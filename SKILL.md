@@ -45,12 +45,24 @@ cat > "$SCRIPT" << SCRIPT_EOF
 #!/usr/bin/env bash
 SESSION="${SESSION}"
 WORKDIR="${WORKDIR}"
-CLAUDE_BIN="/usr/bin/claude"
+REMOTE_NAME="${REMOTE_NAME}"
 export PATH="/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/agents"
+
+LOG_FILE="\$HOME/.sessions/session-starts.log"
+mkdir -p "\$(dirname "\$LOG_FILE")"
 log() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] \$*"; }
-if tmux has-session -t "${SESSION}" 2>/dev/null; then log "Session already running."; exit 0; fi
-log "Starting ${SESSION}..."
+log_start() {
+  local msg="[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR event=\$1"
+  echo "\$msg" | tee -a "\$LOG_FILE"
+}
+
+if tmux has-session -t "${SESSION}" 2>/dev/null; then
+  log_start "already-running"
+  exit 0
+fi
+
+log_start "starting"
 tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "${WORKDIR}" -e "PATH=\$PATH" -e "HOME=\$HOME"
 tmux send-keys -t "${SESSION}" 'SENTINEL="${WORKDIR}/.sessions-init"
 while true; do
@@ -70,7 +82,8 @@ while true; do
     sleep 10
   fi
 done' Enter
-log "Session started. Attach: tmux attach -t ${SESSION}"
+log_start "started"
+log "Attach: tmux attach -t ${SESSION}"
 SCRIPT_EOF
 chmod +x "$SCRIPT"
 
@@ -78,7 +91,7 @@ chmod +x "$SCRIPT"
 cat > "$SERVICE" << UNIT_EOF
 [Unit]
 Description=Claude Code Remote - ${REMOTE_NAME}
-After=network-online.target
+After=network-online.target openclaw-gateway.service
 Wants=network-online.target
 [Service]
 Type=oneshot
@@ -96,6 +109,13 @@ UNIT_EOF
 systemctl --user daemon-reload
 systemctl --user enable --now "$(basename $SERVICE)"
 
+# ── 4.5. Startup log ─────────────────────────────────────────────────────────
+# Start scripts append to ~/.sessions/session-starts.log in this format:
+# [ISO-timestamp] host=<hostname> session=<tmux-name> remote=<remote-control-name> workdir=<path> event=starting|started|already-running
+# Check when/where sessions came up:
+#   cat ~/.sessions/session-starts.log
+# The start script template already includes log_start() — no extra steps needed here.
+
 # ── 5. Pre-accept folder trust ────────────────────────────────────────────────
 python3 -c "
 import json
@@ -112,12 +132,12 @@ tmux list-sessions | grep "${SESSION}"
 ## After Creating
 
 - Connect from Claude Code app: look for `agenthost-<foldername>-<YYYYMMDD>` in remote sessions
-- Commit scripts to your infra repo under `scripts/agenthost/`
+- Commit scripts to `chimera-defi/Etc-mono-repo` under `scripts/agenthost/`
 
 ## Key Rules
 
 - Always use `--dangerously-skip-permissions` — sessions must not prompt for tool approval
-- Use the sentinel file pattern — `--continue` on a fresh workdir exits in 0s and triggers the 300s backoff loop
-- 300s backoff on exit <30s (limit hit / crash), 10s otherwise — never flat-poll
+- Use the sentinel file pattern — `--continue` on fresh workdirs exits in 0s and triggers 300s backoff loop
+- 300s backoff on exit <30s (limit hit / crash), 10s otherwise
 - If two sessions share the same workdir, `--continue` picks the wrong conversation — use dedicated workdirs for shared-home sessions (e.g. `~/.sessions/<name>/`)
 - `hasTrustDialogAccepted: true` must be set for the workdir or Claude prompts on every restart
