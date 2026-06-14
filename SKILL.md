@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.2.0"
+version: "1.3.0"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -117,3 +117,17 @@ tmux list-sessions | grep "${SESSION}" && systemctl --user is-active "${REMOTE_N
 
 Connect from Claude Code app: look for `agenthost-<foldername>-<YYYYMMDD>` in remote sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
+
+## Sessions Agent Scope
+
+A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a **bounded scope**:
+
+- **Allowed**: create sessions, write handoffs to `memory/` in target repos, relay context, monitor session status
+- **NOT allowed**: run scripts, execute optimizers, make code changes, or do project work for another repo
+
+If project-specific work arrives in a sessions agent's context (e.g. a handoff describing optimizer runs):
+1. Write a handoff to that repo's `memory/` folder with the pending work
+2. Spawn or connect to the appropriate project session
+3. Tell the user what session to use — do NOT execute the work yourself
+
+The sessions agent's `CLAUDE.md` at `/home/agents/.sessions/agenthost-sessions/.claude/CLAUDE.md` enforces these rules.
