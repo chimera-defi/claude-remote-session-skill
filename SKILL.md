@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.3.0"
+version: "1.4.0"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -105,11 +105,6 @@ UNIT_EOF
 
 systemctl --user daemon-reload
 systemctl --user enable --now "$(basename $SERVICE)"
-python3 -c "
-import json; p='/home/agents/.claude.json'; d=json.load(open(p))
-d.setdefault('projects',{}).setdefault('${WORKDIR}',{})['hasTrustDialogAccepted']=True
-json.dump(d,open(p,'w'),separators=(',',':'))
-"
 tmux list-sessions | grep "${SESSION}" && systemctl --user is-active "${REMOTE_NAME}.service"
 ```
 
