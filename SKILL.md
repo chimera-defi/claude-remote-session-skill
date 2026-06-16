@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.4.0"
+version: "1.6.0"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -15,8 +15,8 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 ## Naming Convention
 
 ```
-tmux session:    agenthost_<foldername>-<YYYYMMDD>
-remote-control:  agenthost-<foldername>-<YYYYMMDD>
+tmux session:    agenthost_<foldername>-<YYYYMMDD-HHMM>
+remote-control:  agenthost-<foldername>-<YYYYMMDD-HHMM>
 workdir (repo):  /home/agents/workspace/<foldername>
 workdir (util):  /home/agents/.sessions/<foldername>
 ```
@@ -31,13 +31,25 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
 
-## Recipe — run as ONE Bash call
+## Recipe — use the script (preferred)
+
+A standalone script handles the full recipe. Use it directly:
+
+```bash
+new-session <foldername>              # auto-detects workspace/ vs .sessions/
+new-session <foldername> workspace    # force workspace/
+new-session <foldername> sessions     # force .sessions/
+```
+
+Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from the fallback recipe below.
+
+## Recipe — fallback (manual, ONE Bash call)
 
 Set `FOLDERNAME` and `WORKDIR` at the top, then paste the whole block:
 
 ```bash
 FOLDERNAME="<foldername>"
-DATE=$(date +%Y%m%d)
+DATE=$(date +%Y%m%d-%H%M)
 WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${FOLDERNAME}
 SESSION="agenthost_${FOLDERNAME}-${DATE}"
 REMOTE_NAME="agenthost-${FOLDERNAME}-${DATE}"
@@ -61,16 +73,13 @@ log_start() {
 }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
-mkdir -p "${WORKDIR}"
-mkdir -p "${WORKDIR}/.claude/skills"
-ln -sf /home/agents/.openclaw/skills/using-superpowers "${WORKDIR}/.claude/skills/using-superpowers" 2>/dev/null || true
-for _skill in /home/agents/.claude/skills/*/; do
-  _name=\$(basename "\$_skill")
-  [ "\$_name" = "using-superpowers" ] && continue
-  ln -sf "\$_skill" "${WORKDIR}/.claude/skills/\${_name}" 2>/dev/null || true
-done
+mkdir -p "${WORKDIR}/.claude"
+rm -rf "${WORKDIR}/.claude/skills" && ln -sf /home/agents/.claude/skills "${WORKDIR}/.claude/skills"
+if [ -f "${WORKDIR}/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "${WORKDIR}/.claude/CLAUDE.md" 2>/dev/null; then
+  printf '# Session Bootstrap\n\nOn your first response in any new session, read `memory/MEMORY.md` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "${WORKDIR}/.claude/CLAUDE.md"
+fi
 tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "${WORKDIR}" -e "PATH=\$PATH" -e "HOME=\$HOME"
-tmux send-keys -t "${SESSION}" 'SENTINEL="${WORKDIR}/.sessions-init"
+tmux send-keys -t "${SESSION}" 'SENTINEL="${WORKDIR}/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
@@ -105,12 +114,18 @@ UNIT_EOF
 
 systemctl --user daemon-reload
 systemctl --user enable --now "$(basename $SERVICE)"
+python3 -c "
+import json; p='/home/agents/.claude.json'; d=json.load(open(p))
+d.setdefault('projects',{}).setdefault('${WORKDIR}',{})['hasTrustDialogAccepted']=True
+json.dump(d,open(p,'w'),separators=(',',':'))
+"
 tmux list-sessions | grep "${SESSION}" && systemctl --user is-active "${REMOTE_NAME}.service"
 ```
 
 ## After Creating
 
-Connect from Claude Code app: look for `agenthost-<foldername>-<YYYYMMDD>` in remote sessions.
+Connect from Claude Code app: look for `agenthost-<foldername>-<YYYYMMDD-HHMM>` in remote sessions.
+Each spawn gets a unique name — never collides with same-day sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
 
 ## Sessions Agent Scope
