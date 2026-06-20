@@ -30,6 +30,25 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - Auto-wire `using-superpowers` and all global skills into every session — do not wait for user to request it
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
+- Git-aware run dir: when the workdir is a git repo, sessions start from the **default branch** — never a stale feature branch — and parallel sessions never collide (see below)
+
+## Git-aware run directory (RUNDIR)
+
+When the workdir is a git repo, the start script resolves where to run via the
+`session-git-prep` helper (`~/.local/bin/session-git-prep`) instead of using the
+checked-out branch as-is:
+
+- **canonical tree is free + clean** → check it out on the default branch
+  (`origin/HEAD` → `main` → `master`), pull latest when an `origin` exists, and
+  claim it with an owner-lock under `~/.claude/session-locks/`
+- **canonical tree is dirty or already owned by a live session** → create a
+  fresh per-session worktree under `~/.claude/worktrees/<remote_name>` on a new
+  `session/<remote_name>` branch cut from the default branch
+
+This means a session never inherits a random current branch, and N agents can
+work the same repo in parallel without stepping on each other. The helper never
+fails a spawn — if anything goes wrong (or it's not on PATH) the start script
+falls back to launching in `$WORKDIR` as-is. Non-git workdirs are unaffected.
 
 ## Recipe — use the script (preferred)
 
@@ -73,13 +92,19 @@ log_start() {
 }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
-mkdir -p "${WORKDIR}/.claude"
-rm -rf "${WORKDIR}/.claude/skills" && ln -sf /home/agents/.claude/skills "${WORKDIR}/.claude/skills"
-if [ -f "${WORKDIR}/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "${WORKDIR}/.claude/CLAUDE.md" 2>/dev/null; then
-  printf '# Session Bootstrap\n\nOn your first response in any new session, read `memory/MEMORY.md` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "${WORKDIR}/.claude/CLAUDE.md"
+RUNDIR="\$WORKDIR"
+if command -v session-git-prep >/dev/null 2>&1; then
+  PREP="\$(session-git-prep "\$WORKDIR" "\$SESSION" "\$REMOTE_NAME" 2>>"\$LOG_FILE")"
+  [ -n "\$PREP" ] && RUNDIR="\$PREP"
 fi
-tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "${WORKDIR}" -e "PATH=\$PATH" -e "HOME=\$HOME"
-tmux send-keys -t "${SESSION}" 'SENTINEL="${WORKDIR}/.sessions-init-${REMOTE_NAME}"
+echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+mkdir -p "\$RUNDIR/.claude"
+rm -rf "\$RUNDIR/.claude/skills" && ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
+  printf '# Session Bootstrap\n\nOn your first response in any new session, read `memory/MEMORY.md` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
+fi
+tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+tmux send-keys -t "${SESSION}" 'SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then

@@ -33,13 +33,23 @@ mkdir -p "\$(dirname "\$LOG_FILE")"
 log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR event=\$1" | tee -a "\$LOG_FILE"; }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
-mkdir -p "${WORKDIR}/.claude"
-rm -rf "${WORKDIR}/.claude/skills" && ln -sf /home/agents/.claude/skills "${WORKDIR}/.claude/skills"
-if [ -f "${WORKDIR}/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "${WORKDIR}/.claude/CLAUDE.md" 2>/dev/null; then
-  printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "${WORKDIR}/.claude/CLAUDE.md"
+# Decide where this session runs: the canonical tree on its default branch when
+# it is free + clean, otherwise a fresh per-session worktree branched from the
+# default branch (so parallel sessions on the same repo never collide). Falls
+# back to \$WORKDIR if the helper is missing, preserving legacy behaviour.
+RUNDIR="\$WORKDIR"
+if command -v session-git-prep >/dev/null 2>&1; then
+  PREP="\$(session-git-prep "\$WORKDIR" "\$SESSION" "\$REMOTE_NAME" 2>>"\$LOG_FILE")"
+  [ -n "\$PREP" ] && RUNDIR="\$PREP"
 fi
-tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "${WORKDIR}" -e "PATH=\$PATH" -e "HOME=\$HOME"
-tmux send-keys -t "${SESSION}" 'SENTINEL="${WORKDIR}/.sessions-init-${REMOTE_NAME}"
+echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+mkdir -p "\$RUNDIR/.claude"
+rm -rf "\$RUNDIR/.claude/skills" && ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
+  printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
+fi
+tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+tmux send-keys -t "${SESSION}" 'SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
