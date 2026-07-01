@@ -111,6 +111,20 @@ if git -C "$REPO" worktree add --quiet -b "$BR" "$WT" "$BASE" 2>/dev/null; then
   emit "$WT"
 fi
 
-# Worktree creation failed -> last resort: don't block the spawn.
+# Worktree add failed — the branch/dir may already exist from a prior run.
+# 1. If $WT already is a valid worktree of this repo, reuse it.
+if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qF "worktree $WT"; then
+  log "worktree at $WT already registered; reusing -> $WT"
+  emit "$WT"
+fi
+# 2. Retry once with a unique suffix so a second session doesn't collide.
+WT2="$WT_BASE/${REMOTE}-$$"
+BR2="session/${REMOTE}-$$"
+if git -C "$REPO" worktree add --quiet -b "$BR2" "$WT2" "$BASE" 2>/dev/null; then
+  log "retry worktree on '$BR2' from '$BASE' -> $WT2"
+  emit "$WT2"
+fi
+
+# Last resort: don't block the spawn.
 log "worktree add failed ($REASON); falling back to canonical as-is -> $REPO"
 emit "$REPO"
