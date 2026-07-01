@@ -6,18 +6,18 @@ Say "create a session for my-project" and Claude will spin up a session you can 
 
 ## What it does
 
-- Creates a named tmux session running `claude --remote-control <name>` in a loop
+- Creates a named tmux session running `claude --remote-control <name>` in a restart loop
 - Wraps it in a systemd user service so it survives reboots and restarts automatically
 - Uses `--dangerously-skip-permissions` so sessions never block on tool approval prompts
 - Sentinel file + `--continue` so sessions resume conversation context after restarts
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
+- Defaults to `--model sonnet` (latest Sonnet); override with `CLAUDE_SESSION_MODEL=opus` for orchestrator sessions
 
 ## Requirements
 
 - Linux with systemd user services
 - tmux
 - Claude Code CLI (`claude`) installed at `/usr/bin/claude` (or adjust paths)
-- Python 3 (for trust pre-acceptance)
 
 ## Install
 
@@ -43,23 +43,39 @@ Then tell Claude which project to create a session for. It will generate the scr
 ## Use the script directly
 
 ```bash
+new-session my-project              # auto-detects workspace/ vs .sessions/
+new-session my-project workspace    # force workspace/
+new-session my-project sessions     # force .sessions/
+```
+
+Back-compat wrapper (same calling convention as the original script):
+
+```bash
 FOLDERNAME=my-project bash scripts/create-session.sh
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `agenthost-my-project-<date>`.
+The session will appear in the Claude Code app under Remote sessions as `agenthost-my-project-<YYYYMMDD-HHMM>`.
+
+## Model default
+
+Spawned sessions use `--model sonnet` (resolves to the latest Sonnet release). Convention: builder/worker sessions use Sonnet; orchestrator sessions use Opus. Override per-spawn:
+
+```bash
+CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
+```
 
 ## Naming convention
 
 | What | Format |
 |------|--------|
-| tmux session | `agenthost_<folder>-<YYYYMMDD>` (underscore — tmux converts `:` to `_`) |
-| remote-control name | `agenthost-<folder>-<YYYYMMDD>` (hyphens — shown in Claude Code app) |
-| start script | `~/.local/bin/agenthost-<folder>-<YYYYMMDD>-start.sh` |
-| systemd service | `~/.config/systemd/user/agenthost-<folder>-<YYYYMMDD>.service` |
+| tmux session | `agenthost_<folder>-<YYYYMMDD-HHMM>` (underscore prefix) |
+| remote-control name | `agenthost-<folder>-<YYYYMMDD-HHMM>` (shown in Claude Code app) |
+| start script | `~/.local/bin/agenthost-<folder>-<YYYYMMDD-HHMM>-start.sh` |
+| systemd service | `~/.config/systemd/user/agenthost-<folder>-<YYYYMMDD-HHMM>.service` |
 
-## How connect works
+## How to connect
 
-Once the session is running, open Claude Code on any device → Remote sessions → look for `agenthost-<folder>-<date>`. The session keeps your conversation context across restarts via `--continue`.
+Once running: open Claude Code on any device → Remote sessions → look for `agenthost-<folder>-<YYYYMMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
 
 ## License
 
