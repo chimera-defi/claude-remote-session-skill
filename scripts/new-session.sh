@@ -7,6 +7,39 @@
 #   sessions  — utility sessions (monitors, managers, etc.)
 set -e
 
+# ── Help ─────────────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'HELP_EOF'
+Usage: new-session <foldername> [workspace|sessions|auto]
+
+  foldername          Name for the session. Used in:
+                        tmux session:    agenthost_<foldername>-<YYYYMMDD-HHMM>
+                        remote-control:  agenthost-<foldername>-<YYYYMMDD-HHMM>
+                        start script:    ~/.local/bin/agenthost-<foldername>-<YYYYMMDD-HHMM>-start.sh
+                        systemd service: ~/.config/systemd/user/agenthost-<foldername>-<YYYYMMDD-HHMM>.service
+
+  workspace           Force workdir to /home/agents/workspace/<foldername>
+                      (repo sessions)
+  sessions            Force workdir to /home/agents/.sessions/<foldername>
+                      (utility sessions: monitors, managers, etc.)
+  auto (default)      Use workspace/ if /home/agents/workspace/<foldername>
+                      exists, otherwise .sessions/
+
+Options:
+  -h, --help          Print this help and exit.
+
+Environment:
+  CLAUDE_SESSION_MODEL=opus     Spawn with Opus instead of the default Sonnet.
+
+Examples:
+  new-session my-project
+  new-session my-project workspace
+  new-session my-project sessions
+  CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
+HELP_EOF
+  exit 0
+fi
+
 # ── Inputs ──────────────────────────────────────────────────────────────────
 FOLDERNAME="${1:?Usage: new-session <foldername> [workspace|sessions]}"
 TYPE="${2:-auto}"
