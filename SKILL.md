@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.7.0"
+version: "1.7.1"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -59,6 +59,7 @@ A standalone script handles the full recipe. Use it directly:
 new-session <foldername>              # auto-detects workspace/ vs .sessions/
 new-session <foldername> workspace    # force workspace/
 new-session <foldername> sessions     # force .sessions/
+new-session --help                    # print usage and exit (no session spawned)
 ```
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
