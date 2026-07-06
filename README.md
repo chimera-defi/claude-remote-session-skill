@@ -46,6 +46,7 @@ Then tell Claude which project to create a session for. It will generate the scr
 new-session my-project              # auto-detects workspace/ vs .sessions/
 new-session my-project workspace    # force workspace/
 new-session my-project sessions     # force .sessions/
+new-session --help                  # print usage and exit (no session spawned)
 ```
 
 Back-compat wrapper (same calling convention as the original script):
