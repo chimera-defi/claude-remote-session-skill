@@ -21,8 +21,8 @@ UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
 PROTECT='claude-remote|openclaw|hermes'
 MODE="${1:-report}"; shift || true
-DAYS=30
-while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; *) shift;; esac; done
+DAYS=30; FORCE=no
+while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=yes; shift;; *) shift;; esac; done
 
 registry_json() {
   local tok org
@@ -80,7 +80,6 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     ;;
 
   reap-local)
-    FORCE=no; for a in "$@"; do [ "$a" = "--force" ] && FORCE=yes; done
     [ "$FORCE" = yes ] || echo "(DRY-RUN — re-run with --force to actually reap)"
     do_reap() {  # $1=tmux-name-or-empty $2=service $3=start-script
       if [ "$FORCE" = yes ]; then
