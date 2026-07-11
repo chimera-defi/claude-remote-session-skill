@@ -98,6 +98,18 @@ if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
 tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+# Wait for the pane's interactive shell to be ready before typing into it, so
+# the kickoff keystrokes are not swallowed by a still-initializing pane.
+for _i in \$(seq 1 20); do
+  case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
+    bash|zsh|sh) break ;;
+  esac
+  sleep 0.25
+done
+# Type the supervisor loop WITHOUT a trailing Enter, then submit + verify
+# separately: a raced final Enter can be dropped, leaving the loop buffered in
+# readline but never executed (the session then churns idle). Resend Enter until
+# pane_current_command shows the loop actually launched.
 tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
@@ -120,8 +132,24 @@ while true; do
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=restart wait=10s" | tee -a "\$LOG_FILE"
     sleep 10
   fi
-done' Enter
-log_start "started"
+done'
+kicked=no
+for _try in 1 2 3; do
+  tmux send-keys -t "${SESSION}" Enter
+  for _j in \$(seq 1 12); do
+    case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
+      claude|node|sleep) kicked=yes; break ;;
+    esac
+    sleep 0.5
+  done
+  [ "\$kicked" = yes ] && break
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=kickoff-retry attempt=\$_try" | tee -a "\$LOG_FILE"
+done
+if [ "\$kicked" = yes ]; then
+  log_start "started"
+else
+  log_start "started-UNVERIFIED-kickoff-may-have-failed"
+fi
 SCRIPT_EOF
 chmod +x "$SCRIPT"
 
