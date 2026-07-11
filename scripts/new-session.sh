@@ -98,7 +98,10 @@ rm -rf "\$RUNDIR/.claude/skills" && ln -sf /home/agents/.claude/skills "\$RUNDIR
 # a headroom/proxy base URL (e.g. 127.0.0.1) silently disables session registration so
 # the session never appears on the phone. Force first-party via a dedicated --settings
 # layer, which merges over the user settings.json (keeping hooks/MCP/plugins).
-[ -f /home/agents/.claude/rc-firstparty.settings.json ] || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com"}}\n' > /home/agents/.claude/rc-firstparty.settings.json
+# Self-heal: (re)write if MISSING or not valid JSON. A truncated/corrupt file would
+# otherwise make claude silently ignore it, fall back to the proxy base URL, and
+# re-break registration with no error — so validate, don't just check existence.
+python3 -c "import json;json.load(open('/home/agents/.claude/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > /home/agents/.claude/rc-firstparty.settings.json
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
