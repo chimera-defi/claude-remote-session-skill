@@ -34,15 +34,22 @@ registry_json() {
 }
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
-# A session's claude proc is alive if any claude --remote-control matches its remote name.
-proc_alive() { pgrep -af "remote-control .*$1" >/dev/null 2>&1; }
+# Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
+# name from the tmux session name (they often differ, e.g. tmux agenthost_chimera-control
+# vs remote-control chimera-server-control). claude/node = running; sleep = supervisor
+# backoff (still alive); a bare shell = supervisor loop exited = genuinely dead.
+proc_alive() {  # $1 = tmux session name
+  case "$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" in
+    claude|node|sleep) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 case "$MODE" in
   report)
     echo "=== LOCAL: tmux sessions ==="
     for s in $(live_tmux); do
-      rn="${s#agenthost_}"                       # tmux uses agenthost_, remote name uses agenthost-
-      alive=$(proc_alive "${rn//_/-}" && echo yes || echo NO-PROC)
+      alive=$(proc_alive "$s" && echo yes || echo NO-PROC)
       prot=$(echo "$s" | grep -qiE "$PROTECT" && echo " [PROTECTED]" || true)
       printf "  %-52s proc=%s%s\n" "$s" "$alive" "$prot"
     done
@@ -88,8 +95,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     # 1. tmux sessions whose claude proc is gone (skip protected).
     for s in $(live_tmux); do
       echo "$s" | grep -qiE "$PROTECT" && continue
-      rn="${s#agenthost_}"; rn="${rn//_/-}"
-      proc_alive "$rn" && continue                     # alive → keep
+      proc_alive "$s" && continue                      # alive → keep
       echo "DEAD tmux (no claude proc): $s"
       do_reap "$s" "agenthost-${s#agenthost_}.service" "agenthost-${s#agenthost_}-start.sh"
       reaped=$((reaped+1))
