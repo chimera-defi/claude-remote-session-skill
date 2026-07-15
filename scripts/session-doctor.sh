@@ -45,6 +45,13 @@ proc_alive() {  # $1 = tmux session name
   esac
 }
 
+# Prefix mapping. `agenthost`/`ah` are the only prefixes we own; anything else
+# (e.g. codexhost_) is NOT ours and must be left alone. PROTECT (line ~22) stays
+# in sync with session-alias.sh.
+tmux_to_base() { case "$1" in agenthost_*) echo "agenthost-${1#agenthost_}";; ah_*) echo "ah-${1#ah_}";; *) echo "";; esac; }
+svc_to_tmux()  { case "$1" in agenthost-*) echo "agenthost_${1#agenthost-}";; ah-*) echo "ah_${1#ah-}";; *) echo "$1";; esac; }
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
   report)
     echo "=== LOCAL: tmux sessions ==="
@@ -54,8 +61,8 @@ case "$MODE" in
       printf "  %-52s proc=%s%s\n" "$s" "$alive" "$prot"
     done
     echo "=== LOCAL: systemd units without a live tmux (orphans) ==="
-    for u in $(ls "$UD" 2>/dev/null | grep '^agenthost-.*\.service$'); do
-      base="${u%.service}"; tm="agenthost_${base#agenthost-}"
+    for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
+      base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" || echo "  ORPHAN unit: $u"
     done
     echo "=== REGISTRY: staleness summary ==="
@@ -94,15 +101,16 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     # 1. tmux sessions whose claude proc is gone (skip protected).
     for s in $(live_tmux); do
       echo "$s" | grep -qiE "$PROTECT" && continue
-      proc_alive "$s" && continue                      # alive → keep
+      base="$(tmux_to_base "$s")"; [ -z "$base" ] && continue   # not ours (e.g. codexhost_) → leave it
+      proc_alive "$s" && continue                                # alive → keep
       echo "DEAD tmux (no claude proc): $s"
-      do_reap "$s" "agenthost-${s#agenthost_}.service" "agenthost-${s#agenthost_}-start.sh"
+      do_reap "$s" "${base}.service" "${base}-start.sh"
       reaped=$((reaped+1))
     done
     # 2. orphaned systemd units (no live tmux, service not active).
-    for u in $(ls "$UD" 2>/dev/null | grep '^agenthost-.*\.service$'); do
+    for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
       echo "$u" | grep -qiE "$PROTECT" && continue
-      base="${u%.service}"; tm="agenthost_${base#agenthost-}"
+      base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" && continue
       systemctl --user is-active --quiet "$u" && continue   # still active → keep
       echo "ORPHAN unit (no tmux, inactive): $u"
@@ -134,3 +142,4 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
     ;;
   *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]]"; exit 2;;
 esac
+fi
