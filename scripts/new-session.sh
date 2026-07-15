@@ -10,13 +10,13 @@ set -e
 # ── Help ─────────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'HELP_EOF'
-Usage: new-session <foldername> [workspace|sessions|auto]
+Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run]
 
   foldername          Name for the session. Used in:
-                        tmux session:    agenthost_<foldername>-<YYYYMMDD-HHMM>
-                        remote-control:  agenthost-<foldername>-<YYYYMMDD-HHMM>
-                        start script:    ~/.local/bin/agenthost-<foldername>-<YYYYMMDD-HHMM>-start.sh
-                        systemd service: ~/.config/systemd/user/agenthost-<foldername>-<YYYYMMDD-HHMM>.service
+                        tmux session:    ah_<MMDD-HHMM>-<alias>
+                        remote-control:  ah-<MMDD-HHMM>-<alias>
+                        start script:    ~/.local/bin/ah-<MMDD-HHMM>-<alias>-start.sh
+                        systemd service: ~/.config/systemd/user/ah-<MMDD-HHMM>-<alias>.service
 
   workspace           Force workdir to /home/agents/workspace/<foldername>
                       (repo sessions)
@@ -27,6 +27,8 @@ Usage: new-session <foldername> [workspace|sessions|auto]
 
 Options:
   -h, --help          Print this help and exit.
+  -a, --alias <x>     Short alias for the session name (persisted per folder).
+  --dry-run           Print the resolved names and exit without spawning.
 
 Environment:
   CLAUDE_SESSION_MODEL=opus     Spawn with Opus instead of the default Sonnet.
@@ -35,14 +37,23 @@ Examples:
   new-session my-project
   new-session my-project workspace
   new-session my-project sessions
+  new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
 HELP_EOF
   exit 0
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME="${1:?Usage: new-session <foldername> [workspace|sessions]}"
-TYPE="${2:-auto}"
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -a|--alias) ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
+    --dry-run)  DRYRUN=yes; shift ;;
+    workspace|sessions|auto) TYPE="$1"; shift ;;
+    *) if [ -z "$FOLDERNAME" ]; then FOLDERNAME="$1"; else TYPE="$1"; fi; shift ;;
+  esac
+done
+: "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
 
 # ── Model selection ─────────────────────────────────────────────────────────
 # Override per-spawn with CLAUDE_SESSION_MODEL=opus (e.g. for orchestrators).
@@ -60,11 +71,24 @@ else
 fi
 
 # ── Naming ──────────────────────────────────────────────────────────────────
-DATE=$(date +%Y%m%d-%H%M)
-SESSION="agenthost_${FOLDERNAME}-${DATE}"
-REMOTE_NAME="agenthost-${FOLDERNAME}-${DATE}"
+# ID-first so the unique token survives mobile truncation. Prefix `ah` (was
+# `agenthost`); session-doctor understands both during the transition.
+ID=$(date +%m%d-%H%M)
+if command -v session-alias >/dev/null 2>&1; then
+  ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} 2>/dev/null) || ALIAS=""
+fi
+# Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
+[ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
+BODY="${ID}-${ALIAS}"
+SESSION="ah_${BODY}"
+REMOTE_NAME="ah-${BODY}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
+
+if [ "$DRYRUN" = yes ]; then
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\n' "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE"
+  exit 0
+fi
 
 mkdir -p "$(dirname "$SCRIPT")" "$(dirname "$SERVICE")"
 
