@@ -7,8 +7,13 @@ count is still high" confusion.
 | Layer | Where | Lives until | Cleaned by |
 |-------|-------|-------------|------------|
 | **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
-| **systemd --user unit** | `~/.config/systemd/user/agenthost-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
+| **systemd --user unit** | `~/.config/systemd/user/agenthost-*.service` / `ah-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
 | **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | manual `DELETE` (see below) |
+
+Sessions created before the 2026-07-15 naming change use the `agenthost-`/`agenthost_`
+prefix; sessions created after use the shorter `ah-`/`ah_` prefix. `session-doctor`
+matches both prefixes for the whole transition — old and new sessions are reaped
+identically.
 
 **Key fact:** the registry is org-wide and effectively permanent. It accumulates:
 - **disconnected** entries (session ended, registration lingers), and

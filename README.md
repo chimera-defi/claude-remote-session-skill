@@ -46,6 +46,7 @@ Then tell Claude which project to create a session for. It will generate the scr
 new-session my-project              # auto-detects workspace/ vs .sessions/
 new-session my-project workspace    # force workspace/
 new-session my-project sessions     # force .sessions/
+new-session my-long-project-name --alias mpn   # explicit short alias (persisted)
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
@@ -55,7 +56,7 @@ Back-compat wrapper (same calling convention as the original script):
 FOLDERNAME=my-project bash scripts/create-session.sh
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `agenthost-my-project-<YYYYMMDD-HHMM>`.
+The session will appear in the Claude Code app under Remote sessions as `ah-<MMDD-HHMM>-<alias>` (e.g. `ah-0715-0630-my-project`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
 
@@ -69,14 +70,20 @@ CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
 
 | What | Format |
 |------|--------|
-| tmux session | `agenthost_<folder>-<YYYYMMDD-HHMM>` (underscore prefix) |
-| remote-control name | `agenthost-<folder>-<YYYYMMDD-HHMM>` (shown in Claude Code app) |
-| start script | `~/.local/bin/agenthost-<folder>-<YYYYMMDD-HHMM>-start.sh` |
-| systemd service | `~/.config/systemd/user/agenthost-<folder>-<YYYYMMDD-HHMM>.service` |
+| tmux session | `ah_<MMDD-HHMM>-<alias>` (underscore prefix) |
+| remote-control name | `ah-<MMDD-HHMM>-<alias>` (shown in Claude Code app) |
+| start script | `~/.local/bin/ah-<MMDD-HHMM>-<alias>-start.sh` |
+| systemd service | `~/.config/systemd/user/ah-<MMDD-HHMM>-<alias>.service` |
+
+ID-first (`MMDD-HHMM`) so the unique token survives mobile list truncation. `<alias>`
+is the folder name as-is when short, otherwise a short inferred/persisted acronym (or
+an explicit `--alias`) — see `SKILL.md` for the resolution rules. Legacy
+`agenthost_`/`agenthost-` sessions created before this change keep working;
+`session-doctor` matches both prefixes during the transition.
 
 ## How to connect
 
-Once running: open Claude Code on any device → Remote sessions → look for `agenthost-<folder>-<YYYYMMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
+Once running: open Claude Code on any device → Remote sessions → look for `ah-<MMDD-HHMM>-<alias>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
 
 ## License
 
