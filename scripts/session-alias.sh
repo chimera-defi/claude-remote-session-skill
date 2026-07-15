@@ -24,11 +24,21 @@ done
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
 
 infer() { # $1 = folder ; echo alias
-  local f="$1" acr="" w
-  if [ "${#f}" -le "$CAP" ]; then sanitize "$f"; return; fi
-  local IFS='-'; for w in $f; do acr="${acr}${w:0:1}"; done
-  acr="$(sanitize "$acr")"
-  [ "${#acr}" -ge 2 ] && printf '%s' "$acr" || sanitize "${f:0:$CAP}"
+  local f="$1" acr="" w a
+  if [ "${#f}" -le "$CAP" ]; then
+    a="$(sanitize "$f")"
+  else
+    local IFS='-'; for w in $f; do acr="${acr}${w:0:1}"; done
+    acr="$(sanitize "$acr")"
+    if [ "${#acr}" -ge 2 ]; then a="$acr"; else a="$(sanitize "${f:0:$CAP}")"; fi
+  fi
+  # Never emit an empty alias. A folder name with no [a-z0-9-] content after
+  # normalization (e.g. a non-ASCII-only or symbols-only name) would otherwise
+  # sanitize to "" here, which would then flow into a tmux/systemd name with a
+  # dangling separator (e.g. "ah-0715-0630-"). Fall back to a short,
+  # deterministic, charset-safe token derived from the folder name.
+  [ -n "$a" ] || a="s$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
+  printf '%s' "$a"
 }
 
 store_lookup() { [ -f "$STORE" ] && awk -F'\t' -v f="$1" '$1==f{print $2; exit}' "$STORE"; }

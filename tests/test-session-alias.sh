@@ -33,6 +33,14 @@ ok "protected-passthrough" "$(bash "$ALIAS" openclaw-autoresearch)" "openclaw-au
 ok "protected-not-stored" "$(awk -F'\t' '$1=="openclaw-autoresearch"' "$STORE" | wc -l | tr -d ' ')" "0"
 # --alias on a protected folder is ignored (still keeps identity token)
 ok "protected-ignores-alias" "$(bash "$ALIAS" openclaw-autoresearch --alias oa)" "openclaw-autoresearch"
+# a folder name that normalizes to nothing (symbols-only, > CAP chars) must
+# never produce an empty alias — found via independent review (devin-delegate):
+# an empty alias would flow into a malformed tmux/systemd name like
+# "ah-0715-0630-" (dangling separator).
+long_symbolic='@@@@@@@@@@@@@@@@@@@@'
+out="$(bash "$ALIAS" "$long_symbolic")"
+ok "empty-normalize-nonempty" "$([ -n "$out" ] && echo yes || echo no)" "yes"
+ok "empty-normalize-safe-charset" "$(printf '%s' "$out" | grep -qE '^[a-z0-9-]+$' && echo yes || echo no)" "yes"
 
 echo "session-alias: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
