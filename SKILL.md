@@ -15,13 +15,35 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 ## Naming Convention
 
 ```
-tmux session:    agenthost_<foldername>-<YYYYMMDD-HHMM>
-remote-control:  agenthost-<foldername>-<YYYYMMDD-HHMM>
+tmux session:    ah_<MMDD-HHMM>-<alias>
+remote-control:  ah-<MMDD-HHMM>-<alias>
 workdir (repo):  /home/agents/workspace/<foldername>
 workdir (util):  /home/agents/.sessions/<foldername>
 ```
 
+ID-first (`MMDD-HHMM`) so the unique token survives mobile truncation. Legacy
+`agenthost_`/`agenthost-` sessions from before this change keep working;
+`session-doctor` matches both prefixes during the transition.
+
 Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monitors, etc.).
+
+### Alias
+
+`<alias>` is a short, stable name derived from `<foldername>`, resolved by the
+`session-alias` helper and persisted in `~/.claude/session-aliases` (one
+`folder<TAB>alias` per line):
+
+- Folder names `<= 18` chars are used as-is.
+- Longer names are reduced to an initials acronym (`claude-remote-session-skill` → `crss`),
+  then the mapping is saved so every later spawn of that folder gets the same alias.
+- Pass `-a`/`--alias <x>` to `new-session` to set (and persist) an explicit alias.
+- **Protected folders are never aliased.** A folder whose name matches `openclaw|hermes`
+  keeps its full name (aliasing would strip the token `session-doctor` needs to protect it;
+  `--alias` is ignored for these). This `ALIAS_PROTECT` guard is deliberately narrower than
+  `session-doctor`'s reap `PROTECT` (`claude-remote|openclaw|hermes`): the bare
+  `claude-remote`/`claude-remote-b` bridge sessions aren't spawned via `new-session`, so a
+  folder that merely contains `claude-remote` (like this repo) is a normal dev session that
+  shortens and is reapable like any other.
 
 ## Key Rules
 
@@ -67,8 +89,8 @@ Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 
 ## After Creating
 
-Connect from Claude Code app: look for `agenthost-<foldername>-<YYYYMMDD-HHMM>` in remote sessions.
-Each spawn gets a unique name — never collides with same-day sessions.
+Connect from Claude Code app: look for `ah-<MMDD-HHMM>-<alias>` in remote sessions.
+Each spawn gets a unique name — never collides with same-minute sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
 
 ## Sessions Agent Scope
