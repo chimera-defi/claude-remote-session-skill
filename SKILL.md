@@ -15,13 +15,14 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 ## Naming Convention
 
 ```
-tmux session:    ah_<MMDD-HHMM>-<alias>
-remote-control:  ah-<MMDD-HHMM>-<alias>
+tmux session:    ah_<alias>-<MMDD-HHMM>
+remote-control:  ah-<alias>-<MMDD-HHMM>
 workdir (repo):  /home/agents/workspace/<foldername>
 workdir (util):  /home/agents/.sessions/<foldername>
 ```
 
-ID-first (`MMDD-HHMM`) so the unique token survives mobile truncation. Legacy
+Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside the
+mobile-list window while reading naturally and grouping by project. Legacy
 `agenthost_`/`agenthost-` sessions from before this change keep working;
 `session-doctor` matches both prefixes during the transition.
 
@@ -89,7 +90,7 @@ Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 
 ## After Creating
 
-Connect from Claude Code app: look for `ah-<MMDD-HHMM>-<alias>` in remote sessions.
+Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessions.
 Each spawn gets a unique name — never collides with same-minute sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
 
