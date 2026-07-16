@@ -56,7 +56,7 @@ Back-compat wrapper (same calling convention as the original script):
 FOLDERNAME=my-project bash scripts/create-session.sh
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `ah-<MMDD-HHMM>-<alias>` (e.g. `ah-0715-0630-my-project`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
+The session will appear in the Claude Code app under Remote sessions as `ah-<alias>-<MMDD-HHMM>` (e.g. `ah-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
 
@@ -70,12 +70,13 @@ CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
 
 | What | Format |
 |------|--------|
-| tmux session | `ah_<MMDD-HHMM>-<alias>` (underscore prefix) |
-| remote-control name | `ah-<MMDD-HHMM>-<alias>` (shown in Claude Code app) |
-| start script | `~/.local/bin/ah-<MMDD-HHMM>-<alias>-start.sh` |
-| systemd service | `~/.config/systemd/user/ah-<MMDD-HHMM>-<alias>.service` |
+| tmux session | `ah_<alias>-<MMDD-HHMM>` (underscore prefix) |
+| remote-control name | `ah-<alias>-<MMDD-HHMM>` (shown in Claude Code app) |
+| start script | `~/.local/bin/ah-<alias>-<MMDD-HHMM>-start.sh` |
+| systemd service | `~/.config/systemd/user/ah-<alias>-<MMDD-HHMM>.service` |
 
-ID-first (`MMDD-HHMM`) so the unique token survives mobile list truncation. `<alias>`
+Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside the
+mobile-list window while reading naturally and grouping by project. `<alias>`
 is the folder name as-is when short, otherwise a short inferred/persisted acronym (or
 an explicit `--alias`) — see `SKILL.md` for the resolution rules. Legacy
 `agenthost_`/`agenthost-` sessions created before this change keep working;
@@ -83,7 +84,7 @@ an explicit `--alias`) — see `SKILL.md` for the resolution rules. Legacy
 
 ## How to connect
 
-Once running: open Claude Code on any device → Remote sessions → look for `ah-<MMDD-HHMM>-<alias>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
+Once running: open Claude Code on any device → Remote sessions → look for `ah-<alias>-<MMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
 
 ## License
 

@@ -1,4 +1,4 @@
-# Design: shorter, ID-first session names
+# Design: shorter session names (`ah-<alias>-<MMDD-HHMM>`)
 
 **Date:** 2026-07-15
 **Status:** approved (pending user review of this spec)
@@ -21,7 +21,8 @@ always survives truncation — while keeping the host-side lifecycle machinery
 
 ## Decisions (locked with user)
 
-1. **Layout:** ID-first with a short `ah-` host tag. (was `agenthost-`)
+1. **Layout:** short `ah-` host tag (was `agenthost-`); name-first with the date last
+   (revised from ID-first after live feedback — see "Ordering").
 2. **Folder handling:** cap long folder names **and** support an optional, inferred,
    *persisted* short alias (like the `ssot` convention for portfolio sessions).
 3. **Scope:** change **both** the app-visible name and the host-side tmux/systemd names;
@@ -31,27 +32,32 @@ always survives truncation — while keeping the host-side lifecycle machinery
 
 ```
 TAG   = ah                        # was "agenthost"
-ID    = MMDD-HHMM                  # date +%m%d-%H%M ; front-loaded, always visible
 ALIAS = <resolved short name>     # see "Alias resolution"
-BODY  = ${ID}-${ALIAS}
+ID    = MMDD-HHMM                  # date +%m%d-%H%M
+BODY  = ${ALIAS}-${ID}            # name-first, date last
 
-tmux session (host):  ${TAG}_${BODY}          e.g.  ah_0715-0630-crss
-remote-control (app): ${TAG}-${BODY}          e.g.  ah-0715-0630-crss
+tmux session (host):  ${TAG}_${BODY}          e.g.  ah_crss-0715-0630
+remote-control (app): ${TAG}-${BODY}          e.g.  ah-crss-0715-0630
 start script:         ~/.local/bin/${TAG}-${BODY}-start.sh
 systemd unit:         ~/.config/systemd/user/${TAG}-${BODY}.service
 ```
 
 - The only structural difference between tmux and remote name remains the `_` vs `-`
   after the tag — the invariant `session-doctor` relies on to map one to the other.
+  Component order within `BODY` is opaque to `session-doctor` (it keys off the prefix
+  only and never parses the date), so it plays no part in reaping.
 - Year drops from the name but is preserved in `~/.sessions/session-starts.log`
   (full ISO-8601 timestamps), so it is recoverable.
-- Mobile view of `ah-0715-0630-crss`: **entire name visible**; ID + identity both readable.
+- Mobile view of `ah-crss-0715-0630`: **entire name visible**; identity + date readable.
 
-### Trade-off accepted
+### Ordering (revised after live feedback)
 
-If the app sorts sessions alphabetically, front-loading the timestamp groups them by
-spawn-time instead of by project. The user refers to sessions by the ID tail anyway, and
-the app most likely sorts by recency, so this is neutral-to-helpful.
+Initial deploy front-loaded the ID (`ah-<ID>-<alias>`) to guarantee the token survived
+truncation. In practice the **shortening** (short tag + capped alias) is what fixed the
+problem — the whole name now fits — so the order was flipped to **name-first, date last**
+(`ah-<alias>-<MMDD-HHMM>`): it reads naturally and groups by project, and the capped
+alias (≤18) keeps the trailing date inside the mobile window. A max-length (18-char)
+alias puts the date right at the edge; acronyms keep typical names well within it.
 
 ## Alias resolution
 
