@@ -49,7 +49,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias) ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
     --dry-run)  DRYRUN=yes; shift ;;
-    workspace|sessions|auto) TYPE="$1"; shift ;;
+    # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
+    # positional (after the folder). Matching them as the first positional would
+    # make a folder literally named `sessions`/`workspace`/`auto` unspawnable
+    # (e.g. the live `sessions` management session).
     *) if [ -z "$FOLDERNAME" ]; then FOLDERNAME="$1"; else TYPE="$1"; fi; shift ;;
   esac
 done

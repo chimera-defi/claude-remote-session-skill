@@ -22,5 +22,12 @@ has "explicit-alias"     "$out2" 'REMOTE_NAME=ah-[0-9]\{4\}-[0-9]\{4\}-myproj'
 # openclaw|hermes are); it shortens to its acronym like any long dev folder.
 out3="$(bash "$NS" --dry-run claude-remote-session-skill 2>/dev/null)"
 has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=ah-[0-9]\{4\}-[0-9]\{4\}-crss'
+# regression: a folder literally named `sessions`/`workspace`/`auto` must be
+# spawnable — the type keyword is only a TYPE as the SECOND positional.
+out4="$(bash "$NS" --dry-run sessions 2>/dev/null)"
+has "folder-named-sessions" "$out4" 'REMOTE_NAME=ah-[0-9]\{4\}-[0-9]\{4\}-sessions'
+# and the type positional still works after the folder
+out5="$(bash "$NS" --dry-run myproj workspace 2>/dev/null)"
+has "type-positional-after-folder" "$out5" 'REMOTE_NAME=ah-[0-9]\{4\}-[0-9]\{4\}-myproj'
 
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
