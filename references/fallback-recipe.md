@@ -13,8 +13,8 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
-SESSION="ah_${ID}-${ALIAS}"
-REMOTE_NAME="ah-${ID}-${ALIAS}"
+SESSION="ah_${ALIAS}-${ID}"
+REMOTE_NAME="ah-${ALIAS}-${ID}"
 MODEL="${CLAUDE_SESSION_MODEL:-sonnet}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
