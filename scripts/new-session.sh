@@ -13,10 +13,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run]
 
   foldername          Name for the session. Used in:
-                        tmux session:    ah_<MMDD-HHMM>-<alias>
-                        remote-control:  ah-<MMDD-HHMM>-<alias>
-                        start script:    ~/.local/bin/ah-<MMDD-HHMM>-<alias>-start.sh
-                        systemd service: ~/.config/systemd/user/ah-<MMDD-HHMM>-<alias>.service
+                        tmux session:    ah_<alias>-<MMDD-HHMM>
+                        remote-control:  ah-<alias>-<MMDD-HHMM>
+                        start script:    ~/.local/bin/ah-<alias>-<MMDD-HHMM>-start.sh
+                        systemd service: ~/.config/systemd/user/ah-<alias>-<MMDD-HHMM>.service
 
   workspace           Force workdir to /home/agents/workspace/<foldername>
                       (repo sessions)
@@ -74,8 +74,10 @@ else
 fi
 
 # ── Naming ──────────────────────────────────────────────────────────────────
-# ID-first so the unique token survives mobile truncation. Prefix `ah` (was
-# `agenthost`); session-doctor understands both during the transition.
+# Name-first, date last: `ah-<alias>-<MMDD-HHMM>`. Aliases are short (capped /
+# acronym'd), so the whole name fits the mobile window while reading naturally
+# and grouping by project. Prefix `ah` (was `agenthost`); session-doctor
+# understands both prefixes and does not parse the date, so order is opaque to it.
 ID=$(date +%m%d-%H%M)
 # In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.
 DRYFLAG=""; [ "$DRYRUN" = yes ] && DRYFLAG="--no-save"
@@ -84,7 +86,7 @@ if command -v session-alias >/dev/null 2>&1; then
 fi
 # Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
-BODY="${ID}-${ALIAS}"
+BODY="${ALIAS}-${ID}"
 SESSION="ah_${BODY}"
 REMOTE_NAME="ah-${BODY}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
