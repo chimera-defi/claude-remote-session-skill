@@ -7,10 +7,14 @@ For the canonical approach, prefer `scripts/new-session.sh` directly.
 
 ```bash
 FOLDERNAME="<foldername>"
-DATE=$(date +%Y%m%d-%H%M)
 WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${FOLDERNAME}
-SESSION="agenthost_${FOLDERNAME}-${DATE}"
-REMOTE_NAME="agenthost-${FOLDERNAME}-${DATE}"
+# Emergency path: store lookup only (no acronym/inference); may differ from
+# new-session for an un-stored long folder.
+ID=$(date +%m%d-%H%M)
+ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
+[ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
+SESSION="ah_${ID}-${ALIAS}"
+REMOTE_NAME="ah-${ID}-${ALIAS}"
 MODEL="${CLAUDE_SESSION_MODEL:-sonnet}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
