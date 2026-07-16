@@ -57,16 +57,21 @@ the app most likely sorts by recency, so this is neutral-to-helpful.
 
 `ALIAS` is the short "name" component. Resolved **once per spawn**, in priority order:
 
-0. **Protected folder guard (safety, highest priority).** If `FOLDERNAME` matches the
-   `session-doctor` PROTECT pattern (`claude-remote|openclaw|hermes`), alias = sanitized
-   `FOLDERNAME` **unchanged** — never acronymed, and `--alias` is ignored (warn if passed).
+0. **Protected folder guard (safety, highest priority).** If `FOLDERNAME` matches
+   `ALIAS_PROTECT` (`openclaw|hermes`), alias = sanitized `FOLDERNAME` **unchanged** —
+   never acronymed, and `--alias` is ignored (warn if passed).
    Rationale: `session-doctor` protects sessions by **substring-matching the session
-   name**. Aliasing strips the folder token (e.g. a hypothetical `openclaw-<workload>`
-   folder → acronym → `ah_…-ow`, which no longer contains `openclaw`), silently making a
-   protected session reapable. Keeping the protected token in the name preserves the
-   guarantee. The PROTECT
-   pattern is duplicated as a constant in `new-session.sh` with a comment tying it to
-   `session-doctor.sh`; **both must stay in sync.**
+   name**. Aliasing strips the folder token (e.g. an `openclaw-<workload>` folder →
+   acronym → `ah_…-ow`, which no longer contains `openclaw`), silently making a protected
+   session reapable. Keeping the token in the name preserves the guarantee.
+   **`ALIAS_PROTECT` is intentionally NARROWER than `session-doctor`'s reap PROTECT
+   (`claude-remote|openclaw|hermes`).** Only `openclaw`/`hermes` are ever spawned as
+   new-session *folders* needing protection; the bare `claude-remote`/`claude-remote-b`
+   RC bridge sessions are not created via `new-session`, so a folder that merely *contains*
+   `claude-remote` (e.g. this repo, `claude-remote-session-skill`) is a normal dev session
+   that SHOULD shorten and SHOULD be reapable when dead. `session-doctor`'s PROTECT is
+   unchanged and still shields the real bridge sessions by their literal names; the two
+   patterns are deliberately different and each file documents why.
 1. **`--alias <x>` / `-a <x>` flag** → use `<x>`; **upsert** `folder → <x>` into the store.
 2. **Saved alias** for this folder in the store → reuse it (guarantees every spawn of the
    same long folder gets the *same* short name).

@@ -37,10 +37,13 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - Longer names are reduced to an initials acronym (`claude-remote-session-skill` → `crss`),
   then the mapping is saved so every later spawn of that folder gets the same alias.
 - Pass `-a`/`--alias <x>` to `new-session` to set (and persist) an explicit alias.
-- **Protected folders are never aliased.** `session-doctor` protects sessions by
-  substring-matching the session name against `claude-remote|openclaw|hermes`; if a
-  folder name matches that pattern, aliasing it would strip the protected token, so the
-  sanitized folder name is used unchanged instead (and `--alias` is ignored).
+- **Protected folders are never aliased.** A folder whose name matches `openclaw|hermes`
+  keeps its full name (aliasing would strip the token `session-doctor` needs to protect it;
+  `--alias` is ignored for these). This `ALIAS_PROTECT` guard is deliberately narrower than
+  `session-doctor`'s reap `PROTECT` (`claude-remote|openclaw|hermes`): the bare
+  `claude-remote`/`claude-remote-b` bridge sessions aren't spawned via `new-session`, so a
+  folder that merely contains `claude-remote` (like this repo) is a normal dev session that
+  shortens and is reapable like any other.
 
 ## Key Rules
 

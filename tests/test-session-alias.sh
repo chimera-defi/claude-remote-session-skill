@@ -11,18 +11,12 @@ STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 # short folder (<=18) passes through unchanged
 ok "short-passthrough" "$(bash "$ALIAS" eth2-quickstart)" "eth2-quickstart"
 # long folder -> initials acronym
-# NOTE: deviates from the plan's literal test data, which used
-# claude-remote-session-skill -> crss. That folder name contains the substring
-# "claude-remote", which matches PROTECT (claude-remote|openclaw|hermes), so it
-# is correctly treated as protected (rule 0) and passed through unaliased —
-# the plan's example was inconsistent with its own PROTECT constraint. Using a
-# non-protected >18-char folder here to exercise the acronym branch instead;
-# the protected case is asserted separately below.
 ok "long-acronym" "$(bash "$ALIAS" some-very-long-project-name)" "svlpn"
-# a folder name that happens to contain a PROTECT token stays protected even
-# though it would otherwise be a normal >18-char acronym candidate (locks in
-# the safety property: identity token always survives aliasing)
-ok "protected-substring-passthrough" "$(bash "$ALIAS" claude-remote-session-skill)" "claude-remote-session-skill"
+# ALIAS_PROTECT is narrower than session-doctor's reap PROTECT: a folder that
+# merely contains "claude-remote" (this repo) is NOT alias-protected — it is a
+# normal dev session and SHOULD shorten. Locks in that claude-remote-session-skill
+# aliases to its acronym rather than passing through unaliased.
+ok "claude-remote-substring-aliases" "$(bash "$ALIAS" claude-remote-session-skill)" "crss"
 # explicit --alias overrides and is sanitized
 ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
 # stored alias is reused on the next call (no re-inference)
