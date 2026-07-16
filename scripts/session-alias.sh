@@ -21,14 +21,16 @@ ALIAS_PROTECT='openclaw|hermes'
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 
-FOLDER=""; ALIAS_ARG=""
+FOLDER=""; ALIAS_ARG=""; NOSAVE=no
 while [ $# -gt 0 ]; do
   case "$1" in
-    -a|--alias) ALIAS_ARG="${2:-}"; shift 2 ;;
+    -a|--alias)   ALIAS_ARG="${2:-}"; shift 2 ;;
+    -n|--no-save) NOSAVE=yes; shift ;;   # resolve only, never write the store (dry-run)
     *) [ -z "$FOLDER" ] && FOLDER="$1"; shift ;;
   esac
 done
-[ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>]" >&2; exit 2; }
+[ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>] [--no-save]" >&2; exit 2; }
+save() { [ "$NOSAVE" = yes ] || store_upsert "$1" "$2"; }
 
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
 
@@ -71,10 +73,10 @@ fi
 # 1. explicit --alias -> sanitize, store, print
 if [ -n "$ALIAS_ARG" ]; then
   a="$(sanitize "$ALIAS_ARG")"; [ -n "$a" ] || a="$(infer "$FOLDER")"
-  store_upsert "$FOLDER" "$a"; printf '%s\n' "$a"; exit 0
+  save "$FOLDER" "$a"; printf '%s\n' "$a"; exit 0
 fi
 # 2. stored alias -> reuse
 s="$(store_lookup "$FOLDER")"
 if [ -n "$s" ]; then printf '%s\n' "$s"; exit 0; fi
 # 3. infer + store
-a="$(infer "$FOLDER")"; store_upsert "$FOLDER" "$a"; printf '%s\n' "$a"
+a="$(infer "$FOLDER")"; save "$FOLDER" "$a"; printf '%s\n' "$a"
