@@ -35,6 +35,11 @@ long_symbolic='@@@@@@@@@@@@@@@@@@@@'
 out="$(bash "$ALIAS" "$long_symbolic")"
 ok "empty-normalize-nonempty" "$([ -n "$out" ] && echo yes || echo no)" "yes"
 ok "empty-normalize-safe-charset" "$(printf '%s' "$out" | grep -qE '^[a-z0-9-]+$' && echo yes || echo no)" "yes"
+# --no-save resolves (incl. inference) but must NEVER write the store — a --dry-run
+# preview must not mutate shared state.
+NS_STORE="$(mktemp)"; rm -f "$NS_STORE"
+ok "nosave-resolves"  "$(SESSION_ALIAS_STORE="$NS_STORE" bash "$ALIAS" brand-new-long-folder-xyz --no-save)" "bnlfx"
+ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "absent"
 
 echo "session-alias: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

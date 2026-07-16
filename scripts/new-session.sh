@@ -77,8 +77,10 @@ fi
 # ID-first so the unique token survives mobile truncation. Prefix `ah` (was
 # `agenthost`); session-doctor understands both during the transition.
 ID=$(date +%m%d-%H%M)
+# In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.
+DRYFLAG=""; [ "$DRYRUN" = yes ] && DRYFLAG="--no-save"
 if command -v session-alias >/dev/null 2>&1; then
-  ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} 2>/dev/null) || ALIAS=""
+  ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} ${DRYFLAG:+$DRYFLAG} 2>/dev/null) || ALIAS=""
 fi
 # Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
