@@ -5,10 +5,19 @@
 # Usage: session-alias <foldername> [--alias <x>]
 set -uo pipefail
 
-# PROTECT: keep in sync with session-doctor.sh. Protected folders are NEVER
-# aliased — session-doctor protects sessions by substring-matching the name, so
-# the identifying token must remain in it.
-PROTECT='claude-remote|openclaw|hermes'
+# ALIAS_PROTECT — folders never aliased, so their identifying token survives in
+# the session name (session-doctor protects sessions by substring-matching the
+# name; stripping the token via an acronym would silently drop that protection).
+#
+# INTENTIONALLY NARROWER than session-doctor.sh's reap PROTECT
+# (claude-remote|openclaw|hermes): only openclaw/hermes are ever spawned as
+# new-session *folders* that must stay protected. The bare claude-remote /
+# claude-remote-b RC bridge sessions are NOT created via new-session, so a folder
+# that merely *contains* "claude-remote" (e.g. this repo, claude-remote-session-
+# skill) is a normal dev session that SHOULD alias and SHOULD be reapable when
+# dead. Do not add claude-remote here. session-doctor's PROTECT is unchanged and
+# still shields the real bridge sessions by their literal names.
+ALIAS_PROTECT='openclaw|hermes'
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 
@@ -55,7 +64,7 @@ store_upsert() { # $1 folder $2 alias — atomic
 
 # Resolution order (see spec):
 # 0. protected -> sanitized folder, never stored, --alias ignored (warn)
-if printf '%s' "$FOLDER" | grep -qiE "$PROTECT"; then
+if printf '%s' "$FOLDER" | grep -qiE "$ALIAS_PROTECT"; then
   [ -n "$ALIAS_ARG" ] && echo "session-alias: '$FOLDER' is protected; ignoring --alias" >&2
   sanitize "$FOLDER"; exit 0
 fi
