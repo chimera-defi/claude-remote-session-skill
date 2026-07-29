@@ -31,7 +31,10 @@ Options:
   --dry-run           Print the resolved names and exit without spawning.
 
 Environment:
-  CLAUDE_SESSION_MODEL=opus     Spawn with Opus instead of the default Sonnet.
+  CLAUDE_SESSION_MODEL=<model>  Model for the session (default: sonnet). A bare
+                                alias (opus/sonnet/haiku) tracks the latest release
+                                and can drift between spawns; pass an exact id
+                                (e.g. claude-opus-4-8) to pin it reproducibly.
 
 Examples:
   new-session my-project
@@ -39,6 +42,7 @@ Examples:
   new-session my-project sessions
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
+  CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned
 HELP_EOF
   exit 0
 fi
@@ -59,8 +63,17 @@ done
 : "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
 
 # ── Model selection ─────────────────────────────────────────────────────────
-# Override per-spawn with CLAUDE_SESSION_MODEL=opus (e.g. for orchestrators).
+# Override per-spawn with CLAUDE_SESSION_MODEL (e.g. for orchestrators).
 MODEL="${CLAUDE_SESSION_MODEL:-sonnet}"
+# A bare alias (opus/sonnet/haiku/...) tracks "the latest release" and can silently
+# resolve to DIFFERENT models over time (observed: `opus` → claude-opus-5 one week,
+# Opus 4.8 the next, with byte-identical flags). The CLI exposes no resolved-model
+# readout and a model's self-report is unreliable, so the only reproducible fix is
+# to pin an exact id. Warn and recommend pinning; MODEL is logged either way.
+case "$MODEL" in
+  opus|sonnet|haiku|fable|default|opusplan)
+    echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
+esac
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
 if [ "$TYPE" = "auto" ]; then
