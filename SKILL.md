@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.7.1"
+version: "1.8.0"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -45,6 +45,12 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   `claude-remote`/`claude-remote-b` bridge sessions aren't spawned via `new-session`, so a
   folder that merely contains `claude-remote` (like this repo) is a normal dev session that
   shortens and is reapable like any other.
+- **Alias values are validated (anti-poisoning).** An alias that itself looks like a full
+  session name — an `ah-` prefix, an `MMDD-HHMM` timestamp, a trailing `-MMDD` date, or a
+  long numeric run — is rejected and a clean alias re-inferred. This is enforced on **read**
+  (a poisoned stored value is discarded and self-healed), on **write** (`--alias`), and as a
+  `store_upsert` backstop, so a bad entry from an errant `--alias`, an external writer, or
+  legacy data can never produce doubled `ah-ah-…-MMDD-MMDD` session names.
 
 ## Key Rules
 
@@ -54,7 +60,7 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
 - Git-aware run dir: when the workdir is a git repo, sessions start from the **default branch** — never a stale feature branch — and parallel sessions never collide (see below)
-- Model default: spawned sessions run with `--model sonnet` (latest Sonnet, the builder default); override per-spawn with `CLAUDE_SESSION_MODEL=opus` for an orchestrator session
+- Model default: spawned sessions run with `--model sonnet` (latest Sonnet, the builder default); override per-spawn with `CLAUDE_SESSION_MODEL=<model>`. A bare alias (`opus`/`sonnet`) tracks the latest release and can silently resolve to different models between spawns — `new-session` warns and recommends pinning an exact id (e.g. `CLAUDE_SESSION_MODEL=claude-opus-4-8`) for reproducibility
 
 ## Git-aware run directory (RUNDIR)
 
