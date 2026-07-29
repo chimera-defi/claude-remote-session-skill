@@ -41,5 +41,40 @@ NS_STORE="$(mktemp)"; rm -f "$NS_STORE"
 ok "nosave-resolves"  "$(SESSION_ALIAS_STORE="$NS_STORE" bash "$ALIAS" brand-new-long-folder-xyz --no-save)" "bnlfx"
 ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "absent"
 
+# ── Anti-poisoning (regression: real corrupt values seen in the live store) ──
+# The alias must never itself look like a session name (ah- prefix / MMDD-HHMM /
+# trailing -MMDD / long numeric run) — that yields doubled ah-ah-...-MMDD-MMDD names.
+notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
+
+# READ-PATH guard: a poisoned stored value (from an external writer / manual edit /
+# legacy) is discarded on resolution, re-inferred, and self-healed in the store.
+PZ="$(mktemp)"
+printf 'portfolio-single-source-of-truth\ttranche1-ready-0728\n' > "$PZ"
+printf 'discovery-0718\tdiscovery-0718-153051-4107171\n' >> "$PZ"
+printf 'ah-universe-expand-0722\tah-universe-expand-0722-194533-425253\n' >> "$PZ"
+r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" portfolio-single-source-of-truth)"
+r2="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" discovery-0718)"
+r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" ah-universe-expand-0722)"
+ok "readguard-1-clean" "$(notsess "$r1")" "clean"
+ok "readguard-2-value" "$r2" "discovery"
+ok "readguard-3-value" "$r3" "universe-expand"
+ok "readguard-selfheal" "$(awk -F'\t' '{print $2}' "$PZ" | while read -r v; do notsess "$v"; done | grep -c POISONED | tr -d ' ')" "0"
+
+# WRITE guard: an explicit --alias that looks like a session name is refused and a
+# clean alias inferred + stored instead.
+W="$(mktemp)"; rm -f "$W"
+ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-rotation-finalize-0725)")" "clean"
+ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")" "clean"
+
+# INFER de-sessionify: a folder that is itself a session name yields a clean alias
+# from the meaningful part (no ah-ah- / MMDD-MMDD doubling).
+ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-agent-torque-0721)" "agent-torque"
+
+# Every current legit alias must survive untouched (no false positives).
+LS="$(mktemp -u)"
+for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
+  ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
+done
+
 echo "session-alias: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
