@@ -66,6 +66,15 @@ Spawned sessions use `--model sonnet` (resolves to the latest Sonnet release). C
 CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
 ```
 
+A bare alias (`opus`/`sonnet`/`haiku`) resolves to *the latest* release, which can change
+between spawns (e.g. `opus` → `claude-opus-5` one week, Opus 4.8 the next, with identical
+flags). `new-session` prints a warning when a moving alias is used; pass an exact model id
+to pin it reproducibly:
+
+```bash
+CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions
+```
+
 ## Naming convention
 
 | What | Format |
