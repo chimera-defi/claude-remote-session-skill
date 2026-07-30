@@ -8,8 +8,11 @@ Then follow the full recipe from the gstack-session-spawn skill (SKILL.md):
    /home/agents/workspace/, or /home/agents/.sessions/ for utility sessions).
 2. Run `~/.local/bin/new-session <FOLDERNAME>` (auto-detects workspace/ vs .sessions/;
    pass `workspace`/`sessions` to force one, `-a/--alias <x>` for an explicit alias). If
-   the script is missing, recreate it from `references/fallback-recipe.md` (or copy
-   `scripts/new-session.sh` directly) — do not hand-roll the recipe.
+   the script is missing, install it by copying `scripts/new-session.sh` to
+   `~/.local/bin/new-session` (`chmod +x`) so it's available for future spawns too. Only
+   if that isn't possible, fall back to the one-off manual recipe in
+   `references/fallback-recipe.md` — it spawns a single session but does **not** install
+   the helper, so don't treat it as "recreating" `new-session`.
 3. Pre-accept trust for WORKDIR in ~/.claude.json.
 4. Verify with: tmux list-sessions | grep ah_
 

@@ -94,8 +94,11 @@ new-session <foldername> sessions     # force .sessions/
 new-session --help                    # print usage and exit (no session spawned)
 ```
 
-Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
-`references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
+Script lives at `~/.local/bin/new-session`. If it's missing, install it by copying
+`scripts/new-session.sh` to that path (`chmod +x`) so it's there for future spawns too.
+`references/fallback-recipe.md` is a one-off manual recipe for when copying isn't an
+option — it spawns a single session but does **not** install the helper, so the script
+will still be "missing" on the next invocation.
 
 ## After Creating
 
