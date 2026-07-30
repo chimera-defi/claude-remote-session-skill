@@ -76,5 +76,17 @@ for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw w
   ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
 done
 
+# ── False-positive guard: trailing 4 digits that are NOT a real MMDD date ──
+# (year, version, port, ...) must not be treated as session-name decoration —
+# regression for a bug where a bare "4 digits" check (rather than a valid
+# calendar MMDD) collapsed distinct folders onto the same alias, e.g.
+# my-project-2024 and my-project-2025 both -> "my-project".
+YR="$(mktemp -u)"
+ok "year-suffix-not-poisoned-2024" "$(SESSION_ALIAS_STORE="$YR" bash "$ALIAS" my-project-2024)" "my-project-2024"
+ok "year-suffix-not-poisoned-2025" "$(SESSION_ALIAS_STORE="$YR" bash "$ALIAS" my-project-2025)" "my-project-2025"
+ok "year-range-not-poisoned" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" sprint-2024-2025)" "sprint-2024-2025"
+# but a genuine trailing MMDD date is still caught and stripped (unchanged behavior).
+ok "real-mmdd-still-stripped" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" discovery-0718)" "discovery"
+
 echo "session-alias: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

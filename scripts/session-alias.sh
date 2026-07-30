@@ -39,9 +39,18 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 # doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
 # Matches: ah-/ah_ prefix; an MMDD-HHMM timestamp; a trailing -MMDD date; or a long
 # numeric run (timestamp/random suffix, e.g. -153051 / -4107171).
+#
+# MMDD/HHMM are matched against real calendar/clock ranges (month 01-12, day
+# 01-31, hour 00-23, minute 00-59) rather than "any 4 digits" — a bare 4-digit
+# run also matches years, ports, and version suffixes (e.g. "report-2024" /
+# "report-2025", "sprint-2024-2025"), which would otherwise false-positive as
+# poisoned and collapse distinct folders onto the same alias.
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE '[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}'
+  local mmdd hhmm
+  mmdd='(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])'
+  hhmm='([01][0-9]|2[0-3])[0-5][0-9]'
+  printf '%s' "$1" | grep -qE "${mmdd}-${hhmm}|-${mmdd}\$|-[0-9]{5,}"
 }
 
 # desessionify — strip session-name decoration (ah- prefix, trailing date/timestamp
