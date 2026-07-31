@@ -83,6 +83,28 @@ ok "not-mmdd-bad-day"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" client-1042
 # But a genuine MMDD-shaped trailing date (real production fixture) still poisons.
 ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" tranche1-ready-0728)" "tranche1-ready"
 
+# Two-group false positives (found in review: the [0-9]{4}-[0-9]{4} fast path
+# accepted ANY two adjacent 4-digit runs as an MMDD-HHMM timestamp, not just a
+# real date+time — e.g. sprint-2024-2025 / port-8080-9090 both still collided).
+FP2="$(mktemp -u)"
+ok "not-mmdd-hhmm-year-range" "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" sprint-2024-2025)" "sprint-2024-2025"
+ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8080-9090)" "port-8080-9090"
+# A genuine MMDD-HHMM pair (real date + real time) is still caught.
+ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
+
+# --audit-store: read-only report of stored entries where fresh inference now
+# disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
+# Must NOT mutate the store — a human decides what to do with drift.
+AS="$(mktemp)"
+printf 'sprint-2024\tsprint\n' > "$AS"
+printf 'sprint-2025\tsprint\n' >> "$AS"
+printf 'crss\tcrss\n' >> "$AS"
+audit_out="$(SESSION_ALIAS_STORE="$AS" bash "$ALIAS" --audit-store)"
+ok "audit-finds-drift-1" "$(printf '%s' "$audit_out" | grep -c "folder='sprint-2024'")" "1"
+ok "audit-finds-drift-2" "$(printf '%s' "$audit_out" | grep -c "folder='sprint-2025'")" "1"
+ok "audit-no-drift-for-legit" "$(printf '%s' "$audit_out" | grep -c "folder='crss'")" "0"
+ok "audit-does-not-mutate" "$(cat "$AS")" "$(printf 'sprint-2024\tsprint\nsprint-2025\tsprint\ncrss\tcrss')"
+
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
