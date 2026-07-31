@@ -70,6 +70,19 @@ ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")
 # from the meaningful part (no ah-ah- / MMDD-MMDD doubling).
 ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-agent-torque-0721)" "agent-torque"
 
+# Trailing-4-digit false positives (regression: a folder ending in a plain
+# 4-digit number that is NOT a calendar date must alias as-is, not get treated
+# as a poisoned MMDD fragment and stripped — that silently collided distinct
+# folders onto the same alias, e.g. sprint-2024/sprint-2025 both -> "sprint").
+FP="$(mktemp -u)"
+ok "not-mmdd-year-2024"   "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" sprint-2024)" "sprint-2024"
+ok "not-mmdd-year-2025"   "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" sprint-2025)" "sprint-2025"
+ok "not-mmdd-chainid"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" chain-8453)" "chain-8453"
+ok "not-mmdd-port"        "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" port-8080)" "port-8080"
+ok "not-mmdd-bad-day"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" client-1042)" "client-1042"
+# But a genuine MMDD-shaped trailing date (real production fixture) still poisons.
+ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" tranche1-ready-0728)" "tranche1-ready"
+
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
