@@ -9,7 +9,7 @@ Follow the full recipe in `~/.claude/skills/gstack-session-spawn/SKILL.md` (or t
    ```bash
    new-session "$FOLDERNAME"              # auto-detects workspace/ vs .sessions/
    ```
-   If `~/.local/bin/new-session` is missing, recreate it from `references/fallback-recipe.md` (or run `scripts/new-session.sh` directly) — do not hand-roll the start script/systemd unit inline; the script already handles aliasing (`session-alias`), git-aware run-dir resolution (`session-git-prep`), sentinel-file/backoff logic, and the first-party `ANTHROPIC_BASE_URL` settings override.
+   If `~/.local/bin/new-session` is missing, install it from `scripts/new-session.sh` (copy to `~/.local/bin/new-session` and `chmod +x`) and re-run the command above — do not hand-roll the start script/systemd unit inline; the script already handles aliasing (`session-alias`), git-aware run-dir resolution (`session-git-prep`), sentinel-file/backoff logic, and the first-party `ANTHROPIC_BASE_URL` settings override. Only if the repo itself is unavailable, fall back to the one-off manual recipe in `references/fallback-recipe.md` (paste its whole block in a single Bash call) — it's a deliberately reduced last resort (store lookup only, no acronym inference for un-stored long folders) for when nothing else is reachable, not a way to recreate the installed script.
 3. The script prints the resolved `REMOTE_NAME` (`ah-<alias>-<MMDD-HHMM>`) and enables + starts the systemd unit.
 
 After success, tell the user:
