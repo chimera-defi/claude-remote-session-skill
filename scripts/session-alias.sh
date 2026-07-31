@@ -37,11 +37,23 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 # looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
 # a generated session name. Such a value must never be used or STORED as an alias:
 # doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
-# Matches: ah-/ah_ prefix; an MMDD-HHMM timestamp; a trailing -MMDD date; or a long
-# numeric run (timestamp/random suffix, e.g. -153051 / -4107171).
+# Matches: ah-/ah_ prefix; an MMDD-HHMM timestamp; a trailing -MMDD date (validated
+# as a real calendar date, below); or a long numeric run (timestamp/random suffix,
+# e.g. -153051 / -4107171).
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE '[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}'
+  printf '%s' "$1" | grep -qE '[0-9]{4}-[0-9]{4}|-[0-9]{5,}' && return 0
+  # A trailing exactly-4-digit group is only date-shaped when it's a plausible
+  # MMDD calendar date (month 01-12, day 01-31) — an arbitrary trailing 4-digit
+  # number (a year, port, chain id, ticket suffix, ...) is not, and treating it
+  # as one silently collides distinct folders onto the same alias (found live:
+  # sprint-2024/sprint-2025 -> both "sprint"; chain-8453 -> "chain"; port-8080
+  # -> "port"). ${d:0:2} form needs base-10 forcing so a leading zero (e.g. the
+  # "07" in 0728) isn't parsed as invalid octal by [ -ge ].
+  local tail d mm dd
+  tail="$(printf '%s' "$1" | grep -oE -- '-[0-9]{4}$')" || return 1
+  d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
+  [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
 }
 
 # desessionify — strip session-name decoration (ah- prefix, trailing date/timestamp
