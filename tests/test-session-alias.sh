@@ -70,6 +70,18 @@ ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")
 # from the meaningful part (no ah-ah- / MMDD-MMDD doubling).
 ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-agent-torque-0721)" "agent-torque"
 
+# INFER de-sessionify is a FIXED POINT, not a single pass: a folder poisoned more
+# than one layer deep (e.g. `ah-ah-x-0722-0725` — literally the doubled name a
+# prior poisoning incident produces) must still yield a clean, non-`ah-`-prefixed
+# alias. A single-pass strip would leave `ah-universe-expand` (still session-name-
+# shaped), which store_upsert then refuses to persist — so the poisoned value is
+# never self-healed and keeps re-doubling on every future spawn.
+DP="$(mktemp -u)"
+dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" ah-ah-universe-expand-0722-0725)"
+ok "layered-poison-value" "$dp_out" "universe-expand"
+ok "layered-poison-clean" "$(notsess "$dp_out")" "clean"
+ok "layered-poison-stored" "$(awk -F'\t' '$1=="ah-ah-universe-expand-0722-0725"{print $2}' "$DP")" "universe-expand"
+
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
