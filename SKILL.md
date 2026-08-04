@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.8.2"
+version: "1.8.3"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -58,6 +58,10 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   collapsing onto one. `session-alias --audit-store` read-only-scans the whole store and reports
   entries where fresh inference now disagrees with what's stored (e.g. a pre-fix collision) —
   it never rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
+  Inference strips session-name decoration to a **fixed point** (not just once), so a folder
+  name that is poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the very doubled
+  name a prior poisoning incident produces — still yields a fully clean alias instead of a
+  partially stripped one that keeps re-doubling.
 
 ## Key Rules
 

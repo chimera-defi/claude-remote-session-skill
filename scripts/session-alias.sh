@@ -73,8 +73,15 @@ looks_like_session_name() {
 desessionify() { printf '%s' "$1" | sed -E 's/^ah[-_]//; s/(-[0-9]{4,})+$//'; }
 
 infer() { # $1 = folder ; echo alias
-  local f="$1" acr="" w a
-  looks_like_session_name "$f" && f="$(desessionify "$f")"
+  local f="$1" acr="" w a prev=""
+  # De-sessionify to a fixed point, not just once: a folder that is poisoned
+  # MORE than one layer deep (e.g. `ah-ah-x-0722-0725`, itself the doubled
+  # name a prior poisoning incident produces) would otherwise survive a single
+  # pass still wearing an `ah-` prefix and re-trigger the exact doubling this
+  # guard exists to stop. Loop until desessionify stops changing the string.
+  while looks_like_session_name "$f" && [ "$f" != "$prev" ]; do
+    prev="$f"; f="$(desessionify "$f")"
+  done
   if [ "${#f}" -le "$CAP" ]; then
     a="$(sanitize "$f")"
   else
@@ -88,6 +95,12 @@ infer() { # $1 = folder ; echo alias
   # dangling separator (e.g. "ah-0715-0630-"). Fall back to a short,
   # deterministic, charset-safe token derived from the folder name.
   [ -n "$a" ] || a="s$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
+  # Final safety net: infer() must never itself emit a session-name-shaped
+  # alias. The fixed-point loop above handles known layered-poisoning shapes,
+  # but this catches anything unforeseen (e.g. the CAP/acronym branch
+  # reintroducing a matching shape) so a still-poisoned value can never flow
+  # out silently unstored.
+  looks_like_session_name "$a" && a="s$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
   printf '%s' "$a"
 }
 
