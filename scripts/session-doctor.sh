@@ -125,7 +125,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     echo "=== registry sessions disconnected > ${DAYS}d (deletion candidates; NOT auto-deleted) ==="
     registry_json | python3 -c "
 import sys,json,datetime
-arr=json.load(sys.stdin); arr=arr if isinstance(arr,list) else arr.get('sessions',arr.get('data',[]))
+try: arr=json.load(sys.stdin)
+except: print('  (registry unavailable)'); sys.exit()
+arr=arr if isinstance(arr,list) else arr.get('sessions',arr.get('data',[]))
 now=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None); DAYS=$DAYS
 def agedays(s):
     try: return (now-datetime.datetime.fromisoformat((s.get('updated_at') or s.get('created_at'))[:19])).days
