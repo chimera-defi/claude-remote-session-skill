@@ -21,15 +21,16 @@ ALIAS_PROTECT='openclaw|hermes'
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 
-FOLDER=""; ALIAS_ARG=""; NOSAVE=no
+FOLDER=""; ALIAS_ARG=""; NOSAVE=no; AUDIT=no
 while [ $# -gt 0 ]; do
   case "$1" in
-    -a|--alias)   ALIAS_ARG="${2:-}"; shift 2 ;;
-    -n|--no-save) NOSAVE=yes; shift ;;   # resolve only, never write the store (dry-run)
+    -a|--alias)      ALIAS_ARG="${2:-}"; shift 2 ;;
+    -n|--no-save)    NOSAVE=yes; shift ;;   # resolve only, never write the store (dry-run)
+    --audit-store)   AUDIT=yes; shift ;;    # report-only: no foldername needed
     *) [ -z "$FOLDER" ] && FOLDER="$1"; shift ;;
   esac
 done
-[ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>] [--no-save]" >&2; exit 2; }
+[ "$AUDIT" = yes ] || [ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>] [--no-save] | session-alias --audit-store" >&2; exit 2; }
 save() { [ "$NOSAVE" = yes ] || store_upsert "$1" "$2"; }
 
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
@@ -37,11 +38,33 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 # looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
 # a generated session name. Such a value must never be used or STORED as an alias:
 # doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
-# Matches: ah-/ah_ prefix; an MMDD-HHMM timestamp; a trailing -MMDD date; or a long
-# numeric run (timestamp/random suffix, e.g. -153051 / -4107171).
+# Matches: ah-/ah_ prefix; a long numeric run (timestamp/random suffix, e.g.
+# -153051 / -4107171); an MMDD-HHMM timestamp pair; or a trailing -MMDD date —
+# the latter two only when the digits validate as a real date/time (below), so
+# an arbitrary run of digits (a year, port, chain id, ticket suffix, a second
+# unrelated number, ...) is not mistaken for one. Silently treating any digit
+# run as date-shaped previously collided distinct folders onto the same alias
+# (found live: sprint-2024/sprint-2025 -> both "sprint"; chain-8453 -> "chain";
+# port-8080 -> "port"; sprint-2024-2025 / port-8080-9090 -> same, via the
+# two-group check). ${d:0:2} form needs base-10 forcing so a leading zero
+# (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE '[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}'
+  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  local pair mm dd hh mi
+  pair="$(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
+  if [ -n "$pair" ]; then
+    mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2}))
+    hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
+    if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
+       && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
+      return 0
+    fi
+  fi
+  local tail d
+  tail="$(printf '%s' "$1" | grep -oE -- '-[0-9]{4}$')" || return 1
+  d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
+  [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
 }
 
 # desessionify — strip session-name decoration (ah- prefix, trailing date/timestamp
@@ -97,6 +120,34 @@ store_upsert() { # $1 folder $2 alias — atomic; refuses to persist a poisoned 
   flock -u 9
 }
 
+# --audit-store — read-only: scan every stored folder<TAB>alias line and report
+# entries where a fresh infer() (today's, fixed logic) disagrees with what's
+# stored. This surfaces candidates for a stale/mis-inferred alias — e.g. one
+# collapsed by a since-fixed inference bug (sprint-2024/sprint-2025 both
+# stored as "sprint" from before the MMDD-validation fix) — WITHOUT touching
+# the store: the stored value already looks like a legitimate short alias
+# (that's why the read-path self-heal in rule 2 doesn't catch it), and the
+# store is documented as user-editable (session-aliases.example: "edit
+# freely"), so auto-overwriting a flagged entry could just as easily clobber
+# a deliberately chosen short alias. A human reviews the printed candidates
+# and decides: leave it, set an explicit --alias, or delete the line so the
+# next spawn re-infers cleanly.
+if [ "$AUDIT" = yes ]; then
+  drifted=0; total=0
+  if [ -f "$STORE" ]; then
+    while IFS="$(printf '\t')" read -r afolder astored; do
+      case "$afolder" in ""|\#*) continue ;; esac
+      total=$((total+1))
+      afresh="$(infer "$afolder")"
+      if [ "$afresh" != "$astored" ]; then
+        echo "DRIFT  folder='$afolder'  stored='$astored'  infer-now='$afresh'"
+        drifted=$((drifted+1))
+      fi
+    done < "$STORE"
+  fi
+  echo "audit: $drifted drifted / $total total entries in $STORE (not modified — review manually)"
+  exit 0
+fi
 # Resolution order (see spec):
 # 0. protected -> sanitized folder, never stored, --alias ignored (warn)
 if printf '%s' "$FOLDER" | grep -qiE "$ALIAS_PROTECT"; then
