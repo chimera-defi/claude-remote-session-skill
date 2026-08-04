@@ -9,9 +9,16 @@ For the canonical approach, prefer `scripts/new-session.sh` directly.
 FOLDERNAME="<foldername>"
 WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${FOLDERNAME}
 # Emergency path: store lookup only (no acronym/inference); may differ from
-# new-session for an un-stored long folder.
+# new-session for an un-stored long folder. Guard against a poisoned stored
+# value (ah- prefix / MMDD-HHMM / trailing -MMDD / long numeric run — same
+# check as session-alias.sh's looks_like_session_name): trusting it as-is
+# would double into ah-ah-...-MMDD-MMDD on every emergency spawn.
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
+if printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}'; then
+  echo "fallback-recipe: stored alias '$ALIAS' looks like a session name; ignoring" >&2
+  ALIAS=""
+fi
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
