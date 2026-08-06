@@ -102,6 +102,19 @@ fi
 BODY="${ALIAS}-${ID}"
 SESSION="ah_${BODY}"
 REMOTE_NAME="ah-${BODY}"
+# MMDD-HHMM is minute-granularity, so spawning the same folder twice inside one
+# clock-minute would otherwise collide on SESSION. That's not just a cosmetic
+# dupe: the generated script's own already-running guard (line ~130) would then
+# silently exit on the second spawn, discarding whatever --alias/
+# CLAUDE_SESSION_MODEL that call passed while still printing "Session created"
+# below. Disambiguate against a live tmux session of the same name so every
+# spawn really does get its own session, matching the documented guarantee.
+if command -v tmux >/dev/null 2>&1; then
+  n=2
+  while tmux has-session -t "$SESSION" 2>/dev/null; do
+    BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
+  done
+fi
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 

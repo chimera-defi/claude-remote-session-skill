@@ -31,4 +31,21 @@ has "folder-named-sessions" "$out4" 'REMOTE_NAME=ah-sessions-[0-9]\{4\}-[0-9]\{4
 out5="$(bash "$NS" --dry-run myproj workspace 2>/dev/null)"
 has "type-positional-after-folder" "$out5" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
 
+# Regression: spawning the same folder twice inside the same clock-minute must
+# NOT collide on SESSION/REMOTE_NAME. Simulate the collision with a live tmux
+# session under the name the first call would resolve to, then confirm a
+# second resolution for the same folder disambiguates instead of reusing it
+# (a silent reuse would make the second spawn's already-running guard exit
+# without applying its own --alias/model, while still reporting success).
+if command -v tmux >/dev/null 2>&1; then
+  first="$(bash "$NS" --dry-run collide-folder-test 2>/dev/null)"
+  first_session="$(printf '%s' "$first" | sed -n 's/^SESSION=//p')"
+  tmux new-session -d -s "$first_session" 2>/dev/null
+  second="$(bash "$NS" --dry-run collide-folder-test 2>/dev/null)"
+  second_session="$(printf '%s' "$second" | sed -n 's/^SESSION=//p')"
+  tmux kill-session -t "$first_session" 2>/dev/null || true
+  if [ "$first_session" != "$second_session" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: same-minute collision — got identical SESSION '$second_session' twice"; fi
+  has "same-minute-collision-suffixed" "$second_session" '^ah_cft-[0-9]\{4\}-[0-9]\{4\}-2$'
+fi
+
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
