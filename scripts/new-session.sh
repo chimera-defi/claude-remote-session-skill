@@ -102,6 +102,53 @@ fi
 BODY="${ALIAS}-${ID}"
 SESSION="ah_${BODY}"
 REMOTE_NAME="ah-${BODY}"
+# MMDD-HHMM is minute-granularity, so spawning the same folder twice inside one
+# clock-minute would otherwise collide on SESSION. That's not just a cosmetic
+# dupe: the generated script's own already-running guard (line ~130) would then
+# silently exit on the second spawn, discarding whatever --alias/
+# CLAUDE_SESSION_MODEL that call passed while still printing "Session created"
+# below. Disambiguate against a live tmux session of the same name so every
+# spawn really does get its own session, matching the documented guarantee.
+#
+# A plain "check tmux, then act" has a TOCTOU race: two invocations for the
+# same folder started concurrently could both pass the has-session check
+# before either has actually created its tmux session, and would then both
+# settle on the same name (caught in review). Close that window with an
+# mkdir-based lock — mkdir is atomic on POSIX filesystems, so only one
+# concurrent invocation can ever hold a given name's lock — held only for the
+# duration of this process (released on exit via the trap below) once the
+# name is confirmed free. --dry-run never reserves anything (mirrors
+# session-alias's --no-save: a preview must not mutate shared state), so it
+# only does the plain liveness check.
+if command -v tmux >/dev/null 2>&1; then
+  if [ "$DRYRUN" = yes ]; then
+    n=2
+    while tmux has-session -t "$SESSION" 2>/dev/null; do
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
+    done
+  else
+    LOCKROOT="$HOME/.claude/session-spawn-locks"
+    mkdir -p "$LOCKROOT" 2>/dev/null || true
+    n=2
+    while :; do
+      if mkdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null; then
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+          # Name was already live (a prior, non-racing spawn) — free the lock
+          # we just took and move on to the next candidate name.
+          rmdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null
+        else
+          # A lock dir surviving past this process's exit is a crashed/killed
+          # prior attempt (the trap below did not run) — a benign leak: it
+          # just makes this exact name unavailable until removed by hand,
+          # future spawns still get a working (suffixed) name.
+          trap 'rmdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null' EXIT
+          break
+        fi
+      fi
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
+    done
+  fi
+fi
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 
