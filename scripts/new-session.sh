@@ -226,6 +226,12 @@ UNIT_EOF
 # ── Enable and start ─────────────────────────────────────────────────────────
 systemctl --user daemon-reload && systemctl --user enable --now "$(basename $SERVICE)"
 
+# ── Telemetry (best-effort, never fails the spawn) ──────────────────────────
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
+  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" || true
+fi
+
 # ── Confirm ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Session created: ${REMOTE_NAME}"
