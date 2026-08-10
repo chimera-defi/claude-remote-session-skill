@@ -63,4 +63,19 @@ DATEEOF
   has "same-minute-collision-suffixed" "$second_session" '^ah_cft-0101-0000-2$'
 fi
 
+# ── Spawn profile switch (CLAUDE_SESSION_PROFILE) ─────────────────────────────
+# Default → orchestrator (full tool set, only the cache flag). builder → a
+# --tools allowlist. Unknown → falls back to orchestrator AND warns to stderr.
+outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
+has "profile-default-orchestrator" "$outp" 'PROFILE=orchestrator'
+has "orchestrator-cache-flag-only" "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
+has "profile-builder"              "$outb" 'PROFILE=builder'
+has "builder-has-tools-allowlist"  "$outb" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
+# Unknown value: stdout falls back to orchestrator, stderr carries the warning.
+outu="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>/dev/null)"
+has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
+erru="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>&1 1>/dev/null)"
+has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
+
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

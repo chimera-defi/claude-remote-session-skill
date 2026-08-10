@@ -38,6 +38,17 @@ Environment:
                                 alias (opus/sonnet/haiku) tracks the latest release
                                 and can drift between spawns; pass an exact id
                                 (e.g. claude-opus-4-8) to pin it reproducibly.
+  CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint (default: orchestrator).
+                                orchestrator — full built-in tool set; needed for
+                                  multi-agent fan-out (Workflow/Agent/advisor/…).
+                                builder      — trimmed --tools allowlist; drops the
+                                  orchestration-only schemas to reclaim ~11k of the
+                                  ~19.5k System-tools context. Use for hands-on
+                                  implementation sessions that don't fan out.
+                                Both profiles add
+                                --exclude-dynamic-system-prompt-sections (a
+                                prompt-cache-reuse win). Unknown values fall back
+                                to orchestrator with a warning.
 
 Examples:
   new-session my-project
@@ -46,6 +57,7 @@ Examples:
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
   CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned
+  CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools
 HELP_EOF
   exit 0
 fi
@@ -108,6 +120,52 @@ case "$MODEL" in
   opus|sonnet|haiku|fable|default|opusplan)
     echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
 esac
+
+# ── Profile selection ─────────────────────────────────────────────────────────
+# CLAUDE_SESSION_PROFILE selects the built-in tool-schema footprint of the
+# spawned session (mirrors the CLAUDE_SESSION_MODEL override pattern):
+#   orchestrator (default) — full built-in tool set; needed for multi-agent
+#                            fan-out (Workflow, Agent, advisor, SendUserFile…).
+#   builder                — trimmed --tools allowlist; drops the orchestration/
+#                            reporting-only schemas to reclaim ~11k of the
+#                            ~19.5k "System tools" context (measured: 19.5k→8.2k).
+# Unknown values fall back to orchestrator with a warning — fail SAFE, never
+# silently ship a session with fewer tools than the operator expected.
+PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
+case "$PROFILE" in
+  orchestrator|builder) ;;
+  *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder" >&2
+     PROFILE="orchestrator" ;;
+esac
+
+# Builder keep-list: the built-ins a hands-on-implementation session needs.
+# Comma-separated, NO spaces, so it stays a single shell word when baked into
+# the generated claude command line.
+#
+# IMPORTANT: --tools is an EXHAUSTIVE allowlist over the BUILT-IN set — it gates
+# the *deferred* built-ins (WebFetch, WebSearch, Task*, plan-mode, …) too, not
+# just the upfront-schema ones. Verified empirically: a built-in omitted here is
+# unreachable even via ToolSearch. (MCP-server tools are a separate namespace and
+# stay reachable regardless of this list.) Deferred built-ins cost 0 upfront
+# tokens, so re-listing them is FREE (measured: System tools = 8.2k with OR
+# without them) — we keep the useful ones so a builder stays fully capable:
+# web fetch/search, task tracking, plan mode, notebook edits, background monitor.
+#
+# The ~11.3k saving comes entirely from DROPPING the 6 upfront-schema tools:
+# Workflow (~7.8k — multi-agent fan-out, THE orchestrator-defining tool) plus
+# Artifact, SendUserFile, advisor, ReportFindings, ScheduleWakeup (~3.5k combined
+# — the reporting/scheduling surface). A builder that genuinely needs one of
+# those should add it here (~1k each) or just use the orchestrator profile.
+BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor"
+
+# --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
+# cwd/env/memory-path/git-status out of the cached system prompt into the first
+# user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
+# sections, it does not shrink the raw token total.
+CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
+if [ "$PROFILE" = "builder" ]; then
+  CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS"
+fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
 if [ "$TYPE" = "auto" ]; then
@@ -187,7 +245,8 @@ SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\n' "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nCLAUDE_EXTRA_FLAGS=%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$CLAUDE_EXTRA_FLAGS"
   exit 0
 fi
 
@@ -203,11 +262,18 @@ SESSION="${SESSION}"
 WORKDIR="${WORKDIR}"
 REMOTE_NAME="${REMOTE_NAME}"
 MODEL="${MODEL}"
+PROFILE="${PROFILE}"
+# NB: the per-profile claude flags (CLAUDE_EXTRA_FLAGS) are NOT kept as a runtime
+# variable here — the claude command runs inside the single-quoted supervisor
+# loop typed into the tmux pane (send-keys), whose shell does NOT inherit this
+# script's variables. They are baked as a literal into that command instead
+# (see the /usr/bin/claude lines below), which also surfaces the real flags in
+# \`ps\`. Value for this spawn: ${CLAUDE_EXTRA_FLAGS:-<none>}
 export PATH="/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/agents"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
-log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL event=\$1" | tee -a "\$LOG_FILE"; }
+log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE event=\$1" | tee -a "\$LOG_FILE"; }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
 # Resolve the run directory: canonical tree (clean+free) or a fresh worktree.
@@ -249,9 +315,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
