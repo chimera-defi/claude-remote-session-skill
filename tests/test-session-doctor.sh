@@ -20,4 +20,20 @@ out="$(HOME="$NOHOME" bash "$HERE/../scripts/session-doctor.sh" registry-stale 2
 ok "registry-stale-no-traceback" "$(printf '%s' "$out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
 ok "registry-stale-graceful-msg" "$(printf '%s' "$out" | grep -qF '(registry unavailable)' && echo yes || echo no)" "yes"
 
+# --days is spliced verbatim into an embedded Python snippet as a bare identifier
+# (DAYS=$DAYS) — an unvalidated non-numeric value is live Python there, not data,
+# and previously threw an uncaught NameError traceback instead of a clean usage
+# error. Must be rejected up front, before any registry call.
+days_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days abc 2>&1)"; days_rc=$?
+ok "days-nonnumeric-rejected"   "$days_rc" "2"
+ok "days-nonnumeric-no-traceback" "$(printf '%s' "$days_out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
+ok "days-nonnumeric-clean-msg"  "$(printf '%s' "$days_out" | grep -qF -- "--days requires a non-negative integer" && echo yes || echo no)" "yes"
+# Exit code for a *valid* --days still depends on registry/credential availability
+# (unrelated to this validation), so assert on behavior, not a specific exit code:
+# no rejection message, and the same graceful degradation as the no-credentials
+# case above.
+numeric_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 30 2>&1)"
+ok "days-numeric-not-rejected"  "$(printf '%s' "$numeric_out" | grep -qF -- "requires a non-negative integer" && echo yes || echo no)" "no"
+ok "days-numeric-no-traceback"  "$(printf '%s' "$numeric_out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
+
 echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

@@ -23,6 +23,14 @@ PROTECT='claude-remote|openclaw|hermes'
 MODE="${1:-report}"; shift || true
 DAYS=30; FORCE=no
 while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=yes; shift;; *) shift;; esac; done
+# DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
+# mode) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated non-numeric value
+# (typo, empty string) is therefore live Python, not data — it throws an uncaught
+# NameError/SyntaxError there instead of a clean usage error. Validate here so a
+# bad --days fails fast with a readable message.
+case "$DAYS" in
+  ''|*[!0-9]*) echo "session-doctor: --days requires a non-negative integer, got '$DAYS'" >&2; exit 2 ;;
+esac
 
 registry_json() {
   local tok org
