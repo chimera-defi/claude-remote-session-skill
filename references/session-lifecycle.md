@@ -35,6 +35,8 @@ session-doctor.sh reap-local            # DRY-RUN: list dead local tmux + orphan
 session-doctor.sh reap-local --force    # actually reap them
 session-doctor.sh registry-stale --days 30   # list registry entries disconnected > N days
 session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
+session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) ≥2d — report only
+session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold (list all)
 ```
 
 Safety guarantees:
@@ -48,17 +50,26 @@ Safety guarantees:
   dirty/unpushed status and the exact `git worktree remove` + `git branch -D` to run by
   hand — a dead session's worktree may hold unpushed work, so this is a review step,
   not a cleanup one.
+- **`idle-report` is report-only** (like `registry-stale`): every row is a still-*alive*
+  proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
+  then kill an idle-but-alive one by hand. It never kills anything itself.
 
 ## Recommended cadence (expiry policy)
 
 1. **Weekly:** `session-doctor.sh report`. If orphan units or dead tmux pile up,
    `reap-local --force`.
-2. **Monthly:** `session-doctor.sh registry-stale --days 30`. Verify the list is truly
+2. **Weekly (idle sweep):** `session-doctor.sh idle-report`. This is the default,
+   reusable way to get the "candidates to reap" list — LIVE sessions no one has touched
+   in ≥2 days. Dead ones flow to `reap-local`; idle-but-*alive* ones (which `reap-local`
+   deliberately leaves running) you kill by hand: `tmux kill-session -t <name>` +
+   `systemctl --user disable --now <name>.service`. Rows flagged `[P]` are protected —
+   never reap those.
+3. **Monthly:** `session-doctor.sh registry-stale --days 30`. Verify the list is truly
    dead (titles + age make this obvious), then `DELETE` them. Anything > 90 days
    disconnected is essentially always safe to delete.
-3. **Monthly:** `session-doctor.sh worktree-stale`. For each candidate, confirm its
+4. **Monthly:** `session-doctor.sh worktree-stale`. For each candidate, confirm its
    work is merged/pushed or no longer needed, then run the printed removal command.
-4. **After a host reboot:** expect zombies (registry says connected, process gone).
+5. **After a host reboot:** expect zombies (registry says connected, process gone).
    Respawn the sessions you still want; the old registry entries become deletable.
 
 ## Why sessions stop registering (the 2026-07 regression)

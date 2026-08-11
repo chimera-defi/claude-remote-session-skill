@@ -12,6 +12,7 @@
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
+#   session-doctor.sh idle-report [--days N]      # list LIVE local sessions with no type:user msg in N days (default 2); report only
 #
 # Safety:
 #   * Protected names (claude-remote*, *openclaw*, *hermes*) are NEVER reaped.
@@ -21,13 +22,18 @@
 #   * Worktree removal is intentionally NOT automated (a dead session's worktree may
 #     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
 #     dirty/unpushed status, and the exact commands to run by hand after review.
+#   * idle-report is REPORT-ONLY (like registry-stale): every row is a still-alive
+#     proc, so reap-local won't touch it — feed the output to a manual kill pass.
 set -uo pipefail
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
 PROTECT='claude-remote|openclaw|hermes'
 MODE="${1:-report}"; shift || true
-DAYS=30; FORCE=no
+# Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
+# registry-stale keeps its 30d default. --days overrides either.
+case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
+FORCE=no
 while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=yes; shift;; *) shift;; esac; done
 # DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
 # mode) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated non-numeric value
@@ -226,6 +232,89 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
     done
     echo "  --- $cand candidate(s). VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]|worktree-stale]"; exit 2;;
+  idle-report)
+    # Report-only (mirrors registry-stale): LIVE local claude sessions with no
+    # type:user transcript activity in the last N days (default 2 = today/yday).
+    # NEVER kills. Every row is a still-ALIVE proc, so reap-local deliberately
+    # won't touch it — feed dead ones to reap-local, reap an idle-but-alive one
+    # by hand. type:user includes tool-result turns, so a session looping on its
+    # own counts as active and stays off this list (intended: keep live work off
+    # the reap list). Protected names are flagged and must never be reaped.
+    if [ "$DAYS" -gt 0 ] 2>/dev/null; then
+      echo "=== LOCAL: live sessions with NO type:user message in the last ${DAYS} day(s) — REPORT ONLY, kills nothing ==="
+    else
+      echo "=== LOCAL: ALL live sessions, no threshold (--days 0) — REPORT ONLY, kills nothing ==="
+    fi
+    {
+      # Enumerate LIVE claude --remote-control procs. pgrep -f also matches the
+      # tmux launcher and the bash supervisor loop (both carry the string in
+      # their args), so keep only rows whose executable basename is the claude
+      # binary itself.
+      pgrep -af 'claude.*--remote-control' | while read -r pid cmd; do
+        case "$(basename "$(printf '%s' "$cmd" | awk '{print $1}')")" in claude|node) ;; *) continue;; esac
+        rc="$(printf '%s' "$cmd" | grep -oE -- '--remote-control[ =][^ ]+' | head -1 | sed -E 's/^--remote-control[ =]//')"
+        [ -n "$rc" ] || continue
+        tm="$(svc_to_tmux "$rc")"                       # reuse existing name mapping
+        cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
+        [ -n "$cwd" ] || continue                       # proc vanished mid-scan
+        prot=no; printf '%s %s %s' "$rc" "$tm" "$cwd" | grep -qiE "$PROTECT" && prot=yes
+        printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$cwd" "$prot"
+      done
+    } | python3 -c "
+import sys, os, glob, json, datetime
+DAYS = $DAYS
+home = os.path.expanduser('~')
+now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+cutoff = (now - datetime.timedelta(days=DAYS)) if DAYS > 0 else None
+rows, seen = [], set()
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if not line: continue
+    f = line.split('\t')
+    if len(f) < 5: continue
+    pid, rc, tm, cwd, prot = f[0], f[1], f[2], f[3], f[4]
+    key = tm or rc
+    if key in seen: continue
+    seen.add(key)
+    # cwd -> ~/.claude/projects/<encoded> transcript dir (verified empirically,
+    # incl. dotted paths: '.'-> '-' then '/'-> '-').
+    d = os.path.join(home, '.claude', 'projects', cwd.replace('.', '-').replace('/', '-'))
+    files = glob.glob(os.path.join(d, '*.jsonl'))
+    mx = None
+    for fn in files:
+        try:
+            for l in open(fn, encoding='utf-8', errors='ignore'):
+                if '\"user\"' not in l: continue           # cheap prefilter (authoritative check below)
+                try: o = json.loads(l)
+                except Exception: continue
+                if o.get('type') == 'user':
+                    ts = o.get('timestamp')
+                    if ts and (mx is None or ts > mx): mx = ts
+        except Exception: pass
+    if mx is None:
+        # 'never messaged' — distinguish no-transcript from present-but-no-user.
+        state = 'never: no transcript' if not files else 'never: no user msgs'
+        mxdt = None
+    else:
+        state = mx[:19] + 'Z'
+        try: mxdt = datetime.datetime.fromisoformat(mx[:19])
+        except Exception: mxdt = None
+    if DAYS > 0 and mxdt is not None and mxdt >= cutoff:
+        continue                                          # had a user turn within the window -> not idle
+    rows.append((mxdt, state, tm or rc, cwd, prot))
+# oldest-first: 'never' (mxdt None) first, then ascending timestamp.
+rows.sort(key=lambda r: (r[0] is not None, r[0] or datetime.datetime.min))
+print('  %-22s %-5s %-46s %s' % ('LAST type:user', 'PROT', 'TMUX SESSION', 'CWD'))
+nprot = 0
+for mxdt, state, tm, cwd, prot in rows:
+    if prot == 'yes': nprot += 1
+    print('  %-22s %-5s %-46s %s' % (state[:22], ('[P]' if prot == 'yes' else ''), tm[:46], cwd))
+print('  --- %d idle session(s)%s. All are ALIVE -> reap-local will NOT touch them.' % (
+      len(rows), (', incl. %d PROTECTED (never reap)' % nprot) if nprot else ''))
+print('  Report only. Reap an idle-but-alive one by hand:')
+print('    tmux kill-session -t <name> ; systemctl --user disable --now <name>.service')
+"
+    ;;
+  *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]|worktree-stale|idle-report [--days N]]"; exit 2;;
 esac
 fi
