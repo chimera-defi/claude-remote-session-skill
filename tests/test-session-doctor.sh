@@ -36,4 +36,13 @@ numeric_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 3
 ok "days-numeric-not-rejected"  "$(printf '%s' "$numeric_out" | grep -qF -- "requires a non-negative integer" && echo yes || echo no)" "no"
 ok "days-numeric-no-traceback"  "$(printf '%s' "$numeric_out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
 
+# A digit-only --days can still crash the embedded Python: a LEADING ZERO (e.g.
+# `08`) passes the digits-only check above but Python 3 rejects `DAYS=08` as an
+# integer literal (SyntaxError: leading zeros not permitted) once spliced in —
+# caught in PR review (codex). Must be canonicalized to base-10, not just
+# digit-validated.
+leadzero_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 08 2>&1)"
+ok "days-leadingzero-no-traceback" "$(printf '%s' "$leadzero_out" | grep -qi 'Traceback\|SyntaxError' && echo yes || echo no)" "no"
+ok "days-leadingzero-normalized"   "$(printf '%s' "$leadzero_out" | grep -qF '> 8d' && echo yes || echo no)" "yes"
+
 echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

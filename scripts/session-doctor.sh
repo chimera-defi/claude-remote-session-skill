@@ -31,6 +31,13 @@ while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=
 case "$DAYS" in
   ''|*[!0-9]*) echo "session-doctor: --days requires a non-negative integer, got '$DAYS'" >&2; exit 2 ;;
 esac
+# A digit-only value can still break the embedded-as-a-literal splice: Python 3
+# rejects a leading-zero integer literal (e.g. `08`) as a SyntaxError ("leading
+# zeros ... not permitted"), so `--days 08` would pass the digits-only check
+# above yet still crash inside the Python snippet. Canonicalize to base-10 (same
+# `10#` pattern session-alias.sh uses for the same class of problem) so the
+# spliced value is always a plain, leading-zero-free literal.
+DAYS=$((10#$DAYS))
 
 registry_json() {
   local tok org
