@@ -285,7 +285,13 @@ systemctl --user daemon-reload && systemctl --user enable --now "$(basename $SER
 TELEMETRY_DIR="$WORKDIR"
 SPAWN_LOG="$HOME/.sessions/session-starts.log"
 if [ -f "$SPAWN_LOG" ]; then
-  RD="$(grep "session=${SESSION} rundir=" "$SPAWN_LOG" | tail -1 | sed -E 's/.*rundir=//')"
+  LOGLINE="$(grep "session=${SESSION} rundir=" "$SPAWN_LOG" | tail -1)"
+  # Bash's ${#*pat} removes the SHORTEST match from the front — unlike a
+  # greedy sed s/.*rundir=//, which would strip up through the LAST
+  # occurrence of "rundir=" in the line. A run directory whose path itself
+  # contains the literal substring "rundir=" (e.g. .../repo-rundir=trial)
+  # would otherwise get truncated to whatever follows its own last match.
+  RD="${LOGLINE#*session=${SESSION} rundir=}"
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
