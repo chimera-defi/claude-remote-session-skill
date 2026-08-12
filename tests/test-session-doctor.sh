@@ -20,4 +20,25 @@ out="$(HOME="$NOHOME" bash "$HERE/../scripts/session-doctor.sh" registry-stale 2
 ok "registry-stale-no-traceback" "$(printf '%s' "$out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
 ok "registry-stale-graceful-msg" "$(printf '%s' "$out" | grep -qF '(registry unavailable)' && echo yes || echo no)" "yes"
 
+# reap-local orphan detection must NOT skip a unit just because systemd still
+# reports it "active" (regression: Type=oneshot/RemainAfterExit=yes units —
+# see new-session.sh's generated .service — go "active (exited)" once ExecStart
+# finishes and STAY that way indefinitely, independent of whether the tmux
+# session they spawned later dies. A systemctl is-active gate here would
+# almost never be false and would defeat orphan reaping, the exact case this
+# loop exists for). Stub systemctl to always report active and confirm the
+# orphan (no live tmux) is still flagged.
+STUBBIN="$(mktemp -d)"; trap 'rm -rf "$STUBBIN"' RETURN 2>/dev/null || true
+cat > "$STUBBIN/systemctl" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+chmod +x "$STUBBIN/systemctl"
+TESTCFG="$(mktemp -d)"; mkdir -p "$TESTCFG/systemd/user"
+touch "$TESTCFG/systemd/user/ah-test-orphan-0101-0100.service"
+TESTHOME="$(mktemp -d)"
+orphan_out="$(PATH="$STUBBIN:$PATH" XDG_CONFIG_HOME="$TESTCFG" HOME="$TESTHOME" bash "$HERE/../scripts/session-doctor.sh" reap-local 2>&1)"
+ok "reap-local-ignores-is-active" "$(printf '%s' "$orphan_out" | grep -qF 'ORPHAN unit (no tmux): ah-test-orphan-0101-0100.service' && echo yes || echo no)" "yes"
+rm -rf "$STUBBIN" "$TESTCFG" "$TESTHOME"
+
 echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

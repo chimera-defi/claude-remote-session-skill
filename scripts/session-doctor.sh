@@ -107,13 +107,18 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       do_reap "$s" "${base}.service" "${base}-start.sh"
       reaped=$((reaped+1))
     done
-    # 2. orphaned systemd units (no live tmux, service not active).
+    # 2. orphaned systemd units (no live tmux for them). These units are
+    # Type=oneshot/RemainAfterExit=yes (see new-session.sh) — once ExecStart
+    # finishes, systemd holds them "active (exited)" indefinitely regardless
+    # of what later happens to the tmux session they spawned, so an is-active
+    # check here would almost never be false and would skip real orphans
+    # (the exact case this loop exists to reap). Same liveness definition as
+    # `report`'s ORPHAN listing above: no live tmux match.
     for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
       echo "$u" | grep -qiE "$PROTECT" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" && continue
-      systemctl --user is-active --quiet "$u" && continue   # still active → keep
-      echo "ORPHAN unit (no tmux, inactive): $u"
+      echo "ORPHAN unit (no tmux): $u"
       do_reap "" "$u" "${base}-start.sh"
       reaped=$((reaped+1))
     done
