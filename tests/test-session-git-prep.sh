@@ -8,6 +8,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PREP="$HERE/../scripts/session-git-prep.sh"
 pass=0; fail=0
+
+# CI runners have no global git identity configured — commits in mk_repo()
+# below need one regardless of the host's ~/.gitconfig.
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@test.invalid
+export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@test.invalid
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
