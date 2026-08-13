@@ -38,19 +38,29 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 # looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
 # a generated session name. Such a value must never be used or STORED as an alias:
 # doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
-# Matches: ah-/ah_ prefix; a long numeric run (timestamp/random suffix, e.g.
-# -153051 / -4107171); an MMDD-HHMM timestamp pair; or a trailing -MMDD date —
-# the latter two only when the digits validate as a real date/time (below), so
-# an arbitrary run of digits (a year, port, chain id, ticket suffix, a second
-# unrelated number, ...) is not mistaken for one. Silently treating any digit
-# run as date-shaped previously collided distinct folders onto the same alias
-# (found live: sprint-2024/sprint-2025 -> both "sprint"; chain-8453 -> "chain";
-# port-8080 -> "port"; sprint-2024-2025 / port-8080-9090 -> same, via the
-# two-group check). ${d:0:2} form needs base-10 forcing so a leading zero
-# (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
+# Matches: ah-/ah_ prefix; a long numeric run in a MULTI-segment numeric tail
+# (timestamp/random suffix, e.g. -0718-153051-4107171); an MMDD-HHMM timestamp
+# pair; or a trailing -MMDD date — the latter two only when the digits validate
+# as a real date/time (below), so an arbitrary run of digits (a year, port,
+# chain id, ticket suffix, a second unrelated number, ...) is not mistaken for
+# one. Silently treating any digit run as date-shaped previously collided
+# distinct folders onto the same alias (found live: sprint-2024/sprint-2025 ->
+# both "sprint"; chain-8453 -> "chain"; port-8080 -> "port";
+# sprint-2024-2025 / port-8080-9090 -> same, via the two-group check).
+# ${d:0:2} form needs base-10 forcing so a leading zero (e.g. the "07" in
+# 0728) isn't parsed as invalid octal by [ -ge ].
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  # A long numeric run ONLY counts as a poisoned timestamp/random suffix when it
+  # sits in a chain of 2+ consecutive trailing numeric groups (the real legacy
+  # shape: name-MMDD-HHMMSS-RANDOM). A single trailing 5+-digit group is just as
+  # often a legitimate identifier (issue-12345, ticket-99999, build-100000) —
+  # matching it in isolation collided those onto one alias exactly like the
+  # since-fixed MMDD false positives above (found in nightly review:
+  # issue-12345/issue-67890 would both alias to "issue").
+  local tailgroups
+  tailgroups="$(printf '%s' "$1" | grep -oE -- '(-[0-9]+){2,}$')"
+  [ -n "$tailgroups" ] && printf '%s' "$tailgroups" | grep -qE -- '[0-9]{5,}' && return 0
   local pair mm dd hh mi
   pair="$(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
   if [ -n "$pair" ]; then
