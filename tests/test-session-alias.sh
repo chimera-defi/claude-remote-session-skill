@@ -104,6 +104,22 @@ ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
 
+# Found in review (chatgpt-codex-connector, PR #22): an invalid digit pair
+# BEFORE a real embedded timestamp must not let the real pair slide through.
+# `[0-9]{4}-[0-9]{4}` matches non-overlapping left-to-right, so a stored value
+# like "project-2024-2025-0715-2359" yields TWO pairs: "2024-2025" (fails date
+# validation) and "0715-2359" (a real MMDD-HHMM). Only checking the first match
+# (`head -1`, the pre-fix behavior) stops at the invalid pair and never
+# inspects the genuinely poisoned one that follows, so the whole value reads
+# as "clean" and gets embedded verbatim into the next generated session name.
+# Every matched pair must be checked; catching this needs the READ-PATH guard
+# (a poisoned stored value discarded + self-healed on lookup), not desessionify.
+PZ2="$(mktemp)"
+printf 'multipair-proj\tproject-2024-2025-0715-2359\n' > "$PZ2"
+r4="$(SESSION_ALIAS_STORE="$PZ2" bash "$ALIAS" multipair-proj)"
+ok "readguard-multipair-caught" "$r4" "multipair-proj"
+ok "readguard-multipair-clean"  "$(notsess "$r4")" "clean"
+
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
 # Must NOT mutate the store — a human decides what to do with drift.

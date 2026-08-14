@@ -38,5 +38,11 @@ ok "not-mmdd-bad-day"        "$(poisoned client-1042)"        "clean"
 ok "not-mmdd-hhmm-year-range" "$(poisoned sprint-2024-2025)"  "clean"
 ok "not-mmdd-hhmm-port-pair"  "$(poisoned port-8080-9090)"    "clean"
 
+# An invalid digit pair BEFORE a real embedded timestamp must not let the real
+# pair slide through: "project-2024-2025-0715-2359" contains TWO
+# [0-9]{4}-[0-9]{4} matches — "2024-2025" (fails date validation) and
+# "0715-2359" (a real MMDD-HHMM) — only checking the first would miss it.
+ok "multi-pair-later-real-timestamp" "$(poisoned project-2024-2025-0715-2359)" "POISONED"
+
 echo "fallback-recipe guard: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
