@@ -13,9 +13,29 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
 # Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# MMDD-HHMM timestamp, trailing -MMDD, or a long numeric run) — same guard as
-# session-alias.sh's read path. Using it as-is would double into ah-ah-...-MMDD-MMDD.
-printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && ALIAS=""
+# a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD date, or a long numeric
+# run) — same DATE-VALIDATED guard as session-alias.sh's read path. Using it as-is
+# would double into ah-ah-...-MMDD-MMDD. The digits must validate as a real
+# date/time (month 01-12, day 01-31, hour 00-23, minute 00-59): a naive
+# "any 4 digits" match previously misfired on legitimate stored aliases like
+# sprint-2024, chain-8453, port-8080 or sprint-2024-2025, wrongly discarding them.
+_fr_poisoned() {
+  case "$1" in ah-*|ah_*) return 0 ;; esac
+  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  local v="$1" pair mm dd hh mi tail d
+  pair="$(printf '%s' "$v" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
+  if [ -n "$pair" ]; then
+    mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
+    if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
+       && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
+      return 0
+    fi
+  fi
+  tail="$(printf '%s' "$v" | grep -oE -- '-[0-9]{4}$')" || return 1
+  d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
+  [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
+}
+_fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
