@@ -51,16 +51,21 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
   printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
+  # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
+  # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, but the
+  # `head -1` this used to take would stop there and never look at the genuinely
+  # poisoned "0715-2359" that follows). Any single matching pair is disqualifying.
   local pair mm dd hh mi
-  pair="$(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
-  if [ -n "$pair" ]; then
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2}))
     hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
     if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
        && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
       return 0
     fi
-  fi
+  done < <(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}')
   local tail d
   tail="$(printf '%s' "$1" | grep -oE -- '-[0-9]{4}$')" || return 1
   d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
