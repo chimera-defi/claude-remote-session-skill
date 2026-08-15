@@ -156,7 +156,16 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
     for wt in "$WT_BASE"/*/; do
       [ -d "$wt" ] || continue
       wt="${wt%/}"
-      remote="$(basename "$wt")"
+      branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+      # Prefer the session name embedded in the branch (session/<remote>) over the
+      # worktree DIRECTORY name: session-git-prep suffixes the directory with -$$ on
+      # a path collision while leaving the branch (and so the real owning tmux
+      # session) unsuffixed. Deriving liveness from the directory name in that case
+      # would misread a LIVE session's worktree as dead and offer to force-remove it.
+      case "$branch" in
+        session/*) owned=yes; remote="${branch#session/}" ;;
+        *)         owned=no;  remote="$(basename "$wt")" ;;
+      esac
       echo "$remote" | grep -qiE "$PROTECT" && continue
       tm="$(svc_to_tmux "$remote")"
       # Owning session still live (tmux present AND its claude proc running)? Keep it.
@@ -164,7 +173,6 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
         continue
       fi
       cand=$((cand+1))
-      branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
       dirty=clean; git -C "$wt" status --porcelain 2>/dev/null | grep -q . && dirty=DIRTY
       if git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
         ahead="$(git -C "$wt" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '?')"
@@ -179,7 +187,22 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
       case "$common_dir" in /*) : ;; *) common_dir="$wt/$common_dir" ;; esac
       mainrepo="$(cd "$common_dir/.." 2>/dev/null && pwd)"
       printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$upstream"
-      [ -n "$mainrepo" ] && printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$mainrepo" "$wt" "$mainrepo" "$branch"
+      if [ -n "$mainrepo" ]; then
+        # %q shell-quotes each value so the printed command is safe to copy-paste
+        # even if a path or branch name contains whitespace or shell metacharacters.
+        q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
+        if [ "$owned" = yes ]; then
+          q_branch="$(printf '%q' "$branch")"
+          printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$q_main" "$q_wt" "$q_main" "$q_branch"
+        else
+          # Current branch isn't the session-owned session/<remote> name (the
+          # session switched branches) — only suggest removing the worktree
+          # itself; force-deleting an arbitrary, possibly-unmerged branch here
+          # would risk destroying work unrelated to session cleanup.
+          printf '    remove: git -C %s worktree remove --force %s\n' "$q_main" "$q_wt"
+          printf '    NOTE: current branch %s is not a session/* name — leaving branch cleanup for manual review\n' "$branch"
+        fi
+      fi
     done
     echo "  --- $cand candidate(s). VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;

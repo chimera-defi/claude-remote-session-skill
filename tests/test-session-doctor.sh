@@ -48,6 +48,40 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "worktree-stale-skips-live"     "$(printf '%s' "$wtout" | grep -qF "$WT_LIVE" && echo yes || echo no)" "no"
   ok "worktree-stale-skips-protected" "$(printf '%s' "$wtout" | grep -qF "$WT_PROT" && echo yes || echo no)" "no"
   ok "worktree-stale-prints-removal-cmd" "$(printf '%s' "$wtout" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
+
+  # PID-suffixed directory (session-git-prep's collision fallback: the WORKTREE dir
+  # gets a -$$ suffix but the BRANCH — and so the real tmux session — stays
+  # unsuffixed). Liveness must be derived from the branch, not the directory name,
+  # or a live session's worktree gets misreported as stale and offered for --force
+  # removal (regression: found via review).
+  WT_PIDLIVE="$WTHOME/.claude/worktrees/ah-wtpidlive-0101-0900-99999"
+  git -C "$REPO" worktree add -q -b session/ah-wtpidlive-0101-0900 "$WT_PIDLIVE" main >/dev/null 2>&1
+  tmux new-session -d -s ah_wtpidlive-0101-0900 -c "$WT_PIDLIVE" 'sleep 60'
+  wtout2="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  tmux kill-session -t ah_wtpidlive-0101-0900 2>/dev/null || true
+  ok "worktree-stale-skips-pidsuffixed-live" "$(printf '%s' "$wtout2" | grep -qF "$WT_PIDLIVE" && echo yes || echo no)" "no"
+
+  # A dead worktree whose session switched off its session/<remote> branch onto
+  # something else must NOT suggest `branch -D` on that (possibly unmerged,
+  # unrelated) branch — only the worktree removal (regression: found via review).
+  WT_SWITCHED="$WTHOME/.claude/worktrees/ah-wtswitched-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtswitched-0101-0900 "$WT_SWITCHED" main >/dev/null 2>&1
+  git -C "$WT_SWITCHED" checkout -q -b feature/unrelated >/dev/null 2>&1
+  wtout3="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  ok "worktree-stale-lists-switched-branch" "$(printf '%s' "$wtout3" | grep -qF "$WT_SWITCHED" && echo yes || echo no)" "yes"
+  ok "worktree-stale-no-branch-D-on-switched" "$(printf '%s' "$wtout3" | grep -A1 -F "$WT_SWITCHED" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+
+  # Removal command must be safe to copy-paste even when a path contains a space
+  # (and generally shell-quoted) — regression: found via review (unquoted %s
+  # interpolation).
+  REPO_SP="$WTTMP/my repo"; git clone -q "$REPO" "$REPO_SP" >/dev/null 2>&1
+  WT_SP="$WTHOME/.claude/worktrees/ah-wtspacey-0101-0900"
+  git -C "$REPO_SP" worktree add -q -b session/ah-wtspacey-0101-0900 "$WT_SP" main >/dev/null 2>&1
+  wtout4="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  cmd="$(printf '%s' "$wtout4" | grep -F 'remove:' | grep -F "$WT_SP" | sed 's/^ *remove: //')"
+  ( eval "$cmd" ) >/dev/null 2>&1
+  ok "worktree-stale-quoted-cmd-evals-cleanly" "$?" "0"
+  ok "worktree-stale-quoted-cmd-removed-it" "$([ -d "$WT_SP" ] && echo yes || echo no)" "no"
 fi
 
 echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
