@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # session-doctor.sh — audit and clean up agenthost remote-control sessions across
-# the THREE layers they live in: tmux windows, systemd --user units, and the
-# Anthropic session registry (GET /v1/sessions). Local reaping alone does not
-# relieve session-count pressure, because the registry accumulates disconnected
-# and zombie ("connected" but process-gone) entries independently.
+# the layers they live in: tmux windows, systemd --user units, the Anthropic
+# session registry (GET /v1/sessions), and per-session git worktrees
+# (~/.claude/worktrees/, created by session-git-prep.sh for dirty/busy repos).
+# Local reaping alone does not relieve session-count pressure, because the
+# registry accumulates disconnected and zombie ("connected" but process-gone)
+# entries independently, and worktrees accumulate independently of both.
 #
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
+#   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
 #
 # Safety:
 #   * Protected names (claude-remote*, *openclaw*, *hermes*) are NEVER reaped.
 #   * A tmux/systemd entry is only reaped when its claude process is genuinely gone.
 #   * Registry DELETION is intentionally NOT automated (it is account-facing and
 #     irreversible). registry-stale prints candidates + the exact curl to run by hand.
+#   * Worktree removal is intentionally NOT automated (a dead session's worktree may
+#     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
+#     dirty/unpushed status, and the exact commands to run by hand after review.
 set -uo pipefail
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -142,6 +148,41 @@ print('    -H \"Authorization: Bearer \$TOKEN\" -H \"x-organization-uuid: \$ORG\
 print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-2025-07-29\"')
 "
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]]"; exit 2;;
+
+  worktree-stale)
+    echo "=== ~/.claude/worktrees/ dirs with no live owning session (NOT auto-removed) ==="
+    WT_BASE="$HOME/.claude/worktrees"
+    cand=0
+    for wt in "$WT_BASE"/*/; do
+      [ -d "$wt" ] || continue
+      wt="${wt%/}"
+      remote="$(basename "$wt")"
+      echo "$remote" | grep -qiE "$PROTECT" && continue
+      tm="$(svc_to_tmux "$remote")"
+      # Owning session still live (tmux present AND its claude proc running)? Keep it.
+      if [ -n "$tm" ] && live_tmux | grep -qx "$tm" && proc_alive "$tm"; then
+        continue
+      fi
+      cand=$((cand+1))
+      branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+      dirty=clean; git -C "$wt" status --porcelain 2>/dev/null | grep -q . && dirty=DIRTY
+      if git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+        ahead="$(git -C "$wt" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '?')"
+        upstream="ahead=${ahead}"
+      else
+        upstream="no-upstream"
+      fi
+      # Resolve the main repo this worktree belongs to, from its (possibly
+      # relative, on older git) --git-common-dir, so the removal command below
+      # is copy-pasteable without the reviewer having to hunt for the repo.
+      common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)"
+      case "$common_dir" in /*) : ;; *) common_dir="$wt/$common_dir" ;; esac
+      mainrepo="$(cd "$common_dir/.." 2>/dev/null && pwd)"
+      printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$upstream"
+      [ -n "$mainrepo" ] && printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$mainrepo" "$wt" "$mainrepo" "$branch"
+    done
+    echo "  --- $cand candidate(s). VERIFY dirty/unpushed work is not needed before removing. ---"
+    ;;
+  *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]|worktree-stale]"; exit 2;;
 esac
 fi
