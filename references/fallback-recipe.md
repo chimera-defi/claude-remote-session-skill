@@ -13,9 +13,11 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
 # Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# MMDD-HHMM timestamp, trailing -MMDD, or a long numeric run) — same guard as
-# session-alias.sh's read path. Using it as-is would double into ah-ah-...-MMDD-MMDD.
-printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && ALIAS=""
+# MMDD-HHMM timestamp, trailing -MMDD, or a long (>=6 digit) numeric run) — same
+# guard as session-alias.sh's read path. Using it as-is would double into
+# ah-ah-...-MMDD-MMDD. Floor is 6 digits, not 5, so plain 5-digit identifiers
+# (chain ids, zip codes, ephemeral ports) aren't mistaken for a poisoned suffix.
+printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{6,}' && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"

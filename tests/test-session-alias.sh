@@ -44,7 +44,7 @@ ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "abs
 # ── Anti-poisoning (regression: real corrupt values seen in the live store) ──
 # The alias must never itself look like a session name (ah- prefix / MMDD-HHMM /
 # trailing -MMDD / long numeric run) — that yields doubled ah-ah-...-MMDD-MMDD names.
-notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
+notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{6,}' && echo POISONED || echo clean; }
 
 # READ-PATH guard: a poisoned stored value (from an external writer / manual edit /
 # legacy) is discarded on resolution, re-inferred, and self-healed in the store.
@@ -103,6 +103,22 @@ ok "not-mmdd-hhmm-year-range" "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" sprint
 ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8080-9090)" "port-8080-9090"
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
+
+# 5-digit numeric-run false positives (the unconditional "long numeric run"
+# check used a >=5-digit floor, which is not date-shaped so it wasn't covered
+# by the MMDD/HHMM validation above — it collided any two folders ending in a
+# different plain 5-digit number onto the same truncated alias, the same bug
+# class as the 4-digit cases, just one digit-length up: chain ids, zip codes,
+# and ephemeral ports (49152-65535) are all commonly 5 digits).
+FP3="$(mktemp -u)"
+ok "not-longnum-chainid-5digit" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" chain-84532)" "chain-84532"
+ok "not-longnum-zip"            "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" client-90210)" "client-90210"
+ok "not-longnum-ephemeral-port" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" port-49152)" "port-49152"
+# Distinct 5-digit-suffixed folders must alias distinctly, not collide.
+ok "not-longnum-chainid-distinct" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" chain-42161)" "chain-42161"
+# A genuine >=6-digit poisoned suffix (every real production fixture below is
+# 6-7 digits) is still caught — the floor raise doesn't weaken real detection.
+ok "real-longnum-6digit-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" build-153051)" "build"
 
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
