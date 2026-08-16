@@ -46,11 +46,16 @@ sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-
 # run as date-shaped previously collided distinct folders onto the same alias
 # (found live: sprint-2024/sprint-2025 -> both "sprint"; chain-8453 -> "chain";
 # port-8080 -> "port"; sprint-2024-2025 / port-8080-9090 -> same, via the
-# two-group check). ${d:0:2} form needs base-10 forcing so a leading zero
+# two-group check). The numeric-run floor is 6 digits, not 5: every real
+# poisoned suffix seen in production is >=6 digits (-153051 / -4107171 /
+# -194533 / -425253), while plain 5-digit identifiers are common and
+# legitimate (chain ids like 84532, zip codes, ephemeral ports 49152-65535) —
+# at a 5-digit floor those collided the same way (chain-84532/chain-99999 ->
+# both "chain"). ${d:0:2} form needs base-10 forcing so a leading zero
 # (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  printf '%s' "$1" | grep -qE -- '-[0-9]{6,}' && return 0
   local pair mm dd hh mi
   pair="$(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
   if [ -n "$pair" ]; then

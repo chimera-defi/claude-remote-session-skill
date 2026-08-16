@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.8.3"
+version: "1.8.4"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -47,7 +47,9 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   shortens and is reapable like any other.
 - **Alias values are validated (anti-poisoning).** An alias that itself looks like a full
   session name — an `ah-` prefix, an `MMDD-HHMM` timestamp, a trailing `-MMDD` date, or a
-  long numeric run — is rejected and a clean alias re-inferred. This is enforced on **read**
+  numeric run of 6+ digits (the length real timestamp/random suffixes are seen at; a plain
+  5-digit identifier like a chain id, zip code, or ephemeral port is left alone) — is rejected
+  and a clean alias re-inferred. This is enforced on **read**
   (a poisoned stored value is discarded and self-healed), on **write** (`--alias`), and as a
   `store_upsert` backstop, so a bad entry from an errant `--alias`, an external writer, or
   legacy data can never produce doubled `ah-ah-…-MMDD-MMDD` session names. A trailing 4-digit
