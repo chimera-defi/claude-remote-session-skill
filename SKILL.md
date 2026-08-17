@@ -111,6 +111,48 @@ Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessio
 Each spawn gets a unique name — never collides with same-minute sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
 
+## Preserve before reaping (recycling a bloated session)
+
+Long-lived sessions accumulate context until every turn is slow and expensive.
+Recycling one — kill it, spawn a fresh session on the same repo — is the fix.
+**Never reap before `session-preserve` says it is safe.**
+
+```bash
+session-preserve <tmux-session>            # audit only. exit 0 = safe to reap
+session-preserve <tmux-session> --rescue   # + copy non-junk untracked files aside
+session-preserve <tmux-session> --wip      # + WIP-commit uncommitted tracked changes
+session-preserve --all                     # audit the whole fleet
+```
+
+Recycle recipe:
+
+```bash
+session-preserve <s> --rescue --wip        # must print SAFE-TO-REAP
+systemctl --user disable --now <base>.service
+tmux kill-session -t <s>
+new-session <foldername> workspace --alias <new-alias>
+```
+
+**Never use `git log @{u}..` to decide whether work is pushed.** It returns
+*nothing* when a branch has no upstream configured, so unpushed work reads as
+clean. On 2026-08-17 that mistake reported 10,162 local-only commits as "0
+unpushed" and nearly authorised a reap sweep across them. Use
+`git log HEAD --not --remotes`, and check `git remote` separately — a repo with
+**no remote at all** (e.g. `portfolio-single-source-of-truth`, 155 local
+branches, zero remotes) cannot be pushed anywhere, so its branch refs are the
+only copy that exists.
+
+What actually makes a reap safe is that **HEAD is reachable from a named local
+branch** — then killing the session and removing its worktree cannot orphan the
+commits, because they stay in the canonical repo's object store. It follows
+that *deleting the branch* is the dangerous operation, not reaping. Any worktree
+GC must leave `session/*` and research branches alone.
+
+Respawned sessions start on a fresh worktree cut from the default branch, **not**
+on the old session's branch. Say so in the kickoff: name the prior branch, the
+prior transcript path, and what the session was mid-way through, or the
+replacement re-derives it at full cost.
+
 ## Sessions Agent Scope
 
 A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a **bounded scope**:
