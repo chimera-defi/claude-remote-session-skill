@@ -104,6 +104,16 @@ ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
 
+# Multi-candidate scan (found via review: `head -1` on the first matched pair
+# let a real MMDD-HHMM slip through when an invalid-as-date pair, like a year
+# range, appeared earlier in the string and the scan stopped there instead of
+# examining every candidate).
+MP="$(mktemp)"
+printf 'somefolder\trelease-2024-2025-x-0715-0630-copy\n' > "$MP"
+mp_out="$(SESSION_ALIAS_STORE="$MP" bash "$ALIAS" somefolder)"
+ok "multi-pair-readguard-clean" "$(notsess "$mp_out")" "clean"
+ok "multi-pair-readguard-selfheal" "$(awk -F'\t' '$1=="somefolder"{print $2}' "$MP")" "$mp_out"
+
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
 # Must NOT mutate the store — a human decides what to do with drift.
