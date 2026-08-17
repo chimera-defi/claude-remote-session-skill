@@ -24,12 +24,17 @@ poisoned=no
 case "$ALIAS" in ah-*|ah_*) poisoned=yes ;; esac
 printf '%s' "$ALIAS" | grep -qE -- '-[0-9]{5,}' && poisoned=yes
 if [ "$poisoned" = no ]; then
-  pair=$(printf '%s' "$ALIAS" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)
-  if [ -n "$pair" ]; then
+  # Check EVERY [0-9]{4}-[0-9]{4} candidate, not just the first: an invalid-
+  # as-date pair (e.g. a year range) before a genuine MMDD-HHMM later in the
+  # string must not stop the scan (e.g. release-2024-2025-x-0715-0630-copy).
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
-    [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
-      && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ] && poisoned=yes
-  fi
+    if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
+      && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
+      poisoned=yes
+    fi
+  done < <(printf '%s' "$ALIAS" | grep -oE -- '[0-9]{4}-[0-9]{4}')
 fi
 if [ "$poisoned" = no ]; then
   tail=$(printf '%s' "$ALIAS" | grep -oE -- '-[0-9]{4}$')

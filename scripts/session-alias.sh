@@ -52,15 +52,21 @@ looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
   printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
   local pair mm dd hh mi
-  pair="$(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)"
-  if [ -n "$pair" ]; then
+  # Check EVERY [0-9]{4}-[0-9]{4} candidate, not just the first: `head -1`
+  # alone would let a poisoned value slip through when an invalid-as-date pair
+  # (e.g. a year range) precedes a genuine MMDD-HHMM later in the string
+  # (found via review: release-2024-2025-x-0715-0630-copy — "2024-2025" fails
+  # validation and a single-candidate check stops there, never examining the
+  # real "0715-0630" that follows).
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2}))
     hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
     if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
        && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
       return 0
     fi
-  fi
+  done < <(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}')
   local tail d
   tail="$(printf '%s' "$1" | grep -oE -- '-[0-9]{4}$')" || return 1
   d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))

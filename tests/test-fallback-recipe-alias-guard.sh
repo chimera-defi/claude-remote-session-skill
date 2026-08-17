@@ -26,6 +26,9 @@ ok "ah-underscore-prefix" "$(run_guard 'ah_universe_expand')"             "yes"
 ok "long-numeric-run"     "$(run_guard 'discovery-0718-153051-4107171')" "yes"
 ok "real-mmdd-hhmm"       "$(run_guard 'foo-0715-0630')"                  "yes"
 ok "real-trailing-mmdd"   "$(run_guard 'tranche1-ready-0728')"            "yes"
+# Multi-candidate scan: an invalid-as-date pair (year range) before a genuine
+# MMDD-HHMM must not stop the scan early.
+ok "multi-pair-real-hidden" "$(run_guard 'release-2024-2025-x-0715-0630-copy')" "yes"
 
 # Values that are NOT session-name-shaped and must be left alone (regression:
 # the naive pre-fix regex flagged any 4-digit-4-digit / trailing-4-digit run,
