@@ -13,9 +13,33 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
 # Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# MMDD-HHMM timestamp, trailing -MMDD, or a long numeric run) — same guard as
-# session-alias.sh's read path. Using it as-is would double into ah-ah-...-MMDD-MMDD.
-printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && ALIAS=""
+# a long numeric run, or an embedded MMDD/MMDD-HHMM group that validates as a
+# REAL calendar date/time) — same date-validated guard as session-alias.sh's
+# read path (looks_like_session_name). Using it as-is would double into
+# ah-ah-...-MMDD-MMDD. A plain digit run that ISN'T a real date (a year, port,
+# chain id, ...) is left alone, so a stored alias like "sprint-2024" or
+# "port-8080" survives instead of being needlessly discarded.
+# alias-guard-start (tests/test-fallback-recipe-alias-guard.sh extracts this block)
+poisoned=no
+case "$ALIAS" in ah-*|ah_*) poisoned=yes ;; esac
+printf '%s' "$ALIAS" | grep -qE -- '-[0-9]{5,}' && poisoned=yes
+if [ "$poisoned" = no ]; then
+  pair=$(printf '%s' "$ALIAS" | grep -oE -- '[0-9]{4}-[0-9]{4}' | head -1)
+  if [ -n "$pair" ]; then
+    mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
+    [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
+      && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ] && poisoned=yes
+  fi
+fi
+if [ "$poisoned" = no ]; then
+  tail=$(printf '%s' "$ALIAS" | grep -oE -- '-[0-9]{4}$')
+  if [ -n "$tail" ]; then
+    d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
+    [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] && poisoned=yes
+  fi
+fi
+[ "$poisoned" = yes ] && ALIAS=""
+# alias-guard-end
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
