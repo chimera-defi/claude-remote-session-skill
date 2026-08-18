@@ -12,9 +12,18 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 # new-session for an un-stored long folder.
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
-# Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# MMDD-HHMM timestamp, trailing -MMDD, or a long numeric run) — same guard as
-# session-alias.sh's read path. Using it as-is would double into ah-ah-...-MMDD-MMDD.
+# Reject a stored alias that looks like a session name itself (ah- prefix,
+# MMDD-HHMM timestamp, trailing -MMDD, or a long numeric run) — using it as-is
+# would double into ah-ah-...-MMDD-MMDD. This is a CRUDER version of
+# session-alias.sh's read-path guard: that one only flags a trailing 4-digit
+# group or an MMDD-HHMM pair when the digits validate as a real calendar
+# date/time, so it leaves alone a folder like sprint-2024 or port-8080-9090.
+# This one-liner skips that range check, so it will also (over-cautiously)
+# discard a legitimate stored alias shaped like that — falling back to a plain
+# sanitized folder name instead, which may differ from what new-session would
+# have produced for that same folder. Acceptable for an emergency path; if
+# that matters, fix the store entry (or the missing `new-session`) instead of
+# tightening this regex.
 printf '%s' "$ALIAS" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
