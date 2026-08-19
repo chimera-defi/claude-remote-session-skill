@@ -3,7 +3,14 @@
 Use this when `~/.local/bin/new-session` is missing. Paste the entire block
 in one Bash call after setting `FOLDERNAME` and optionally `WORKDIR`.
 
-For the canonical approach, prefer `scripts/new-session.sh` directly.
+For the canonical approach, prefer `scripts/new-session.sh` directly. This is
+a deliberately reduced last resort — besides the store-lookup-only aliasing
+(no acronym inference for un-stored long folders), it also drops two fixes
+`new-session.sh` carries: a same-minute collision lock (a second same-minute
+spawn of the same folder here can collide/no-op instead of getting a
+disambiguated name) and kickoff-verification retry (the launch `Enter` below
+is sent once, unverified — a dropped keystroke can leave the tmux pane idle
+with no indication).
 
 ```bash
 FOLDERNAME="<foldername>"
@@ -13,38 +20,51 @@ WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${F
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
 # Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# a long numeric run, or an embedded MMDD/MMDD-HHMM group that validates as a
-# REAL calendar date/time) — same date-validated guard as session-alias.sh's
-# read path (looks_like_session_name). Using it as-is would double into
-# ah-ah-...-MMDD-MMDD. A plain digit run that ISN'T a real date (a year, port,
-# chain id, ...) is left alone, so a stored alias like "sprint-2024" or
-# "port-8080" survives instead of being needlessly discarded.
-# alias-guard-start (tests/test-fallback-recipe-alias-guard.sh extracts this block)
-poisoned=no
-case "$ALIAS" in ah-*|ah_*) poisoned=yes ;; esac
-printf '%s' "$ALIAS" | grep -qE -- '-[0-9]{5,}' && poisoned=yes
-if [ "$poisoned" = no ]; then
-  # Check EVERY [0-9]{4}-[0-9]{4} candidate, not just the first: an invalid-
-  # as-date pair (e.g. a year range) before a genuine MMDD-HHMM later in the
-  # string must not stop the scan (e.g. release-2024-2025-x-0715-0630-copy).
+# a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD date, or a long numeric
+# run PAIRED with a real MMDD date fragment) — same DATE-VALIDATED guard as
+# session-alias.sh's read path. Using it as-is would double into
+# ah-ah-...-MMDD-MMDD. The digits must validate as a real date/time (month
+# 01-12, day 01-31, hour 00-23, minute 00-59): a naive "any 4 digits" match
+# previously misfired on legitimate stored aliases like sprint-2024,
+# chain-8453, port-8080 or sprint-2024-2025, wrongly discarding them. The
+# long-numeric-run check is further gated on an actual calendar-plausible
+# MMDD elsewhere in the string so a legitimately stored alias that merely
+# contains a long number (a port, invoice/build id, ...) is not discarded
+# (mirrors has_mmdd_group() in session-alias.sh).
+_fr_has_mmdd_group() {
+  local IFS='-' f mm dd
+  for f in $1; do
+    [ "${#f}" -eq 4 ] || continue
+    case "$f" in *[!0-9]*) continue ;; esac
+    mm=$((10#${f:0:2})); dd=$((10#${f:2:2}))
+    if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+_fr_poisoned() {
+  case "$1" in ah-*|ah_*) return 0 ;; esac
+  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$1" && return 0
+  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
+  # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
+  # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, and only
+  # inspecting that first pair would never look at the genuinely poisoned
+  # "0715-2359" that follows). Any single matching pair is disqualifying.
+  local v="$1" pair mm dd hh mi tail d
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
     if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] \
-      && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
-      poisoned=yes
+       && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
+      return 0
     fi
-  done < <(printf '%s' "$ALIAS" | grep -oE -- '[0-9]{4}-[0-9]{4}')
-fi
-if [ "$poisoned" = no ]; then
-  tail=$(printf '%s' "$ALIAS" | grep -oE -- '-[0-9]{4}$')
-  if [ -n "$tail" ]; then
-    d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
-    [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ] && poisoned=yes
-  fi
-fi
-[ "$poisoned" = yes ] && ALIAS=""
-# alias-guard-end
+  done < <(printf '%s' "$v" | grep -oE -- '[0-9]{4}-[0-9]{4}')
+  tail="$(printf '%s' "$v" | grep -oE -- '-[0-9]{4}$')" || return 1
+  d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
+  [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
+}
+_fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
@@ -82,6 +102,18 @@ if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
 tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+# Wait for the pane's interactive shell to be ready before typing into it, so
+# the kickoff keystrokes are not swallowed by a still-initializing pane.
+for _i in \$(seq 1 20); do
+  case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
+    bash|zsh|sh) break ;;
+  esac
+  sleep 0.25
+done
+# Type the supervisor loop WITHOUT a trailing Enter, then submit + verify
+# separately: a raced final Enter can be dropped, leaving the loop buffered in
+# readline but never executed (the session then churns idle). Resend Enter until
+# pane_current_command shows the loop actually launched.
 tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
@@ -104,8 +136,24 @@ while true; do
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=restart wait=10s" | tee -a "\$LOG_FILE"
     sleep 10
   fi
-done' Enter
-log_start "started"
+done'
+kicked=no
+for _try in 1 2 3; do
+  tmux send-keys -t "${SESSION}" Enter
+  for _j in \$(seq 1 12); do
+    case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
+      claude|node|sleep) kicked=yes; break ;;
+    esac
+    sleep 0.5
+  done
+  [ "\$kicked" = yes ] && break
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=kickoff-retry attempt=\$_try" | tee -a "\$LOG_FILE"
+done
+if [ "\$kicked" = yes ]; then
+  log_start "started"
+else
+  log_start "started-UNVERIFIED-kickoff-may-have-failed"
+fi
 SCRIPT_EOF
 chmod +x "$SCRIPT"
 

@@ -35,29 +35,50 @@ save() { [ "$NOSAVE" = yes ] || store_upsert "$1" "$2"; }
 
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
 
+# has_mmdd_group — true if some hyphen-delimited field of $1 is itself a
+# calendar-plausible MMDD (month 01-12, day 01-31). Used to gate the long-
+# numeric-run check below: a random-suffix run of 5+ digits (as seen in legacy
+# session names like `discovery-0718-153051-4107171`) is only real
+# session-name evidence when paired with an actual date fragment elsewhere in
+# the string — a folder that merely HAS a long number (a port >= 10000, an
+# invoice/issue/build id, a ticket suffix, ...) is not one just for being long.
+has_mmdd_group() {
+  local IFS='-' f mm dd
+  for f in $1; do
+    [ "${#f}" -eq 4 ] || continue
+    case "$f" in *[!0-9]*) continue ;; esac
+    mm=$((10#${f:0:2})); dd=$((10#${f:2:2}))
+    if [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
 # a generated session name. Such a value must never be used or STORED as an alias:
 # doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
 # Matches: ah-/ah_ prefix; a long numeric run (timestamp/random suffix, e.g.
-# -153051 / -4107171); an MMDD-HHMM timestamp pair; or a trailing -MMDD date —
-# the latter two only when the digits validate as a real date/time (below), so
-# an arbitrary run of digits (a year, port, chain id, ticket suffix, a second
-# unrelated number, ...) is not mistaken for one. Silently treating any digit
-# run as date-shaped previously collided distinct folders onto the same alias
-# (found live: sprint-2024/sprint-2025 -> both "sprint"; chain-8453 -> "chain";
-# port-8080 -> "port"; sprint-2024-2025 / port-8080-9090 -> same, via the
-# two-group check). ${d:0:2} form needs base-10 forcing so a leading zero
-# (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
+# -153051 / -4107171) PAIRED WITH a real MMDD date fragment elsewhere in the
+# string (see has_mmdd_group); an MMDD-HHMM timestamp pair; or a trailing -MMDD
+# date — the latter two only when the digits validate as a real date/time
+# (below), so an arbitrary run of digits (a year, port, chain id, ticket
+# suffix, a second unrelated number, ...) is not mistaken for one. Silently
+# treating any digit run as date-shaped previously collided distinct folders
+# onto the same alias (found live: sprint-2024/sprint-2025 -> both "sprint";
+# chain-8453 -> "chain"; port-8080 -> "port"; sprint-2024-2025 / port-8080-9090
+# -> same, via the two-group check; port-12345/port-54321 -> both "port" via
+# the un-gated long-numeric-run check). ${d:0:2} form needs base-10 forcing so
+# a leading zero (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
 looks_like_session_name() {
   case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && return 0
+  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && has_mmdd_group "$1" && return 0
+  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
+  # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
+  # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, but the
+  # `head -1` this used to take would stop there and never look at the genuinely
+  # poisoned "0715-2359" that follows). Any single matching pair is disqualifying.
   local pair mm dd hh mi
-  # Check EVERY [0-9]{4}-[0-9]{4} candidate, not just the first: `head -1`
-  # alone would let a poisoned value slip through when an invalid-as-date pair
-  # (e.g. a year range) precedes a genuine MMDD-HHMM later in the string
-  # (found via review: release-2024-2025-x-0715-0630-copy — "2024-2025" fails
-  # validation and a single-candidate check stops there, never examining the
-  # real "0715-0630" that follows).
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2}))
