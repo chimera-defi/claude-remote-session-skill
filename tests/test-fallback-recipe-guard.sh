@@ -56,6 +56,8 @@ ok "real-longrun-still-caught" "$(poisoned release-0715-123456)" "POISONED"
 # [0-9]{4}-[0-9]{4} matches — "2024-2025" (fails date validation) and
 # "0715-2359" (a real MMDD-HHMM) — only checking the first would miss it.
 ok "multi-pair-later-real-timestamp" "$(poisoned project-2024-2025-0715-2359)" "POISONED"
+# Same class, three digit-pairs instead of two (extra coverage, found in review).
+ok "multi-pair-three-candidates" "$(poisoned release-2024-2025-x-0715-0630-copy)" "POISONED"
 
 echo "fallback-recipe guard: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
