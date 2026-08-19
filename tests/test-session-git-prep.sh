@@ -38,6 +38,8 @@ ok "dirty-isolated-path" "$out" "$HOME/.claude/worktrees/remote-dirty"
 ok "dirty-worktree-branch" "$(git -C "$out" rev-parse --abbrev-ref HEAD 2>/dev/null)" "session/remote-dirty"
 ok "dirty-canonical-untouched" "$([ -f "$R2/dirty.txt" ] && echo yes || echo no)" "yes"
 ok "dirty-canonical-branch-unchanged" "$(git -C "$R2" rev-parse --abbrev-ref HEAD)" "main"
+LOCK_KEY2=$(printf '%s' "$R2" | tr '/ ' '__')
+ok "dirty-canonical-not-locked" "$([ -f "$HOME/.claude/session-locks/${LOCK_KEY2}.owner" ] && echo yes || echo no)" "no"
 
 # 4. Changes confined to .claude/ and .sessions-init-* sentinels must NOT count as
 # dirty (the spawn skill's own housekeeping) — regression for the exclusion filter.
