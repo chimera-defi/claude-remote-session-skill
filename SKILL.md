@@ -121,6 +121,103 @@ Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessio
 Each spawn gets a unique name — never collides with same-minute sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
 
+## Preserve before reaping (recycling a bloated session)
+
+Long-lived sessions accumulate context until every turn is slow and expensive.
+Recycling one — kill it, spawn a fresh session on the same repo — is the fix.
+**Never reap before `session-preserve` says it is safe.**
+
+```bash
+session-preserve <tmux-session>            # audit only. exit 0 = safe to reap
+session-preserve <tmux-session> --rescue   # + copy non-junk untracked files aside
+session-preserve <tmux-session> --wip      # + WIP-commit uncommitted tracked changes
+session-preserve --all                     # audit the whole fleet
+```
+
+Recycle recipe:
+
+```bash
+session-preserve <s> --rescue --wip        # must print SAFE-TO-REAP
+systemctl --user disable --now <base>.service
+tmux kill-session -t <s>
+new-session <foldername> workspace --alias <new-alias>
+```
+
+**Never use `git log @{u}..` to decide whether work is pushed.** It returns
+*nothing* when a branch has no upstream configured, so unpushed work reads as
+clean. On 2026-08-17 that mistake reported 10,162 local-only commits as "0
+unpushed" and nearly authorised a reap sweep across them. Use
+`git log HEAD --not --remotes`, and check `git remote` separately — a repo with
+**no remote at all** (e.g. `portfolio-single-source-of-truth`, 155 local
+branches, zero remotes) cannot be pushed anywhere, so its branch refs are the
+only copy that exists.
+
+What actually makes a reap safe is that **HEAD is reachable from a named local
+branch** — then killing the session and removing its worktree cannot orphan the
+commits, because they stay in the canonical repo's object store. It follows
+that *deleting the branch* is the dangerous operation, not reaping. Any worktree
+GC must leave `session/*` and research branches alone.
+
+Respawned sessions start on a fresh worktree cut from the default branch, **not**
+on the old session's branch. Say so in the kickoff: name the prior branch, the
+prior transcript path, and what the session was mid-way through, or the
+replacement re-derives it at full cost.
+
+## Detecting a hook-wedged session (different from bloat)
+
+A session can go silent for a reason that looks identical to the "send didn't
+land" failure mode but has a different mechanism and a different fix: a
+`UserPromptSubmit` or `PreToolUse` hook in the session's own
+`.claude/settings.json` throws (a subprocess spawn error, a missing script, an
+unhandled exception) and has **no fail-open guard**. Because
+`UserPromptSubmit` fires on *every* prompt, once it starts erroring, every
+future prompt — including plain retries like "try again" — is rejected before
+Claude ever sees it. No amount of resending fixes this from inside the
+session; resending IS the thing that keeps failing.
+
+**Symptom in `tmux capture-pane -p`:** repeated blocks shaped like
+
+```
+UserPromptSubmit operation blocked by hook:
+  [<command>]: error: Failed to spawn: `<script>`
+    Caused by: No such file or directory (os error 2)
+
+  Original prompt: <whatever was sent>
+```
+
+with no `✻`/`●` processing indicator after it — the agent process is alive and
+idle, but unreachable. This happened on 2026-08-17 to `ah-trs-fix-0816-2008`
+(ironically, a session tasked with hardening the very hook scripts that then
+wedged it): a `PreToolUse` hook spawn error blocked Bash/Read/Grep/Glob, the
+in-session `advisor()` call stalled 16 minutes and errored, and every prompt
+sent after that — from the user and from a live diagnostic retry — was
+rejected by the same broken `UserPromptSubmit` hook.
+
+**Diagnose:** `cat <rundir>/.claude/settings.json` and look at the failing
+hook's command. If it has no fail-open guard (compare to a sibling hook line
+in the same file that does, e.g. `[ -x <script> ] && <script> || exit 0`),
+a subprocess error there is a hard, permanent block — not a fluke worth
+retrying.
+
+**Recover:** same mechanics as the bloat recycle recipe above — a hook wedge
+is not a special case for reaping:
+
+```bash
+session-preserve <s> --rescue --wip        # runs from OUTSIDE the wedged session — unaffected by its hook
+systemctl --user disable --now <base>.service
+new-session <foldername> workspace --alias <same-alias>
+```
+
+Then hand off the wedged session's actual state in the kickoff (branch, task
+list, what was in progress) since its own transcript may be unrecoverable —
+`tmux capture-pane -S` is capped by the pane's history-limit and may not reach
+back to the original kickoff.
+
+**Prevention (tell whoever fixes the hook):** any script wired to
+`UserPromptSubmit` or `PreToolUse` must fail open — catch spawn/subprocess
+errors and `exit 0` rather than propagate — because a failure there doesn't
+just fail one tool call, it can permanently wedge the whole session.
+
 ## Sessions Agent Scope
 
 A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a **bounded scope**:
