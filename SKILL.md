@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.8.7"
+version: "1.8.8"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -120,6 +120,27 @@ Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessions.
 Each spawn gets a unique name — never collides with same-minute sessions.
 Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
+
+## Finding stale sessions: session-registry
+
+"Which sessions are older than N days" is a cheap, repeatable query — no manual
+tmux/log scan needed:
+
+```bash
+session-registry                     # every live ah_/agenthost_ session, oldest first
+session-registry --older-than 3d     # filter to sessions older than N days (or Nh)
+```
+
+Age is the session's **first-ever spawn**, read from the existing
+`~/.sessions/session-starts.log` (every `new-session` invocation already writes
+a `starting`/`started`/`already-running` line there — no new instrumentation
+needed, this is a read-only query layer, not a second source of truth). A
+restart keeps the same tmux session name but must not reset its age, so age is
+the *earliest* log line for that name, not the most recent one — tmux's own
+`#{session_created}` resets on every systemd restart and would under-report
+age for a bounced session, the dangerous direction for a reap decision.
+`#{session_created}` is used only as a fallback for a live session with zero
+log entries.
 
 ## Preserve before reaping (recycling a bloated session)
 
