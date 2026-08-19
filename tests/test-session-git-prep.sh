@@ -1,63 +1,105 @@
 #!/usr/bin/env bash
-# Plain-bash assertions for session-git-prep. No external test framework.
-# Covers the three core decision paths (non-git passthrough, clean+free ->
-# canonical on default branch, dirty -> isolated worktree). Deliberately does
-# not exercise the busy/owner-lock path — that requires a live tmux session
-# and is exercised manually / by the reap tests instead.
+# Regression coverage for session-git-prep.sh: which run directory it picks
+# (canonical vs. isolated worktree) and why. Previously untested despite
+# owning git checkout/merge/worktree/locking side effects.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PREP="$HERE/../scripts/session-git-prep.sh"
+SGP="$HERE/../scripts/session-git-prep.sh"
 pass=0; fail=0
-
-# CI runners have no global git identity configured — commits in mk_repo()
-# below need one regardless of the host's ~/.gitconfig.
-export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@test.invalid
-export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@test.invalid
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
+export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
+
+mkrepo() { git init --quiet -b main "$1"; git -C "$1" commit --quiet --allow-empty -m init; }
+
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+export HOME="$WORK/home"; mkdir -p "$HOME"
 
-# ── non-git dir: run in place (legacy behaviour) ────────────────────────────
-NONGIT="$WORK/plain-dir"; mkdir -p "$NONGIT"
-out="$(bash "$PREP" "$NONGIT" sess-nongit remote-nongit 2>/dev/null)"
-ok "non-git-passthrough" "$out" "$NONGIT"
+# 1. Not a git repo -> run in place, unchanged.
+PLAIN="$WORK/plain"; mkdir -p "$PLAIN"
+out="$(bash "$SGP" "$PLAIN" sess-1 remote-1 2>/dev/null)"
+ok "non-git-passthrough" "$out" "$PLAIN"
 
-mk_repo() { # $1 = path
-  git init -q -b main "$1"
-  echo hi > "$1/f.txt"
-  git -C "$1" add -A
-  git -C "$1" commit -q -m init
-}
+# 2. Clean + free canonical tree: lands on the default branch and claims the lock.
+R1="$WORK/repo1"; mkrepo "$R1"
+git -C "$R1" checkout --quiet -b other-branch
+out="$(bash "$SGP" "$R1" sess-clean remote-clean 2>/dev/null)"
+ok "clean-free-emits-repo" "$out" "$R1"
+ok "clean-free-checks-out-default" "$(git -C "$R1" rev-parse --abbrev-ref HEAD)" "main"
+LOCK_KEY1=$(printf '%s' "$R1" | tr '/ ' '__')
+ok "clean-free-claims-lock" "$(cat "$HOME/.claude/session-locks/${LOCK_KEY1}.owner" 2>/dev/null)" "sess-clean"
 
-# ── clean + free canonical tree: checked out on default branch, run in place ─
-REPO1="$WORK/repo-clean"; mk_repo "$REPO1"
-git -C "$REPO1" checkout -q -b feature-branch
-HOME1="$WORK/home-clean"; mkdir -p "$HOME1"
-out1="$(HOME="$HOME1" bash "$PREP" "$REPO1" sess-clean remote-clean 2>/dev/null)"
-ok "clean-free-runs-in-canonical" "$out1" "$REPO1"
-ok "clean-free-checks-out-default" "$(git -C "$REPO1" rev-parse --abbrev-ref HEAD)" "main"
-ok "clean-free-claims-owner-lock" "$([ -f "$HOME1/.claude/session-locks/"*".owner" ] && echo yes || echo no)" "yes"
+# 3. Dirty canonical tree: isolated into a fresh worktree; canonical is untouched.
+R2="$WORK/repo2"; mkrepo "$R2"
+echo "uncommitted" > "$R2/dirty.txt"
+out="$(bash "$SGP" "$R2" sess-dirty remote-dirty 2>/dev/null)"
+ok "dirty-isolated-path" "$out" "$HOME/.claude/worktrees/remote-dirty"
+ok "dirty-worktree-branch" "$(git -C "$out" rev-parse --abbrev-ref HEAD 2>/dev/null)" "session/remote-dirty"
+ok "dirty-canonical-untouched" "$([ -f "$R2/dirty.txt" ] && echo yes || echo no)" "yes"
+ok "dirty-canonical-branch-unchanged" "$(git -C "$R2" rev-parse --abbrev-ref HEAD)" "main"
+LOCK_KEY2=$(printf '%s' "$R2" | tr '/ ' '__')
+ok "dirty-canonical-not-locked" "$([ -f "$HOME/.claude/session-locks/${LOCK_KEY2}.owner" ] && echo yes || echo no)" "no"
 
-# ── dirty canonical tree: isolated into a fresh worktree, canonical untouched ─
-REPO2="$WORK/repo-dirty"; mk_repo "$REPO2"
-echo "uncommitted change" >> "$REPO2/f.txt"
-HOME2="$WORK/home-dirty"; mkdir -p "$HOME2"
-out2="$(HOME="$HOME2" bash "$PREP" "$REPO2" sess-dirty remote-dirty 2>/dev/null)"
-ok "dirty-uses-worktree-path" "$out2" "$HOME2/.claude/worktrees/remote-dirty"
-ok "dirty-worktree-exists" "$([ -d "$out2" ] && echo yes || echo no)" "yes"
-ok "dirty-worktree-on-session-branch" "$(git -C "$out2" rev-parse --abbrev-ref HEAD 2>/dev/null)" "session/remote-dirty"
-ok "dirty-canonical-still-dirty" "$(git -C "$REPO2" status --porcelain | grep -qF 'f.txt' && echo yes || echo no)" "yes"
-ok "dirty-canonical-not-locked" "$([ -f "$HOME2/.claude/session-locks/"*".owner" ] && echo yes || echo no)" "no"
+# 4. Changes confined to .claude/ and .sessions-init-* sentinels must NOT count as
+# dirty (the spawn skill's own housekeeping) — regression for the exclusion filter.
+R3="$WORK/repo3"; mkrepo "$R3"
+mkdir -p "$R3/.claude"
+echo x > "$R3/.claude/skills"
+touch "$R3/.sessions-init-remote-housekeeping"
+out="$(bash "$SGP" "$R3" sess-housekeeping remote-housekeeping 2>/dev/null)"
+ok "housekeeping-not-dirty" "$out" "$R3"
 
-# ── housekeeping-only dirt (skills symlink / bootstrap edits / sentinels) does
-# NOT count as dirty — only the skill's own artifacts are ignored, so a real
-# repo that only has these must still be treated as clean+free.
-REPO3="$WORK/repo-housekeeping"; mk_repo "$REPO3"
-mkdir -p "$REPO3/.claude"; ln -sf /nonexistent "$REPO3/.claude/skills"
-touch "$REPO3/.sessions-init-remote-hk"
-HOME3="$WORK/home-hk"; mkdir -p "$HOME3"
-out3="$(HOME="$HOME3" bash "$PREP" "$REPO3" sess-hk remote-hk 2>/dev/null)"
-ok "housekeeping-only-still-canonical" "$out3" "$REPO3"
+# 5. Busy (lock held by a LIVE tmux session) forces a worktree even on a clean tree.
+if command -v tmux >/dev/null 2>&1; then
+  R4="$WORK/repo4"; mkrepo "$R4"
+  OWNER="sgp-test-owner-$$"
+  tmux new-session -d -s "$OWNER" 2>/dev/null
+  LOCK_KEY4=$(printf '%s' "$R4" | tr '/ ' '__')
+  mkdir -p "$HOME/.claude/session-locks"
+  printf '%s' "$OWNER" > "$HOME/.claude/session-locks/${LOCK_KEY4}.owner"
+  out="$(bash "$SGP" "$R4" sess-busy remote-busy 2>/dev/null)"
+  tmux kill-session -t "$OWNER" 2>/dev/null || true
+  ok "busy-lock-forces-worktree" "$out" "$HOME/.claude/worktrees/remote-busy"
+  ok "busy-canonical-branch-unchanged" "$(git -C "$R4" rev-parse --abbrev-ref HEAD)" "main"
+fi
 
-echo "session-git-prep: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+# 6. A stale lock (owner tmux session no longer alive) is treated as free: canonical
+# is claimed and the lock file is overwritten with the new owner.
+R5="$WORK/repo5"; mkrepo "$R5"
+git -C "$R5" checkout --quiet -b other-branch
+LOCK_KEY5=$(printf '%s' "$R5" | tr '/ ' '__')
+mkdir -p "$HOME/.claude/session-locks"
+printf '%s' "sgp-test-owner-does-not-exist-$$" > "$HOME/.claude/session-locks/${LOCK_KEY5}.owner"
+out="$(bash "$SGP" "$R5" sess-stale remote-stale 2>/dev/null)"
+ok "stale-lock-treated-as-free" "$out" "$R5"
+ok "stale-lock-checks-out-default" "$(git -C "$R5" rev-parse --abbrev-ref HEAD)" "main"
+ok "stale-lock-overwritten" "$(cat "$HOME/.claude/session-locks/${LOCK_KEY5}.owner")" "sess-stale"
+
+# 7. A worktree is branched from the DEFAULT branch's tip, not whatever happens to
+# be checked out — a file only on main must be present, despite the dirty checkout
+# sitting on a feature branch that deleted it.
+R6="$WORK/repo6"; mkrepo "$R6"
+echo "on-main" > "$R6/marker.txt"; git -C "$R6" add marker.txt; git -C "$R6" commit --quiet -m "add marker"
+git -C "$R6" checkout --quiet -b feature-branch
+git -C "$R6" rm --quiet marker.txt; git -C "$R6" commit --quiet -m "remove marker on feature"
+echo "still-dirty" > "$R6/other.txt"
+out="$(bash "$SGP" "$R6" sess-base remote-base 2>/dev/null)"
+ok "worktree-based-on-default-not-current" "$([ -f "$out/marker.txt" ] && echo yes || echo no)" "yes"
+
+# 8. With an 'origin' remote, the canonical tree ff-merges the latest origin/<default>
+# instead of just checking out whatever the local branch already had.
+SRC="$WORK/src"; mkrepo "$SRC"
+ORIGIN_BARE="$WORK/origin.git"
+git clone --quiet --bare "$SRC" "$ORIGIN_BARE" 2>/dev/null
+R7="$WORK/repo7"
+git clone --quiet "$ORIGIN_BARE" "$R7" 2>/dev/null
+echo "sync-marker" > "$SRC/sync.txt"
+git -C "$SRC" add sync.txt
+git -C "$SRC" commit --quiet -m "add sync marker"
+git -C "$SRC" push --quiet "$ORIGIN_BARE" main:main
+out="$(bash "$SGP" "$R7" sess-sync remote-sync 2>/dev/null)"
+ok "origin-emits-repo" "$out" "$R7"
+ok "origin-ff-merge-pulls-latest" "$([ -f "$R7/sync.txt" ] && echo yes || echo no)" "yes"
+
+echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
