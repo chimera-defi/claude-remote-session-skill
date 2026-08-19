@@ -102,6 +102,8 @@ A standalone script handles the full recipe. Use it directly:
 new-session <foldername>              # auto-detects workspace/ vs .sessions/
 new-session <foldername> workspace    # force workspace/
 new-session <foldername> sessions     # force .sessions/
+new-session <foldername> --alias x    # explicit short alias (persisted)
+new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session --help                    # print usage and exit (no session spawned)
 ```
 
