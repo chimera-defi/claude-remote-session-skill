@@ -118,6 +118,17 @@ ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
 
+# 5-digit numeric-run false positives (chain ids, zip codes, and ephemeral
+# ports (49152-65535) are all commonly 5 digits and must not collide onto the
+# same alias, same bug class as the 4-digit cases above — already covered by
+# the has_mmdd_group() gate below, not by a digit-count floor).
+FP3c="$(mktemp -u)"
+ok "not-longnum-chainid-5digit" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" chain-84532)" "chain-84532"
+ok "not-longnum-zip"            "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" client-90210)" "client-90210"
+ok "not-longnum-ephemeral-port" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" port-49152)" "port-49152"
+# Distinct 5-digit-suffixed folders must alias distinctly, not collide.
+ok "not-longnum-chainid-distinct" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" chain-42161)" "chain-42161"
+
 # Long-numeric-run false positives (found live: the un-gated `-[0-9]{5,}` check
 # treated ANY trailing run of 5+ digits as timestamp/random-suffix evidence,
 # not just one paired with a real date — e.g. port-12345/port-54321 both
