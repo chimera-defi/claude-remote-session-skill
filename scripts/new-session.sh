@@ -29,6 +29,9 @@ Options:
   -h, --help          Print this help and exit.
   -a, --alias <x>     Short alias for the session name (persisted per folder).
   --dry-run           Print the resolved names and exit without spawning.
+  --force             Spawn even when the preflight capacity gate refuses
+                      (low RAM). Warnings are always advisory; only an
+                      out-of-memory host blocks, and this overrides it.
 
 Environment:
   CLAUDE_SESSION_MODEL=<model>  Model for the session (default: sonnet). A bare
@@ -48,11 +51,12 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias) ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
     --dry-run)  DRYRUN=yes; shift ;;
+    --force)    FORCE=yes; shift ;;
     # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
     # positional (after the folder). Matching them as the first positional would
     # make a folder literally named `sessions`/`workspace`/`auto` unspawnable
@@ -61,6 +65,36 @@ while [ $# -gt 0 ]; do
   esac
 done
 : "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
+
+# ── Preflight capacity gate ──────────────────────────────────────────────────
+# Sessions are long-lived and nothing reaps them automatically, so spawns
+# accumulate until the box runs out of RAM and every session degrades together
+# (observed 2026-08-16: 33 live sessions, 1.4G free of 64G, 18.5G in swap, load
+# 8+ on 12 cores — turns taking 10-12min, `uv run` hanging with no output).
+# A wedged fleet looks like a Claude bug but is really host exhaustion, so
+# refuse to make it worse. Advisory by default; only a genuinely unsafe box
+# hard-blocks, and --force always overrides.
+preflight_capacity() {
+  local avail_mb load1 cpus sess hard=no
+  avail_mb=$(awk '/^MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 99999)
+  load1=$(awk '{printf "%.0f", $1}' /proc/loadavg 2>/dev/null || echo 0)
+  cpus=$(nproc 2>/dev/null || echo 1)
+  sess=$(tmux ls -F '#{session_name}' 2>/dev/null | grep -cE '^(ah_|agenthost_)' || true)
+  : "${sess:=0}"
+
+  [ "$avail_mb" -lt "${NEW_SESSION_MIN_AVAIL_MB:-4096}" ] && { echo "warn: only ${avail_mb}MB RAM available — a new session needs ~400-600MB and will push the box into swap" >&2; hard=yes; }
+  [ "$load1" -gt $(( cpus * 2 )) ] && echo "warn: load ${load1} on ${cpus} cpus — existing sessions are already CPU-starved" >&2
+  [ "$sess" -ge 25 ] && echo "warn: ${sess} agenthost sessions already live — run 'session-doctor idle-report' and reap before adding more" >&2
+
+  if [ "$hard" = yes ] && [ "$FORCE" != yes ]; then
+    echo "" >&2
+    echo "REFUSING to spawn: host is out of memory (${avail_mb}MB available)." >&2
+    echo "  Free capacity first (reap idle sessions / stop a node), or re-run with --force." >&2
+    return 1
+  fi
+  return 0
+}
+preflight_capacity || exit 1
 
 # ── Model selection ─────────────────────────────────────────────────────────
 # Override per-spawn with CLAUDE_SESSION_MODEL (e.g. for orchestrators).
