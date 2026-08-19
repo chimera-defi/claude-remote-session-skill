@@ -14,9 +14,10 @@ DOC="$HERE/../references/fallback-recipe.md"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
-# Pull just the _fr_poisoned() function body out of the fenced bash block.
-FUNC="$(sed -n '/^_fr_poisoned() {$/,/^}$/p' "$DOC")"
-[ -n "$FUNC" ] || { echo "FAIL: could not locate _fr_poisoned() in $DOC"; exit 1; }
+# Pull the _fr_has_mmdd_group() and _fr_poisoned() function bodies out of the
+# fenced bash block (_fr_poisoned calls _fr_has_mmdd_group, so both are needed).
+FUNC="$(sed -n '/^_fr_has_mmdd_group() {$/,/^}$/p; /^_fr_poisoned() {$/,/^}$/p' "$DOC")"
+[ -n "$FUNC" ] || { echo "FAIL: could not locate _fr_poisoned()/_fr_has_mmdd_group() in $DOC"; exit 1; }
 eval "$FUNC"
 
 poisoned(){ _fr_poisoned "$1" && echo POISONED || echo clean; }
@@ -37,6 +38,18 @@ ok "not-mmdd-port"           "$(poisoned port-8080)"          "clean"
 ok "not-mmdd-bad-day"        "$(poisoned client-1042)"        "clean"
 ok "not-mmdd-hhmm-year-range" "$(poisoned sprint-2024-2025)"  "clean"
 ok "not-mmdd-hhmm-port-pair"  "$(poisoned port-8080-9090)"    "clean"
+
+# Long-numeric-run false positives (same bug class, un-gated -[0-9]{5,} check —
+# a single trailing 5+-digit group with no accompanying real MMDD field is a
+# legitimate identifier, not a poisoned timestamp/random suffix. Mirrors
+# test-session-alias.sh's "not-longrun-*" cases).
+ok "not-longrun-port"    "$(poisoned port-12345)"    "clean"
+ok "not-longrun-port-2"  "$(poisoned port-54321)"     "clean"
+ok "not-longrun-client"  "$(poisoned client-99999)"   "clean"
+ok "not-longrun-invoice" "$(poisoned invoice-123456)" "clean"
+# A long numeric run PAIRED with a real MMDD date fragment elsewhere in the
+# string is still caught.
+ok "real-longrun-still-caught" "$(poisoned release-0715-123456)" "POISONED"
 
 # An invalid digit pair BEFORE a real embedded timestamp must not let the real
 # pair slide through: "project-2024-2025-0715-2359" contains TWO
