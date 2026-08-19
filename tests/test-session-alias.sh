@@ -184,6 +184,22 @@ ok "audit-finds-drift-2" "$(printf '%s' "$audit_out" | grep -c "folder='sprint-2
 ok "audit-no-drift-for-legit" "$(printf '%s' "$audit_out" | grep -c "folder='crss'")" "0"
 ok "audit-does-not-mutate" "$(cat "$AS")" "$(printf 'sprint-2024\tsprint\nsprint-2025\tsprint\ncrss\tcrss')"
 
+# FOLDER-KEY guard: a folder name containing a literal tab/newline must never
+# be persisted as a store key — it would split into extra TSV fields/lines
+# and corrupt the store for every entry sharing the file (found via targeted
+# fuzzing of store_upsert's untrusted $1, not from a live incident).
+TK="$(mktemp -u)"
+tabfolder=$'weird\tfolder'
+out_tab="$(SESSION_ALIAS_STORE="$TK" bash "$ALIAS" "$tabfolder" 2>/dev/null)"
+ok "tabkey-resolves"     "$([ -n "$out_tab" ] && echo yes || echo no)" "yes"
+ok "tabkey-not-persisted" "$([ -f "$TK" ] && echo exists || echo absent)" "absent"
+
+NK="$(mktemp -u)"
+nlfolder=$'weird\nfolder'
+out_nl="$(SESSION_ALIAS_STORE="$NK" bash "$ALIAS" "$nlfolder" 2>/dev/null)"
+ok "newlinekey-resolves"     "$([ -n "$out_nl" ] && echo yes || echo no)" "yes"
+ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "absent"
+
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do

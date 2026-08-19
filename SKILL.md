@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.8.6"
+version: "1.8.7"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -66,7 +66,10 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   Inference strips session-name decoration to a **fixed point** (not just once), so a folder
   name that is poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the very doubled
   name a prior poisoning incident produces — still yields a fully clean alias instead of a
-  partially stripped one that keeps re-doubling.
+  partially stripped one that keeps re-doubling. `store_upsert` also refuses to persist a
+  folder **key** containing a literal tab/newline (a directory basename never legitimately
+  needs either) — such a value would split into extra fields/lines in the tab-separated
+  store and corrupt lookups for every entry sharing the file.
 
 ## Key Rules
 
