@@ -95,6 +95,20 @@ ok "not-mmdd-bad-day"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" client-1042
 # But a genuine MMDD-shaped trailing date (real production fixture) still poisons.
 ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" tranche1-ready-0728)" "tranche1-ready"
 
+# Single-long-numeric-run false positives (found in review: a lone trailing
+# 5+-digit group was treated as a poisoned timestamp/random suffix regardless
+# of context, colliding distinct folders onto the same alias exactly like the
+# MMDD false positives above — e.g. issue-12345/issue-67890 both -> "issue").
+# A long numeric run only poisons when it's part of a 2+-group numeric tail
+# (the real legacy shape: name-MMDD-HHMMSS-RANDOM).
+FP3="$(mktemp -u)"
+ok "not-longrun-issue-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" issue-12345)" "issue-12345"
+ok "not-longrun-ticket-id" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" ticket-99999)" "ticket-99999"
+ok "not-longrun-build-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" build-100000)" "build-100000"
+# A genuine multi-group timestamp+random tail (real production fixture, no
+# ah- prefix so it relies solely on the long-numeric-run check) still poisons.
+ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" discovery-0718-153051-4107171)" "discovery"
+
 # Two-group false positives (found in review: the [0-9]{4}-[0-9]{4} fast path
 # accepted ANY two adjacent 4-digit runs as an MMDD-HHMM timestamp, not just a
 # real date+time — e.g. sprint-2024-2025 / port-8080-9090 both still collided).
@@ -103,6 +117,37 @@ ok "not-mmdd-hhmm-year-range" "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" sprint
 ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8080-9090)" "port-8080-9090"
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
+
+# Long-numeric-run false positives (found live: the un-gated `-[0-9]{5,}` check
+# treated ANY trailing run of 5+ digits as timestamp/random-suffix evidence,
+# not just one paired with a real date — e.g. port-12345/port-54321 both
+# collided onto "port", same bug class as the sprint-2024/sprint-2025 fix
+# above but for 5+ digit runs instead of 4).
+FP3b="$(mktemp -u)"
+ok "not-longrun-port"    "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-12345)" "port-12345"
+ok "not-longrun-port-2"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-54321)" "port-54321"
+ok "not-longrun-client"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" client-99999)" "client-99999"
+ok "not-longrun-invoice" "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" invoice-123456)" "invoice-123456"
+# A long numeric run PAIRED with a real MMDD date fragment elsewhere in the
+# string is still caught (the legacy shape this check exists to catch, e.g.
+# discovery-0718-153051-4107171 above).
+ok "real-longrun-still-caught-2" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" release-0715-123456)" "release"
+
+# Found in review (chatgpt-codex-connector, PR #22): an invalid digit pair
+# BEFORE a real embedded timestamp must not let the real pair slide through.
+# `[0-9]{4}-[0-9]{4}` matches non-overlapping left-to-right, so a stored value
+# like "project-2024-2025-0715-2359" yields TWO pairs: "2024-2025" (fails date
+# validation) and "0715-2359" (a real MMDD-HHMM). Only checking the first match
+# (`head -1`, the pre-fix behavior) stops at the invalid pair and never
+# inspects the genuinely poisoned one that follows, so the whole value reads
+# as "clean" and gets embedded verbatim into the next generated session name.
+# Every matched pair must be checked; catching this needs the READ-PATH guard
+# (a poisoned stored value discarded + self-healed on lookup), not desessionify.
+PZ2="$(mktemp)"
+printf 'multipair-proj\tproject-2024-2025-0715-2359\n' > "$PZ2"
+r4="$(SESSION_ALIAS_STORE="$PZ2" bash "$ALIAS" multipair-proj)"
+ok "readguard-multipair-caught" "$r4" "multipair-proj"
+ok "readguard-multipair-clean"  "$(notsess "$r4")" "clean"
 
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).

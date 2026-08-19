@@ -29,6 +29,21 @@ PROTECT='claude-remote|openclaw|hermes'
 MODE="${1:-report}"; shift || true
 DAYS=30; FORCE=no
 while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=yes; shift;; *) shift;; esac; done
+# DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
+# mode) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated non-numeric value
+# (typo, empty string) is therefore live Python, not data — it throws an uncaught
+# NameError/SyntaxError there instead of a clean usage error. Validate here so a
+# bad --days fails fast with a readable message.
+case "$DAYS" in
+  ''|*[!0-9]*) echo "session-doctor: --days requires a non-negative integer, got '$DAYS'" >&2; exit 2 ;;
+esac
+# A digit-only value can still break the embedded-as-a-literal splice: Python 3
+# rejects a leading-zero integer literal (e.g. `08`) as a SyntaxError ("leading
+# zeros ... not permitted"), so `--days 08` would pass the digits-only check
+# above yet still crash inside the Python snippet. Canonicalize to base-10 (same
+# `10#` pattern session-alias.sh uses for the same class of problem) so the
+# spliced value is always a plain, leading-zero-free literal.
+DAYS=$((10#$DAYS))
 
 registry_json() {
   local tok org
@@ -113,13 +128,18 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       do_reap "$s" "${base}.service" "${base}-start.sh"
       reaped=$((reaped+1))
     done
-    # 2. orphaned systemd units (no live tmux, service not active).
+    # 2. orphaned systemd units (no live tmux for them). These units are
+    # Type=oneshot/RemainAfterExit=yes (see new-session.sh) — once ExecStart
+    # finishes, systemd holds them "active (exited)" indefinitely regardless
+    # of what later happens to the tmux session they spawned, so an is-active
+    # check here would almost never be false and would skip real orphans
+    # (the exact case this loop exists to reap). Same liveness definition as
+    # `report`'s ORPHAN listing above: no live tmux match.
     for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
       echo "$u" | grep -qiE "$PROTECT" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" && continue
-      systemctl --user is-active --quiet "$u" && continue   # still active → keep
-      echo "ORPHAN unit (no tmux, inactive): $u"
+      echo "ORPHAN unit (no tmux): $u"
       do_reap "" "$u" "${base}-start.sh"
       reaped=$((reaped+1))
     done
