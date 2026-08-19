@@ -123,15 +123,31 @@ ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$AL
 # not just one paired with a real date — e.g. port-12345/port-54321 both
 # collided onto "port", same bug class as the sprint-2024/sprint-2025 fix
 # above but for 5+ digit runs instead of 4).
-FP3="$(mktemp -u)"
-ok "not-longrun-port"    "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" port-12345)" "port-12345"
-ok "not-longrun-port-2"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" port-54321)" "port-54321"
-ok "not-longrun-client"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" client-99999)" "client-99999"
-ok "not-longrun-invoice" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" invoice-123456)" "invoice-123456"
+FP3b="$(mktemp -u)"
+ok "not-longrun-port"    "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-12345)" "port-12345"
+ok "not-longrun-port-2"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-54321)" "port-54321"
+ok "not-longrun-client"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" client-99999)" "client-99999"
+ok "not-longrun-invoice" "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" invoice-123456)" "invoice-123456"
 # A long numeric run PAIRED with a real MMDD date fragment elsewhere in the
 # string is still caught (the legacy shape this check exists to catch, e.g.
 # discovery-0718-153051-4107171 above).
-ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" release-0715-123456)" "release"
+ok "real-longrun-still-caught-2" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" release-0715-123456)" "release"
+
+# Found in review (chatgpt-codex-connector, PR #22): an invalid digit pair
+# BEFORE a real embedded timestamp must not let the real pair slide through.
+# `[0-9]{4}-[0-9]{4}` matches non-overlapping left-to-right, so a stored value
+# like "project-2024-2025-0715-2359" yields TWO pairs: "2024-2025" (fails date
+# validation) and "0715-2359" (a real MMDD-HHMM). Only checking the first match
+# (`head -1`, the pre-fix behavior) stops at the invalid pair and never
+# inspects the genuinely poisoned one that follows, so the whole value reads
+# as "clean" and gets embedded verbatim into the next generated session name.
+# Every matched pair must be checked; catching this needs the READ-PATH guard
+# (a poisoned stored value discarded + self-healed on lookup), not desessionify.
+PZ2="$(mktemp)"
+printf 'multipair-proj\tproject-2024-2025-0715-2359\n' > "$PZ2"
+r4="$(SESSION_ALIAS_STORE="$PZ2" bash "$ALIAS" multipair-proj)"
+ok "readguard-multipair-caught" "$r4" "multipair-proj"
+ok "readguard-multipair-clean"  "$(notsess "$r4")" "clean"
 
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
