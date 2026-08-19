@@ -160,6 +160,17 @@ r4="$(SESSION_ALIAS_STORE="$PZ2" bash "$ALIAS" multipair-proj)"
 ok "readguard-multipair-caught" "$r4" "multipair-proj"
 ok "readguard-multipair-clean"  "$(notsess "$r4")" "clean"
 
+# Multi-candidate scan (found via review: `head -1` on the first matched pair
+# let a real MMDD-HHMM slip through when an invalid-as-date pair, like a year
+# range, appeared earlier in the string and the scan stopped there instead of
+# examining every candidate). Different fixture than the multipair-proj case
+# above (three digit-pairs instead of two), extra coverage for the same fix.
+MP="$(mktemp)"
+printf 'somefolder\trelease-2024-2025-x-0715-0630-copy\n' > "$MP"
+mp_out="$(SESSION_ALIAS_STORE="$MP" bash "$ALIAS" somefolder)"
+ok "multi-pair-readguard-clean" "$(notsess "$mp_out")" "clean"
+ok "multi-pair-readguard-selfheal" "$(awk -F'\t' '$1=="somefolder"{print $2}' "$MP")" "$mp_out"
+
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
 # Must NOT mutate the store — a human decides what to do with drift.
