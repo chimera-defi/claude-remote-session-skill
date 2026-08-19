@@ -55,9 +55,10 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   is only treated as poisoned when the digits validate as a real calendar date/time (month
   01-12, day 01-31, hour 00-23, minute 00-59); a long run of 5+ digits is only treated as
   poisoned when some other field in the string is itself a valid calendar `MMDD` — an
-  arbitrary digit run (a year, port, chain id, invoice/ticket id, a second unrelated number,
-  ...) is left alone, so folders like `sprint-2024`/`sprint-2025`, `port-8080-9090`, or
-  `port-12345`/`port-54321` keep distinct aliases instead of collapsing onto one.
+  arbitrary digit run (a year, port, chain id, invoice/ticket/issue/build id, a second unrelated
+  number, ...) is left alone, so folders like `sprint-2024`/`sprint-2025`, `port-8080-9090`,
+  `port-12345`/`port-54321`, or `issue-12345`/`issue-67890` keep distinct aliases instead of
+  collapsing onto one.
   `session-alias --audit-store` read-only-scans the whole store and reports
   entries where fresh inference now disagrees with what's stored (e.g. a pre-fix collision) —
   it never rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.

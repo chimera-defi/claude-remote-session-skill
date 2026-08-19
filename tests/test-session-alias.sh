@@ -95,6 +95,20 @@ ok "not-mmdd-bad-day"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" client-1042
 # But a genuine MMDD-shaped trailing date (real production fixture) still poisons.
 ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" tranche1-ready-0728)" "tranche1-ready"
 
+# Single-long-numeric-run false positives (found in review: a lone trailing
+# 5+-digit group was treated as a poisoned timestamp/random suffix regardless
+# of context, colliding distinct folders onto the same alias exactly like the
+# MMDD false positives above — e.g. issue-12345/issue-67890 both -> "issue").
+# A long numeric run only poisons when it's part of a 2+-group numeric tail
+# (the real legacy shape: name-MMDD-HHMMSS-RANDOM).
+FP3="$(mktemp -u)"
+ok "not-longrun-issue-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" issue-12345)" "issue-12345"
+ok "not-longrun-ticket-id" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" ticket-99999)" "ticket-99999"
+ok "not-longrun-build-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" build-100000)" "build-100000"
+# A genuine multi-group timestamp+random tail (real production fixture, no
+# ah- prefix so it relies solely on the long-numeric-run check) still poisons.
+ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" discovery-0718-153051-4107171)" "discovery"
+
 # Two-group false positives (found in review: the [0-9]{4}-[0-9]{4} fast path
 # accepted ANY two adjacent 4-digit runs as an MMDD-HHMM timestamp, not just a
 # real date+time — e.g. sprint-2024-2025 / port-8080-9090 both still collided).
