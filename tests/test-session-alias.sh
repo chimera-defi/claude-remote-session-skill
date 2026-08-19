@@ -118,6 +118,21 @@ ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8
 # A genuine MMDD-HHMM pair (real date + real time) is still caught.
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
 
+# Long-numeric-run false positives (found live: the un-gated `-[0-9]{5,}` check
+# treated ANY trailing run of 5+ digits as timestamp/random-suffix evidence,
+# not just one paired with a real date — e.g. port-12345/port-54321 both
+# collided onto "port", same bug class as the sprint-2024/sprint-2025 fix
+# above but for 5+ digit runs instead of 4).
+FP3="$(mktemp -u)"
+ok "not-longrun-port"    "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" port-12345)" "port-12345"
+ok "not-longrun-port-2"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" port-54321)" "port-54321"
+ok "not-longrun-client"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" client-99999)" "client-99999"
+ok "not-longrun-invoice" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" invoice-123456)" "invoice-123456"
+# A long numeric run PAIRED with a real MMDD date fragment elsewhere in the
+# string is still caught (the legacy shape this check exists to catch, e.g.
+# discovery-0718-153051-4107171 above).
+ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" release-0715-123456)" "release"
+
 # --audit-store: read-only report of stored entries where fresh inference now
 # disagrees with what's stored (e.g. collapsed by the pre-fix inference bug).
 # Must NOT mutate the store — a human decides what to do with drift.
