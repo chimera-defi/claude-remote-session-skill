@@ -79,5 +79,8 @@ Guidance weights these per domain (a survey leans on #3; an execution task leads
 
 ## Out of scope (separate follow-up)
 
-`registry-reap` / `worktree-prune` (session-doctor maintenance for the nightly) — different
-domain, its own PR.
+`registry-reap` (session-doctor maintenance for the nightly) — different domain, its own PR.
+
+`worktree-prune`: implemented as `session-doctor.sh worktree-stale` (nightly-review-2026-08-15)
+— report-only, mirroring `registry-stale`'s never-auto-delete pattern, since a dead session's
+worktree may hold unpushed work.
