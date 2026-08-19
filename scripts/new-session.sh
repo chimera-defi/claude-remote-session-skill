@@ -308,9 +308,29 @@ UNIT_EOF
 systemctl --user daemon-reload && systemctl --user enable --now "$(basename $SERVICE)"
 
 # ── Telemetry (best-effort, never fails the spawn) ──────────────────────────
+# Prefer the directory the session actually launched in over WORKDIR:
+# session-git-prep redirects into a fresh worktree whenever the canonical tree
+# is dirty or already owned, and the bootstrap CLAUDE.md fragment (line ~197
+# above) is appended there — not in WORKDIR — so WORKDIR's CLAUDE.md would be
+# stale/wrong for worktree spawns. `systemctl --user enable --now` above
+# blocks until ExecStart (the generated script) completes, and that script
+# logs "session=$SESSION rundir=..." before returning, so the line is already
+# there to read back. Falls back to WORKDIR if the log line isn't found.
+TELEMETRY_DIR="$WORKDIR"
+SPAWN_LOG="$HOME/.sessions/session-starts.log"
+if [ -f "$SPAWN_LOG" ]; then
+  LOGLINE="$(grep "session=${SESSION} rundir=" "$SPAWN_LOG" | tail -1)"
+  # Bash's ${#*pat} removes the SHORTEST match from the front — unlike a
+  # greedy sed s/.*rundir=//, which would strip up through the LAST
+  # occurrence of "rundir=" in the line. A run directory whose path itself
+  # contains the literal substring "rundir=" (e.g. .../repo-rundir=trial)
+  # would otherwise get truncated to whatever follows its own last match.
+  RD="${LOGLINE#*session=${SESSION} rundir=}"
+  [ -n "$RD" ] && TELEMETRY_DIR="$RD"
+fi
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" || true
+  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" || true
 fi
 
 # ── Confirm ──────────────────────────────────────────────────────────────────
