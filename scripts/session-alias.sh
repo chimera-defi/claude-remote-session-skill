@@ -111,6 +111,17 @@ store_upsert() { # $1 folder $2 alias — atomic; refuses to persist a poisoned 
     echo "session-alias: refusing to store session-name-shaped alias '$2' for '$1'" >&2
     return 0
   fi
+  # A folder KEY containing a literal tab/newline would corrupt the TSV store
+  # itself (extra fields, or extra physical "lines" from one entry — awk/read
+  # are line-oriented, so a newline mid-value splits one record into several
+  # garbage ones). A directory basename never legitimately needs either
+  # character, so refuse to persist rather than corrupt the file for every
+  # entry that shares it.
+  case "$1" in
+    *$'\t'*|*$'\n'*)
+      echo "session-alias: refusing to store folder key containing tab/newline (alias '$2')" >&2
+      return 0 ;;
+  esac
   mkdir -p "$(dirname "$STORE")"
   exec 9>"${STORE}.lock"; flock 9
   local tmp; tmp="$(mktemp "${STORE}.XXXXXX")"
