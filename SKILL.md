@@ -47,15 +47,18 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   shortens and is reapable like any other.
 - **Alias values are validated (anti-poisoning).** An alias that itself looks like a full
   session name — an `ah-` prefix, an `MMDD-HHMM` timestamp, a trailing `-MMDD` date, or a
-  long numeric run — is rejected and a clean alias re-inferred. This is enforced on **read**
-  (a poisoned stored value is discarded and self-healed), on **write** (`--alias`), and as a
-  `store_upsert` backstop, so a bad entry from an errant `--alias`, an external writer, or
-  legacy data can never produce doubled `ah-ah-…-MMDD-MMDD` session names. A trailing 4-digit
-  group (or an `MMDD-HHMM`-shaped pair) is only treated as poisoned when the digits validate as
-  a real calendar date/time (month 01-12, day 01-31, hour 00-23, minute 00-59) — an arbitrary
-  digit run (a year, port, chain id, a second unrelated number, ...) is left alone, so folders
-  like `sprint-2024`/`sprint-2025` or `port-8080-9090` keep distinct aliases instead of
-  collapsing onto one. `session-alias --audit-store` read-only-scans the whole store and reports
+  long numeric run paired with a real date fragment — is rejected and a clean alias
+  re-inferred. This is enforced on **read** (a poisoned stored value is discarded and
+  self-healed), on **write** (`--alias`), and as a `store_upsert` backstop, so a bad entry
+  from an errant `--alias`, an external writer, or legacy data can never produce doubled
+  `ah-ah-…-MMDD-MMDD` session names. A trailing 4-digit group (or an `MMDD-HHMM`-shaped pair)
+  is only treated as poisoned when the digits validate as a real calendar date/time (month
+  01-12, day 01-31, hour 00-23, minute 00-59); a long run of 5+ digits is only treated as
+  poisoned when some other field in the string is itself a valid calendar `MMDD` — an
+  arbitrary digit run (a year, port, chain id, invoice/ticket id, a second unrelated number,
+  ...) is left alone, so folders like `sprint-2024`/`sprint-2025`, `port-8080-9090`, or
+  `port-12345`/`port-54321` keep distinct aliases instead of collapsing onto one.
+  `session-alias --audit-store` read-only-scans the whole store and reports
   entries where fresh inference now disagrees with what's stored (e.g. a pre-fix collision) —
   it never rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
   Inference strips session-name decoration to a **fixed point** (not just once), so a folder
