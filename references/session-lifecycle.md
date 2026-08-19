@@ -1,6 +1,6 @@
 # Session lifecycle, reaping & expiry
 
-Remote-control sessions exist in **three independent layers**. Cleaning one does not
+Remote-control sessions exist in **four independent layers**. Cleaning one does not
 clean the others — this is the #1 source of "I reaped everything but the session
 count is still high" confusion.
 
@@ -9,6 +9,7 @@ count is still high" confusion.
 | **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
 | **systemd --user unit** | `~/.config/systemd/user/agenthost-*.service` / `ah-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
 | **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | manual `DELETE` (see below) |
+| **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos — see `session-git-prep`) | `git worktree remove` (never expires on its own) | manual removal (see below) |
 
 Sessions created before the 2026-07-15 naming change use the `agenthost-`/`agenthost_`
 prefix; sessions created after use the shorter `ah-`/`ah_` prefix. `session-doctor`
@@ -22,6 +23,9 @@ identically.
 
 Reaping local tmux/systemd does **not** remove registry entries, so it does little for
 any per-org session-count pressure. Registry hygiene is a separate, deliberate step.
+Similarly, reaping local tmux/systemd does **not** remove worktrees — a session that
+ran in an isolated worktree (because its canonical repo was dirty or already owned;
+see `session-git-prep`) leaves that worktree + branch behind indefinitely once reaped.
 
 ## The tool: `scripts/session-doctor.sh`
 
@@ -30,6 +34,7 @@ session-doctor.sh                       # read-only 3-layer audit (default)
 session-doctor.sh reap-local            # DRY-RUN: list dead local tmux + orphan units
 session-doctor.sh reap-local --force    # actually reap them
 session-doctor.sh registry-stale --days 30   # list registry entries disconnected > N days
+session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
 ```
 
 Safety guarantees:
@@ -39,6 +44,10 @@ Safety guarantees:
   supervisor restart window is never reaped by accident.
 - **Registry deletion is never automated.** `registry-stale` prints candidates and the
   exact `curl -X DELETE …` to run by hand after you verify each one.
+- **Worktree removal is never automated.** `worktree-stale` prints each candidate's
+  dirty/unpushed status and the exact `git worktree remove` + `git branch -D` to run by
+  hand — a dead session's worktree may hold unpushed work, so this is a review step,
+  not a cleanup one.
 
 ## Recommended cadence (expiry policy)
 
@@ -47,7 +56,9 @@ Safety guarantees:
 2. **Monthly:** `session-doctor.sh registry-stale --days 30`. Verify the list is truly
    dead (titles + age make this obvious), then `DELETE` them. Anything > 90 days
    disconnected is essentially always safe to delete.
-3. **After a host reboot:** expect zombies (registry says connected, process gone).
+3. **Monthly:** `session-doctor.sh worktree-stale`. For each candidate, confirm its
+   work is merged/pushed or no longer needed, then run the printed removal command.
+4. **After a host reboot:** expect zombies (registry says connected, process gone).
    Respawn the sessions you still want; the old registry entries become deletable.
 
 ## Why sessions stop registering (the 2026-07 regression)
