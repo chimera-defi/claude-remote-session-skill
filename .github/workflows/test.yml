@@ -17,3 +17,10 @@ jobs:
             echo "=== $t ==="
             bash "$t"
           done
+      - name: shellcheck
+        run: |
+          # SC2010 (ls | grep) excluded: session-doctor.sh globs
+          # ~/.config/systemd/user for agenthost-/ah-*.service unit files this
+          # skill generates itself with a sanitized [a-z0-9-] alias charset —
+          # never arbitrary/adversarial filenames — so ls|grep here is safe.
+          shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh
