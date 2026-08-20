@@ -39,7 +39,7 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
 }
 
 audit_one() {
-  local s="$1" cwd br nremote local_only unreach dirty untracked verdict reasons
+  local s="$1" cwd br nremote local_only unreach dirty untracked reasons
   cwd=$(rundir_of "$s")
   echo "### $s"
   if [ -z "$cwd" ]; then echo "   rundir: UNKNOWN (proc gone) — verdict: SAFE-TO-REAP (nothing to preserve)"; return 0; fi
