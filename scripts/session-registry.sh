@@ -30,10 +30,24 @@ while [ $# -gt 0 ]; do
     --older-than)
       v="${2:-}"; shift 2
       case "$v" in
-        *d) OLDER_THAN_SEC=$(( ${v%d} * 86400 )) ;;
-        *h) OLDER_THAN_SEC=$(( ${v%h} * 3600 )) ;;
+        *d) n="${v%d}"; unit=86400 ;;
+        *h) n="${v%h}"; unit=3600 ;;
         *)  echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
       esac
+      # The numeric part must be validated BEFORE it reaches bash arithmetic:
+      # an unvalidated value (empty, non-digit, or fractional — e.g. 'd', 'abcd',
+      # '3.5d') is spliced verbatim into `$(( n * unit ))` and either throws an
+      # unbound-variable/syntax error with the wrong exit code (1, not the usage
+      # exit 2) or — for a case bash's arithmetic parses as a bare word rather
+      # than erroring — silently falls through with OLDER_THAN_SEC left unset,
+      # reporting a bogus "no session matches" instead of a usage error.
+      case "$n" in
+        ''|*[!0-9]*) echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
+      esac
+      # 10# forces base-10 so a leading zero (e.g. '08d') isn't parsed as an
+      # invalid octal literal (same class of bug session-doctor.sh's --days
+      # guards against with the same fix).
+      OLDER_THAN_SEC=$(( 10#$n * unit ))
       ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "session-registry: unknown arg '$1'" >&2; exit 2 ;;

@@ -52,5 +52,18 @@ ok "older-than-excludes-new" "$(printf '%s' "$filtered" | grep -qF 'ah_test-new-
 
 ok "bad-unit-rejected" "$(bash "$REG" --older-than 3x >/dev/null 2>&1; echo $?)" "2"
 
+# Regression: an unvalidated numeric prefix used to reach bash arithmetic
+# directly and either crash with the wrong exit code (unbound-variable, exit
+# 1) or silently fall through to a threshold of 0/garbage (exit 0) instead of
+# a clean usage error (exit 2). Every malformed numeric prefix must be
+# rejected the same way as an unrecognized unit.
+ok "bad-nonnumeric-rejected"   "$(bash "$REG" --older-than abcd >/dev/null 2>&1; echo $?)" "2"
+ok "bad-empty-num-rejected"    "$(bash "$REG" --older-than d    >/dev/null 2>&1; echo $?)" "2"
+ok "bad-fractional-rejected"   "$(bash "$REG" --older-than 3.5d >/dev/null 2>&1; echo $?)" "2"
+ok "bad-negative-rejected"     "$(bash "$REG" --older-than -5d  >/dev/null 2>&1; echo $?)" "2"
+# A leading zero must still be accepted (canonicalized to base-10, not parsed
+# as an invalid octal literal — same fix class as session-doctor.sh's --days).
+ok "leading-zero-accepted"     "$(bash "$REG" --older-than 08d  >/dev/null 2>&1; echo $?)" "0"
+
 echo "session-registry: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
