@@ -239,6 +239,43 @@ back to the original kickoff.
 errors and `exit 0` rather than propagate — because a failure there doesn't
 just fail one tool call, it can permanently wedge the whole session.
 
+## Detecting a stuck-on-a-menu session (different from both wedge types above)
+
+A session can look wedged for a third reason that has nothing wrong with it
+at all: it's mid an interactive multi-choice widget (an `AskUserQuestion`-style
+prompt — numbered options with `[ ]`/`[✔]` checkboxes, a
+`←  ☐ Next direction  ✔ Submit  →` bar, "Enter to select · ↑/↓ to navigate ·
+Esc to cancel") and whoever replied sent ordinary free text instead of
+navigating it. The widget only understands arrow keys + Enter (and a
+dedicated "Type something" option for free text); a plain sentence sent into
+it is not a valid input, so it just sits there inert — the session looks
+unresponsive to normal chat, but the agent process is perfectly healthy the
+whole time. Confirmed on 2026-08-21 (`ah-frontend-refactor-0821-0657`): a
+plain-text reply ("all good?") to a "where should I point the next
+iterations" menu never registered; the widget was still waiting for a
+selection.
+
+**Symptom in `tmux capture-pane -p`:** a numbered option list with checkboxes
+and the `↑/↓ to navigate` hint still on screen, with a plain-text line sitting
+below it that was clearly meant as an answer but isn't reflected in any
+checkbox state.
+
+**Recover (no reap needed — this is not a broken session):**
+1. `tmux send-keys -t <s> Down` (or `Up`) and re-capture to confirm the `❯`
+   marker actually moves — this proves the widget is live and just
+   mis-navigated, not stuck for some other reason.
+2. Navigate to the option that best matches what the original sender meant
+   (`Enter` toggles a `[ ]`→`[✔]` checkbox on the highlighted option — it does
+   **not** submit).
+3. `Right` arrow to move from the options page to "Submit", then `Enter` again
+   on the review screen ("1. Submit answers") to actually confirm. Re-capture
+   after each step — the same "type, act, verify" discipline as any other
+   kickoff, just with arrow keys instead of literal text.
+
+Check `session-preserve` / `git log HEAD --not --remotes` before doing
+anything if there's any doubt — but a stuck-menu session usually has nothing
+to lose: it was mid a *review* pause, not mid an edit.
+
 ## Sessions Agent Scope
 
 A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a **bounded scope**:
