@@ -6,9 +6,30 @@ REG="$HERE/../scripts/session-registry.sh"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
+# --older-than argument-parsing checks run FIRST and unconditionally: they only
+# exercise the flag parser (which exits before ever touching tmux), so they
+# must not sit behind the tmux-availability guard below — a tmux-less test
+# host would otherwise skip them too and report a false "pass=0 fail=0"
+# instead of actually exercising the validation (found via automated review).
+ok "bad-unit-rejected" "$(bash "$REG" --older-than 3x >/dev/null 2>&1; echo $?)" "2"
+
+# Regression: an unvalidated numeric prefix used to reach bash arithmetic
+# directly and either crash with the wrong exit code (unbound-variable, exit
+# 1) or silently fall through to a threshold of 0/garbage (exit 0) instead of
+# a clean usage error (exit 2). Every malformed numeric prefix must be
+# rejected the same way as an unrecognized unit.
+ok "bad-nonnumeric-rejected"   "$(bash "$REG" --older-than abcd >/dev/null 2>&1; echo $?)" "2"
+ok "bad-empty-num-rejected"    "$(bash "$REG" --older-than d    >/dev/null 2>&1; echo $?)" "2"
+ok "bad-fractional-rejected"   "$(bash "$REG" --older-than 3.5d >/dev/null 2>&1; echo $?)" "2"
+ok "bad-negative-rejected"     "$(bash "$REG" --older-than -5d  >/dev/null 2>&1; echo $?)" "2"
+# A leading zero must still be accepted (canonicalized to base-10, not parsed
+# as an invalid octal literal — same fix class as session-doctor.sh's --days).
+ok "leading-zero-accepted"     "$(bash "$REG" --older-than 08d  >/dev/null 2>&1; echo $?)" "0"
+
 if ! command -v tmux >/dev/null 2>&1; then
-  echo "session-registry: pass=0 fail=0 (tmux not available, skipped)"
-  exit 0
+  echo "session-registry: pass=$pass fail=$fail (tmux not available, remaining tests skipped)"
+  [ "$fail" -eq 0 ]
+  exit $?
 fi
 
 WORK="$(mktemp -d)"
@@ -49,21 +70,6 @@ ok "nolog-uses-tmux-fallback" "$(printf '%s' "$out" | grep -F 'ah_test-nolog-010
 filtered="$(bash "$REG" --older-than 3d 2>&1)"
 ok "older-than-includes-old" "$(printf '%s' "$filtered" | grep -qF 'ah_test-old-0101-0100' && echo yes || echo no)" "yes"
 ok "older-than-excludes-new" "$(printf '%s' "$filtered" | grep -qF 'ah_test-new-0101-0100' && echo yes || echo no)" "no"
-
-ok "bad-unit-rejected" "$(bash "$REG" --older-than 3x >/dev/null 2>&1; echo $?)" "2"
-
-# Regression: an unvalidated numeric prefix used to reach bash arithmetic
-# directly and either crash with the wrong exit code (unbound-variable, exit
-# 1) or silently fall through to a threshold of 0/garbage (exit 0) instead of
-# a clean usage error (exit 2). Every malformed numeric prefix must be
-# rejected the same way as an unrecognized unit.
-ok "bad-nonnumeric-rejected"   "$(bash "$REG" --older-than abcd >/dev/null 2>&1; echo $?)" "2"
-ok "bad-empty-num-rejected"    "$(bash "$REG" --older-than d    >/dev/null 2>&1; echo $?)" "2"
-ok "bad-fractional-rejected"   "$(bash "$REG" --older-than 3.5d >/dev/null 2>&1; echo $?)" "2"
-ok "bad-negative-rejected"     "$(bash "$REG" --older-than -5d  >/dev/null 2>&1; echo $?)" "2"
-# A leading zero must still be accepted (canonicalized to base-10, not parsed
-# as an invalid octal literal — same fix class as session-doctor.sh's --days).
-ok "leading-zero-accepted"     "$(bash "$REG" --older-than 08d  >/dev/null 2>&1; echo $?)" "0"
 
 echo "session-registry: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
