@@ -29,10 +29,21 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --older-than)
       v="${2:-}"; shift 2
-      case "$v" in
-        *d) OLDER_THAN_SEC=$(( ${v%d} * 86400 )) ;;
-        *h) OLDER_THAN_SEC=$(( ${v%h} * 3600 )) ;;
-        *)  echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
+      # Validate the numeric part strictly (digits only) before splicing it into
+      # arithmetic — an unvalidated value (e.g. 'xd', '3.5d', '3xd') would
+      # otherwise hit `set -u`'s unbound-variable error or a bash arithmetic
+      # syntax error instead of this script's own clean usage message. Same
+      # class of bug session-doctor.sh's --days validation already guards
+      # against; 10# forces base-10 so a leading zero (e.g. 08) isn't misread
+      # as an invalid octal literal.
+      n="${v%[dh]}"; unit="${v#"$n"}"
+      case "$n" in
+        ''|*[!0-9]*) echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
+      esac
+      case "$unit" in
+        d) OLDER_THAN_SEC=$(( 10#$n * 86400 )) ;;
+        h) OLDER_THAN_SEC=$(( 10#$n * 3600 )) ;;
+        *) echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
       esac
       ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
