@@ -51,6 +51,15 @@ ok "older-than-includes-old" "$(printf '%s' "$filtered" | grep -qF 'ah_test-old-
 ok "older-than-excludes-new" "$(printf '%s' "$filtered" | grep -qF 'ah_test-new-0101-0100' && echo yes || echo no)" "no"
 
 ok "bad-unit-rejected" "$(bash "$REG" --older-than 3x >/dev/null 2>&1; echo $?)" "2"
+# Non-numeric/malformed values before splicing into arithmetic must hit the
+# clean usage error (exit 2), not an unbound-variable or arithmetic-syntax
+# crash from bash itself (set -u; see session-registry.sh --older-than).
+ok "non-numeric-rejected"      "$(bash "$REG" --older-than xd >/dev/null 2>&1; echo $?)" "2"
+ok "decimal-rejected"          "$(bash "$REG" --older-than 3.5d >/dev/null 2>&1; echo $?)" "2"
+ok "trailing-junk-rejected"    "$(bash "$REG" --older-than 3xd >/dev/null 2>&1; echo $?)" "2"
+ok "bare-unit-rejected"        "$(bash "$REG" --older-than d >/dev/null 2>&1; echo $?)" "2"
+ok "missing-unit-rejected"     "$(bash "$REG" --older-than 3 >/dev/null 2>&1; echo $?)" "2"
+ok "leading-zero-hours-accepted" "$(bash "$REG" --older-than 08h >/dev/null 2>&1; echo $?)" "0"
 
 echo "session-registry: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
