@@ -200,6 +200,25 @@ out_nl="$(SESSION_ALIAS_STORE="$NK" bash "$ALIAS" "$nlfolder" 2>/dev/null)"
 ok "newlinekey-resolves"     "$([ -n "$out_nl" ] && echo yes || echo no)" "yes"
 ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "absent"
 
+# CASE-INSENSITIVITY guard: looks_like_session_name's ah-/ah_ prefix check must
+# catch mixed/upper-case values too, not just lowercase. The store is
+# documented as user-editable and this is also the read-path guard for values
+# from an external writer, so a hand-typed `AH-foo-bar` (no embedded date, so
+# none of the digit checks would catch it either) must not silently survive as
+# a stored alias — found via targeted probing of the read path.
+CI="$(mktemp)"
+printf 'myproj\tAH-foo-bar\n' > "$CI"
+ci_out="$(SESSION_ALIAS_STORE="$CI" bash "$ALIAS" myproj)"
+ok "caseinsens-readguard-caught"    "$(notsess "$ci_out")" "clean"
+ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI")" "$ci_out"
+
+# CASE-INSENSITIVITY, infer(): a folder whose own name carries an uppercase
+# `AH-` prefix + a real embedded date must still desessionify down to the
+# meaningful part (like the lowercase `ah-agent-torque-0721` case above),
+# not fall back to an opaque checksum alias because desessionify's prefix
+# strip couldn't match the uppercase prefix.
+ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "AH-project-0810-1234")" "project"
+
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
