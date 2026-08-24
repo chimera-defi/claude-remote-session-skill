@@ -111,14 +111,17 @@ falls back to launching in `$WORKDIR` as-is. Non-git workdirs are unaffected.
 
 **Check the workdir is the repo you actually mean — a project's *name* is not always its
 folder.** Because non-git workdirs skip `session-git-prep` entirely, spawning against a
-same-named stub fails silently: no worktree, no default-branch checkout, no lock, and the
-session works in an empty directory believing it is in the repo. Verified 2026-08-24: the
-portfolio project is called `portfolio-ssot` everywhere it is referenced — its CLAUDE.md
-says `gbrain sync --source portfolio-ssot`, its `.gbrain-source` file reads `portfolio-ssot`
-— but the actual checkout is `workspace/portfolio-single-source-of-truth`, while
-`workspace/portfolio-ssot` is a leftover 6-file, **non-git** scratch dir. `new-session
-portfolio-ssot` therefore lands nowhere useful and says nothing about it. One command
-settles it before you spawn:
+same-named stub fails silently: no worktree, no default-branch checkout, no lock. The
+non-git branch of `session-git-prep` is a bare `emit "$REPO"` with **no `log` call** — every
+other branch logs what it did, this one says nothing — so the only signal is the absence of
+one. Worse than landing in an empty directory, the stub can carry its own `CLAUDE.md` and
+`AGENTS.md`, which load as project instructions and make the wrong folder read as right.
+Verified 2026-08-24: the portfolio project is called `portfolio-ssot` everywhere it is
+referenced — its CLAUDE.md says `gbrain sync --source portfolio-ssot`, its `.gbrain-source`
+file reads `portfolio-ssot` — but the actual checkout is
+`workspace/portfolio-single-source-of-truth`, while `workspace/portfolio-ssot` is a leftover
+**non-git** scratch dir holding exactly the six files (`CLAUDE.md`, `AGENTS.md`, a stale
+handoff, …) that make it look like the real thing. One command settles it before you spawn:
 
 ```bash
 git -C /home/agents/workspace/<foldername> rev-parse --show-toplevel
