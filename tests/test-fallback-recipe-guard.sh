@@ -25,6 +25,9 @@ poisoned(){ _fr_poisoned "$1" && echo POISONED || echo clean; }
 # Genuine poisoned shapes (must still be caught).
 ok "ah-prefix"            "$(poisoned ah-universe-expand-0722)"            "POISONED"
 ok "ah-underscore-prefix" "$(poisoned ah_universe_expand)"                 "POISONED"
+# Case-insensitivity (found via review, chatgpt-codex-connector, PR #34): a
+# mixed-case stored alias must not bypass the prefix check either.
+ok "ah-prefix-mixed-case"    "$(poisoned AH-foo-bar)"                      "POISONED"
 ok "long-numeric-run"     "$(poisoned discovery-0718-153051-4107171)"      "POISONED"
 ok "real-mmdd-hhmm"       "$(poisoned foo-0715-0630)"                      "POISONED"
 ok "real-trailing-mmdd"   "$(poisoned tranche1-ready-0728)"                "POISONED"

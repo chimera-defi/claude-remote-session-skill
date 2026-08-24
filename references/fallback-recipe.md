@@ -44,14 +44,21 @@ _fr_has_mmdd_group() {
   return 1
 }
 _fr_poisoned() {
-  case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$1" && return 0
+  # Case-fold before the prefix check: a stored alias can carry any case (hand
+  # edit, external writer), and a mixed-case `AH-foo-bar` (no embedded date, so
+  # none of the digit checks below would catch it either) must not bypass this
+  # guard and get embedded as `ah-AH-foo-bar-...` — same fix as
+  # session-alias.sh's looks_like_session_name (found via review, chatgpt-codex-
+  # connector, PR #34).
+  local v="$1" pair mm dd hh mi tail d
+  v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+  case "$v" in ah-*|ah_*) return 0 ;; esac
+  printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
   # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, and only
   # inspecting that first pair would never look at the genuinely poisoned
   # "0715-2359" that follows). Any single matching pair is disqualifying.
-  local v="$1" pair mm dd hh mi tail d
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
