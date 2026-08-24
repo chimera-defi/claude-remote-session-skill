@@ -37,7 +37,7 @@ skills_count=0
 skills_bytes=0
 if [ -d "$SKILLS_DIR" ]; then
   skills_count=$(find "$SKILLS_DIR" -maxdepth 1 -mindepth 1 2>/dev/null | wc -l | tr -d ' ')
-  skills_bytes=$(find "$SKILLS_DIR" -iname 'SKILL.md' -type f 2>/dev/null -exec cat {} + 2>/dev/null | wc -c | tr -d ' ')
+  skills_bytes=$(find "$SKILLS_DIR" -iname 'SKILL.md' -type f -exec cat {} + 2>/dev/null | wc -c | tr -d ' ')
 fi
 
 claude_md_bytes=0
