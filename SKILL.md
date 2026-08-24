@@ -1,7 +1,7 @@
 ---
 name: gstack-session-spawn
 slug: gstack-session-spawn
-version: "1.8.8"
+version: "1.8.9"
 tagline: "Create a persistent Claude remote session on agenthost"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
@@ -51,7 +51,9 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   re-inferred. This is enforced on **read** (a poisoned stored value is discarded and
   self-healed), on **write** (`--alias`), and as a `store_upsert` backstop, so a bad entry
   from an errant `--alias`, an external writer, or legacy data can never produce doubled
-  `ah-ah-…-MMDD-MMDD` session names. A trailing 4-digit group (or an `MMDD-HHMM`-shaped pair)
+  `ah-ah-…-MMDD-MMDD` session names. The `ah-`/`ah_` prefix check is case-insensitive: the
+  store is documented as user-editable, so a hand-typed `AH-foo-bar` (no embedded date, so
+  none of the digit checks would catch it either) is caught the same as lowercase `ah-foo-bar`. A trailing 4-digit group (or an `MMDD-HHMM`-shaped pair)
   is only treated as poisoned when the digits validate as a real calendar date/time (month
   01-12, day 01-31, hour 00-23, minute 00-59); a long run of 5+ digits is only treated as
   poisoned when some other field in the string is itself a valid calendar `MMDD` — an

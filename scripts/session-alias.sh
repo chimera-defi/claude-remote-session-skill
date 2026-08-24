@@ -70,9 +70,17 @@ has_mmdd_group() {
 # -> same, via the two-group check; port-12345/port-54321 -> both "port" via
 # the un-gated long-numeric-run check). ${d:0:2} form needs base-10 forcing so
 # a leading zero (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
+#
+# Case-fold to lowercase before the prefix check: the store is documented as
+# user-editable (session-aliases.example: "edit freely") and this is also the
+# read-path guard for values from an external writer, so a hand-typed `AH-foo-bar`
+# (no embedded date, so none of the digit checks below would catch it either)
+# must not slip past a case-sensitive `ah-*` match — found via targeted probing
+# of the read path with a mixed-case stored value.
 looks_like_session_name() {
-  case "$1" in ah-*|ah_*) return 0 ;; esac
-  printf '%s' "$1" | grep -qE -- '-[0-9]{5,}' && has_mmdd_group "$1" && return 0
+  local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$v" in ah-*|ah_*) return 0 ;; esac
+  printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
   # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, but the
@@ -87,17 +95,22 @@ looks_like_session_name() {
        && [ "$hh" -ge 0 ] && [ "$hh" -le 23 ] && [ "$mi" -ge 0 ] && [ "$mi" -le 59 ]; then
       return 0
     fi
-  done < <(printf '%s' "$1" | grep -oE -- '[0-9]{4}-[0-9]{4}')
+  done < <(printf '%s' "$v" | grep -oE -- '[0-9]{4}-[0-9]{4}')
   local tail d
-  tail="$(printf '%s' "$1" | grep -oE -- '-[0-9]{4}$')" || return 1
+  tail="$(printf '%s' "$v" | grep -oE -- '-[0-9]{4}$')" || return 1
   d="${tail#-}"; mm=$((10#${d:0:2})); dd=$((10#${d:2:2}))
   [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
 }
 
 # desessionify — strip session-name decoration (ah- prefix, trailing date/timestamp
 # runs) so a folder that is itself a session name yields a clean alias from the
-# meaningful part instead of doubling the decoration.
-desessionify() { printf '%s' "$1" | sed -E 's/^ah[-_]//; s/(-[0-9]{4,})+$//'; }
+# meaningful part instead of doubling the decoration. Prefix match is
+# case-insensitive to match looks_like_session_name's case-folding: without it,
+# a mixed-case folder like `AH-project-0810-1234` keeps its `AH-` prefix after
+# the date is stripped, the fixed-point loop in infer() can't make progress past
+# `AH-project`, and infer() falls back to an opaque checksum alias via its final
+# safety net instead of the clean `project` a same-cased folder would get.
+desessionify() { printf '%s' "$1" | sed -E 's/^[Aa][Hh][-_]//; s/(-[0-9]{4,})+$//'; }
 
 infer() { # $1 = folder ; echo alias
   local f="$1" acr="" w a prev=""
