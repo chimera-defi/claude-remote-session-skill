@@ -51,12 +51,6 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-Back-compat wrapper (same calling convention as the original script):
-
-```bash
-FOLDERNAME=my-project bash scripts/create-session.sh
-```
-
 The session will appear in the Claude Code app under Remote sessions as `ah-<alias>-<MMDD-HHMM>` (e.g. `ah-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
