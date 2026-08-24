@@ -25,6 +25,12 @@ ok "bad-negative-rejected"     "$(bash "$REG" --older-than -5d  >/dev/null 2>&1;
 # A leading zero must still be accepted (canonicalized to base-10, not parsed
 # as an invalid octal literal — same fix class as session-doctor.sh's --days).
 ok "leading-zero-accepted"     "$(bash "$REG" --older-than 08d  >/dev/null 2>&1; echo $?)" "0"
+ok "leading-zero-hours-accepted" "$(bash "$REG" --older-than 08h  >/dev/null 2>&1; echo $?)" "0"
+# A digit prefix followed by junk still ends in a valid unit char, so it reaches
+# the `*d`/`*h` branch — the numeric guard, not the unit guard, is what rejects it.
+ok "bad-trailing-junk-rejected" "$(bash "$REG" --older-than 3xd  >/dev/null 2>&1; echo $?)" "2"
+# A bare number with no unit at all must be a usage error, not a silent default.
+ok "bad-missing-unit-rejected"  "$(bash "$REG" --older-than 3    >/dev/null 2>&1; echo $?)" "2"
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "session-registry: pass=$pass fail=$fail (tmux not available, remaining tests skipped)"
