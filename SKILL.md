@@ -65,6 +65,14 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   `session-alias --audit-store` read-only-scans the whole store and reports
   entries where fresh inference now disagrees with what's stored (e.g. a pre-fix collision) —
   it never rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
+  **The dominant real-world drift is not a collision — it is a task name that got
+  persisted as a folder alias.** `--alias` names the *folder*, but sessions habitually pass
+  the *task* (`--alias crss-prs`, `trs-fix`, `eth2qs-orch`, `ghv-refactor`), and that value
+  sticks: every later bare `new-session <folder>` inherits it, so the folder ends up
+  permanently named after a task that finished weeks ago. A 2026-08-24 `--audit-store` run
+  found **11 of 37 entries drifted, and every one was this shape** — none were collisions.
+  Before passing `--alias`, ask whether the name still reads correctly for the *next* session
+  in that folder; if it only describes this task, spawn bare and let inference name it.
   Inference strips session-name decoration to a **fixed point** (not just once), so a folder
   name that is poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the very doubled
   name a prior poisoning incident produces — still yields a fully clean alias instead of a
@@ -100,6 +108,24 @@ This means a session never inherits a random current branch, and N agents can
 work the same repo in parallel without stepping on each other. The helper never
 fails a spawn — if anything goes wrong (or it's not on PATH) the start script
 falls back to launching in `$WORKDIR` as-is. Non-git workdirs are unaffected.
+
+**Check the workdir is the repo you actually mean — a project's *name* is not always its
+folder.** Because non-git workdirs skip `session-git-prep` entirely, spawning against a
+same-named stub fails silently: no worktree, no default-branch checkout, no lock, and the
+session works in an empty directory believing it is in the repo. Verified 2026-08-24: the
+portfolio project is called `portfolio-ssot` everywhere it is referenced — its CLAUDE.md
+says `gbrain sync --source portfolio-ssot`, its `.gbrain-source` file reads `portfolio-ssot`
+— but the actual checkout is `workspace/portfolio-single-source-of-truth`, while
+`workspace/portfolio-ssot` is a leftover 6-file, **non-git** scratch dir. `new-session
+portfolio-ssot` therefore lands nowhere useful and says nothing about it. One command
+settles it before you spawn:
+
+```bash
+git -C /home/agents/workspace/<foldername> rev-parse --show-toplevel
+```
+
+A `fatal: not a git repository` on a folder you expected to be a repo means you have the
+wrong folder, not a broken repo — resolve the real checkout first, then spawn against that.
 
 ## Recipe — use the script (preferred)
 
