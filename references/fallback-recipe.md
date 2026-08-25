@@ -4,13 +4,13 @@ Use this when `~/.local/bin/new-session` is missing. Paste the entire block
 in one Bash call after setting `FOLDERNAME` and optionally `WORKDIR`.
 
 For the canonical approach, prefer `scripts/new-session.sh` directly. This is
-a deliberately reduced last resort — besides the store-lookup-only aliasing
-(no acronym inference for un-stored long folders), it also drops two fixes
-`new-session.sh` carries: a same-minute collision lock (a second same-minute
+a deliberately reduced last resort: besides the store-lookup-only aliasing
+(no acronym inference for un-stored long folders), it also drops one fix
+`new-session.sh` carries — a same-minute collision lock (a second same-minute
 spawn of the same folder here can collide/no-op instead of getting a
-disambiguated name) and kickoff-verification retry (the launch `Enter` below
-is sent once, unverified — a dropped keystroke can leave the tmux pane idle
-with no indication).
+disambiguated name). The kickoff-verification retry (wait for the pane's
+shell, then retry the launch `Enter` with verification) IS ported below and
+kept in sync with `new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
 
 ```bash
 FOLDERNAME="<foldername>"
