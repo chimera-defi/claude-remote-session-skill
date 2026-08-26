@@ -124,11 +124,11 @@ has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
 
-# 9. --all audits every live ah_/agenthost_ session — the two synthetic clean/
-# dirty sessions above are not ah_/agenthost_-prefixed, so --all must skip them
-# and never error just because none of its target sessions exist.
+# 9. --all audits every live ah_/agenthost_ session — the synthetic sp-test-*
+# sessions above are not ah_/agenthost_-prefixed, so --all must skip them and
+# exit 0 rather than erroring just because none of its target sessions exist.
 out="$(bash "$SP" --all 2>&1)"; rc=$?
-ok "all-no-crash" "$([ -n "$out" ] || [ -z "$out" ] && echo ok)" "ok"
+ok "all-no-crash-exit0" "$rc" "0"
 
 echo "session-preserve: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
