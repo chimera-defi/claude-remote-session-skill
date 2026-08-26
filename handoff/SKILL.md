@@ -20,7 +20,7 @@ Turn a terse human task into a target session actually working on a well-formed 
 ## Workflow
 
 1. **Target.** `session-handoff targets` lists live sessions with state + model. Decide: route to an existing one, or spawn.
-   - Spawn via `new-session <folder> [workspace|sessions]` (it already handles alias anti-poisoning + the model-pin warning). Launcher default is **Opus** unless the task names a model: `CLAUDE_SESSION_MODEL=opus new-session <folder> sessions`.
+   - Spawn via `new-session <folder> [workspace|sessions]` (it already handles alias anti-poisoning + the model-pin warning). The default `orchestrator` profile already gives **Opus**, so a plain `new-session` is right for launcher work; only pass `CLAUDE_SESSION_MODEL=<model>` (or `CLAUDE_SESSION_PROFILE=builder|copywriter`) when the task wants a different tier.
    - **Before routing to an existing session, check its size and staleness — not just topic match.** `tmux capture-pane -p -t <session>` and look for a `/clear to save NNNk tokens` hint (six figures = bloated) and how long it's been idle. Neither `session-handoff` nor `session-preserve` currently measures this automatically — you have to look. A *small, recently-active* session is usually the cheaper and better routing target (it avoids re-paying rediscovery costs). A *bloated and stale* session is the trap: prompt-cache staleness means the next message pays full price to reload the whole prefix, size means every later turn keeps paying to wade through mostly-irrelevant history — for a one-shot handoff you pay both costs for a single turn's value. In that case, don't send into it: pull out just the load-bearing facts the target needs, then follow `gstack-session-spawn`'s "Preserve before reaping" recipe (`session-preserve --rescue --wip`, stop the unit, respawn fresh) and hand the compact version to the new session instead.
 2. **Verify healthy.** `session-handoff check <tmux-session>` — exit 0 means ready at the prompt. Don't send to a `starting`/`dead` target; `busy` will queue behind current work.
 3. **Massage.** Shape the raw request into a self-contained prompt. **REQUIRED SUB-REFERENCE: follow the contract in `references/massaging.md`** — a good handoff prompt *is*: goal → numbered steps → known-state-to-verify-not-assume → deliverable → carried-forward guardrails → scope. The parts are fixed; how you weight and phrase them is judgment for the task's domain.
@@ -34,7 +34,7 @@ Turn a terse human task into a target session actually working on a well-formed 
 | list live targets + model | `session-handoff targets` |
 | health of one target | `session-handoff check <tmux-session>` |
 | relay a prompt + verify it landed | `session-handoff send <tmux-session> --file <path>` |
-| spawn a target (Opus default for launcher work) | `CLAUDE_SESSION_MODEL=opus new-session <folder> [sessions\|workspace]` |
+| spawn a target (Opus by default via `orchestrator` profile) | `new-session <folder> [sessions\|workspace]` |
 
 Run `session-handoff` with no args for usage. See also: `gstack-session-spawn` (the `new-session`/`session-doctor`/`session-alias` family this builds on).
 
