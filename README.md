@@ -11,7 +11,7 @@ Say "create a session for my-project" and Claude will spin up a session you can 
 - Uses `--dangerously-skip-permissions` so sessions never block on tool approval prompts
 - Sentinel file + `--continue` so sessions resume conversation context after restarts
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
-- Defaults to `--model sonnet` (latest Sonnet); override with `CLAUDE_SESSION_MODEL=opus` for orchestrator sessions
+- Per-role default model via `CLAUDE_SESSION_PROFILE` (orchestrator→opus, builder→sonnet, copywriter→haiku), each a bare alias that auto-tracks the latest release; override with `CLAUDE_SESSION_MODEL=<model>`
 
 ## Requirements
 
@@ -55,20 +55,28 @@ The session will appear in the Claude Code app under Remote sessions as `ah-<ali
 
 ## Model default
 
-Spawned sessions use `--model sonnet` (resolves to the latest Sonnet release). Convention: builder/worker sessions use Sonnet; orchestrator sessions use Opus. Override per-spawn:
+The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per role:
+
+| Profile | Role | Default model |
+|---|---|---|
+| `orchestrator` (default) | thinking / multi-agent fan-out | `opus` |
+| `builder` | hands-on implementation | `sonnet` |
+| `copywriter` | lightweight doc/copy work | `haiku` |
+
+Each default is a **bare alias** on purpose — it auto-tracks Anthropic's latest release
+for that tier, so spawns pick up a newer Opus/Sonnet/Haiku with no edit here.
+
+Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
 ```bash
-CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
+CLAUDE_SESSION_PROFILE=copywriter new-session my-docs-pass sessions        # role default: haiku
+CLAUDE_SESSION_MODEL=opus         new-session my-orchestrator sessions     # bare alias: still auto-tracks latest
+CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned: one reproducible spawn
 ```
 
-A bare alias (`opus`/`sonnet`/`haiku`) resolves to *the latest* release, which can change
-between spawns (e.g. `opus` → `claude-opus-5` one week, Opus 4.8 the next, with identical
-flags). `new-session` prints a warning when a moving alias is used; pass an exact model id
-to pin it reproducibly:
-
-```bash
-CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions
-```
+Use a **bare alias for defaults you want to auto-upgrade**; **pin an exact id only when a
+specific spawn must be reproducible**. `new-session` prints a moving-alias warning only when
+you pass a bare alias *explicitly* — never for a role default (that drift is the point).
 
 ## Naming convention
 

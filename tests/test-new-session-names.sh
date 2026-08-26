@@ -63,15 +63,40 @@ DATEEOF
   has "same-minute-collision-suffixed" "$second_session" '^ah_cft-0101-0000-2$'
 fi
 
-# ── Spawn profile switch (CLAUDE_SESSION_PROFILE) ─────────────────────────────
-# Default → orchestrator (full tool set, only the cache flag). builder → a
-# --tools allowlist. Unknown → falls back to orchestrator AND warns to stderr.
+# ── Spawn profile switch + per-role model default (CLAUDE_SESSION_PROFILE) ────
+# A profile selects BOTH the tool footprint AND a default model (a bare alias, so
+# the role default auto-tracks the latest release for its tier). An explicit
+# CLAUDE_SESSION_MODEL always overrides. Unknown profile → orchestrator + warning.
 outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
-has "profile-default-orchestrator" "$outp" 'PROFILE=orchestrator'
-has "orchestrator-cache-flag-only" "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
+has "orchestrator-default-model-opus" "$outp" '^MODEL=opus$'
+has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
+has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+# A role-default bare alias is INTENDED (auto-upgrade) → must NOT emit the warning.
+errp="$(bash "$NS" --dry-run profile-default 2>&1 1>/dev/null)"
+if printf '%s' "$errp" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: role-default-model-should-not-warn"; else pass=$((pass+1)); fi
+
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
-has "profile-builder"              "$outb" 'PROFILE=builder'
-has "builder-has-tools-allowlist"  "$outb" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
+has "profile-builder"               "$outb" 'PROFILE=builder'
+has "builder-default-model-sonnet"  "$outb" '^MODEL=sonnet$'
+has "builder-has-tools-allowlist"   "$outb" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
+
+outc="$(CLAUDE_SESSION_PROFILE=copywriter bash "$NS" --dry-run profile-copywriter 2>/dev/null)"
+has "profile-copywriter"             "$outc" 'PROFILE=copywriter'
+has "copywriter-default-model-haiku" "$outc" '^MODEL=haiku$'
+has "copywriter-has-tools-allowlist" "$outc" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
+
+# Explicit CLAUDE_SESSION_MODEL overrides the profile default; a PINNED id (not a
+# bare alias) must NOT warn.
+outo="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-override 2>/dev/null)"
+has "explicit-model-overrides-default" "$outo" '^MODEL=claude-opus-4-8$'
+has "explicit-model-src-explicit"      "$outo" '^MODEL_SRC=explicit$'
+erro="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 bash "$NS" --dry-run profile-override 2>&1 1>/dev/null)"
+if printf '%s' "$erro" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: pinned-id-should-not-warn"; else pass=$((pass+1)); fi
+# An EXPLICIT bare alias (a one-off spawn) SHOULD warn — the operator may want a pin.
+erra="$(CLAUDE_SESSION_MODEL=opus bash "$NS" --dry-run profile-explicit-alias 2>&1 1>/dev/null)"
+has "explicit-bare-alias-warns"        "$erra" 'moving model alias'
+
 # Unknown value: stdout falls back to orchestrator, stderr carries the warning.
 outu="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>/dev/null)"
 has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
