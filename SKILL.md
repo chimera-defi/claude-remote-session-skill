@@ -48,38 +48,39 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - **Alias values are validated (anti-poisoning).** An alias that itself looks like a full
   session name — an `ah-` prefix, an `MMDD-HHMM` timestamp, a trailing `-MMDD` date, or a
   long numeric run paired with a real date fragment — is rejected and a clean alias
-  re-inferred. This is enforced on **read** (a poisoned stored value is discarded and
-  self-healed), on **write** (`--alias`), and as a `store_upsert` backstop, so a bad entry
-  from an errant `--alias`, an external writer, or legacy data can never produce doubled
-  `ah-ah-…-MMDD-MMDD` session names. The `ah-`/`ah_` prefix check is case-insensitive: the
-  store is documented as user-editable, so a hand-typed `AH-foo-bar` (no embedded date, so
-  none of the digit checks would catch it either) is caught the same as lowercase `ah-foo-bar`. A trailing 4-digit group (or an `MMDD-HHMM`-shaped pair)
-  is only treated as poisoned when the digits validate as a real calendar date/time (month
-  01-12, day 01-31, hour 00-23, minute 00-59); a long run of 5+ digits is only treated as
-  poisoned when some other field in the string is itself a valid calendar `MMDD` — an
-  arbitrary digit run (a year, port, chain id, invoice/ticket/issue/build id, zip code,
-  ephemeral port, a second unrelated number, ...) is left alone, so folders like
-  `sprint-2024`/`sprint-2025`, `port-8080-9090`, `port-12345`/`port-54321`,
-  `issue-12345`/`issue-67890`, or `chain-84532`/`chain-42161` keep distinct aliases instead of
-  collapsing onto one.
-  `session-alias --audit-store` read-only-scans the whole store and reports
-  entries where fresh inference now disagrees with what's stored (e.g. a pre-fix collision) —
-  it never rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
-  **The dominant real-world drift is not a collision — it is a task name that got
-  persisted as a folder alias.** `--alias` names the *folder*, but sessions habitually pass
-  the *task* (`--alias crss-prs`, `trs-fix`, `eth2qs-orch`, `ghv-refactor`), and that value
-  sticks: every later bare `new-session <folder>` inherits it, so the folder ends up
-  permanently named after a task that finished weeks ago. A 2026-08-24 `--audit-store` run
-  found **11 of 37 entries drifted, and every one was this shape** — none were collisions.
-  Before passing `--alias`, ask whether the name still reads correctly for the *next* session
-  in that folder; if it only describes this task, spawn bare and let inference name it.
-  Inference strips session-name decoration to a **fixed point** (not just once), so a folder
-  name that is poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the very doubled
-  name a prior poisoning incident produces — still yields a fully clean alias instead of a
-  partially stripped one that keeps re-doubling. `store_upsert` also refuses to persist a
-  folder **key** containing a literal tab/newline (a directory basename never legitimately
-  needs either) — such a value would split into extra fields/lines in the tab-separated
-  store and corrupt lookups for every entry sharing the file.
+  re-inferred. Enforced on **read** (a poisoned stored value is discarded and self-healed),
+  on **write** (`--alias`), and as a `store_upsert` backstop — so a bad entry from an errant
+  `--alias`, an external writer, or legacy data can never produce doubled `ah-ah-…-MMDD-MMDD`
+  session names.
+  - *Case-insensitive prefix check:* the store is user-editable, so a hand-typed `AH-foo-bar`
+    (no embedded date, so the digit checks wouldn't catch it either) is caught the same as
+    lowercase `ah-foo-bar`.
+  - *Real-date gating (avoids false positives):* a trailing 4-digit group (or an
+    `MMDD-HHMM`-shaped pair) is poisoned only when the digits validate as a real calendar
+    date/time (month 01-12, day 01-31, hour 00-23, minute 00-59); a 5+-digit run only when
+    some other field is itself a valid calendar `MMDD`. An arbitrary digit run (a year, port,
+    chain id, invoice/ticket/issue/build id, zip, ephemeral port, …) is left alone, so
+    `sprint-2024`/`sprint-2025`, `port-8080-9090`, `port-12345`/`port-54321`,
+    `issue-12345`/`issue-67890`, `chain-84532`/`chain-42161` keep distinct aliases instead of
+    collapsing onto one.
+  - *Fixed-point stripping:* inference strips session-name decoration repeatedly, not once, so
+    a name poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the doubled name a
+    prior poisoning incident produces — still yields a fully clean alias, not a partially
+    stripped one that keeps re-doubling.
+  - *Key integrity:* `store_upsert` refuses to persist a folder **key** containing a literal
+    tab/newline (a directory basename never needs either) — such a value would split into
+    extra fields/lines in the tab-separated store and corrupt lookups for every entry in it.
+- **The dominant real-world drift is a task name persisted as a folder alias — not a
+  collision.** `--alias` names the *folder*, but sessions habitually pass the *task*
+  (`--alias crss-prs`, `trs-fix`, `eth2qs-orch`, `ghv-refactor`), and that value sticks:
+  every later bare `new-session <folder>` inherits it, so the folder ends up permanently
+  named after a task that finished weeks ago. A 2026-08-24 `--audit-store` run found **11 of
+  37 entries drifted, and every one was this shape** — none were collisions. Before passing
+  `--alias`, ask whether the name still reads correctly for the *next* session in that folder;
+  if it only describes this task, spawn bare and let inference name it.
+- `session-alias --audit-store` read-only-scans the whole store and reports entries where
+  fresh inference now disagrees with what's stored (e.g. a pre-fix collision) — it never
+  rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
 
 ## Key Rules
 
@@ -150,7 +151,7 @@ Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 
 Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessions.
 Each spawn gets a unique name — never collides with same-minute sessions.
-Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits.
+(Scripts are local-only — see Key Rules.)
 
 ## Finding stale sessions: session-registry
 
