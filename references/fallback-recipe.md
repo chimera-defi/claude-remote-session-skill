@@ -182,7 +182,7 @@ WantedBy=default.target
 UNIT_EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now "$(basename $SERVICE)"
+systemctl --user enable --now "$(basename "$SERVICE")"
 echo ""
 echo "Session created: ${REMOTE_NAME}"
 echo "Connect: Claude Code app → Remote sessions → ${REMOTE_NAME}"

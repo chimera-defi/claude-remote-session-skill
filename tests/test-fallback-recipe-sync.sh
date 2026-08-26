@@ -38,5 +38,10 @@ has "fallback-logs-unverified"    'started-UNVERIFIED-kickoff-may-have-failed' "
 # bare trailing ` Enter` (the pre-fix shape: submit blind, never verify).
 ok "fallback-no-blind-trailing-enter" "$(grep -cE "^done' Enter$" "$FB")" "0"
 
+# $SERVICE must be quoted in the final `basename` call, like new-session.sh's
+# equivalent line — an unquoted expansion is a word-splitting/glob hazard on
+# any path containing whitespace or shell metacharacters.
+has "fallback-quotes-service-basename" 'basename "$SERVICE"' "$FB"
+
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
