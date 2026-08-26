@@ -124,11 +124,17 @@ has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
 
-# 9. --all audits every live ah_/agenthost_ session — the synthetic sp-test-*
-# sessions above are not ah_/agenthost_-prefixed, so --all must skip them and
-# exit 0 rather than erroring just because none of its target sessions exist.
+# 9. --all audits every live ah_/agenthost_ session. The synthetic sp-test-*
+# sessions above are NOT ah_/agenthost_-prefixed, so --all must skip them.
+# Its EXIT CODE reflects real host state (0 = every audited session safe,
+# 1 = at least one not-safe) — both are valid completions. So assert it
+# completed without a crash/usage error (rc 0 or 1) AND that it never named a
+# synthetic session, rather than pinning a host-state-dependent exit code
+# (asserting 0 spuriously fails on any active host with an in-flight not-safe
+# session — e.g. one with untracked telemetry pending --rescue).
 out="$(bash "$SP" --all 2>&1)"; rc=$?
-ok "all-no-crash-exit0" "$rc" "0"
+if [ "$rc" = 0 ] || [ "$rc" = 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: all-completes-no-crash — got rc=$rc; out: $out"; fi
+ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")" "0"
 
 echo "session-preserve: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
