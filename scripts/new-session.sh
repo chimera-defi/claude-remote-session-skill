@@ -284,7 +284,19 @@ if command -v session-git-prep >/dev/null 2>&1; then
 fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
 mkdir -p "\$RUNDIR/.claude"
-rm -rf "\$RUNDIR/.claude/skills" && ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+# Make the global skill catalog available at \$RUNDIR/.claude/skills WITHOUT
+# clobbering a repo that ships its OWN committed project skills. Only (re)point
+# the link when it is missing or is a symlink we own (incl. a dangling one from a
+# prior spawn) — \`rm -f\` on a symlink removes just the link, never its target.
+# A real directory there is the project's own project-scoped skills: leave it.
+# (Previously an unconditional \`rm -rf … && ln -sf\` silently destroyed any
+# committed .claude/skills/ on every spawn.)
+if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
+  rm -f "\$RUNDIR/.claude/skills"
+  ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+else
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
+fi
 # Remote-control bridge requires a first-party ANTHROPIC_BASE_URL (CLI >= 2026-07-07);
 # a headroom/proxy base URL (e.g. 127.0.0.1) silently disables session registration so
 # the session never appears on the phone. Force first-party via a dedicated --settings
