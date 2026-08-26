@@ -89,7 +89,7 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
 - Git-aware run dir: when the workdir is a git repo, sessions start from the **default branch** — never a stale feature branch — and parallel sessions never collide (see below)
-- Model default: spawned sessions run with `--model sonnet` (latest Sonnet, the builder default); override per-spawn with `CLAUDE_SESSION_MODEL=<model>`. A bare alias (`opus`/`sonnet`) tracks the latest release and can silently resolve to different models between spawns — `new-session` warns and recommends pinning an exact id (e.g. `CLAUDE_SESSION_MODEL=claude-opus-4-8`) for reproducibility
+- Model default is **per role**: `CLAUDE_SESSION_PROFILE` sets it — `orchestrator`→`opus`, `builder`→`sonnet`, `copywriter`→`haiku` — each a **bare alias that auto-tracks the latest release** for its tier. Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`. Keep the distinction straight: a **bare role alias is the right default** (you *want* auto-upgrade when a newer Opus/Sonnet/Haiku ships); **pin an exact id** (e.g. `CLAUDE_SESSION_MODEL=claude-opus-4-8`) only when one spawn must be reproducible. `new-session` prints the moving-alias warning only when you pass a bare alias *explicitly* — never for a role default
 
 ## Git-aware run directory (RUNDIR)
 

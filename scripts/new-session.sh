@@ -34,30 +34,35 @@ Options:
                       out-of-memory host blocks, and this overrides it.
 
 Environment:
-  CLAUDE_SESSION_MODEL=<model>  Model for the session (default: sonnet). A bare
-                                alias (opus/sonnet/haiku) tracks the latest release
-                                and can drift between spawns; pass an exact id
-                                (e.g. claude-opus-4-8) to pin it reproducibly.
-  CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint (default: orchestrator).
+  CLAUDE_SESSION_MODEL=<model>  Model for the session. Unset → the PROFILE's
+                                per-role default (opus/sonnet/haiku, see below) —
+                                a bare alias that auto-tracks the latest release
+                                for that tier. Set it to override: a bare alias
+                                still tracks latest, or pass an exact id (e.g.
+                                claude-opus-4-8) to pin one spawn reproducibly.
+  CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
+                                orchestrator).
                                 orchestrator — full built-in tool set; needed for
                                   multi-agent fan-out (Workflow/Agent/advisor/…).
+                                  Default model: opus.
                                 builder      — trimmed --tools allowlist; drops the
                                   orchestration-only schemas to reclaim ~11k of the
-                                  ~19.5k System-tools context. Use for hands-on
-                                  implementation sessions that don't fan out.
-                                Both profiles add
+                                  ~19.5k System-tools context. Hands-on
+                                  implementation that doesn't fan out. Default: sonnet.
+                                copywriter   — same trimmed allowlist; lightweight
+                                  doc/copy work. Default model: haiku.
+                                All profiles add
                                 --exclude-dynamic-system-prompt-sections (a
                                 prompt-cache-reuse win). Unknown values fall back
                                 to orchestrator with a warning.
 
 Examples:
-  new-session my-project
+  new-session my-project                                                     # orchestrator + opus
   new-session my-project workspace
-  new-session my-project sessions
   new-session my-long-project-name --alias mpn
-  CLAUDE_SESSION_MODEL=opus new-session my-orchestrator sessions
-  CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned
-  CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools
+  CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
+  CLAUDE_SESSION_PROFILE=copywriter new-session my-docs-pass sessions        # trimmed tools + haiku
+  CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pin a specific spawn
 HELP_EOF
   exit 0
 fi
@@ -108,39 +113,60 @@ preflight_capacity() {
 }
 preflight_capacity || exit 1
 
-# ── Model selection ─────────────────────────────────────────────────────────
-# Override per-spawn with CLAUDE_SESSION_MODEL (e.g. for orchestrators).
-MODEL="${CLAUDE_SESSION_MODEL:-sonnet}"
-# A bare alias (opus/sonnet/haiku/...) tracks "the latest release" and can silently
-# resolve to DIFFERENT models over time (observed: `opus` → claude-opus-5 one week,
-# Opus 4.8 the next, with byte-identical flags). The CLI exposes no resolved-model
-# readout and a model's self-report is unreliable, so the only reproducible fix is
-# to pin an exact id. Warn and recommend pinning; MODEL is logged either way.
-case "$MODEL" in
-  opus|sonnet|haiku|fable|default|opusplan)
-    echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
-esac
-
-# ── Profile selection ─────────────────────────────────────────────────────────
-# CLAUDE_SESSION_PROFILE selects the built-in tool-schema footprint of the
-# spawned session (mirrors the CLAUDE_SESSION_MODEL override pattern):
+# ── Profile selection (resolved BEFORE the model, so a profile supplies the
+#    role-appropriate default model) ───────────────────────────────────────────
+# CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND the
+# default model for the spawned session:
 #   orchestrator (default) — full built-in tool set; needed for multi-agent
-#                            fan-out (Workflow, Agent, advisor, SendUserFile…).
+#                            fan-out (Workflow, Agent, advisor…). Default: opus.
 #   builder                — trimmed --tools allowlist; drops the orchestration/
-#                            reporting-only schemas to reclaim ~11k of the
-#                            ~19.5k "System tools" context (measured: 19.5k→8.2k).
+#                            reporting-only schemas to reclaim ~11k of the ~19.5k
+#                            "System tools" context (19.5k→8.2k). Default: sonnet.
+#   copywriter             — same trimmed allowlist; lightweight doc/copy work
+#                            that doesn't fan out. Default: haiku (cheapest tier).
 # Unknown values fall back to orchestrator with a warning — fail SAFE, never
 # silently ship a session with fewer tools than the operator expected.
 PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
 case "$PROFILE" in
-  orchestrator|builder) ;;
-  *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder" >&2
+  orchestrator|builder|copywriter) ;;
+  *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder|copywriter" >&2
      PROFILE="orchestrator" ;;
 esac
 
+# ── Model selection ─────────────────────────────────────────────────────────
+# Precedence: an explicit CLAUDE_SESSION_MODEL always wins. Otherwise the model
+# defaults PER ROLE from the profile above, using a BARE alias ON PURPOSE so the
+# role default tracks Anthropic's latest release for that tier — when a newer
+# Opus/Sonnet/Haiku ships, spawns auto-upgrade with no edit here.
+#   orchestrator → opus     builder → sonnet     copywriter → haiku
+if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
+  MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
+else
+  case "$PROFILE" in
+    orchestrator) MODEL=opus ;;
+    builder)      MODEL=sonnet ;;
+    copywriter)   MODEL=haiku ;;
+  esac
+  MODEL_SRC=profile-default
+fi
+# A bare alias tracks "the latest release" and can silently resolve to DIFFERENT
+# models over time (observed: `opus` → claude-opus-5 one week, Opus 4.8 the next,
+# with byte-identical flags). That drift is the INTENDED behaviour for a role
+# default (auto-upgrade), so we only warn when the operator EXPLICITLY passed a
+# bare alias for a one-off spawn — there they may instead want to pin an exact id
+# for reproducibility (the CLI exposes no resolved-model readout). MODEL is logged
+# either way.
+if [ "$MODEL_SRC" = explicit ]; then
+  case "$MODEL" in
+    opus|sonnet|haiku|fable|default|opusplan)
+      echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
+  esac
+fi
+
 # Builder keep-list: the built-ins a hands-on-implementation session needs.
-# Comma-separated, NO spaces, so it stays a single shell word when baked into
-# the generated claude command line.
+# Shared by the `builder` and `copywriter` profiles (both are trimmed, non-fan-out
+# roles). Comma-separated, NO spaces, so it stays a single shell word when baked
+# into the generated claude command line.
 #
 # IMPORTANT: --tools is an EXHAUSTIVE allowlist over the BUILT-IN set — it gates
 # the *deferred* built-ins (WebFetch, WebSearch, Task*, plan-mode, …) too, not
@@ -163,9 +189,9 @@ BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSe
 # user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
-if [ "$PROFILE" = "builder" ]; then
-  CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS"
-fi
+case "$PROFILE" in
+  builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
+esac
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
 if [ "$TYPE" = "auto" ]; then
@@ -245,8 +271,8 @@ SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nCLAUDE_EXTRA_FLAGS=%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$CLAUDE_EXTRA_FLAGS"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS"
   exit 0
 fi
 
