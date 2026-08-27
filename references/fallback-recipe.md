@@ -101,7 +101,17 @@ if command -v session-git-prep >/dev/null 2>&1; then
 fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
 mkdir -p "\$RUNDIR/.claude"
-rm -rf "\$RUNDIR/.claude/skills" && ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+# Make the global skill catalog available at \$RUNDIR/.claude/skills WITHOUT
+# clobbering a repo that ships its OWN committed project skills. Only (re)point
+# the link when it is missing or is a symlink we own (incl. a dangling one from a
+# prior spawn) — \`rm -f\` on a symlink removes just the link, never its target.
+# A real directory there is the project's own project-scoped skills: leave it.
+if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
+  rm -f "\$RUNDIR/.claude/skills"
+  ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+else
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
+fi
 # Remote-control bridge requires a first-party ANTHROPIC_BASE_URL (CLI >= 2026-07-07);
 # a proxy base URL (e.g. headroom 127.0.0.1) silently disables session registration.
 python3 -c "import json;json.load(open('/home/agents/.claude/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > /home/agents/.claude/rc-firstparty.settings.json

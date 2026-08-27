@@ -43,5 +43,17 @@ ok "fallback-no-blind-trailing-enter" "$(grep -cE "^done' Enter$" "$FB")" "0"
 # any path containing whitespace or shell metacharacters.
 has "fallback-quotes-service-basename" 'basename "$SERVICE"' "$FB"
 
+# Both scripts guard the .claude/skills symlink instead of unconditionally
+# `rm -rf`-ing it: new-session.sh commit 4469055 fixed a bug where every spawn
+# silently destroyed a repo's own committed project-scoped .claude/skills/
+# (only a missing path or a symlink this script itself owns may be replaced;
+# a real directory there is left alone). fallback-recipe.md carried its own
+# copy of the pre-fix unconditional `rm -rf ... && ln -sf` line, so the
+# documented emergency path reintroduced the exact bug new-session.sh no
+# longer has.
+has "new-session-guards-skills-symlink" '[ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]' "$NS"
+has "fallback-guards-skills-symlink"    '[ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]' "$FB"
+ok "fallback-no-unconditional-skills-rm" "$(grep -cE '^rm -rf "\$RUNDIR/\.claude/skills" && ln -sf' "$FB")" "0"
+
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
