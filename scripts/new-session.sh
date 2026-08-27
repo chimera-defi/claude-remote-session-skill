@@ -57,7 +57,7 @@ Environment:
                                 to orchestrator with a warning.
 
 Examples:
-  new-session my-project                                                     # orchestrator + opus
+  new-session my-project                                                     # orchestrator + claude-opus-5 (pinned)
   new-session my-project workspace
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
@@ -118,7 +118,8 @@ preflight_capacity || exit 1
 # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND the
 # default model for the spawned session:
 #   orchestrator (default) — full built-in tool set; needed for multi-agent
-#                            fan-out (Workflow, Agent, advisor…). Default: opus.
+#                            fan-out (Workflow, Agent, advisor…). Default:
+#                            claude-opus-5 (pinned, see Model selection below).
 #   builder                — trimmed --tools allowlist; drops the orchestration/
 #                            reporting-only schemas to reclaim ~11k of the ~19.5k
 #                            "System tools" context (19.5k→8.2k). Default: sonnet.
@@ -135,15 +136,22 @@ esac
 
 # ── Model selection ─────────────────────────────────────────────────────────
 # Precedence: an explicit CLAUDE_SESSION_MODEL always wins. Otherwise the model
-# defaults PER ROLE from the profile above, using a BARE alias ON PURPOSE so the
-# role default tracks Anthropic's latest release for that tier — when a newer
-# Opus/Sonnet/Haiku ships, spawns auto-upgrade with no edit here.
-#   orchestrator → opus     builder → sonnet     copywriter → haiku
+# defaults PER ROLE from the profile above. builder/copywriter use a BARE alias
+# ON PURPOSE so those role defaults keep tracking Anthropic's latest release for
+# that tier with no edit here. orchestrator is PINNED (2026-08-27, operator
+# request) to claude-opus-5 after direct verification (`claude -p ... --model
+# claude-opus-5` responded; a live persistent spawn ran clean) — it's real and
+# callable but not yet a public model alias and has no advisor-catalog rank
+# (`claude --model claude-opus-5` warns "Advisor disabled ... no advisor rank in
+# the model catalog"), so it's deliberately pinned rather than left to the
+# already-observed opus/opus-4-8/opus-5 drift above. Revisit once Anthropic
+# promotes it to the public `opus` alias target.
+#   orchestrator → claude-opus-5 (pinned)     builder → sonnet     copywriter → haiku
 if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
   MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
 else
   case "$PROFILE" in
-    orchestrator) MODEL=opus ;;
+    orchestrator) MODEL=claude-opus-5 ;;
     builder)      MODEL=sonnet ;;
     copywriter)   MODEL=haiku ;;
   esac
