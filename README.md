@@ -11,7 +11,7 @@ Say "create a session for my-project" and Claude will spin up a session you can 
 - Uses `--dangerously-skip-permissions` so sessions never block on tool approval prompts
 - Sentinel file + `--continue` so sessions resume conversation context after restarts
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
-- Per-role default model via `CLAUDE_SESSION_PROFILE` (orchestrator→opus, builder→sonnet, copywriter→haiku), each a bare alias that auto-tracks the latest release; override with `CLAUDE_SESSION_MODEL=<model>`
+- Per-role default model via `CLAUDE_SESSION_PROFILE` — orchestrator→`claude-opus-5` (pinned), builder→sonnet, copywriter→haiku (the latter two are bare aliases that auto-track the latest release); override with `CLAUDE_SESSION_MODEL=<model>`
 
 ## Requirements
 
@@ -59,12 +59,16 @@ The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per ro
 
 | Profile | Role | Default model |
 |---|---|---|
-| `orchestrator` (default) | thinking / multi-agent fan-out | `opus` |
-| `builder` | hands-on implementation | `sonnet` |
-| `copywriter` | lightweight doc/copy work | `haiku` |
+| `orchestrator` (default) | thinking / multi-agent fan-out | `claude-opus-5` (pinned) |
+| `builder` | hands-on implementation | `sonnet` (bare alias) |
+| `copywriter` | lightweight doc/copy work | `haiku` (bare alias) |
 
-Each default is a **bare alias** on purpose — it auto-tracks Anthropic's latest release
-for that tier, so spawns pick up a newer Opus/Sonnet/Haiku with no edit here.
+builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
+latest release for that tier, so spawns pick up a newer Sonnet/Haiku with no edit here.
+orchestrator is **pinned** (2026-08-27) to `claude-opus-5` after direct verification,
+rather than left on the bare `opus` alias — see `scripts/new-session.sh`'s Model selection
+comment for why (it's real and callable but not yet a public model alias, and the bare
+`opus` alias has been observed resolving to different releases across spawns).
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -75,8 +79,10 @@ CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pin
 ```
 
 Use a **bare alias for defaults you want to auto-upgrade**; **pin an exact id only when a
-specific spawn must be reproducible**. `new-session` prints a moving-alias warning only when
-you pass a bare alias *explicitly* — never for a role default (that drift is the point).
+specific spawn must be reproducible** (which is why orchestrator is pinned right now — revisit
+once Anthropic promotes `claude-opus-5` to the public `opus` alias target). `new-session`
+prints a moving-alias warning only when you pass a bare alias *explicitly* — never for a role
+default (that drift is the point for builder/copywriter).
 
 ## Naming convention
 
