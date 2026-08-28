@@ -69,7 +69,12 @@ fi
 # lives OUTSIDE the repo so claiming it never dirties the working tree.
 LOCK_DIR="$HOME/.claude/session-locks"
 mkdir -p "$LOCK_DIR" 2>/dev/null || true
-LOCK_KEY=$(printf '%s' "$REPO" | tr '/ ' '__')
+# tr '/ ' '__' alone is not injective — /a/b_c and /a/b/c both flatten to
+# "_a_b_c", so two genuinely different repos could share one lock file and
+# corrupt each other's busy/free decision. Append a checksum of the
+# unflattened path (same s$(cksum) pattern session-alias.sh uses) to keep the
+# key both readable and collision-resistant.
+LOCK_KEY="$(printf '%s' "$REPO" | tr '/ ' '__')_$(printf '%s' "$REPO" | cksum | cut -d' ' -f1)"
 LOCK="$LOCK_DIR/${LOCK_KEY}.owner"
 BUSY=""
 if [ -f "$LOCK" ]; then

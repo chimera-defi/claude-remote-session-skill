@@ -36,10 +36,23 @@ spawn_in() {
   s="sp-test-$$-$RANDOM-$RANDOM"
   tmux new-session -d -s "$s" -c "$dir" 2>/dev/null
   tmux send-keys -t "$s" 'sleep 300 &' Enter
-  # Wait for the backgrounded child to actually appear before returning.
-  local pid tries=0
+  # Wait for the backgrounded `sleep` to actually appear before returning — NOT
+  # just any child. The pane's login shell can fork a short-lived startup
+  # helper first (observed live: rbenv-rehash and other transients that exit
+  # before `ps` can even read their cmdline); stopping as soon as ANY child
+  # shows up can return while that transient is the only one present, and by
+  # the time the caller invokes session-preserve.sh it may have already exited
+  # with `sleep` not yet started — a window where rundir_of() sees no children
+  # and spuriously reports the proc gone (flaky test failures, ~30-40% rate).
+  local pid tries=0 cpid found=no
   pid=$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null)
-  while [ -z "$(pgrep -P "$pid" 2>/dev/null)" ] && [ "$tries" -lt 20 ]; do sleep 0.1; tries=$((tries+1)); done
+  while [ "$tries" -lt 20 ]; do
+    for cpid in $(pgrep -P "$pid" 2>/dev/null); do
+      [ "$(cat "/proc/$cpid/comm" 2>/dev/null)" = "sleep" ] && { found=yes; break; }
+    done
+    [ "$found" = yes ] && break
+    sleep 0.1; tries=$((tries+1))
+  done
   printf '%s' "$s"
 }
 
@@ -91,7 +104,23 @@ has "rescue-copies"      "$out" "rescued: scratch.txt"
 has "rescue-then-safe"   "$out" "SAFE-TO-REAP"
 ok  "rescue-exit0"       "$rc" "0"
 RESCUED_DIR="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
-ok "rescue-file-on-disk" "$(cat "$RESCUED_DIR/${S_UNTRACKED}__scratch.txt" 2>/dev/null)" "orphan"
+ok "rescue-file-on-disk" "$(cat "$RESCUED_DIR/$S_UNTRACKED/scratch.txt" 2>/dev/null)" "orphan"
+
+# 5b. Two untracked files that would collide under the OLD flatten-slashes-to-
+# underscores naming (src/util.txt and src_util.txt both -> src_util.txt) must
+# both survive --rescue with their real content intact — regression for a
+# data-loss bug where the second cp -f silently clobbered the first while both
+# still printed "rescued".
+R3B="$WORK/repo3b"; mkrepo "$R3B"
+mkdir -p "$R3B/src"
+echo "nested" > "$R3B/src/util.txt"
+echo "flat" > "$R3B/src_util.txt"
+S_COLLIDE="$(spawn_in "$R3B")"
+out="$(bash "$SP" "$S_COLLIDE" --rescue 2>&1)"; rc=$?
+has "collide-rescue-safe" "$out" "SAFE-TO-REAP"
+ok  "collide-rescue-exit0" "$rc" "0"
+ok "collide-nested-preserved" "$(cat "$RESCUED_DIR/$S_COLLIDE/src/util.txt" 2>/dev/null)" "nested"
+ok "collide-flat-preserved"   "$(cat "$RESCUED_DIR/$S_COLLIDE/src_util.txt" 2>/dev/null)" "flat"
 
 # 6. Untracked file matching JUNK_RE (e.g. under node_modules/) must NOT count —
 # it is regenerable clutter every session produces, not real work to preserve.

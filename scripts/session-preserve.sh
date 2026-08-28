@@ -86,9 +86,15 @@ audit_one() {
   fi
 
   if [ "$MODE_RESCUE" = yes ] && [ "$untracked" -gt 0 ]; then
-    mkdir -p "$RESCUE_ROOT"
+    # Preserve the relative path under the session's own subdir instead of
+    # flattening it (old: tr '/' '_' into one shared directory) — two distinct
+    # untracked paths that flatten to the same string (e.g. src/util.txt and
+    # src_util.txt) would otherwise collide on one filename, and the second
+    # cp -f silently overwrites the first while both still print "rescued".
     git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | while read -r rel; do
-      cp -f "$cwd/$rel" "$RESCUE_ROOT/${s}__$(printf '%s' "$rel" | tr '/' '_')" 2>/dev/null \
+      dest="$RESCUE_ROOT/$s/$rel"
+      mkdir -p "$(dirname "$dest")"
+      cp -f "$cwd/$rel" "$dest" 2>/dev/null \
         && echo "   rescued: $rel"
     done
     untracked=0
