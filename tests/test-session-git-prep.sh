@@ -119,4 +119,24 @@ ok "collide-distinct-lock-keys" "$([ "$(lock_key "$RA")" != "$(lock_key "$RB")" 
 ok "collide-a-lock-is-a" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RA").owner" 2>/dev/null)" "sess-collide-a"
 ok "collide-b-lock-is-b" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RB").owner" 2>/dev/null)" "sess-collide-b"
 
+# 10. A lock held under the PRE-checksum key format (from a session that
+# claimed the canonical tree before this fix was deployed) must still be
+# honored as busy — scripts here are deployed as flat copies, not versioned
+# atomically, and a live session's lock only moves to the new key on its own
+# next claim. Looking up only the new key during that rollout window would
+# read a live owner as free and let a second session claim the same tree
+# concurrently (found in review, chatgpt-codex-connector, PR #43).
+if command -v tmux >/dev/null 2>&1; then
+  R8="$WORK/repo8"; mkrepo "$R8"
+  LEGACY_OWNER="sgp-test-legacy-owner-$$"
+  tmux new-session -d -s "$LEGACY_OWNER" 2>/dev/null
+  LEGACY_KEY8="$(printf '%s' "$R8" | tr '/ ' '__')"
+  mkdir -p "$HOME/.claude/session-locks"
+  printf '%s' "$LEGACY_OWNER" > "$HOME/.claude/session-locks/${LEGACY_KEY8}.owner"
+  out="$(bash "$SGP" "$R8" sess-legacy-busy remote-legacy-busy 2>/dev/null)"
+  tmux kill-session -t "$LEGACY_OWNER" 2>/dev/null || true
+  ok "legacy-lock-forces-worktree" "$out" "$HOME/.claude/worktrees/remote-legacy-busy"
+  ok "legacy-lock-canonical-branch-unchanged" "$(git -C "$R8" rev-parse --abbrev-ref HEAD)" "main"
+fi
+
 echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

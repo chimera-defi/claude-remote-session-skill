@@ -122,6 +122,23 @@ ok  "collide-rescue-exit0" "$rc" "0"
 ok "collide-nested-preserved" "$(cat "$RESCUED_DIR/$S_COLLIDE/src/util.txt" 2>/dev/null)" "nested"
 ok "collide-flat-preserved"   "$(cat "$RESCUED_DIR/$S_COLLIDE/src_util.txt" 2>/dev/null)" "flat"
 
+# 5c. A path component that already exists as a FILE from an earlier rescue of
+# the SAME session on the SAME day (one $RESCUE_ROOT) must not be silently
+# marked safe when the second rescue can't land: untracked "foo" is rescued,
+# then "foo" is replaced by a directory containing untracked "foo/bar" —
+# `mkdir -p .../foo` now fails because "foo" is a file there, so "foo/bar"
+# can't be copied. Verdict must stay NOT-SAFE-TO-REAP, not flip to SAFE over a
+# silently-lost file (found in review, chatgpt-codex-connector, PR #43).
+R3C="$WORK/repo3c"; mkrepo "$R3C"
+echo "v1" > "$R3C/foo"
+S_CONFLICT="$(spawn_in "$R3C")"
+bash "$SP" "$S_CONFLICT" --rescue >/dev/null 2>&1
+ok "conflict-first-rescue-on-disk" "$(cat "$RESCUED_DIR/$S_CONFLICT/foo" 2>/dev/null)" "v1"
+rm -f "$R3C/foo"; mkdir -p "$R3C/foo"; echo "v2" > "$R3C/foo/bar"
+out="$(bash "$SP" "$S_CONFLICT" --rescue 2>&1)"; rc=$?
+has "conflict-second-rescue-not-safe" "$out" "NOT-SAFE-TO-REAP"
+ok  "conflict-second-rescue-exit1"    "$rc" "1"
+
 # 6. Untracked file matching JUNK_RE (e.g. under node_modules/) must NOT count —
 # it is regenerable clutter every session produces, not real work to preserve.
 R4="$WORK/repo4"; mkrepo "$R4"

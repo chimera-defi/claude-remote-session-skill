@@ -91,13 +91,29 @@ audit_one() {
     # untracked paths that flatten to the same string (e.g. src/util.txt and
     # src_util.txt) would otherwise collide on one filename, and the second
     # cp -f silently overwrites the first while both still print "rescued".
-    git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | while read -r rel; do
+    #
+    # A path component can itself collide across two rescues of the SAME
+    # session on the SAME day (one $RESCUE_ROOT): if untracked "foo" (a file)
+    # was rescued earlier and "foo" later becomes a directory containing an
+    # untracked "foo/bar", `mkdir -p .../foo` fails because "foo" already
+    # exists there as a plain file — so the rescue for "foo/bar" cannot land.
+    # Track that per-file so `untracked` is only cleared when every rescue
+    # actually succeeded; otherwise the audit must keep reporting
+    # NOT-SAFE-TO-REAP instead of a false SAFE-TO-REAP over a lost file.
+    # (`< <(...)` process substitution, not a `| while` pipe, so
+    # rescue_failed set inside the loop is visible after it — a pipe would
+    # run the loop in a subshell and silently drop that state.)
+    rescue_failed=0
+    while read -r rel; do
       dest="$RESCUE_ROOT/$s/$rel"
-      mkdir -p "$(dirname "$dest")"
-      cp -f "$cwd/$rel" "$dest" 2>/dev/null \
-        && echo "   rescued: $rel"
-    done
-    untracked=0
+      if mkdir -p "$(dirname "$dest")" 2>/dev/null && cp -f "$cwd/$rel" "$dest" 2>/dev/null; then
+        echo "   rescued: $rel"
+      else
+        echo "   RESCUE FAILED: $rel (path conflict with an earlier rescue?)" >&2
+        rescue_failed=1
+      fi
+    done < <(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE")
+    [ "$rescue_failed" -eq 0 ] && untracked=0
   fi
 
   reasons=""

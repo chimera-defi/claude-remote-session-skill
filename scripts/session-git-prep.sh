@@ -74,16 +74,32 @@ mkdir -p "$LOCK_DIR" 2>/dev/null || true
 # corrupt each other's busy/free decision. Append a checksum of the
 # unflattened path (same s$(cksum) pattern session-alias.sh uses) to keep the
 # key both readable and collision-resistant.
-LOCK_KEY="$(printf '%s' "$REPO" | tr '/ ' '__')_$(printf '%s' "$REPO" | cksum | cut -d' ' -f1)"
+FLAT_KEY="$(printf '%s' "$REPO" | tr '/ ' '__')"
+LOCK_KEY="${FLAT_KEY}_$(printf '%s' "$REPO" | cksum | cut -d' ' -f1)"
 LOCK="$LOCK_DIR/${LOCK_KEY}.owner"
+# LEGACY_LOCK is the pre-checksum key format. Scripts here are deployed as
+# flat copies to ~/.local/bin (see SKILL.md), not versioned atomically, and
+# session-git-prep only re-runs for a given session on its NEXT spawn/restart
+# — so a session that claimed the canonical tree under the OLD key format
+# keeps its lock recorded there indefinitely while it stays up. Looking up
+# only the new key during the rollout window would read that live owner as
+# free and let a second session claim the same tree concurrently (found in
+# review, chatgpt-codex-connector, PR #43) — so busy-detection must still
+# check the legacy path too, even though new claims only ever write the new one.
+LEGACY_LOCK="$LOCK_DIR/${FLAT_KEY}.owner"
 BUSY=""
-if [ -f "$LOCK" ]; then
-  OWNER=$(cat "$LOCK" 2>/dev/null)
-  if [ -n "$OWNER" ] && tmux has-session -t "$OWNER" 2>/dev/null; then
-    BUSY=1
-  else
-    rm -f "$LOCK" 2>/dev/null || true   # stale lock from a dead session
+check_lock() {  # $1 = lock file -> 0 (busy, live owner) or 1 (free; removes a stale lock)
+  local f="$1" owner
+  [ -f "$f" ] || return 1
+  owner=$(cat "$f" 2>/dev/null)
+  if [ -n "$owner" ] && tmux has-session -t "$owner" 2>/dev/null; then
+    return 0
   fi
+  rm -f "$f" 2>/dev/null || true   # stale lock from a dead session
+  return 1
+}
+if check_lock "$LOCK" || check_lock "$LEGACY_LOCK"; then
+  BUSY=1
 fi
 
 # --- Decision -------------------------------------------------------------
