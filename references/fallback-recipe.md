@@ -8,14 +8,17 @@ a deliberately reduced last resort: besides the store-lookup-only aliasing
 (no acronym inference for un-stored long folders), it also drops one fix
 `new-session.sh` carries — a same-minute collision lock (a second same-minute
 spawn of the same folder here can collide/no-op instead of getting a
-disambiguated name). The kickoff-verification retry (wait for the pane's
-shell, then retry the launch `Enter` with verification) IS ported below and
-kept in sync with `new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
-It also does not implement `CLAUDE_SESSION_PROFILE` (no `builder`/`copywriter`
-`--tools` trimming) — only a bare `CLAUDE_SESSION_MODEL` override, defaulting
-to the same model `new-session.sh`'s default `orchestrator` profile resolves
-to when neither is set (`claude-opus-5`, pinned — see `new-session.sh`'s Model
-selection comment).
+disambiguated name) — and does not implement `CLAUDE_SESSION_PROFILE` (no
+`builder`/`copywriter` `--tools` trimming), only a bare `CLAUDE_SESSION_MODEL`
+override, defaulting to the same model `new-session.sh`'s default
+`orchestrator` profile resolves to when neither is set (`claude-opus-5`,
+pinned — see `new-session.sh`'s Model selection comment).
+
+The kickoff-verification retry (wait for the pane's shell, then retry the
+launch `Enter` with verification) IS ported below, as is the universal
+`--exclude-dynamic-system-prompt-sections` flag `new-session.sh` adds for
+every profile (a prompt-cache-reuse win) — both kept in sync with
+`new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
 
 ```bash
 FOLDERNAME="<foldername>"
@@ -148,9 +151,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
