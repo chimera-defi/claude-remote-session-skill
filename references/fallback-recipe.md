@@ -5,12 +5,21 @@ in one Bash call after setting `FOLDERNAME` and optionally `WORKDIR`.
 
 For the canonical approach, prefer `scripts/new-session.sh` directly. This is
 a deliberately reduced last resort: besides the store-lookup-only aliasing
-(no acronym inference for un-stored long folders), it also drops one fix
-`new-session.sh` carries — a same-minute collision lock (a second same-minute
-spawn of the same folder here can collide/no-op instead of getting a
-disambiguated name). The kickoff-verification retry (wait for the pane's
-shell, then retry the launch `Enter` with verification) IS ported below and
-kept in sync with `new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
+(no acronym inference for un-stored long folders), it also drops two things
+`new-session.sh` carries:
+- a same-minute collision lock (a second same-minute spawn of the same folder
+  here can collide/no-op instead of getting a disambiguated name).
+- the `CLAUDE_SESSION_PROFILE` per-role model default and its matching
+  `--tools` trim. `MODEL` below is a flat `${CLAUDE_SESSION_MODEL:-sonnet}` —
+  it does NOT know about `orchestrator`'s pinned `claude-opus-5` default (see
+  `new-session.sh`'s Model selection section), so an unset
+  `CLAUDE_SESSION_MODEL` here spawns `sonnet`, not the orchestrator role
+  default. Set `CLAUDE_SESSION_MODEL=claude-opus-5` explicitly if this
+  emergency spawn needs orchestrator parity.
+
+The kickoff-verification retry (wait for the pane's shell, then retry the
+launch `Enter` with verification) IS ported below and kept in sync with
+`new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
 
 ```bash
 FOLDERNAME="<foldername>"
@@ -75,6 +84,9 @@ _fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
+# Flat default, NOT the CLAUDE_SESSION_PROFILE-aware default new-session.sh
+# uses (orchestrator -> pinned claude-opus-5). See the note at the top of
+# this file — pass CLAUDE_SESSION_MODEL explicitly for parity.
 MODEL="${CLAUDE_SESSION_MODEL:-sonnet}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
