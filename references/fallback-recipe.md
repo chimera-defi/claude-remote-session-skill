@@ -14,8 +14,14 @@ a deliberately reduced last resort: besides the store-lookup-only aliasing
   it does NOT know about `orchestrator`'s pinned `claude-opus-5` default (see
   `new-session.sh`'s Model selection section), so an unset
   `CLAUDE_SESSION_MODEL` here spawns `sonnet`, not the orchestrator role
-  default. Set `CLAUDE_SESSION_MODEL=claude-opus-5` explicitly if this
-  emergency spawn needs orchestrator parity.
+  default. Set `CLAUDE_SESSION_MODEL=claude-opus-5` explicitly to match the
+  orchestrator **model** — the `--tools` trim itself (builder/copywriter's
+  reduced tool-schema footprint) is not ported at all, so this is model
+  parity only, not full profile parity.
+
+  `--exclude-dynamic-system-prompt-sections` (the prompt-cache-reuse flag
+  `new-session.sh` bakes into every spawn regardless of profile) IS ported
+  below, on both `claude` invocations, so that optimization is not lost here.
 
 The kickoff-verification retry (wait for the pane's shell, then retry the
 launch `Enter` with verification) IS ported below and kept in sync with
@@ -149,9 +155,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))

@@ -19,7 +19,9 @@ NS="$HERE/../scripts/new-session.sh"
 FB="$HERE/../references/fallback-recipe.md"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if grep -qF "$2" "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found in $3: $2"; fi; }
+# The `--` before "$2" stops grep from misparsing a pattern that itself starts
+# with `--` (e.g. a CLI flag literal) as an option instead of the search string.
+has(){ if grep -qF -- "$2" "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found in $3: $2"; fi; }
 
 # Both scripts wait for the pane's interactive shell before typing into it.
 has "new-session-waits-for-shell" 'bash|zsh|sh) break ;;' "$NS"
@@ -54,6 +56,22 @@ has "fallback-quotes-service-basename" 'basename "$SERVICE"' "$FB"
 has "new-session-guards-skills-symlink" '[ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]' "$NS"
 has "fallback-guards-skills-symlink"    '[ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]' "$FB"
 ok "fallback-no-unconditional-skills-rm" "$(grep -cE '^rm -rf "\$RUNDIR/\.claude/skills" && ln -sf' "$FB")" "0"
+
+# Both scripts pass --exclude-dynamic-system-prompt-sections on every `claude`
+# invocation (a prompt-cache-reuse win, applied unconditionally regardless of
+# profile in new-session.sh — see CLAUDE_EXTRA_FLAGS). Found in review
+# (chatgpt-codex-connector, PR #45): the flag was ported to new-session.sh but
+# not to fallback-recipe.md's hand-maintained copy of the same invocations, so
+# an emergency spawn silently lost the optimization on every launch/restart.
+has "new-session-has-cache-flag" '--exclude-dynamic-system-prompt-sections' "$NS"
+has "fallback-has-cache-flag"    '--exclude-dynamic-system-prompt-sections' "$FB"
+# Both `claude` invocations in the fallback's generated script (fresh spawn
+# AND --continue restart), not just one — a restart that drops the flag would
+# silently regress the optimization every time the supervisor loop restarts.
+# Counted on the actual /usr/bin/claude invocation lines specifically (not
+# the whole file) so this stays robust to unrelated prose mentioning the flag.
+fb_claude_lines_with_flag="$(grep '/usr/bin/claude' "$FB" | grep -cE -- '--exclude-dynamic-system-prompt-sections')"
+ok "fallback-cache-flag-on-both-invocations" "$fb_claude_lines_with_flag" "2"
 
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
