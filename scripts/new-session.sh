@@ -297,12 +297,17 @@ if command -v tmux >/dev/null 2>&1; then
           break
         fi
       fi
+      # Build the next candidate from the CURRENT n before incrementing — not
+      # after — so the first retry after the bare base name is "-2" (matching
+      # the dry-run branch above and the collision-suffix numbering the tests
+      # assert), not "-3" (found by Codex review on this PR: incrementing
+      # first skipped "-2" on every real, non-dry-run collision).
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"
       n=$((n+1))
       if [ "$n" -gt 1000 ]; then
         echo "new-session: could not claim a session-name lock under '$LOCKROOT' after 1000 attempts — likely a persistent filesystem problem (read-only/full), not a race. Check '$LOCKROOT' by hand." >&2
         exit 1
       fi
-      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"
     done
   fi
 fi
