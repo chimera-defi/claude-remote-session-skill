@@ -92,6 +92,15 @@ done
 # refuse to make it worse. Advisory by default; only a genuinely unsafe box
 # hard-blocks, and --force always overrides.
 preflight_capacity() {
+  # --dry-run is documented as a pure, side-effect-free preview ("print the
+  # resolved names and exit — no session spawned, store untouched"), but this
+  # gate ran unconditionally BEFORE $DRYRUN is consulted (it isn't checked
+  # again until the naming section below), so a --dry-run on a genuinely
+  # low-memory host hard-refused with no name output at all unless --force
+  # was also passed — defeating the exact "check what this would resolve to"
+  # use case --dry-run exists for (e.g. debugging a memory-pressure incident).
+  # A dry-run spawns nothing and consumes no RAM, so it never needs this gate.
+  [ "$DRYRUN" = yes ] && return 0
   local avail_mb load1 cpus sess hard=no
   avail_mb=$(awk '/^MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 99999)
   load1=$(awk '{printf "%.0f", $1}' /proc/loadavg 2>/dev/null || echo 0)
@@ -202,6 +211,16 @@ case "$PROFILE" in
 esac
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
+# Validate the TYPE positional the same way PROFILE is validated above (fail
+# SAFE with a warning, don't silently reinterpret): an unrecognized value here
+# — most likely a typo like `workspce` — previously fell straight through to
+# the `else` branch below and was silently treated as `sessions`, redirecting
+# a repo-intended spawn into .sessions/ with zero diagnostic.
+case "$TYPE" in
+  auto|workspace|sessions) ;;
+  *) echo "note: unknown session type '$TYPE' — defaulting to 'auto'. Valid: workspace|sessions|auto" >&2
+     TYPE="auto" ;;
+esac
 if [ "$TYPE" = "auto" ]; then
   [ -d "/home/agents/workspace/${FOLDERNAME}" ] && TYPE="workspace" || TYPE="sessions"
 fi
@@ -256,6 +275,13 @@ if command -v tmux >/dev/null 2>&1; then
     LOCKROOT="$HOME/.claude/session-spawn-locks"
     mkdir -p "$LOCKROOT" 2>/dev/null || true
     n=2
+    # Bounded, not `while :`: this loop only ever needs to advance past names a
+    # CONCURRENT spawn is actively racing for, which is inherently self-limiting.
+    # A persistent (non-transient) `mkdir` failure — LOCKROOT on a read-only/full
+    # filesystem, or a plain file occupying that path — makes every iteration
+    # fail identically forever; an unbounded loop then spins with no sleep, no
+    # cap, and no diagnostic, hanging the whole spawn with no sign of why. Fail
+    # loudly instead once a persistent failure is implausibly still "just a race".
     while :; do
       if mkdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null; then
         if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -271,7 +297,12 @@ if command -v tmux >/dev/null 2>&1; then
           break
         fi
       fi
-      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
+      n=$((n+1))
+      if [ "$n" -gt 1000 ]; then
+        echo "new-session: could not claim a session-name lock under '$LOCKROOT' after 1000 attempts — likely a persistent filesystem problem (read-only/full), not a race. Check '$LOCKROOT' by hand." >&2
+        exit 1
+      fi
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"
     done
   fi
 fi

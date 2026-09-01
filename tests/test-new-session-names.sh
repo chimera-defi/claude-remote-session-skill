@@ -11,6 +11,7 @@ export PATH="$BIN:$PATH"
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 pass=0; fail=0
 has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
+ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 # Name-first, date last: ah-<alias>-<MMDD-HHMM>.
 out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
@@ -104,5 +105,56 @@ outu="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>/dev/n
 has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
 erru="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>&1 1>/dev/null)"
 has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
+
+# ── --dry-run must bypass the preflight capacity gate (found in nightly review) ──
+# --dry-run is documented as a pure, side-effect-free preview ("print the
+# resolved names and exit — no session spawned, store untouched"), but the
+# capacity gate ran unconditionally before DRYRUN was consulted, so a --dry-run
+# on a genuinely (or artificially, via NEW_SESSION_MIN_AVAIL_MB) low-memory host
+# hard-refused with no name output at all unless --force was also passed —
+# defeating the "check what this would resolve to" use case --dry-run exists
+# for. A dry-run spawns nothing and consumes no RAM, so it never needs this gate.
+outcap="$(NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run 2>/dev/null)"
+has "dry-run-bypasses-capacity-gate" "$outcap" 'REMOTE_NAME=ah-capacity-dry-run-'
+capexit=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run >/dev/null 2>&1 || capexit=$?
+ok "dry-run-bypasses-capacity-gate-exit0" "$capexit" "0"
+# Sanity: a real (non-dry-run) spawn on the same low-memory condition must
+# still refuse — the gate itself isn't disabled, only bypassed for --dry-run.
+capexit2=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" capacity-real-run-test >/dev/null 2>&1 || capexit2=$?
+ok "non-dry-run-capacity-gate-still-refuses" "$capexit2" "1"
+
+# ── Unknown TYPE positional must warn and fall back, not silently redirect ──
+# (found in nightly review): only "auto" and "workspace" were explicitly
+# checked; any other value (e.g. a typo like `workspce`) fell straight into
+# the `else` branch and was silently treated as `sessions`, redirecting a
+# repo-intended spawn into .sessions/ with zero diagnostic — inconsistent with
+# how CLAUDE_SESSION_PROFILE validates unknown values (warn + fall back).
+outty="$(bash "$NS" --dry-run type-typo-test workspce 2>/dev/null)"
+has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/ah-type-typo-test-'
+erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1 1>/dev/null)"
+has "unknown-type-warns" "$erty" "unknown session type 'workspce'"
+# A recognized TYPE must NOT warn (no false positive on the new validation).
+ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1 1>/dev/null)"
+if printf '%s' "$ertyok" | grep -q 'unknown session type'; then fail=$((fail+1)); echo "FAIL: known-type-should-not-warn"; else pass=$((pass+1)); fi
+
+# ── Session-name lock loop must not hang forever on a persistent mkdir failure ──
+# (found in nightly review): the mkdir-based same-minute-collision lock had no
+# bound — a persistent (non-transient) mkdir failure (LOCKROOT on a read-only/
+# full filesystem, or a plain file occupying that path) made every iteration
+# fail identically forever, spinning with no sleep, no cap, and no diagnostic.
+# Simulate a persistent failure by putting a plain FILE where LOCKROOT (a
+# directory) is expected, under an isolated HOME so this can't collide with a
+# real lock dir.
+if command -v tmux >/dev/null 2>&1; then
+  LOCKHOME="$(mktemp -d)"
+  mkdir -p "$LOCKHOME/.claude"
+  touch "$LOCKHOME/.claude/session-spawn-locks"
+  lockerr=""
+  lockexit=0
+  lockerr="$(HOME="$LOCKHOME" SESSION_ALIAS_STORE="$(mktemp -u)" timeout 15 bash "$NS" lock-persistent-fail-test 2>&1 1>/dev/null)" || lockexit=$?
+  rm -rf "$LOCKHOME"
+  ok "lock-persistent-failure-bounded-exit1" "$lockexit" "1"
+  has "lock-persistent-failure-diagnostic" "$lockerr" 'could not claim a session-name lock'
+fi
 
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
