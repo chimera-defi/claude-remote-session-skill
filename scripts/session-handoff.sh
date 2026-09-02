@@ -115,6 +115,12 @@ case "$MODE" in
       busy)     echo "send: note — '$S' is busy (working); message will queue behind current work" >&2;;
     esac
     frag="$(_frag "$MSG")"
+    # A whitespace-only MSG yields an empty frag, and grep -qF "" matches every
+    # line unconditionally — _on_input_line would then always report "still
+    # buffered" regardless of what's on screen, so _verdict could never reach
+    # "landed" even though Enter worked fine. Refuse rather than loop to a
+    # false "unverified".
+    [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
     # Bracketed paste so a multi-line prompt lands as one input, not N submits.
     printf '%s' "$MSG" | tmux load-buffer -b handoff -
     tmux paste-buffer -t "$S" -b handoff -p -d

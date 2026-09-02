@@ -48,6 +48,12 @@ ok "working-ready"     "$(_is_working "$READY_PANE"     && echo yes || echo no)"
 # --- _frag: distinctive single-line fragment of a (possibly multiline) msg ----
 ok "frag-firstline" "$(_frag "Goal: survey the \$25k tranche candidates
 1. verify the lineage list is current")" "Goal: survey the \$25k tranche candidates"
+# A whitespace-only message must yield an empty frag — the `send` dispatch
+# guards on this (empty frag would otherwise make grep -qF "" match every
+# line unconditionally, so _on_input_line/_verdict could never report
+# anything but "buffered").
+ok "frag-whitespace-only-empty" "$(_frag "
+	")" ""
 
 # --- _on_input_line: is the fragment still buffered at the ❯ prompt? ----------
 FRAG="Goal: survey the \$25k tranche candidates"
