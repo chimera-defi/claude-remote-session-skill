@@ -51,25 +51,10 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   re-inferred. Enforced on **read** (a poisoned stored value is discarded and self-healed),
   on **write** (`--alias`), and as a `store_upsert` backstop — so a bad entry from an errant
   `--alias`, an external writer, or legacy data can never produce doubled `ah-ah-…-MMDD-MMDD`
-  session names.
-  - *Case-insensitive prefix check:* the store is user-editable, so a hand-typed `AH-foo-bar`
-    (no embedded date, so the digit checks wouldn't catch it either) is caught the same as
-    lowercase `ah-foo-bar`.
-  - *Real-date gating (avoids false positives):* a trailing 4-digit group (or an
-    `MMDD-HHMM`-shaped pair) is poisoned only when the digits validate as a real calendar
-    date/time (month 01-12, day 01-31, hour 00-23, minute 00-59); a 5+-digit run only when
-    some other field is itself a valid calendar `MMDD`. An arbitrary digit run (a year, port,
-    chain id, invoice/ticket/issue/build id, zip, ephemeral port, …) is left alone, so
-    `sprint-2024`/`sprint-2025`, `port-8080-9090`, `port-12345`/`port-54321`,
-    `issue-12345`/`issue-67890`, `chain-84532`/`chain-42161` keep distinct aliases instead of
-    collapsing onto one.
-  - *Fixed-point stripping:* inference strips session-name decoration repeatedly, not once, so
-    a name poisoned more than one layer deep — e.g. `ah-ah-x-0722-0725`, the doubled name a
-    prior poisoning incident produces — still yields a fully clean alias, not a partially
-    stripped one that keeps re-doubling.
-  - *Key integrity:* `store_upsert` refuses to persist a folder **key** containing a literal
-    tab/newline (a directory basename never needs either) — such a value would split into
-    extra fields/lines in the tab-separated store and corrupt lookups for every entry in it.
+  session names. Gating is calendar-validated, so ordinary digit runs (`sprint-2024`,
+  `port-8080`, `chain-84532`, `issue-12345`) keep distinct aliases. The detection rules
+  themselves live in `scripts/session-alias.sh` and are pinned by 69 assertions in
+  `tests/test-session-alias.sh` — read those rather than restating them here.
 - **The dominant real-world drift is a task name persisted as a folder alias — not a
   collision.** `--alias` names the *folder*, but sessions habitually pass the *task*
   (`--alias crss-prs`, `trs-fix`, `eth2qs-orch`, `ghv-refactor`), and that value sticks:
@@ -90,7 +75,7 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
 - Git-aware run dir: when the workdir is a git repo, sessions start from the **default branch** — never a stale feature branch — and parallel sessions never collide (see below)
-- Model default is **per role**: `CLAUDE_SESSION_PROFILE` sets it — `builder`→`sonnet` and `copywriter`→`haiku` are **bare aliases that auto-track the latest release** for their tier; `orchestrator`→`claude-opus-5`, **pinned** (2026-08-27) after direct verification rather than left on the bare `opus` alias, since `opus` has been observed resolving to different releases across spawns and `claude-opus-5` isn't yet the public alias target (revisit once it is). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`. Keep the distinction straight: a **bare role alias is the right default when you want auto-upgrade** (builder/copywriter); **pin an exact id** (e.g. `CLAUDE_SESSION_MODEL=claude-opus-4-8`) when one spawn must be reproducible, or as the deliberate orchestrator default above. `new-session` prints the moving-alias warning only when you pass a bare alias *explicitly* — never for a role default
+- Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5`, **pinned** to an exact id rather than the bare `opus` alias (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`. `new-session` only warns on a moving bare alias when one is passed *explicitly* — never for a role default
 
 ## Git-aware run directory (RUNDIR)
 
@@ -146,6 +131,12 @@ new-session --help                    # print usage and exit (no session spawned
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
+
+**Deployed copies drift.** The skill dir and `/create-session` symlink into this repo, so
+they can't rot; `~/.local/bin/*` are real copies — after landing a fix, redeploy
+(`install -m 755 scripts/<x>.sh ~/.local/bin/<x>`) or it stays inert, and **diff before
+overwriting** or you silently revert a deployed-only hand-patch (how `advisor` fell out of
+`BUILDER_TOOLS`).
 
 ## After Creating
 
