@@ -127,7 +127,27 @@ new-session <foldername> sessions     # force .sessions/
 new-session <foldername> --alias x    # explicit short alias (persisted)
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session --help                    # print usage and exit (no session spawned)
+
+new-session <foldername> --task "..."        # spawn AND kick off, in one shot
+new-session <foldername> --task-file <path>  # same, task text read from a file
 ```
+
+**Prefer `--task`/`--task-file` over typing the kickoff by hand.** It polls until claude is
+ready in the pane, sends, then verifies the message landed — the manual type/verify/Enter
+dance drops the Enter often enough to matter, leaving the session idle with no error. The
+two flags are mutually exclusive; an unreadable `--task-file` fails *before* anything spawns.
+
+Relaying into an already-running session, and tearing one down:
+
+```bash
+session-send <name> "..."             # relay a follow-up (or --file <path>)
+session-doctor reap <name> [--force]  # teardown of a named ALIVE session (tmux + unit)
+session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
+```
+
+`reap` is the live counterpart to `reap-local` (which only handles already-dead sessions).
+It refuses protected names outright, and refuses a session with unlanded/uncommitted work
+unless `--force` — rescue first via `session-preserve <name> --rescue --wip`.
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).

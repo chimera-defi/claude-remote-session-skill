@@ -10,20 +10,26 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
+#   session-doctor.sh reap <name> [--force]       # one-shot teardown of a named ALIVE session (tmux+unit); refuses on unlanded work unless --force
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
+#   session-doctor.sh land-check           # per-worktree unlanded-vs-real-default-branch + real-dirty; report only
 #   session-doctor.sh idle-report [--days N]      # list LIVE local sessions with no type:user msg in N days (default 2); report only
 #
 # Safety:
 #   * Protected names (claude-remote*, *openclaw*, *hermes*) are NEVER reaped.
-#   * A tmux/systemd entry is only reaped when its claude process is genuinely gone.
+#   * A tmux/systemd entry is only reaped when its claude process is genuinely gone
+#     (reap-local) or the operator named it explicitly (reap).
+#   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
+#     unless --force; a missing tmux session or systemd unit never fails the rest of it.
 #   * Registry DELETION is intentionally NOT automated (it is account-facing and
 #     irreversible). registry-stale prints candidates + the exact curl to run by hand.
 #   * Worktree removal is intentionally NOT automated (a dead session's worktree may
 #     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
-#     dirty/unpushed status, and the exact commands to run by hand after review.
-#   * idle-report is REPORT-ONLY (like registry-stale): every row is a still-alive
-#     proc, so reap-local won't touch it — feed the output to a manual kill pass.
+#     dirty/landed status, and the exact commands to run by hand after review.
+#   * idle-report and land-check are REPORT-ONLY: idle-report's rows are still-alive
+#     procs reap-local won't touch; land-check never mutates anything. Feed either to
+#     a manual pass.
 set -uo pipefail
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -34,7 +40,19 @@ MODE="${1:-report}"; shift || true
 # registry-stale keeps its 30d default. --days overrides either.
 case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
-while [ $# -gt 0 ]; do case "$1" in --days) DAYS="$2"; shift 2;; --force) FORCE=yes; shift;; *) shift;; esac; done
+# Positional args past MODE (e.g. `reap <name>`) must survive this loop, not
+# just be discarded — collect anything that isn't a recognized flag into ARGS
+# and restore it as $1.. below. (No mode needed a bare positional until `reap`,
+# so this previously silently dropped one; caught while adding it.)
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --days) DAYS="$2"; shift 2;;
+    --force) FORCE=yes; shift;;
+    *) ARGS+=("$1"); shift;;
+  esac
+done
+set -- "${ARGS[@]}"
 # DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
 # mode) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated non-numeric value
 # (typo, empty string) is therefore live Python, not data — it throws an uncaught
@@ -77,6 +95,116 @@ proc_alive() {  # $1 = tmux session name
 # in sync with session-alias.sh.
 tmux_to_base() { case "$1" in agenthost_*) echo "agenthost-${1#agenthost_}";; ah_*) echo "ah-${1#ah_}";; *) echo "";; esac; }
 svc_to_tmux()  { case "$1" in agenthost-*) echo "agenthost_${1#agenthost-}";; ah-*) echo "ah_${1#ah-}";; *) echo "$1";; esac; }
+
+# _find_helper <basename> — resolve a sibling script co-located first (repo/dev
+# layout: <basename>.sh next to this script), then on PATH (deployed layout:
+# flat copies in ~/.local/bin with the .sh dropped, see session-git-prep.sh's
+# header comment for why). Prints the path and returns 0, or prints nothing and
+# returns 1 — callers must fail SAFE on a miss (refuse, don't silently skip
+# whatever the helper was gating).
+_find_helper() {
+  local base="$1" here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+  if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
+  if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
+  return 1
+}
+
+# ── worktree-stale / land-check shared helpers ────────────────────────────────
+# Factored so both modes compute dirty/base/landed identically (item 5 reuses
+# item 4's fixes rather than re-deriving them).
+
+# _wt_dirty <worktree> -> "clean" | "DIRTY", ignoring the spawner's own
+# baseline (the .claude/skills symlink new-session.sh creates in every run
+# dir, plus .sessions-init-* sentinels) — mirrors session-git-prep.sh's own
+# dirty check (same ignore regex) so a fresh, otherwise-untouched worktree
+# doesn't look dirty just because the spawner touched it. Before this fix,
+# EVERY worktree was reported DIRTY unconditionally.
+_wt_dirty() {
+  if git -C "$1" status --porcelain 2>/dev/null | grep -qvE '^.. (\.claude(/|$)|\.sessions-init)'; then
+    echo DIRTY
+  else
+    echo clean
+  fi
+}
+
+# _wt_mainrepo <worktree> -> absolute path to the worktree's main repo, from
+# its (possibly relative, on older git) --git-common-dir.
+_wt_mainrepo() {
+  local common_dir
+  common_dir="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || { echo ""; return; }
+  case "$common_dir" in /*) : ;; *) common_dir="$1/$common_dir" ;; esac
+  (cd "$common_dir/.." 2>/dev/null && pwd) || echo ""
+}
+
+declare -A _DEFBR_CACHE
+# _default_branch <repo> -> the repo's REAL default branch name (no origin/
+# prefix). Every git call here is -C-scoped to the given repo, never to $PWD or
+# any other repo — a stale/decoy ref living in some OTHER repo on disk can
+# never leak into this answer. Prefers GitHub's actual setting via `gh` (a
+# hardcoded "main" assumption, or a stale local origin/HEAD, can silently
+# disagree with reality — an observed failure: a stale origin/main decoy in one
+# repo made an unrelated fleet look unlanded). Falls back sanely when `gh` is
+# absent/unauthenticated or the repo has no (or a non-GitHub) remote: origin/
+# HEAD -> local main -> local master -> current HEAD (same chain session-git-
+# prep.sh uses for the same problem). `gh` is only ever tried against a
+# github.com origin (never invoked for a local-path/other-host remote — keeps
+# this fast and hermetic in tests) and bounded with `timeout` so a
+# hung/unreachable network call can't stall a whole worktree scan.
+_default_branch() {
+  local repo="$1" def="" url slug
+  if [ -n "${_DEFBR_CACHE[$repo]+x}" ]; then printf '%s\n' "${_DEFBR_CACHE[$repo]}"; return; fi
+  if command -v gh >/dev/null 2>&1 && url="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
+    case "$url" in
+      *github.com*)
+        slug="$(printf '%s' "$url" | sed -E 's#^(git@github\.com:|https://github\.com/|git://github\.com/)##; s#\.git$##')"
+        def="$(timeout 5 gh repo view "$slug" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
+        ;;
+    esac
+  fi
+  if [ -z "$def" ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    def="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')"
+  fi
+  if [ -z "$def" ]; then
+    if   git -C "$repo" show-ref --verify --quiet refs/heads/main;   then def=main
+    elif git -C "$repo" show-ref --verify --quiet refs/heads/master; then def=master
+    else
+      # NOT `$(cmd 2>/dev/null || echo HEAD)`: on an unborn-HEAD repo (no
+      # commits, no main/master) git can print "HEAD" to stdout AND still
+      # exit non-zero, so the `||` fallback would ALSO fire and the
+      # substitution would capture both — a literal "HEAD\nHEAD" (caught by
+      # hand-testing this edge case). Check emptiness instead of exit status.
+      def="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      [ -n "$def" ] || def="HEAD"
+    fi
+  fi
+  _DEFBR_CACHE[$repo]="$def"
+  printf '%s\n' "$def"
+}
+
+# _wt_landed <worktree> <mainrepo> -> "base=<branch> landed=yes|no|unknown".
+# landed=yes means HEAD is already an ancestor of the real default branch (safe
+# to forget about); unknown means neither origin/<default> nor a local
+# <default> branch exists in this repo to compare against.
+_wt_landed() {
+  local wt="$1" mainrepo="$2" def base_ref landed
+  def="$(_default_branch "$mainrepo")"
+  if git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$def"; then
+    base_ref="origin/$def"
+  elif git -C "$wt" show-ref --verify --quiet "refs/heads/$def"; then
+    base_ref="$def"
+  else
+    base_ref=""
+  fi
+  if [ -z "$base_ref" ]; then
+    landed=unknown
+  elif git -C "$wt" merge-base --is-ancestor HEAD "$base_ref" 2>/dev/null; then
+    landed=yes
+  else
+    landed=no
+  fi
+  printf 'base=%s landed=%s\n' "$def" "$landed"
+}
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
@@ -199,20 +327,15 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
         continue
       fi
       cand=$((cand+1))
-      dirty=clean; git -C "$wt" status --porcelain 2>/dev/null | grep -q . && dirty=DIRTY
-      if git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-        ahead="$(git -C "$wt" rev-list --count '@{u}..HEAD' 2>/dev/null || echo '?')"
-        upstream="ahead=${ahead}"
-      else
-        upstream="no-upstream"
-      fi
-      # Resolve the main repo this worktree belongs to, from its (possibly
-      # relative, on older git) --git-common-dir, so the removal command below
-      # is copy-pasteable without the reviewer having to hunt for the repo.
-      common_dir="$(git -C "$wt" rev-parse --git-common-dir 2>/dev/null)"
-      case "$common_dir" in /*) : ;; *) common_dir="$wt/$common_dir" ;; esac
-      mainrepo="$(cd "$common_dir/.." 2>/dev/null && pwd)"
-      printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$upstream"
+      dirty="$(_wt_dirty "$wt")"
+      # Resolve the main repo this worktree belongs to, so the removal command
+      # below is copy-pasteable without the reviewer having to hunt for the
+      # repo, and so landed-ness can be checked against its REAL default
+      # branch (not an assumed "main") — see _default_branch/_wt_landed above.
+      mainrepo="$(_wt_mainrepo "$wt")"
+      landedinfo="base=? landed=unknown"
+      [ -n "$mainrepo" ] && landedinfo="$(_wt_landed "$wt" "$mainrepo")"
+      printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$landedinfo"
       if [ -n "$mainrepo" ]; then
         # %q shell-quotes each value so the printed command is safe to copy-paste
         # even if a path or branch name contains whitespace or shell metacharacters.
@@ -315,6 +438,68 @@ print('  Report only. Reap an idle-but-alive one by hand:')
 print('    tmux kill-session -t <name> ; systemctl --user disable --now <name>.service')
 "
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|registry-stale [--days N]|worktree-stale|idle-report [--days N]]"; exit 2;;
+
+  reap)
+    # One-shot clean teardown of a named ALIVE session — the missing live
+    # counterpart to reap-local (which only handles sessions whose claude proc
+    # is already gone). Idempotent: a missing tmux session or a missing/never-
+    # installed systemd unit does not fail the rest of the teardown.
+    NAME="${1:?usage: session-doctor.sh reap <tmux-session> [--force]}"
+    echo "$NAME" | grep -qiE "$PROTECT" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
+    # Safety gate: refuse a session with unlanded/uncommitted work unless
+    # --force. Reuses session-preserve.sh's own audit (exit 0 = safe to reap)
+    # rather than re-deriving dirty/unpushed/reachability logic here. If the
+    # helper can't be found at all, fail SAFE (refuse) rather than silently
+    # skip the check.
+    if [ "$FORCE" != yes ]; then
+      SP="$(_find_helper session-preserve)" || {
+        echo "session-doctor: REFUSING to reap '$NAME' — could not locate session-preserve to check for unlanded work (looked next to this script and on PATH). Re-run with --force to skip the safety check." >&2
+        exit 1
+      }
+      if ! bash "$SP" "$NAME"; then
+        echo "" >&2
+        echo "REFUSING to reap '$NAME': unlanded/uncommitted work detected (see session-preserve output above)." >&2
+        echo "  Rescue first: session-preserve $NAME --rescue --wip   (then re-run reap)" >&2
+        echo "  Or force through data loss: session-doctor reap $NAME --force" >&2
+        exit 1
+      fi
+    fi
+    base="$(tmux_to_base "$NAME")"
+    tmux kill-session -t "$NAME" 2>/dev/null \
+      && echo "  tmux session killed: $NAME" || echo "  no live tmux session '$NAME' (ok)"
+    if [ -n "$base" ]; then
+      systemctl --user disable --now "${base}.service" >/dev/null 2>&1 \
+        && echo "  unit disabled: ${base}.service" || echo "  unit '${base}.service' not active/installed (ok)"
+      systemctl --user reset-failed "${base}.service" >/dev/null 2>&1 || true
+    else
+      echo "  '$NAME' is not an ah_/agenthost_ session — no systemd unit to tear down" >&2
+    fi
+    echo "reaped '$NAME'"
+    ;;
+
+  land-check)
+    # Per session-worktree, report-only: unlanded-vs-correct-base + real-dirty,
+    # reusing worktree-stale's two fixes (baseline-aware dirty, real default
+    # branch). Unlike worktree-stale (removal candidates for DEAD worktrees
+    # only), this audits EVERY worktree regardless of whether its owning
+    # session is still live — a "will I lose this?" check, not a cleanup list.
+    # No mutation.
+    echo "=== ~/.claude/worktrees/ land-check: unlanded-vs-correct-base + real-dirty (report-only) ==="
+    WT_BASE="$HOME/.claude/worktrees"
+    n=0
+    for wt in "$WT_BASE"/*/; do
+      [ -d "$wt" ] || continue
+      wt="${wt%/}"
+      n=$((n+1))
+      branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+      dirty="$(_wt_dirty "$wt")"
+      mainrepo="$(_wt_mainrepo "$wt")"
+      landedinfo="base=? landed=unknown"
+      [ -n "$mainrepo" ] && landedinfo="$(_wt_landed "$wt" "$mainrepo")"
+      printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$landedinfo"
+    done
+    echo "  --- $n worktree(s) checked. Report only; see worktree-stale for removal candidates + commands. ---"
+    ;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N]]"; exit 2;;
 esac
 fi

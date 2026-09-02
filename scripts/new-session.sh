@@ -32,6 +32,14 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
+  --task <text>       After the session boots, poll until claude is ready in
+                      the pane, then send this as the first message and
+                      verify it landed (reuses session-handoff's send+verify
+                      dance — never sent blind). Mutually exclusive with
+                      --task-file.
+  --task-file <path>  Same as --task, but read the message from a file. A
+                      missing/unreadable path fails immediately, before
+                      anything is spawned.
 
 Environment:
   CLAUDE_SESSION_MODEL=<model>  Model for the session. Unset → the PROFILE's
@@ -68,12 +76,14 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -a|--alias) ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
-    --dry-run)  DRYRUN=yes; shift ;;
-    --force)    FORCE=yes; shift ;;
+    -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
+    --dry-run)   DRYRUN=yes; shift ;;
+    --force)     FORCE=yes; shift ;;
+    --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
+    --task-file) TASK_FILE_ARG="${2:?--task-file needs a value}"; shift 2 ;;
     # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
     # positional (after the folder). Matching them as the first positional would
     # make a folder literally named `sessions`/`workspace`/`auto` unspawnable
@@ -82,6 +92,24 @@ while [ $# -gt 0 ]; do
   esac
 done
 : "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
+
+# --task/--task-file: validate up front so a bad kickoff argument fails loudly
+# BEFORE anything spawns, not after (a spawned-but-unkicked session is a worse
+# failure mode than no session at all — it looks like it worked).
+if [ -n "$TASK_ARG" ] && [ -n "$TASK_FILE_ARG" ]; then
+  echo "new-session: --task and --task-file are mutually exclusive" >&2
+  exit 2
+fi
+TASK=""
+if [ -n "$TASK_FILE_ARG" ]; then
+  if [ ! -r "$TASK_FILE_ARG" ]; then
+    echo "new-session: --task-file '$TASK_FILE_ARG' is missing or unreadable" >&2
+    exit 2
+  fi
+  TASK="$(cat "$TASK_FILE_ARG")"
+elif [ -n "$TASK_ARG" ]; then
+  TASK="$TASK_ARG"
+fi
 
 # ── Preflight capacity gate ──────────────────────────────────────────────────
 # Sessions are long-lived and nothing reaps them automatically, so spawns
@@ -487,6 +515,40 @@ fi
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
   "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" || true
+fi
+
+# ── Kickoff task (--task/--task-file) ───────────────────────────────────────
+# Replaces the fragile manual dance (spawn, hand-type the prompt, eyeball it
+# landed, hit Enter) with the SAME poll-then-verify path session-handoff.sh
+# already uses for a live session's follow-ups — not a second copy of that
+# logic. Resolve the helper co-located first (repo/dev layout: session-
+# handoff.sh next to this script) then on PATH (deployed layout: flat copies
+# in ~/.local/bin with the .sh dropped, see session-git-prep.sh's header) so
+# this works in both. Invoked via `bash` so the helper's exec bit (664 in-repo)
+# never matters.
+if [ -n "$TASK" ]; then
+  HANDOFF=""
+  if [ -f "$SELF_DIR/session-handoff.sh" ]; then
+    HANDOFF="$SELF_DIR/session-handoff.sh"
+  elif command -v session-handoff >/dev/null 2>&1; then
+    HANDOFF="$(command -v session-handoff)"
+  fi
+  if [ -z "$HANDOFF" ]; then
+    echo "WARNING: could not locate session-handoff (looked next to this script and on PATH) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
+  else
+    ready=no
+    for _i in $(seq 1 "${NEW_SESSION_TASK_READY_TRIES:-90}"); do
+      bash "$HANDOFF" check "$SESSION" >/dev/null 2>&1 && { ready=yes; break; }
+      sleep 1
+    done
+    if [ "$ready" != yes ]; then
+      echo "WARNING: '${SESSION}' never reached ready state — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
+    elif bash "$HANDOFF" send "$SESSION" "$TASK"; then
+      echo "Task sent to ${REMOTE_NAME} and verified landed."
+    else
+      echo "WARNING: task send UNVERIFIED on ${REMOTE_NAME} — check the session before assuming it received the task" >&2
+    fi
+  fi
 fi
 
 # ── Confirm ──────────────────────────────────────────────────────────────────
