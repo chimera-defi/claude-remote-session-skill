@@ -68,5 +68,19 @@ ok "fallback-model-default-matches-new-session" \
 ok "fallback-model-default-not-stale-sonnet" \
   "$(grep -cE 'MODEL="\$\{CLAUDE_SESSION_MODEL:-sonnet\}"' "$FB")" "0"
 
+# Both scripts' claude invocation carries --exclude-dynamic-system-prompt-sections
+# (new-session.sh commit c065420: a prompt-cache-reuse win applied unconditionally
+# for every CLAUDE_SESSION_PROFILE, including the orchestrator default that the
+# fallback recipe's non-PROFILE-aware invocation matches). Found in review: the
+# flag landed in new-session.sh's CLAUDE_EXTRA_FLAGS but was never ported to the
+# fallback recipe's two `/usr/bin/claude ...` lines, so the documented emergency
+# path silently lost the cache-reuse win new-session.sh already has.
+has "new-session-has-cache-flag" 'CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"' "$NS"
+# The fallback recipe's invocation has no CLAUDE_EXTRA_FLAGS variable (it isn't
+# PROFILE-aware), so check the flag is baked directly into BOTH claude
+# invocation lines (fresh-start and --continue), not just mentioned in prose.
+ok "fallback-cache-flag-on-both-invocations" \
+  "$(grep -cE -- '^\s*/usr/bin/claude .*--exclude-dynamic-system-prompt-sections' "$FB")" "2"
+
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
