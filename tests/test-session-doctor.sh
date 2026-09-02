@@ -5,6 +5,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run report (source-guard)
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
+has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 ok "legacy tmux->base" "$(tmux_to_base agenthost_foo-20260101-0900)" "agenthost-foo-20260101-0900"
 ok "new tmux->base"    "$(tmux_to_base ah_0101-0900-foo)"            "ah-0101-0900-foo"
@@ -128,6 +129,164 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ( eval "$cmd" ) >/dev/null 2>&1
   ok "worktree-stale-quoted-cmd-evals-cleanly" "$?" "0"
   ok "worktree-stale-quoted-cmd-removed-it" "$([ -d "$WT_SP" ] && echo yes || echo no)" "no"
+fi
+
+# _default_branch: real default branch resolution, no gh dependency needed for
+# these cases (no origin, or a non-github origin — the gh path is gated on
+# *github.com* and never invoked, so this stays hermetic/fast in CI).
+if command -v git >/dev/null 2>&1; then
+  DBTMP="$(mktemp -d)"; trap 'rm -rf "$DBTMP"' RETURN 2>/dev/null || true
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.com
+
+  # No remote at all, local 'main' exists -> falls back to local main.
+  git init -q -b main "$DBTMP/nomain" >/dev/null 2>&1
+  git -C "$DBTMP/nomain" commit -q --allow-empty -m init
+  ok "defbr-no-remote-local-main" "$(_default_branch "$DBTMP/nomain")" "main"
+
+  # No remote, only 'master' exists -> falls back to local master.
+  git init -q -b master "$DBTMP/nomaster" >/dev/null 2>&1
+  git -C "$DBTMP/nomaster" commit -q --allow-empty -m init
+  ok "defbr-no-remote-local-master" "$(_default_branch "$DBTMP/nomaster")" "master"
+
+  # A plain clone (non-github origin) sets refs/remotes/origin/HEAD on clone —
+  # resolved via that, NOT via gh (origin is a local path, not github.com, so
+  # gh is never even attempted — proves the github.com gate works and this
+  # stays network-free).
+  git clone -q "$DBTMP/nomain" "$DBTMP/clone" >/dev/null 2>&1
+  ok "defbr-clone-origin-head" "$(_default_branch "$DBTMP/clone")" "main"
+
+  # Caching: a second call for the same repo path returns the same answer
+  # (exercises the cache-hit branch, not just the compute path).
+  ok "defbr-cached-call" "$(_default_branch "$DBTMP/clone")" "main"
+
+  # Real repo with a github.com origin: gh is authenticated on this host and
+  # resolves the real default branch, matching the incident this exists to
+  # prevent (a hardcoded/stale "main" silently disagreeing with reality).
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    REALREPO="$(cd "$HERE/.." && pwd)"
+    realdef="$(_default_branch "$REALREPO")"
+    if [ -n "$realdef" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: defbr-real-github-repo — got empty"; fi
+  fi
+fi
+
+# _wt_dirty must ignore the spawner's own .claude/skills baseline (bug 4(i):
+# every worktree was reported DIRTY unconditionally before this fix, because
+# new-session.sh's generated start script creates an untracked .claude/skills
+# symlink in every run dir it touches).
+if command -v git >/dev/null 2>&1; then
+  DIRTYTMP="$(mktemp -d)"; trap 'rm -rf "$DIRTYTMP"' RETURN 2>/dev/null || true
+  git init -q -b main "$DIRTYTMP/repo" >/dev/null 2>&1
+  git -C "$DIRTYTMP/repo" config user.email t@t.com; git -C "$DIRTYTMP/repo" config user.name t
+  git -C "$DIRTYTMP/repo" commit -q --allow-empty -m init
+  ok "wtdirty-clean-repo" "$(_wt_dirty "$DIRTYTMP/repo")" "clean"
+  mkdir -p "$DIRTYTMP/repo/.claude"
+  ln -sf /nonexistent-skills-target "$DIRTYTMP/repo/.claude/skills"
+  ok "wtdirty-ignores-claude-skills-baseline" "$(_wt_dirty "$DIRTYTMP/repo")" "clean"
+  touch "$DIRTYTMP/repo/.sessions-init-ah-something"
+  ok "wtdirty-ignores-sessions-init-sentinel" "$(_wt_dirty "$DIRTYTMP/repo")" "clean"
+  # A REAL untracked file must still be reported dirty (the ignore list is not
+  # a blanket "ignore everything untracked").
+  echo x > "$DIRTYTMP/repo/real-untracked.txt"
+  ok "wtdirty-still-flags-real-untracked" "$(_wt_dirty "$DIRTYTMP/repo")" "DIRTY"
+fi
+
+# worktree-stale / land-check: real base + landed reporting (bug 4(ii)), and
+# the DIRTY flag no longer false-positiving on the .claude/skills baseline
+# (bug 4(i)) — end-to-end through the actual mode dispatch, not just the
+# helper functions in isolation.
+if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
+  LCTMP="$(mktemp -d)"; trap 'rm -rf "$LCTMP"' EXIT
+  LCREPO="$LCTMP/repo"; mkdir -p "$LCREPO"
+  git -C "$LCREPO" init -q -b main
+  git -C "$LCREPO" config user.email t@t.com; git -C "$LCREPO" config user.name t
+  echo hi > "$LCREPO/a.txt"; git -C "$LCREPO" add a.txt; git -C "$LCREPO" commit -q -m init
+
+  LCHOME="$LCTMP/home"; mkdir -p "$LCHOME/.claude/worktrees"
+
+  # Landed: dead worktree, straight off main, no new commits, WITH the
+  # .claude/skills baseline present (proves both fixes together).
+  WT_LANDED="$LCHOME/.claude/worktrees/ah-lclanded-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lclanded-0101-0900 "$WT_LANDED" main >/dev/null 2>&1
+  mkdir -p "$WT_LANDED/.claude"; ln -sf /nonexistent-skills-target "$WT_LANDED/.claude/skills"
+
+  # Unlanded: dead worktree with a commit not on main.
+  WT_UNLANDED="$LCHOME/.claude/worktrees/ah-lcunlanded-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lcunlanded-0101-0900 "$WT_UNLANDED" main >/dev/null 2>&1
+  git -C "$WT_UNLANDED" config user.email t@t.com; git -C "$WT_UNLANDED" config user.name t
+  echo new > "$WT_UNLANDED/new.txt"; git -C "$WT_UNLANDED" add new.txt
+  git -C "$WT_UNLANDED" commit -q -m "unlanded work"
+
+  wsout="$(HOME="$LCHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  ok "wstale-skips-skills-baseline-dirty" "$(printf '%s' "$wsout" | grep -F "$WT_LANDED" | grep -oE 'status=[a-zA-Z]+')" "status=clean"
+  ok "wstale-reports-landed-yes"          "$(printf '%s' "$wsout" | grep -F "$WT_LANDED" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=yes"
+  ok "wstale-reports-landed-no"           "$(printf '%s' "$wsout" | grep -F "$WT_UNLANDED" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=no"
+
+  # land-check: report-only (no mutation — both worktrees still exist after),
+  # and unlike worktree-stale it must NOT filter by liveness — add a LIVE
+  # worktree and confirm it's still reported (worktree-stale would skip it).
+  WT_LCLIVE="$LCHOME/.claude/worktrees/ah-lclive-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lclive-0101-0900 "$WT_LCLIVE" main >/dev/null 2>&1
+  tmux new-session -d -s ah_lclive-0101-0900 -c "$WT_LCLIVE" 'sleep 60'
+  lcout="$(HOME="$LCHOME" bash "$HERE/../scripts/session-doctor.sh" land-check)"
+  tmux kill-session -t ah_lclive-0101-0900 2>/dev/null || true
+
+  has "landcheck-lists-landed"   "$lcout" "$WT_LANDED"
+  has "landcheck-lists-unlanded" "$lcout" "$WT_UNLANDED"
+  has "landcheck-lists-live-too" "$lcout" "$WT_LCLIVE"
+  ok "landcheck-no-mutation-landed"   "$([ -d "$WT_LANDED" ] && echo yes || echo no)" "yes"
+  ok "landcheck-no-mutation-unlanded" "$([ -d "$WT_UNLANDED" ] && echo yes || echo no)" "yes"
+fi
+
+# reap: one-shot teardown of a named ALIVE session (the missing live case —
+# reap-local only handles DEAD ones). Never run against a real session name;
+# every fixture here is a throwaway created and killed by this test.
+if command -v tmux >/dev/null 2>&1; then
+  RSTUB="$(mktemp -d)"
+  cat > "$RSTUB/systemctl" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "$RSTUB/systemctl"
+
+  # 1. Protected name -> refused outright, regardless of --force, and nothing
+  # is touched (there's no real resource here, so this only checks message +
+  # exit code).
+  protout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
+  has "reap-protected-refused" "$protout" "PROTECTED"
+  ok  "reap-protected-exit2"   "$protrc" "2"
+
+  # 2. Idempotent no-op: tmux session and systemd unit both already absent —
+  # must still exit 0, not error.
+  noopout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap ah_reap-noop-test-0101-0900 --force 2>&1)"; nooprc=$?
+  ok "reap-noop-exit0" "$nooprc" "0"
+  has "reap-noop-message" "$noopout" "reaped 'ah_reap-noop-test-0101-0900'"
+
+  # 3. Live session with unlanded work: refused without --force (and the tmux
+  # session must survive the refusal), reaped with --force (and the tmux
+  # session must actually be gone afterward).
+  REAPTMP="$(mktemp -d)"
+  REAPREPO="$REAPTMP/repo"; mkdir -p "$REAPREPO"
+  git -C "$REAPREPO" init -q -b main
+  git -C "$REAPREPO" config user.email t@t.com; git -C "$REAPREPO" config user.name t
+  git -C "$REAPREPO" commit -q --allow-empty -m init
+  echo "uncommitted" > "$REAPREPO/scratch.txt"
+  RS="ah_reaplivetest-0101-0900"
+  tmux new-session -d -s "$RS" -c "$REAPREPO" 2>/dev/null
+  tmux send-keys -t "$RS" 'sleep 300 &' Enter
+  sleep 1
+
+  refuseout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" 2>&1)"; refuserc=$?
+  has "reap-refuses-unlanded"        "$refuseout" "REFUSING to reap"
+  ok  "reap-refuses-unlanded-exit1"  "$refuserc" "1"
+  ok  "reap-refused-session-survives" "$(tmux has-session -t "$RS" 2>/dev/null && echo yes || echo no)" "yes"
+
+  forceout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" --force 2>&1)"; forcerc=$?
+  ok "reap-force-exit0" "$forcerc" "0"
+  has "reap-force-message" "$forceout" "reaped '$RS'"
+  ok "reap-force-session-gone" "$(tmux has-session -t "$RS" 2>/dev/null && echo yes || echo no)" "no"
+
+  rm -rf "$RSTUB" "$REAPTMP"
+  tmux kill-session -t "$RS" 2>/dev/null || true
 fi
 
 echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
