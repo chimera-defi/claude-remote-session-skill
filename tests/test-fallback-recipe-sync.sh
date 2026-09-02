@@ -55,5 +55,18 @@ has "new-session-guards-skills-symlink" '[ -L "\$RUNDIR/.claude/skills" ] || [ !
 has "fallback-guards-skills-symlink"    '[ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]' "$FB"
 ok "fallback-no-unconditional-skills-rm" "$(grep -cE '^rm -rf "\$RUNDIR/\.claude/skills" && ln -sf' "$FB")" "0"
 
+# The fallback's default MODEL (no CLAUDE_SESSION_MODEL set) must match
+# new-session.sh's actual default-profile model, not a stale hardcoded value.
+# Found in review: new-session.sh commit 66d1e63/cb733ec moved the no-env
+# default from a flat "sonnet" to a per-profile default (orchestrator ->
+# claude-opus-5, pinned), but neither that commit nor the later doc-sync
+# commit (9d4c420) touched fallback-recipe.md, so the documented emergency
+# path still silently spawned sonnet instead of the intended opus default.
+ns_default_model="$(grep -oE 'orchestrator\) MODEL=[a-zA-Z0-9._-]+' "$NS" | sed -E 's/.*MODEL=//')"
+ok "fallback-model-default-matches-new-session" \
+  "$(grep -cF "CLAUDE_SESSION_MODEL:-${ns_default_model}}" "$FB")" "1"
+ok "fallback-model-default-not-stale-sonnet" \
+  "$(grep -cE 'MODEL="\$\{CLAUDE_SESSION_MODEL:-sonnet\}"' "$FB")" "0"
+
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

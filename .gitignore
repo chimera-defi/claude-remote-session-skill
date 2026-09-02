@@ -1,0 +1,5 @@
+# Local runtime telemetry (scripts/record-spawn-telemetry.sh /
+# scripts/telemetry-report.sh) — written under the repo checkout by design
+# (REPO_ROOT defaults to the deployed clone's toplevel) but is per-host
+# operational data, not source content, and must never be committed.
+artifacts/
