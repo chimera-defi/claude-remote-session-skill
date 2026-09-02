@@ -38,8 +38,19 @@ has "missing-dirs-exit-zero" "$rc" '^0$'
 last_line="$(tail -1 "$EVENTS")"
 has "missing-dirs-zeroed" "$last_line" '"global_skills_count": 0'
 
+# An empty WORKDIR must never be treated as "probe filesystem root" —
+# "$WORKDIR/CLAUDE.md" with WORKDIR="" is the real path "/CLAUDE.md". Confirm
+# it degrades to the same zeroed/best-effort behavior as a missing workdir,
+# not a crash and not a lookup against "/" or "/.claude".
+CLAUDE_SKILLS_DIR="$TMPD/skills" TELEMETRY_ROOT="$TMPD/repo" \
+  bash "$RECORD" empty e ah-e-0101-0000 ah_e-0101-0000 sessions sonnet "" >/dev/null
+rc=$?
+has "empty-workdir-exit-zero" "$rc" '^0$'
+last_line="$(tail -1 "$EVENTS")"
+has "empty-workdir-zeroed-claude-md" "$last_line" '"claude_md_bytes": 0'
+
 # Report runs against the file this test just built.
 report_out="$(TELEMETRY_ROOT="$TMPD/repo" bash "$REPORT")"
-has "report-counts-spawns" "$report_out" 'spawns recorded: 3'
+has "report-counts-spawns" "$report_out" 'spawns recorded: 4'
 
 echo "spawn telemetry: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

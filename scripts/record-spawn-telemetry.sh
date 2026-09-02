@@ -41,12 +41,17 @@ if [ -d "$SKILLS_DIR" ]; then
 fi
 
 claude_md_bytes=0
-for candidate in "$WORKDIR/.claude/CLAUDE.md" "$WORKDIR/CLAUDE.md"; do
-  if [ -f "$candidate" ]; then
-    claude_md_bytes=$(wc -c < "$candidate" 2>/dev/null | tr -d ' ')
-    break
-  fi
-done
+# An empty WORKDIR (arg 7 omitted) would otherwise probe "/.claude/CLAUDE.md"
+# and "/CLAUDE.md" — real filesystem paths, not "missing" ones — and
+# misattribute whatever happens to live at filesystem root to this spawn.
+if [ -n "$WORKDIR" ]; then
+  for candidate in "$WORKDIR/.claude/CLAUDE.md" "$WORKDIR/CLAUDE.md"; do
+    if [ -f "$candidate" ]; then
+      claude_md_bytes=$(wc -c < "$candidate" 2>/dev/null | tr -d ' ')
+      break
+    fi
+  done
+fi
 
 mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
 
