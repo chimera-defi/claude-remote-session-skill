@@ -196,4 +196,20 @@ if command -v tmux >/dev/null 2>&1; then
   has "lock-persistent-failure-diagnostic" "$lockerr" 'could not claim a session-name lock'
 fi
 
+# BUILDER_TOOLS must keep `advisor`. --tools is an EXHAUSTIVE allowlist that
+# gates deferred built-ins too, so dropping `advisor` here makes it unreachable
+# ENTIRELY for a `--profile builder` session — which presents as "advisor is
+# broken" rather than "never allowlisted", with no error and no warning.
+#
+# This already regressed once and was caught only in production: the DEPLOYED
+# ~/.local/bin/new-session was hand-patched to re-add `advisor` (2026-08-27,
+# cf. its .pre-advisor-readd backup) but the fix was never landed back here, so
+# the repo stayed wrong and any redeploy-from-source would silently undo it.
+# Nothing tested the allowlist, which is why the drift survived. It does now.
+builder_tools_line="$(grep -m1 '^BUILDER_TOOLS=' "$NS")"
+has "builder-tools-keeps-advisor" "$builder_tools_line" ',advisor"$'
+# Guard the rationale too, so the comment can't contradict the code.
+ok "builder-tools-comment-not-stale" \
+  "$(grep -c 'SendUserFile, advisor, ReportFindings' "$NS")" "0"
+
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

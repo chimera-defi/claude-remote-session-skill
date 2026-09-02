@@ -194,12 +194,20 @@ fi
 # without them) — we keep the useful ones so a builder stays fully capable:
 # web fetch/search, task tracking, plan mode, notebook edits, background monitor.
 #
-# The ~11.3k saving comes entirely from DROPPING the 6 upfront-schema tools:
-# Workflow (~7.8k — multi-agent fan-out, THE orchestrator-defining tool) plus
-# Artifact, SendUserFile, advisor, ReportFindings, ScheduleWakeup (~3.5k combined
-# — the reporting/scheduling surface). A builder that genuinely needs one of
-# those should add it here (~1k each) or just use the orchestrator profile.
-BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor"
+# The ~10.3k saving comes from DROPPING 5 upfront-schema tools: Workflow (~7.8k
+# — multi-agent fan-out, THE orchestrator-defining tool) plus Artifact,
+# SendUserFile, ReportFindings, ScheduleWakeup (~2.5k combined — the
+# reporting/scheduling surface). A builder that genuinely needs one of those
+# should add it here (~1k each) or just use the orchestrator profile.
+#
+# `advisor` is KEPT (~1k), unlike its reporting-surface neighbours: the builder
+# role is the one that actually reaches for a second opinion, and --tools gates
+# deferred built-ins too, so omitting it here made it unreachable ENTIRELY —
+# which presents as "advisor is broken" rather than "never allowlisted".
+# NB it is ALSO gated on the agent's own model, independent of this list
+# (verified 2026-08-27: sonnet-5 and opus-4-8 have it, claude-opus-5 does not).
+# This allowlist is necessary but not sufficient — keep builder on sonnet.
+BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 
 # --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
 # cwd/env/memory-path/git-status out of the cached system prompt into the first
