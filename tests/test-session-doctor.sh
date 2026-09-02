@@ -167,6 +167,7 @@ if command -v git >/dev/null 2>&1; then
     realdef="$(_default_branch "$REALREPO")"
     if [ -n "$realdef" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: defbr-real-github-repo — got empty"; fi
   fi
+  rm -rf "$DBTMP"   # `trap ... RETURN` above never fires at script top-level (no enclosing function)
 fi
 
 # _wt_dirty must ignore the spawner's own .claude/skills baseline (bug 4(i):
@@ -188,6 +189,7 @@ if command -v git >/dev/null 2>&1; then
   # a blanket "ignore everything untracked").
   echo x > "$DIRTYTMP/repo/real-untracked.txt"
   ok "wtdirty-still-flags-real-untracked" "$(_wt_dirty "$DIRTYTMP/repo")" "DIRTY"
+  rm -rf "$DIRTYTMP"   # `trap ... RETURN` above never fires at script top-level (no enclosing function)
 fi
 
 # worktree-stale / land-check: real base + landed reporting (bug 4(ii)), and
