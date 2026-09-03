@@ -241,7 +241,7 @@ PS="$(mktemp -u)"
 ok "per-spawn-alias-returns-value" \
   "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" my-long-project-folder --alias taskname)" "taskname"
 ok "per-spawn-alias-creates-no-entry" \
-  "$( { grep -c '^my-long-project-folder' "$PS" 2>/dev/null || echo 0; } | head -1)" "0"
+  "$([ -f "$PS" ] && echo exists || echo absent)" "absent"
 # With a stored default: --alias overrides for this spawn but must not overwrite.
 printf 'stable-folder\tstable\n' > "$PS"
 ok "per-spawn-alias-overrides-for-this-spawn" \
@@ -261,7 +261,7 @@ ok "bare-resolve-after-set-default" \
 # anti-poisoning check runs BEFORE the persist decision.
 pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias ah-x-0722-0725 --set-default 2>/dev/null)"
 ok "set-default-rejects-poisoned"      "$(notsess "$pz_out")" "clean"
-ok "set-default-poisoned-not-verbatim" "$( { grep -c 'ah-x-0722-0725' "$PS" 2>/dev/null || echo 0; } | head -1)" "0"
+ok "set-default-poisoned-not-verbatim" "$(grep -cF 'ah-x-0722-0725' "$PS" 2>/dev/null; true)" "0"
 # Inference still persists -- that is a deterministic cache, not drift.
 PS2="$(mktemp -u)"
 inf_out="$(SESSION_ALIAS_STORE="$PS2" bash "$ALIAS" some-very-long-project-name)"
