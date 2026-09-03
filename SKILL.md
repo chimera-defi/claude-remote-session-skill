@@ -37,7 +37,8 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 - Folder names `<= 18` chars are used as-is.
 - Longer names are reduced to an initials acronym (`claude-remote-session-skill` → `crss`),
   then the mapping is saved so every later spawn of that folder gets the same alias.
-- Pass `-a`/`--alias <x>` to `new-session` to set (and persist) an explicit alias.
+- Pass `-a`/`--alias <x>` to `new-session` for a one-off name (this spawn only);
+  add `--set-default-alias` to persist it as the folder default.
 - **Protected folders are never aliased.** A folder whose name matches `openclaw|hermes`
   keeps its full name (aliasing would strip the token `session-doctor` needs to protect it;
   `--alias` is ignored for these). This `ALIAS_PROTECT` guard is deliberately narrower than
@@ -55,17 +56,16 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   `port-8080`, `chain-84532`, `issue-12345`) keep distinct aliases. The detection rules
   themselves live in `scripts/session-alias.sh` and are pinned by 69 assertions in
   `tests/test-session-alias.sh` — read those rather than restating them here.
-- **The dominant real-world drift is a task name persisted as a folder alias — not a
-  collision.** `--alias` names the *folder*, but sessions habitually pass the *task*
-  (`--alias crss-prs`, `trs-fix`, `eth2qs-orch`, `ghv-refactor`), and that value sticks:
-  every later bare `new-session <folder>` inherits it, so the folder ends up permanently
-  named after a task that finished weeks ago. A 2026-08-24 `--audit-store` run found **11 of
-  37 entries drifted, and every one was this shape** — none were collisions. Before passing
-  `--alias`, ask whether the name still reads correctly for the *next* session in that folder;
-  if it only describes this task, spawn bare and let inference name it.
+- **`--alias` is PER-SPAWN and does not change the folder's default.** Sessions habitually
+  pass the *task* (`--alias crss-prs`, `trs-fix`, `pssot-indep`) rather than the folder, and
+  when that used to persist automatically it was the dominant source of drift — two audits
+  found 11-of-37 and 11-of-42 entries drifted, every one this shape, none collisions. Fixed
+  2026-09-03: pass `--set-default-alias` to actually rewrite the folder default, and only
+  when the name describes the **folder**, not the task.
 - `session-alias --audit-store` read-only-scans the whole store and reports entries where
   fresh inference now disagrees with what's stored (e.g. a pre-fix collision) — it never
-  rewrites anything; a human decides whether to leave, re-`--alias`, or clear the line.
+  rewrites anything; a human decides whether to leave, re-`--alias --set-default-alias`,
+  or clear the line.
 
 ## Key Rules
 
@@ -124,7 +124,8 @@ A standalone script handles the full recipe. Use it directly:
 new-session <foldername>              # auto-detects workspace/ vs .sessions/
 new-session <foldername> workspace    # force workspace/
 new-session <foldername> sessions     # force .sessions/
-new-session <foldername> --alias x    # explicit short alias (persisted)
+new-session <foldername> --alias x    # explicit short alias (THIS spawn only)
+new-session <foldername> --alias x --set-default-alias   # ...and make it the folder default
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session --help                    # print usage and exit (no session spawned)
 
