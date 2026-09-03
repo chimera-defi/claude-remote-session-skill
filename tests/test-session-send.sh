@@ -51,7 +51,17 @@ if command -v tmux >/dev/null 2>&1; then
   S="sendtest-$$-ws"
   tmux new-session -d -s "$S" 2>/dev/null
   tmux send-keys -t "$S" 'exec -a claude cat' Enter
-  sleep 1
+  # POLL, don't sleep. A fixed `sleep 1` raced on loaded CI runners: the pane was
+  # still a bare login shell, so _state_of classified it "starting" and
+  # session-send refused for THAT reason before ever reaching the whitespace
+  # check — failing this assertion with a misleading message
+  # ("... is still starting — refusing to send"). Wait for the renamed
+  # foreground command this fixture needs, which is what the comment above
+  # already said was required.
+  for _ in $(seq 1 50); do
+    [ "$(tmux list-panes -t "$S" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] && break
+    sleep 0.2
+  done
   outw="$(bash "$SEND" "$S" "   " 2>&1)"; rcw=$?
   has "whitespace-rejected" "$outw" "message is empty or whitespace-only"
   ok  "whitespace-exit2"    "$rcw" "2"

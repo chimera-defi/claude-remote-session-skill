@@ -2,7 +2,10 @@
 # session-alias — resolve a short, stable session alias for a workdir folder and
 # persist it. Invoked by new-session.sh (like session-git-prep). Prints the alias.
 #
-# Usage: session-alias <foldername> [--alias <x>]
+# Usage: session-alias <foldername> [--alias <x>] [--set-default] [--no-save]
+#
+# --alias is PER-SPAWN and does not change the folder's stored default; pass
+# --set-default alongside it to actually persist the new default.
 set -uo pipefail
 
 # ALIAS_PROTECT — folders never aliased, so their identifying token survives in
@@ -21,16 +24,17 @@ ALIAS_PROTECT='openclaw|hermes'
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 
-FOLDER=""; ALIAS_ARG=""; NOSAVE=no; AUDIT=no
+FOLDER=""; ALIAS_ARG=""; NOSAVE=no; AUDIT=no; SETDEFAULT=no
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)      ALIAS_ARG="${2:-}"; shift 2 ;;
     -n|--no-save)    NOSAVE=yes; shift ;;   # resolve only, never write the store (dry-run)
+    --set-default)   SETDEFAULT=yes; shift ;;  # opt in to PERSISTING an explicit --alias
     --audit-store)   AUDIT=yes; shift ;;    # report-only: no foldername needed
     *) [ -z "$FOLDER" ] && FOLDER="$1"; shift ;;
   esac
 done
-[ "$AUDIT" = yes ] || [ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>] [--no-save] | session-alias --audit-store" >&2; exit 2; }
+[ "$AUDIT" = yes ] || [ -n "$FOLDER" ] || { echo "usage: session-alias <foldername> [--alias <x>] [--set-default] [--no-save] | session-alias --audit-store" >&2; exit 2; }
 save() { [ "$NOSAVE" = yes ] || store_upsert "$1" "$2"; }
 
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
@@ -205,14 +209,25 @@ if printf '%s' "$FOLDER" | grep -qiE "$ALIAS_PROTECT"; then
   [ -n "$ALIAS_ARG" ] && echo "session-alias: '$FOLDER' is protected; ignoring --alias" >&2
   sanitize "$FOLDER"; exit 0
 fi
-# 1. explicit --alias -> sanitize, validate, store, print
+# 1. explicit --alias -> sanitize, validate, print. PER-SPAWN ONLY: it does NOT
+# become the folder's stored default unless --set-default is passed.
+#
+# It used to persist unconditionally, and that was the dominant source of alias
+# drift in practice. `--alias` names the *task* far more often than the *folder*
+# (`--alias crss-prs`, `trs-fix`, `eth2-resurrect`, `pssot-indep`), so one spawn
+# permanently renamed the folder and every later bare `new-session <folder>`
+# inherited a name describing work that finished weeks ago. Two audits found
+# 11-of-37 and 11-of-42 entries drifted, and every single one was this shape --
+# none were collisions. Making the common case non-destructive is the fix; the
+# rare "I really do want to rename this folder for good" case opts in explicitly.
 if [ -n "$ALIAS_ARG" ]; then
   a="$(sanitize "$ALIAS_ARG")"
   if [ -z "$a" ] || looks_like_session_name "$a"; then
     [ -n "$a" ] && echo "session-alias: alias '$a' looks like a session name; inferring a clean one instead" >&2
     a="$(infer "$FOLDER")"
   fi
-  save "$FOLDER" "$a"; printf '%s\n' "$a"; exit 0
+  [ "$SETDEFAULT" = yes ] && save "$FOLDER" "$a"
+  printf '%s\n' "$a"; exit 0
 fi
 # 2. stored alias -> reuse, UNLESS poisoned (session-name-shaped). Poisoned entries
 # can arrive from an external writer, a manual edit, or legacy data, so validate on

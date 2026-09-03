@@ -212,4 +212,40 @@ has "builder-tools-keeps-advisor" "$builder_tools_line" ',advisor"$'
 ok "builder-tools-comment-not-stale" \
   "$(grep -c 'SendUserFile, advisor, ReportFindings' "$NS")" "0"
 
+# ── `new-session --alias` must NOT mutate the folder's stored default ─────────
+# Operator directive 2026-09-03, after clearing 11 drifted entries: --alias is
+# PER-SPAWN; persisting is opt-in via --set-default-alias.
+#
+# Testing this through --dry-run would be VACUOUS: --dry-run already passes
+# --no-save, so the store is untouched either way and the assertion would pass
+# even against the buggy auto-persist build (verified). So instead stub
+# session-alias with a recorder and assert on the flags new-session actually
+# hands it -- that is the plumbing that decides persistence on a real spawn.
+REC="$(mktemp -d)"
+cat > "$REC/session-alias" <<'RECEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$REC_ARGS"
+# still resolve, so new-session gets a usable alias
+for a in "$@"; do case "$prev" in -a|--alias) echo "$a"; exit 0;; esac; prev="$a"; done
+echo stubalias
+RECEOF
+chmod +x "$REC/session-alias"
+
+rec_args_for() {  # $@ = extra new-session flags; prints the args passed to session-alias
+  REC_ARGS="$(mktemp)"; export REC_ARGS
+  PATH="$REC:$PATH" bash "$NS" --dry-run recorder-folder "$@" >/dev/null 2>&1
+  cat "$REC_ARGS"; rm -f "$REC_ARGS"; unset REC_ARGS
+}
+
+# A bare --alias spawn must NOT ask session-alias to persist.
+recA="$(rec_args_for --alias taskname)"
+has "alias-passed-through"            "$recA" 'alias taskname'
+if printf '%s' "$recA" | grep -q -- '--set-default'; then
+  fail=$((fail+1)); echo "FAIL: alias-alone-must-not-request-persist — got '$recA'"
+else pass=$((pass+1)); fi
+
+# --set-default-alias IS the opt-in and must forward --set-default.
+recB="$(rec_args_for --alias renamed --set-default-alias)"
+has "set-default-alias-forwards-flag" "$recB" 'set-default'
+
 echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
