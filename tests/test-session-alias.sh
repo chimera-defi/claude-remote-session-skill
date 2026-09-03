@@ -63,9 +63,13 @@ ok "readguard-3-value" "$r3" "universe-expand"
 ok "readguard-selfheal" "$(awk -F'\t' '{print $2}' "$PZ" | while read -r v; do notsess "$v"; done | grep -c POISONED | tr -d ' ')" "0"
 
 # WRITE guard: an explicit --alias that looks like a session name is refused and a
-# clean alias inferred + stored instead.
+# clean alias inferred + stored instead. --set-default is required here: a bare
+# --alias is per-spawn only and persists nothing (see the per-spawn block near
+# the end of this file), so without it "$W" is never created and the store
+# assertion below would trivially read as "clean" off a nonexistent file
+# instead of actually exercising store_upsert's guard.
 W="$(mktemp)"; rm -f "$W"
-ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-rotation-finalize-0725)")" "clean"
+ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-rotation-finalize-0725 --set-default)")" "clean"
 ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")" "clean"
 
 # INFER de-sessionify: a folder that is itself a session name yields a clean alias

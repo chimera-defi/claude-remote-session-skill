@@ -79,7 +79,17 @@ audit_one() {
       | grep -vE "$JUNK_RE" | head -10 | sed 's/^/       /'
 
   if [ "$MODE_WIP" = yes ] && [ "$dirty" -gt 0 ]; then
-    git -C "$cwd" add -A -- . ':!*.claude/skills' 2>/dev/null
+    # Stage exactly the paths counted as "dirty" above (git diff --name-only
+    # HEAD, filtered by the SAME $JUNK_RE) — not `git add -A`. -A also picks up
+    # any new untracked file (only .claude/skills was ever excluded from it),
+    # so a tracked-but-JUNK_RE-matched path (e.g. a committed node_modules/ or
+    # .venv/ file, unusual but real for vendored deps) that was modified would
+    # get silently staged and WIP-committed even though the audit above never
+    # counted it as dirty and told the operator it wasn't there. Building the
+    # add list from the identical filtered diff guarantees the commit can
+    # never contain more than what was actually reported.
+    mapfile -t wip_files < <(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE")
+    [ "${#wip_files[@]}" -gt 0 ] && git -C "$cwd" add -- "${wip_files[@]}" 2>/dev/null
     git -C "$cwd" commit -q -m "wip(session-preserve): checkpoint before reaping $s" 2>/dev/null \
       && echo "   WIP committed on $br" || echo "   WIP commit FAILED — do not reap"
     dirty=0
