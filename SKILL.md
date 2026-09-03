@@ -54,7 +54,7 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
   `--alias`, an external writer, or legacy data can never produce doubled `ah-ah-…-MMDD-MMDD`
   session names. Gating is calendar-validated, so ordinary digit runs (`sprint-2024`,
   `port-8080`, `chain-84532`, `issue-12345`) keep distinct aliases. The detection rules
-  themselves live in `scripts/session-alias.sh` and are pinned by 69 assertions in
+  themselves live in `scripts/session-alias.sh` and are pinned by 80 assertions in
   `tests/test-session-alias.sh` — read those rather than restating them here.
 - **`--alias` is PER-SPAWN and does not change the folder's default.** Sessions habitually
   pass the *task* (`--alias crss-prs`, `trs-fix`, `pssot-indep`) rather than the folder, and

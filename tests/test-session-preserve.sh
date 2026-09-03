@@ -148,6 +148,27 @@ out="$(bash "$SP" "$S_JUNK" 2>&1)"; rc=$?
 has "junk-untracked-safe" "$out" "SAFE-TO-REAP"
 ok  "junk-untracked-exit0" "$rc" "0"
 
+# 6b. --wip must not sweep in a TRACKED file under a JUNK_RE path (e.g. a
+# committed node_modules/ entry -- unusual but real for vendored deps). The
+# audit above never counts it as dirty, so committing it anyway via a bare
+# `git add -A` would silently include content the operator was never told was
+# there. Only the real, non-junk tracked change should land in the WIP commit;
+# the junk change stays uncommitted (harmless -- it was never blocking reap).
+R4B="$WORK/repo4b"; mkrepo "$R4B"
+mkdir -p "$R4B/node_modules/pkg"; echo v1 > "$R4B/node_modules/pkg/index.js"
+echo one > "$R4B/real.txt"
+git -C "$R4B" add -A; git -C "$R4B" commit --quiet -m "add tracked + junk"
+echo v2 > "$R4B/node_modules/pkg/index.js"   # tracked JUNK_RE path, modified
+echo two > "$R4B/real.txt"                    # tracked real path, modified
+S_JUNKWIP="$(spawn_in "$R4B")"
+out="$(bash "$SP" "$S_JUNKWIP" 2>&1)"; rc=$?
+has "junk-wip-dirty-excludes-junk" "$out" "uncommitted TRACKED changes (non-junk): 1"
+out="$(bash "$SP" "$S_JUNKWIP" --wip 2>&1)"; rc=$?
+has "junk-wip-commits"   "$out" "WIP committed"
+has "junk-wip-then-safe" "$out" "SAFE-TO-REAP"
+ok "junk-wip-real-committed" "$(git -C "$R4B" diff --name-only HEAD)" "node_modules/pkg/index.js"
+ok "junk-wip-junk-not-committed" "$(git -C "$R4B" show HEAD:real.txt)" "two"
+
 # 7. No remote configured -> flagged explicitly, since local-only commits there
 # have nowhere to be pushed to (the finding that prompted this script, see the
 # header comment: @{u}.. silently reports 0 unpushed with no upstream at all).
