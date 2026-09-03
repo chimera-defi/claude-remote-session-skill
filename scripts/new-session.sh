@@ -27,7 +27,12 @@ Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run
 
 Options:
   -h, --help          Print this help and exit.
-  -a, --alias <x>     Short alias for the session name (persisted per folder).
+  -a, --alias <x>     Short alias for THIS spawn only. It does NOT change the
+                      folder's stored default -- pass --set-default-alias too if
+                      you really mean to rename the folder for every future spawn.
+  --set-default-alias Persist the --alias value as the folder's new default.
+                      Use only when the name describes the FOLDER, not the task:
+                      a task name here becomes the folder's name forever.
   --dry-run           Print the resolved names and exit without spawning.
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
@@ -76,10 +81,11 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
+    --set-default-alias) SETDEFAULT_ALIAS=yes; shift ;;
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
@@ -275,8 +281,10 @@ fi
 ID=$(date +%m%d-%H%M)
 # In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.
 DRYFLAG=""; [ "$DRYRUN" = yes ] && DRYFLAG="--no-save"
+# --alias alone is per-spawn; only --set-default-alias makes it the folder default.
+SETDEFFLAG=""; [ "$SETDEFAULT_ALIAS" = yes ] && SETDEFFLAG="--set-default"
 if command -v session-alias >/dev/null 2>&1; then
-  ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} ${DRYFLAG:+$DRYFLAG} 2>/dev/null) || ALIAS=""
+  ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} ${SETDEFFLAG:+$SETDEFFLAG} ${DRYFLAG:+$DRYFLAG} 2>/dev/null) || ALIAS=""
 fi
 # Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')

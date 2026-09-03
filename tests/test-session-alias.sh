@@ -19,8 +19,10 @@ ok "long-acronym" "$(bash "$ALIAS" some-very-long-project-name)" "svlpn"
 ok "claude-remote-substring-aliases" "$(bash "$ALIAS" claude-remote-session-skill)" "crss"
 # explicit --alias overrides and is sanitized
 ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
-# stored alias is reused on the next call (no re-inference)
-bash "$ALIAS" a-very-long-folder-name-here --alias keep >/dev/null
+# stored alias is reused on the next call (no re-inference). NB the stored entry
+# is established with --set-default: a bare --alias is per-spawn and deliberately
+# does NOT persist any more (see the per-spawn block at the end of this file).
+bash "$ALIAS" a-very-long-folder-name-here --alias keep --set-default >/dev/null
 ok "store-hit" "$(bash "$ALIAS" a-very-long-folder-name-here)" "keep"
 # protected folder is never aliased (token must survive), and not stored
 ok "protected-passthrough" "$(bash "$ALIAS" openclaw-autoresearch)" "openclaw-autoresearch"
@@ -224,6 +226,48 @@ LS="$(mktemp -u)"
 for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
   ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
 done
+
+# ── --alias is PER-SPAWN: it must not mutate the folder's stored default ──────
+# The dominant real-world drift: `--alias` names the TASK, not the folder, but it
+# used to persist unconditionally, so a single spawn renamed the folder forever
+# and every later bare `new-session <folder>` inherited a name describing work
+# that finished weeks ago. Two audits found 11-of-37 and 11-of-42 entries
+# drifted and every single one was this shape -- none were collisions. The
+# operator cleared all 11 and asked for the leak itself to be closed
+# (2026-09-03), so the common case is now non-destructive and persisting is an
+# explicit opt-in via --set-default.
+PS="$(mktemp -u)"
+# No stored entry yet: --alias resolves for this spawn and stores NOTHING.
+ok "per-spawn-alias-returns-value" \
+  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" my-long-project-folder --alias taskname)" "taskname"
+ok "per-spawn-alias-creates-no-entry" \
+  "$([ -f "$PS" ] && echo exists || echo absent)" "absent"
+# With a stored default: --alias overrides for this spawn but must not overwrite.
+printf 'stable-folder\tstable\n' > "$PS"
+ok "per-spawn-alias-overrides-for-this-spawn" \
+  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder --alias throwaway)" "throwaway"
+ok "per-spawn-alias-leaves-default-intact" \
+  "$(awk -F'\t' '$1=="stable-folder"{print $2}' "$PS")" "stable"
+ok "bare-resolve-still-returns-default" \
+  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "stable"
+# --set-default is the explicit opt-in that DOES persist.
+ok "set-default-returns-value" \
+  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder --alias renamed --set-default)" "renamed"
+ok "set-default-persists" \
+  "$(awk -F'\t' '$1=="stable-folder"{print $2}' "$PS")" "renamed"
+ok "bare-resolve-after-set-default" \
+  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "renamed"
+# Opting in must not be a way to smuggle a poisoned default past the guard: the
+# anti-poisoning check runs BEFORE the persist decision.
+pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias ah-x-0722-0725 --set-default 2>/dev/null)"
+ok "set-default-rejects-poisoned"      "$(notsess "$pz_out")" "clean"
+ok "set-default-poisoned-not-verbatim" "$(grep -cF 'ah-x-0722-0725' "$PS" 2>/dev/null; true)" "0"
+# Inference still persists -- that is a deterministic cache, not drift.
+PS2="$(mktemp -u)"
+inf_out="$(SESSION_ALIAS_STORE="$PS2" bash "$ALIAS" some-very-long-project-name)"
+ok "inference-still-persists" \
+  "$(awk -F'\t' '$1=="some-very-long-project-name"{print $2}' "$PS2")" "$inf_out"
+rm -f "$PS" "$PS2"
 
 echo "session-alias: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
