@@ -46,7 +46,8 @@ Then tell Claude which project to create a session for. It will generate the scr
 new-session my-project              # auto-detects workspace/ vs .sessions/
 new-session my-project workspace    # force workspace/
 new-session my-project sessions     # force .sessions/
-new-session my-long-project-name --alias mpn   # explicit short alias (persisted)
+new-session my-long-project-name --alias mpn   # explicit short alias (THIS spawn only)
+new-session my-long-project-name --alias mpn --set-default-alias   # ...and persist it as the folder default
 new-session my-project --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session --help                  # print usage and exit (no session spawned)
 ```
