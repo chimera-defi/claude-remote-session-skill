@@ -3,43 +3,47 @@
 Read this before starting a new nightly review pass so you don't rediscover
 or re-litigate something an earlier run already found, fixed, or rejected.
 
+This file does not exist on `main` yet - PRs #54 (2026-09-06) and #55
+(2026-09-07) each carried their own copy on their own branch, and neither
+has merged yet. This run (2026-09-10) folds both of those runs' findings in
+below, plus this run's own, since none of them are on `main`. Once #54, #55
+and this run's PR all merge, later runs will see one consolidated file.
+
 ## last_run
 
-- date: 2026-09-07
+- date: 2026-09-10
 - status: completed
 - gh_mode: mcp (gh binary absent; mcp__github__ tools used for the whole run)
-- pr: (opened this run, see PR created 2026-09-07)
-- branch: nightly-review-2026-09-07
+- pr: (opened this run)
+- branch: nightly-review-2026-09-10
 
 ## PHASE 0 gate note
 
-An open PR from the previous run (#54, branch nightly-review-2026-09-06,
-the README `--alias` persistence doc-drift fix) was found green and
-mergeable (shell-tests check: success, mergeable_state: clean). Per the
-gate rule for a green-and-unmerged PR, its findings were NOT re-reported;
-this run only looked for something genuinely new, found one, and opened a
-separate PR from `main` rather than stacking on #54's branch. PR #54 is
-still open and unmerged as of this run and should be merged independently
-(or will be picked up by a future run's gate check if still open).
+Two open nightly-review PRs were found: #54 (nightly-review-2026-09-06,
+README `--alias` persistence doc-drift) and #55 (nightly-review-2026-09-07,
+session-preserve --wip dirty-flag fix). Both are green (`shell-tests`
+check: success) and `mergeable_state: clean`, just unmerged - `main` has
+not moved since #55 was opened (still at c74cb61). Per the gate rule for a
+green-and-unmerged PR, neither's findings were re-reported. This run read
+both diffs and the state file carried on #55's branch, then looked for
+something genuinely new per that file's own "Notes for future runs"
+(focus on the less-scrutinized scripts), rather than re-auditing settled
+ground.
 
 ## findings_reported
 
-- `scripts/session-preserve.sh` `--wip` path: `dirty` was unconditionally
-  reset to 0 right after the `git commit` attempt, even when that commit
-  failed (missing git identity, a rejecting pre-commit hook, GPG signing
-  misconfigured, etc). A failed commit printed "WIP commit FAILED - do
-  not reap" and then, a few lines later, "VERDICT: SAFE-TO-REAP" anyway -
-  directly contradicting its own warning, in the exact tool that exists
-  to gate a destructive reap sweep on real uncommitted work. Fixed by
-  only clearing `dirty` inside the success branch of an if/then/else on
-  the commit's exit status (matching the existing rescue_failed pattern
-  used a few lines below for the --rescue path). Added a regression test
-  (`wip-hookfail-*` in tests/test-session-preserve.sh) that rigs a
-  pre-commit hook to `exit 1` and confirms the audit still reports
-  NOT-SAFE-TO-REAP with exit 1 instead of a false SAFE-TO-REAP. Verified
-  by reverting the fix and confirming the new test fails exactly as
-  expected (3 assertions red), then restoring the fix (all green,
-  353 assertions across the full suite, up from 346).
+- `scripts/session-handoff.sh` `send --file <path>` mode: read the file via
+  `cat` (ignoring its exit status) BEFORE checking that the tmux session
+  existed. A missing/unreadable path silently left `MSG` empty, which fell
+  through to the unrelated "message is empty or whitespace-only" refusal -
+  hiding the real cause. This also contradicted the design already
+  documented in `tests/test-session-send.sh`'s own comments ("the
+  has-session check runs before any file is read"), which the code didn't
+  actually match. Fixed by moving the has-session check first and checking
+  `cat`'s exit status, reporting "could not read --file path: <path>" on
+  failure. Added a regression test (`unreadable-file-*` in
+  tests/test-session-send.sh) against a live, ready tmux session; reverting
+  the fix turns it red (2 assertions) as expected.
 
 ## findings_rejected
 
@@ -49,52 +53,60 @@ still open and unmerged as of this run and should be merged independently
 
 - **session-alias poisoning** (an `ah-`-prefixed or MMDD-dated value saved
   as an alias): still fully fixed and covered by 80 assertions in
-  tests/test-session-alias.sh as of this run. Do not re-propose adding
-  this validation - it is already there. If a *new* poisoning shape is
-  found, add a fixture to test-session-alias.sh and extend
-  `looks_like_session_name`, don't assume the mechanism is missing.
+  tests/test-session-alias.sh as of this run (baseline run showed the
+  "looks like a session name; re-inferring" guard firing as expected). Do
+  not re-propose adding this validation - it is already there.
 - **README.md `--alias` persistence doc-drift**: fixed on branch
-  nightly-review-2026-09-06 / PR #54. Was still unmerged as of this run
-  (see PHASE 0 gate note above); **merged 2026-09-11** as commit 0237bbb,
-  so README.md's "Use the script directly" section now correctly describes
-  `--set-default-alias` as the opt-in persistence flag. Settled - do not
-  re-report.
+  nightly-review-2026-09-06 / PR #54. Unmerged as of this run; **merged
+  2026-09-11 as 0237bbb**. Settled.
+- **session-preserve.sh `--wip` false SAFE-TO-REAP on a failed commit**:
+  fixed on branch nightly-review-2026-09-07 / PR #55. Unmerged as of this
+  run; **merged 2026-09-11 as 890ea3b**. Settled.
 
 ## attempt_counts
 
-- files read this run: SKILL.md, README.md, references/*.md, docs/*.md,
-  handoff/*, .claude/commands/create-session.md, all scripts/*.sh (via a
-  background review agent), tests/test-session-preserve.sh in depth.
-- test suite: ran all 13 tests/test-*.sh files on main before starting
-  (346 assertions, all passing - baseline), then again after the fix on
-  this branch (353 assertions, all passing), and once more with the fix
-  temporarily reverted to confirm the new test actually catches the
-  regression (3 assertions failed as expected, confirming the test is
-  meaningful and not a false positive).
-- PR CI: see this run's PR for the shell-tests check result: it should be
-  watched to completion (with a timeout, never a bare --watch) before
-  merging.
+- files read this run: `.routine-state` (absent on main), both open PRs'
+  bodies/diffs/state files, `scripts/session-handoff.sh`,
+  `scripts/session-send.sh`, `scripts/telemetry-report.sh` and their tests
+  in depth (the three scripts PR #55's state file flagged as having had
+  lighter scrutiny).
+- test suite: ran all 13 tests/test-*.sh files on `main` before starting
+  (346 assertions, unchanged from #54/#55's baseline since neither has
+  merged) and again after this run's fix + new test (349 assertions). All
+  passing both times.
+- PR CI: watched via the PR's check-runs rollup after pushing (never a
+  bare blocking watch).
 
 ## Notes for future runs
 
-- This repo has been through many prior review passes; most low-hanging
-  correctness bugs in the scripts themselves are already fixed and
-  pinned by tests. The highest-value things a future run can still do:
-  (a) re-verify anything listed under `verified_already_fixed` is *still*
-  fixed after any new commits, (b) hunt for *documentation* drift between
-  README.md/SKILL.md and actual script behavior after a behavior-changing
-  commit lands, and (c) look for genuinely new edge cases in the less
-  heavily-tested scripts (session-handoff.sh, session-send.sh,
-  telemetry-report.sh had lighter scrutiny this run than
-  session-preserve.sh), not re-litigate settled ones.
-- PR #54 (nightly-review-2026-09-06) has since been merged (0237bbb,
-  2026-09-11) along with this run's PR #55 and the 2026-09-10 PR #58, as
-  part of an operator-directed backlog clear. Nothing pending from those
-  runs - don't re-report their findings.
-- **Lesson from that backlog clear:** three consecutive nightly PRs sat
-  open simultaneously, and because every run rewrites this same file, each
-  new one conflicted with the last the moment any of them merged. The
-  script fixes never collided - only `review-state.md` did. If you open a
-  PR while a previous run's PR is still open, expect to rebase this file,
-  and resolve it by taking the *newer* run wholesale (this file is current
-  state, not an append-only history) rather than hand-merging sections.
+- Two open, green, mergeable nightly-review PRs (#54, #55) plus this run's
+  new one are now stacked, unmerged, on `main` as of 2026-09-10. Merging
+  is a human's call, not this routine's, but a future run should keep
+  checking the PHASE 0 gate and should flag (via the heartbeat issue, not
+  by merging) if the backlog keeps growing without any of them landing.
+  **Resolved 2026-09-11:** the operator directed a backlog clear and all
+  three landed — #54 (0237bbb), #55 (890ea3b), #58 (this run). Nothing
+  from those runs is pending; don't re-report their findings.
+- **Lesson from that backlog clear, worth acting on:** the gate rule
+  ("don't re-report, open a separate PR from `main`") is correct, but it
+  guarantees a `review-state.md` conflict for every run opened while a
+  previous run's PR is still open — because every run rewrites this same
+  file. Three stacked PRs meant each one conflicted the moment any other
+  merged. The *script* fixes never collided once; only this file did.
+  Two practical consequences: (a) resolve such a conflict by taking the
+  **newer** run wholesale — this file is current state, not append-only
+  history — rather than hand-merging sections; (b) that conflict cost is
+  a real argument for merging each run's PR promptly instead of letting
+  them stack, which is exactly what the backlog-growth flag above is for.
+- `telemetry-report.sh` was read this run and found to have no correctness
+  issues worth reporting (pure read/summarize of a JSONL file, tolerant of
+  malformed lines, has a documented hardcoded-fallback-path rationale).
+  `session-send.sh` itself is a thin passthrough and was already covered
+  by good passthrough tests; the actual bug was in the shared
+  `session-handoff.sh send` logic it delegates to.
+- Remaining lower-scrutiny surface for a future run: `session-registry.sh`
+  and `session-doctor.sh` have decent test coverage already (15 and 50
+  assertions) but weren't read line-by-line this run; the reap/recycle
+  interaction between `session-preserve.sh` and `session-registry.sh` (do
+  they agree on what "safe to reap" means end-to-end?) is worth a look
+  once #55 merges.
