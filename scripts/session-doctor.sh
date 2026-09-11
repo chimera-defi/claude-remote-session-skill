@@ -14,7 +14,15 @@
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
 #   session-doctor.sh land-check           # per-worktree unlanded-vs-real-default-branch + real-dirty; report only
-#   session-doctor.sh idle-report [--days N]      # list LIVE local sessions with no type:user msg in N days (default 2); report only
+#   session-doctor.sh idle-report [--days N | --minutes N] [--tsv]
+#                                           # list LIVE local sessions with no GENUINE user turn
+#                                           # in N days (default 2) or N minutes (--minutes;
+#                                           # mutually exclusive with --days); a /compact summary
+#                                           # entry itself does not count as a genuine turn; --tsv
+#                                           # emits one machine-readable row per session (10 tab-
+#                                           # separated columns, no header/summary) for actuator
+#                                           # scripts; report only
+#   session-doctor.sh history <foldername>        # NOW (live sessions) + PAST (transcript history) + status for a worktree; bare name, absolute path, or repo-name substring; report only
 #
 # Safety:
 #   * Protected names (claude-remote*, *openclaw*, *hermes*) are NEVER reaped.
@@ -27,9 +35,10 @@
 #   * Worktree removal is intentionally NOT automated (a dead session's worktree may
 #     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
 #     dirty/landed status, and the exact commands to run by hand after review.
-#   * idle-report and land-check are REPORT-ONLY: idle-report's rows are still-alive
-#     procs reap-local won't touch; land-check never mutates anything. Feed either to
-#     a manual pass.
+#   * idle-report, land-check, and history are REPORT-ONLY: idle-report's rows are
+#     still-alive procs reap-local won't touch; land-check never mutates anything;
+#     history only reads transcripts, /proc, and git state. Feed any of them to a
+#     manual pass.
 set -uo pipefail
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -37,9 +46,15 @@ BIN="$HOME/.local/bin"
 PROTECT='claude-remote|openclaw|hermes'
 MODE="${1:-report}"; shift || true
 # Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
-# registry-stale keeps its 30d default. --days overrides either.
+# registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
+# report only) is a finer-grained alternate threshold and is mutually exclusive
+# with --days — see the DAYS_SET/MINUTES_SET check below.
 case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
+TSV=no
+MINUTES=""
+DAYS_SET=no
+MINUTES_SET=no
 # Positional args past MODE (e.g. `reap <name>`) must survive this loop, not
 # just be discarded — collect anything that isn't a recognized flag into ARGS
 # and restore it as $1.. below. (No mode needed a bare positional until `reap`,
@@ -47,17 +62,26 @@ FORCE=no
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --days) DAYS="$2"; shift 2;;
+    --days) DAYS="$2"; DAYS_SET=yes; shift 2;;
+    --minutes) MINUTES="$2"; MINUTES_SET=yes; shift 2;;
+    --tsv) TSV=yes; shift;;
     --force) FORCE=yes; shift;;
     *) ARGS+=("$1"); shift;;
   esac
 done
 set -- "${ARGS[@]}"
+# --minutes and --days both select an idle-report threshold — giving both is
+# ambiguous (which one wins?), not additive, so reject it outright instead of
+# silently picking one.
+if [ "$DAYS_SET" = yes ] && [ "$MINUTES_SET" = yes ]; then
+  echo "session-doctor: --days and --minutes are mutually exclusive" >&2
+  exit 2
+fi
 # DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
-# mode) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated non-numeric value
-# (typo, empty string) is therefore live Python, not data — it throws an uncaught
-# NameError/SyntaxError there instead of a clean usage error. Validate here so a
-# bad --days fails fast with a readable message.
+# and idle-report modes) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated
+# non-numeric value (typo, empty string) is therefore live Python, not data — it
+# throws an uncaught NameError/SyntaxError there instead of a clean usage error.
+# Validate here so a bad --days fails fast with a readable message.
 case "$DAYS" in
   ''|*[!0-9]*) echo "session-doctor: --days requires a non-negative integer, got '$DAYS'" >&2; exit 2 ;;
 esac
@@ -68,6 +92,15 @@ esac
 # `10#` pattern session-alias.sh uses for the same class of problem) so the
 # spliced value is always a plain, leading-zero-free literal.
 DAYS=$((10#$DAYS))
+# --minutes gets the identical validate-then-canonicalize treatment, but only
+# when actually given — an empty/unset MINUTES is the "not requested" sentinel
+# idle-report's dispatch below checks for (MINUTES_SET), not a value to validate.
+if [ "$MINUTES_SET" = yes ]; then
+  case "$MINUTES" in
+    ''|*[!0-9]*) echo "session-doctor: --minutes requires a non-negative integer, got '$MINUTES'" >&2; exit 2 ;;
+  esac
+  MINUTES=$((10#$MINUTES))
+fi
 
 registry_json() {
   local tok org
@@ -141,29 +174,43 @@ declare -A _DEFBR_CACHE
 # _default_branch <repo> -> the repo's REAL default branch name (no origin/
 # prefix). Every git call here is -C-scoped to the given repo, never to $PWD or
 # any other repo — a stale/decoy ref living in some OTHER repo on disk can
-# never leak into this answer. Prefers GitHub's actual setting via `gh` (a
-# hardcoded "main" assumption, or a stale local origin/HEAD, can silently
-# disagree with reality — an observed failure: a stale origin/main decoy in one
-# repo made an unrelated fleet look unlanded). Falls back sanely when `gh` is
-# absent/unauthenticated or the repo has no (or a non-GitHub) remote: origin/
-# HEAD -> local main -> local master -> current HEAD (same chain session-git-
-# prep.sh uses for the same problem). `gh` is only ever tried against a
-# github.com origin (never invoked for a local-path/other-host remote — keeps
-# this fast and hermetic in tests) and bounded with `timeout` so a
-# hung/unreachable network call can't stall a whole worktree scan.
+# never leak into this answer (the observed failure mode this -C scoping
+# exists to prevent: a stale origin/main decoy in one repo made an unrelated
+# fleet look unlanded).
+#
+# Resolution order is LOCAL-FIRST, not gh-first: `git symbolic-ref
+# refs/remotes/origin/HEAD` (no network, set in most clones) is tried before
+# ever shelling out to `gh`. This is a deliberate perf tradeoff, not an
+# oversight — idle-report --tsv (this function's hottest caller, via
+# _wt_landed/_tsv_git_status) is about to run unattended on an hourly systemd
+# timer across every worktree's main repo; at up to N sequential 5s-timeout
+# `gh repo view` network round-trips per run, that no longer scales. The
+# accepted risk is a STALE local origin/HEAD (e.g. the upstream default
+# branch was renamed after this clone's last `git remote set-head`/fetch
+# --prune) silently disagreeing with GitHub's actual setting — narrow in
+# practice, and fails toward the conservative side in _wt_landed (a wrong
+# base ref tends to read as landed=no/unknown, i.e. "keep the worktree",
+# never a false "safe to delete"). `gh` remains the fallback when there's no
+# usable local origin/HEAD (repo has no remote, or a non-GitHub remote, or
+# `gh` itself is absent/unauthenticated): origin/HEAD -> gh repo view -> local
+# main -> local master -> current HEAD (same chain session-git-prep.sh uses
+# for the same problem). `gh` is only ever tried against a github.com origin
+# (never invoked for a local-path/other-host remote — keeps this fast and
+# hermetic in tests) and bounded with `timeout` so a hung/unreachable network
+# call can't stall a whole worktree scan.
 _default_branch() {
   local repo="$1" def="" url slug
   if [ -n "${_DEFBR_CACHE[$repo]+x}" ]; then printf '%s\n' "${_DEFBR_CACHE[$repo]}"; return; fi
-  if command -v gh >/dev/null 2>&1 && url="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
+  if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    def="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')"
+  fi
+  if [ -z "$def" ] && command -v gh >/dev/null 2>&1 && url="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
     case "$url" in
       *github.com*)
         slug="$(printf '%s' "$url" | sed -E 's#^(git@github\.com:|https://github\.com/|git://github\.com/)##; s#\.git$##')"
         def="$(timeout 5 gh repo view "$slug" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
         ;;
     esac
-  fi
-  if [ -z "$def" ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
-    def="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')"
   fi
   if [ -z "$def" ]; then
     if   git -C "$repo" show-ref --verify --quiet refs/heads/main;   then def=main
@@ -204,6 +251,314 @@ _wt_landed() {
     landed=no
   fi
   printf 'base=%s landed=%s\n' "$def" "$landed"
+}
+
+declare -A _TSV_STATUS_CACHE
+# _tsv_git_status <cwd> -> sets globals _TSV_LANDED/_TSV_DIRTY for idle-report
+# --tsv columns 9/10 (landed: yes|no|unknown|no-worktree; dirty:
+# clean|DIRTY|unknown). Reuses _wt_dirty/_wt_landed/_wt_mainrepo exactly as
+# worktree-stale/land-check do — no reimplementation. "no-worktree"/"unknown"
+# when cwd no longer exists on disk or git doesn't recognize it as a working
+# tree at all (transcripts commonly outlive worktrees — see _history_footer
+# below for the same problem).
+#
+# Cached per-cwd (mirrors the _DEFBR_CACHE idiom above _default_branch) so a
+# cwd that repeats across multiple idle rows doesn't re-shell git for each
+# one. Deliberately sets globals instead of printing a value for the caller
+# to capture via `$(...)`: command substitution forks a subshell, and an
+# associative-array write made inside that subshell is discarded the instant
+# it exits — a `status="$(_tsv_git_status "$cwd")"` call site would silently
+# repopulate an empty cache on every single row and never actually cache
+# anything. Callers MUST invoke this directly (no `$(...)` wrapper) for the
+# cache to have any effect.
+_tsv_git_status() {
+  local cwd="$1" mainrepo landedinfo
+  if [ -n "${_TSV_STATUS_CACHE[$cwd]+x}" ]; then
+    _TSV_LANDED="${_TSV_STATUS_CACHE[$cwd]%%$'\t'*}"
+    _TSV_DIRTY="${_TSV_STATUS_CACHE[$cwd]#*$'\t'}"
+    return
+  fi
+  if [ ! -d "$cwd" ] || ! git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _TSV_LANDED="no-worktree"; _TSV_DIRTY="unknown"
+  else
+    _TSV_DIRTY="$(_wt_dirty "$cwd")"
+    mainrepo="$(_wt_mainrepo "$cwd")"
+    if [ -n "$mainrepo" ]; then
+      landedinfo="$(_wt_landed "$cwd" "$mainrepo")"
+      _TSV_LANDED="${landedinfo#*landed=}"
+    else
+      _TSV_LANDED="unknown"
+    fi
+  fi
+  _TSV_STATUS_CACHE[$cwd]="$_TSV_LANDED"$'\t'"$_TSV_DIRTY"
+}
+
+# ── history helpers ────────────────────────────────────────────────────────
+
+# _encode_cwd <path> -> the ~/.claude/projects/<encoded> transcript-dir name
+# for that cwd. Pure string transform (does NOT require the path to exist):
+# '.' -> '-' FIRST, then '/' -> '-' (this order is load-bearing and already
+# verified empirically for idle-report above — this is the same algorithm,
+# just factored out so `history` can reuse it instead of re-deriving it).
+_encode_cwd() {
+  local p="$1"
+  p="${p//./-}"
+  printf '%s\n' "${p//\//-}"
+}
+
+# _history_matches <query> <wt_base> <proj_base> -> one matched worktree
+# absolute path per line (may not exist on disk — transcripts outlive
+# worktrees, see _history_report/_history_footer). <query> may be a bare
+# folder name, an absolute path to the worktree (only its basename is used,
+# so `.../worktrees/<name>` and `.../worktrees/<name>/` both work), or a
+# repo-name substring.
+#
+# Candidate folder names come from TWO sources, unioned: (a) directories
+# currently under <wt_base>, and (b) names recovered from every
+# <proj_base>/<encoded> transcript dir by stripping the deterministic
+# "<encode(wt_base)>-" prefix (safe: we only strip a known-constant prefix,
+# we never try to invert the lossy '.'/'/' -> '-' collapse for the remainder)
+# — so a substring/repo-name query still finds worktrees that were already
+# removed from disk, not just live ones.
+#
+# Exact match (query's basename equals a candidate name exactly) wins outright;
+# otherwise every candidate whose name CONTAINS the query substring is
+# returned. Prints nothing and returns 1 when there is no match at all.
+_history_matches() {
+  local query="$1" wt_base="$2" proj_base="$3" qname d dn n prefix found=0 trimmed
+  # A query that LOOKS like a path (contains a slash, or is exactly "." or
+  # "..") and resolves to a real, existing directory is authoritative: use it
+  # exactly as given (resolved to an absolute path) and skip name-based
+  # matching entirely. Without this short-circuit, an absolute path whose
+  # basename happens to be a substring of some unrelated worktree name (e.g.
+  # a main-repo checkout that lives OUTSIDE ~/.claude/worktrees/, whose
+  # basename is also a substring of a stale worktree dir like
+  # "agenthost-<same-name>-<date>") gets silently hijacked by the substring
+  # fallback below instead of matching the literal folder the caller named.
+  # CONFIRMED: `history /home/agents/workspace/claude-remote-session-skill`
+  # (a real, existing directory, NOT under wt_base) matched a long-deleted
+  # `agenthost-claude-remote-session-skill-20260715-0630` worktree instead —
+  # the basename-based substring search never even looked at whether the
+  # literal path existed. A query that does NOT resolve to a real directory
+  # (folder already deleted from disk, or a bare name/substring with no
+  # slash) still falls through to the name-based search below exactly as
+  # before, so PAST-only lookups by name are unaffected.
+  case "$query" in
+    */*|.|..)
+      trimmed="${query%/}"
+      [ -n "$trimmed" ] || trimmed="/"
+      if [ -d "$trimmed" ]; then
+        printf '%s\n' "$(cd "$trimmed" >/dev/null 2>&1 && pwd)"
+        return 0
+      fi
+      qname="$(basename "$trimmed")"
+      ;;
+    *) qname="$query" ;;
+  esac
+  local -A seen=()
+  local -a candidates=()
+  for d in "$wt_base"/*/; do
+    [ -d "$d" ] || continue
+    n="$(basename "${d%/}")"
+    [ -n "${seen[$n]+x}" ] && continue
+    seen[$n]=1; candidates+=("$n")
+  done
+  prefix="$(_encode_cwd "$wt_base")-"
+  if [ -d "$proj_base" ]; then
+    for d in "$proj_base"/*/; do
+      [ -d "$d" ] || continue
+      dn="$(basename "${d%/}")"
+      case "$dn" in
+        "$prefix"*) n="${dn#"$prefix"}" ;;
+        *) continue ;;
+      esac
+      [ -n "$n" ] || continue
+      [ -n "${seen[$n]+x}" ] && continue
+      seen[$n]=1; candidates+=("$n")
+    done
+  fi
+  if [ "${#candidates[@]}" -gt 0 ]; then
+    mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | sort)
+  fi
+  if [ -n "${seen[$qname]+x}" ]; then
+    printf '%s\n' "$wt_base/$qname"
+    return 0
+  fi
+  for n in "${candidates[@]}"; do
+    case "$n" in
+      *"$qname"*) printf '%s\n' "$wt_base/$n"; found=1 ;;
+    esac
+  done
+  [ "$found" -eq 1 ]
+}
+
+# _history_report <worktree> <proj_base> — prints the NOW (live sessions with
+# this exact cwd) and PAST (transcript history for this cwd) sections for one
+# worktree. Report-only: reads /proc and transcript files, never sends keys,
+# never kills, never writes anything.
+#
+# NOW is derived exactly the way idle-report (above) already does it — same
+# `pgrep -af 'claude.*--remote-control'` + basename filter (also matches the
+# tmux launcher and the bash supervisor loop, so keep only claude|node), same
+# `readlink /proc/<pid>/cwd`, same svc_to_tmux name mapping — just filtered
+# down to processes whose cwd is exactly this worktree, instead of every live
+# session. A vanished pid mid-scan (empty readlink) is skipped, same as
+# idle-report.
+#
+# PAST reads every <uuid>.jsonl in the transcript dir for this cwd. A process
+# command line carries no session uuid, so a live pid can't be mapped to a
+# specific transcript file directly; when a live session exists for this cwd
+# we assume it is the writer of whichever transcript file here has the latest
+# type:user timestamp (normally exactly one file is being actively written per
+# cwd) and fold that file into NOW instead of also listing it under PAST — so
+# the two sections cross-reference rather than double-count. This is a
+# heuristic, not a guarantee; it is called out in the printed output.
+_history_report() {
+  local wt="$1" proj_base="$2" encoded tdir now_rows
+  encoded="$(_encode_cwd "$wt")"
+  tdir="$proj_base/$encoded"
+  echo ""
+  echo "--- $wt ---"
+  now_rows="$(
+    pgrep -af 'claude.*--remote-control' 2>/dev/null | while read -r pid cmd; do
+      case "$(basename "$(printf '%s' "$cmd" | awk '{print $1}')")" in claude|node) ;; *) continue;; esac
+      rc="$(printf '%s' "$cmd" | grep -oE -- '--remote-control[ =][^ ]+' | head -1 | sed -E 's/^--remote-control[ =]//')"
+      [ -n "$rc" ] || continue
+      tm="$(svc_to_tmux "$rc")"
+      cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
+      [ -n "$cwd" ] || continue
+      [ "$cwd" = "$wt" ] || continue
+      prot=no; printf '%s %s %s' "$rc" "$tm" "$cwd" | grep -qiE "$PROTECT" && prot=yes
+      printf '%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$prot"
+    done
+  )"
+  python3 - "$tdir" "$now_rows" <<'PYEOF'
+import sys, os, glob, json, datetime
+
+tdir, now_raw = sys.argv[1], sys.argv[2]
+now_rows = [l.split('\t') for l in now_raw.splitlines() if l.strip()]
+now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+files = sorted(glob.glob(os.path.join(tdir, '*.jsonl')))
+per_file = {}
+dir_max_ts = None
+for fn in files:
+    uuid = os.path.basename(fn)
+    if uuid.endswith('.jsonl'):
+        uuid = uuid[:-6]
+    first_ts = last_ts = None
+    turns = 0
+    try:
+        size = os.path.getsize(fn)
+    except OSError:
+        size = 0
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                if '"user"' not in line:            # cheap prefilter, same trick idle-report uses
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get('type') != 'user':
+                    continue
+                ts = o.get('timestamp')
+                if not ts:
+                    continue
+                turns += 1
+                if first_ts is None or ts < first_ts:
+                    first_ts = ts
+                if last_ts is None or ts > last_ts:
+                    last_ts = ts
+    except OSError:
+        pass                                          # transcript dir/file gone mid-scan — just skip it
+    per_file[uuid] = {'first': first_ts, 'last': last_ts, 'turns': turns, 'size': size}
+    if last_ts and (dir_max_ts is None or last_ts > dir_max_ts):
+        dir_max_ts = last_ts
+
+def human_size(n):
+    n = float(n)
+    for unit in ('B', 'K', 'M', 'G', 'T'):
+        if n < 1024 or unit == 'T':
+            return ('%d%s' % (n, unit)) if unit == 'B' else ('%.1f%s' % (n, unit))
+        n /= 1024
+
+print('  NOW — live session(s) with this cwd:')
+if not now_rows:
+    print('    (none)')
+else:
+    print('    %-30s %-30s %-8s %-9s %s' % ('TMUX SESSION', 'REMOTE-CONTROL NAME', 'PID', 'IDLE', 'PROT'))
+    for pid, rc, tm, prot in now_rows:
+        if dir_max_ts:
+            try:
+                dt = datetime.datetime.fromisoformat(dir_max_ts[:19])
+                idle_s = '%dm' % int((now - dt).total_seconds() // 60)
+            except Exception:
+                idle_s = '?'
+        else:
+            idle_s = 'never'
+        flag = '[P]' if prot == 'yes' else ''
+        print('    %-30s %-30s %-8s %-9s %s' % (tm[:30], rc[:30], pid, idle_s, flag))
+
+# See _history_report's comment above for why this cross-reference is a
+# heuristic (no uuid on the process command line to match against directly).
+live_uuid = None
+if now_rows and dir_max_ts:
+    for uuid, info in per_file.items():
+        if info['last'] == dir_max_ts:
+            live_uuid = uuid
+            break
+
+past = [u for u in per_file if u != live_uuid]
+past.sort(key=lambda u: (per_file[u]['last'] or '', per_file[u]['first'] or ''))
+
+print('')
+print('  PAST — sessions that previously touched this folder (%s):' % tdir)
+if not files:
+    print('    (no transcript directory — no recorded sessions)')
+elif not past:
+    print('    (no PAST sessions%s)' % (' — only session here is the LIVE one above' if live_uuid else ''))
+else:
+    print('    %-10s %-21s %-21s %-6s %s' % ('SESSION', 'FIRST type:user', 'LAST type:user', 'TURNS', 'SIZE'))
+    for uuid in past:
+        info = per_file[uuid]
+        first_s = (info['first'][:19] + 'Z') if info['first'] else '(none)'
+        last_s = (info['last'][:19] + 'Z') if info['last'] else '(none)'
+        print('    %-10s %-21s %-21s %-6d %s' % (uuid[:8], first_s, last_s, info['turns'], human_size(info['size'])))
+if live_uuid:
+    print('    [%s is LIVE now — see NOW section above, not double-counted here]' % live_uuid[:8])
+print('  --- %d past session(s), %d live session(s) ---' % (len(past), len(now_rows)))
+PYEOF
+}
+
+# _history_footer <worktree> — branch/landed/dirty + recent commits, reusing
+# _wt_dirty/_wt_landed/_wt_mainrepo/_default_branch exactly as worktree-stale
+# and land-check already do (no reimplementation). Handles a worktree that no
+# longer exists on disk (transcripts outlive worktrees — the common case for a
+# genuinely PAST session) by saying so instead of running git against a
+# missing directory.
+_history_footer() {
+  local wt="$1" branch dirty mainrepo landedinfo logout
+  echo ""
+  echo "  worktree status:"
+  if [ ! -d "$wt" ]; then
+    echo "    worktree no longer exists on disk at $wt (history above is from transcripts only)"
+    return 0
+  fi
+  branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  dirty="$(_wt_dirty "$wt")"
+  mainrepo="$(_wt_mainrepo "$wt")"
+  landedinfo="base=? landed=unknown"
+  [ -n "$mainrepo" ] && landedinfo="$(_wt_landed "$wt" "$mainrepo")"
+  printf '    branch=%s status=%s %s\n' "$branch" "$dirty" "$landedinfo"
+  echo "    git log --oneline -5:"
+  logout="$(git -C "$wt" log --oneline -5 2>/dev/null)"
+  if [ -n "$logout" ]; then
+    printf '%s\n' "$logout" | sed 's/^/      /'
+  else
+    echo "      (no commits)"
+  fi
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
@@ -357,17 +712,49 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
     ;;
   idle-report)
     # Report-only (mirrors registry-stale): LIVE local claude sessions with no
-    # type:user transcript activity in the last N days (default 2 = today/yday).
-    # NEVER kills. Every row is a still-ALIVE proc, so reap-local deliberately
-    # won't touch it — feed dead ones to reap-local, reap an idle-but-alive one
-    # by hand. type:user includes tool-result turns, so a session looping on its
-    # own counts as active and stays off this list (intended: keep live work off
-    # the reap list). Protected names are flagged and must never be reaped.
-    if [ "$DAYS" -gt 0 ] 2>/dev/null; then
-      echo "=== LOCAL: live sessions with NO type:user message in the last ${DAYS} day(s) — REPORT ONLY, kills nothing ==="
-    else
-      echo "=== LOCAL: ALL live sessions, no threshold (--days 0) — REPORT ONLY, kills nothing ==="
+    # GENUINE user turn in the last N days (default 2 = today/yesterday) or N
+    # minutes (--minutes; mutually exclusive with --days — enforced in the
+    # flag-parsing block above). NEVER kills. Every row is a still-ALIVE proc,
+    # so reap-local deliberately won't touch it — feed dead ones to reap-local,
+    # reap an idle-but-alive one by hand.
+    #
+    # "Genuine" turn: ordinary tool-result turns (also type:"user" in Claude
+    # Code transcripts) DO count as activity — a session looping on its own
+    # counts as active and stays off this list, intentionally (documented in
+    # docs/idle-report.md). The one type:"user" entry that does NOT count is a
+    # /compact summary itself (isCompactSummary:true): if that counted, a
+    # freshly-compacted session would look freshly active, drift back into the
+    # idle window roughly one compaction cycle later, and get compacted again
+    # forever. So idle here is measured from the last type:"user" entry that is
+    # NOT a compact summary. Protected names are flagged and must never be
+    # reaped.
+    #
+    # --tsv emits one machine-readable row per still-idle session — 10 tab-
+    # separated columns (tmux_session, remote_name, pid, cwd, idle_minutes,
+    # last_genuine_user_ts, protected, compacted_since_last_turn, landed,
+    # dirty), no header, no summary/footer lines — for an actuator script to
+    # consume with `while IFS=$'\t' read -r ...`. Columns 9/10 (landed/dirty)
+    # reuse _wt_landed/_wt_dirty exactly as worktree-stale/land-check do (via
+    # _tsv_git_status above); a cwd that's gone from disk or was never a git
+    # working tree reports no-worktree/unknown there instead of failing the row
+    # (transcripts commonly outlive worktrees).
+    if [ "$TSV" != yes ]; then
+      if [ "$MINUTES_SET" = yes ]; then
+        if [ "$MINUTES" -gt 0 ] 2>/dev/null; then
+          echo "=== LOCAL: live sessions with NO genuine user turn in the last ${MINUTES} minute(s) — REPORT ONLY, kills nothing ==="
+        else
+          echo "=== LOCAL: ALL live sessions, no threshold (--minutes 0) — REPORT ONLY, kills nothing ==="
+        fi
+      else
+        if [ "$DAYS" -gt 0 ] 2>/dev/null; then
+          echo "=== LOCAL: live sessions with NO type:user message in the last ${DAYS} day(s) — REPORT ONLY, kills nothing ==="
+        else
+          echo "=== LOCAL: ALL live sessions, no threshold (--days 0) — REPORT ONLY, kills nothing ==="
+        fi
+      fi
     fi
+    PY_TSV=False; [ "$TSV" = yes ] && PY_TSV=True
+    PY_MINUTES=None; [ "$MINUTES_SET" = yes ] && PY_MINUTES="$MINUTES"
     {
       # Enumerate LIVE claude --remote-control procs. pgrep -f also matches the
       # tmux launcher and the bash supervisor loop (both carry the string in
@@ -386,9 +773,35 @@ print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-20
     } | python3 -c "
 import sys, os, glob, json, datetime
 DAYS = $DAYS
+MINUTES = $PY_MINUTES
+TSV = $PY_TSV
 home = os.path.expanduser('~')
 now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-cutoff = (now - datetime.timedelta(days=DAYS)) if DAYS > 0 else None
+if MINUTES is not None:
+    cutoff = (now - datetime.timedelta(minutes=MINUTES)) if MINUTES > 0 else None
+else:
+    cutoff = (now - datetime.timedelta(days=DAYS)) if DAYS > 0 else None
+
+# The only Claude Code build empirically verified (on this host) to emit a
+# type:system/subtype:compact_boundary entry (with a compactMetadata object)
+# for a completed /compact is 2.1.206. The true minimum version this shipped
+# in is unknown, so rather than guess a lower bound, only a transcript whose
+# highest seen 'version' is >= this exact verified build is treated as
+# 'version-aware' (making an absence a real 'no'); anything older, unparseable,
+# or missing a version entirely reports 'unknown' rather than a guessed 'no'.
+MIN_COMPACT_AWARE_VERSION = (2, 1, 206)
+
+def parse_version(v):
+    try:
+        parts = [int(x) for x in str(v).split('.')[:3]]
+    except Exception:
+        return None
+    if not parts:
+        return None
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
 rows, seen = [], set()
 for line in sys.stdin:
     line = line.rstrip('\n')
@@ -403,17 +816,38 @@ for line in sys.stdin:
     # incl. dotted paths: '.'-> '-' then '/'-> '-').
     d = os.path.join(home, '.claude', 'projects', cwd.replace('.', '-').replace('/', '-'))
     files = glob.glob(os.path.join(d, '*.jsonl'))
-    mx = None
+    genuine_mx = None    # max ts over type:user entries that are NOT a /compact summary
+    compact_mx = None    # max ts over type:system/subtype:compact_boundary entries
+    ver_mx = None         # highest 'version' field seen on any entry read below
     for fn in files:
         try:
             for l in open(fn, encoding='utf-8', errors='ignore'):
-                if '\"user\"' not in l: continue           # cheap prefilter (authoritative check below)
+                # Cheap prefilter before json.loads (same trick the rest of
+                # this file uses): an ordinary type:user line always contains
+                # the literal substring \"user\"; a compact_boundary line does
+                # NOT (its only 'user'-ish key is userType, which doesn't
+                # match the quoted-literal check) but always carries its
+                # subtype name verbatim — check both in the one pass instead
+                # of adding a second scan over the same files.
+                if '\"user\"' not in l and 'compact_boundary' not in l:
+                    continue
                 try: o = json.loads(l)
                 except Exception: continue
-                if o.get('type') == 'user':
+                v = o.get('version')
+                if v:
+                    vt = parse_version(v)
+                    if vt and (ver_mx is None or vt > ver_mx): ver_mx = vt
+                t = o.get('type')
+                if t == 'user':
+                    if o.get('isCompactSummary'):
+                        continue   # the /compact write itself is not genuine activity
                     ts = o.get('timestamp')
-                    if ts and (mx is None or ts > mx): mx = ts
+                    if ts and (genuine_mx is None or ts > genuine_mx): genuine_mx = ts
+                elif t == 'system' and o.get('subtype') == 'compact_boundary':
+                    ts = o.get('timestamp')
+                    if ts and (compact_mx is None or ts > compact_mx): compact_mx = ts
         except Exception: pass
+    mx = genuine_mx
     if mx is None:
         # 'never messaged' — distinguish no-transcript from present-but-no-user.
         state = 'never: no transcript' if not files else 'never: no user msgs'
@@ -422,21 +856,49 @@ for line in sys.stdin:
         state = mx[:19] + 'Z'
         try: mxdt = datetime.datetime.fromisoformat(mx[:19])
         except Exception: mxdt = None
-    if DAYS > 0 and mxdt is not None and mxdt >= cutoff:
-        continue                                          # had a user turn within the window -> not idle
-    rows.append((mxdt, state, tm or rc, cwd, prot))
+    if cutoff is not None and mxdt is not None and mxdt >= cutoff:
+        continue                                          # had a genuine turn within the window -> not idle
+    idle_field = str(int((now - mxdt).total_seconds() // 60)) if mxdt is not None else 'never'
+    last_ts_field = (mx[:19] + 'Z') if mx else '-'
+    if compact_mx is not None and (genuine_mx is None or compact_mx > genuine_mx):
+        compacted = 'yes'
+    elif ver_mx is not None and ver_mx >= MIN_COMPACT_AWARE_VERSION:
+        compacted = 'no'
+    else:
+        compacted = 'unknown'
+    rows.append((mxdt, state, cwd, prot, pid, rc, tm, idle_field, last_ts_field, compacted))
 # oldest-first: 'never' (mxdt None) first, then ascending timestamp.
 rows.sort(key=lambda r: (r[0] is not None, r[0] or datetime.datetime.min))
-print('  %-22s %-5s %-46s %s' % ('LAST type:user', 'PROT', 'TMUX SESSION', 'CWD'))
-nprot = 0
-for mxdt, state, tm, cwd, prot in rows:
-    if prot == 'yes': nprot += 1
-    print('  %-22s %-5s %-46s %s' % (state[:22], ('[P]' if prot == 'yes' else ''), tm[:46], cwd))
-print('  --- %d idle session(s)%s. All are ALIVE -> reap-local will NOT touch them.' % (
-      len(rows), (', incl. %d PROTECTED (never reap)' % nprot) if nprot else ''))
-print('  Report only. Reap an idle-but-alive one by hand:')
-print('    tmux kill-session -t <name> ; systemctl --user disable --now <name>.service')
-"
+
+if TSV:
+    for mxdt, state, cwd, prot, pid, rc, tm, idle_field, last_ts_field, compacted in rows:
+        print('\t'.join([tm, rc, pid, cwd, idle_field, last_ts_field, prot, compacted]))
+else:
+    print('  %-22s %-5s %-46s %s' % ('LAST type:user', 'PROT', 'TMUX SESSION', 'CWD'))
+    nprot = 0
+    for mxdt, state, cwd, prot, pid, rc, tm, idle_field, last_ts_field, compacted in rows:
+        if prot == 'yes': nprot += 1
+        print('  %-22s %-5s %-46s %s' % (state[:22], ('[P]' if prot == 'yes' else ''), tm[:46], cwd))
+    print('  --- %d idle session(s)%s. All are ALIVE -> reap-local will NOT touch them.' % (
+          len(rows), (', incl. %d PROTECTED (never reap)' % nprot) if nprot else ''))
+    print('  Report only. Reap an idle-but-alive one by hand:')
+    print('    tmux kill-session -t <name> ; systemctl --user disable --now <name>.service')
+" | {
+      if [ "$TSV" = yes ]; then
+        while IFS=$'\t' read -r tmux_session remote_name pid cwd idle_minutes last_ts prot compacted; do
+          [ -n "$tmux_session" ] && [ -n "$cwd" ] || continue
+          # Called directly (NOT via `$(...)`) so _TSV_STATUS_CACHE's writes
+          # land in THIS while loop's own subshell and actually persist across
+          # iterations — see _tsv_git_status's comment above for why a
+          # command-substitution call site would silently defeat the cache.
+          _tsv_git_status "$cwd"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$tmux_session" "$remote_name" "$pid" "$cwd" "$idle_minutes" "$last_ts" "$prot" "$compacted" "$_TSV_LANDED" "$_TSV_DIRTY"
+        done
+      else
+        cat
+      fi
+    }
     ;;
 
   reap)
@@ -500,6 +962,32 @@ print('    tmux kill-session -t <name> ; systemctl --user disable --now <name>.s
     done
     echo "  --- $n worktree(s) checked. Report only; see worktree-stale for removal candidates + commands. ---"
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N]]"; exit 2;;
+
+  history)
+    # Report-only: "what happened here before me, and who else is working here
+    # right now?" for a worktree folder. <foldername> may be a bare name, an
+    # absolute path, or a repo-name substring (see _history_matches). Every
+    # match is printed: NOW (live sessions, via _history_report — same
+    # pgrep/readlink/svc_to_tmux mechanism idle-report uses), PAST (transcript
+    # history, also via _history_report), then a worktree-status footer (via
+    # _history_footer, reusing _wt_dirty/_wt_landed — no reimplementation).
+    # WT_BASE/PROJ_BASE come from $HOME exactly like every other mode here, so
+    # the existing HOME-override convention (see idle-report/worktree-stale/
+    # land-check tests) is all that's needed to sandbox this in tests too.
+    NAME="${1:?usage: session-doctor.sh history <foldername|path|repo-substring>}"
+    WT_BASE="$HOME/.claude/worktrees"
+    PROJ_BASE="$HOME/.claude/projects"
+    mapfile -t MATCHES < <(_history_matches "$NAME" "$WT_BASE" "$PROJ_BASE")
+    if [ "${#MATCHES[@]}" -eq 0 ]; then
+      echo "session-doctor: no worktree matches '$NAME' under $WT_BASE (checked live worktree dirs, transcript history, and repo-name substrings)" >&2
+      exit 2
+    fi
+    echo "=== history: ${#MATCHES[@]} worktree(s) matching '$NAME' ==="
+    for wt in "${MATCHES[@]}"; do
+      _history_report "$wt" "$PROJ_BASE"
+      _history_footer "$wt"
+    done
+    ;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]"; exit 2;;
 esac
 fi
