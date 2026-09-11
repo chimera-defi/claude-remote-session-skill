@@ -301,7 +301,7 @@ STUB_BUSY_POLLS=0
 : > "$STUB_LOG"
 STUB_READY_SESSIONS="okrelay"
 STUB_BUSY_POLLS=1
-outh="$(_run before-relay okrelay "the real relayed message")"; rch=$?
+_run before-relay okrelay "the real relayed message" >/dev/null 2>&1; rch=$?
 ok  "cli-relay-happypath-exit0"            "$rch" "0"
 has "cli-relay-happypath-compact-sent"     "$(cat "$STUB_LOG")" "send okrelay /compact"
 has "cli-relay-happypath-message-sent"     "$(cat "$STUB_LOG")" "send okrelay the real relayed message"
