@@ -56,6 +56,23 @@ ok "decide-outside-window-hi" "$(d 60 120 200 no no unknown clean na)" "skip:out
 ok "decide-escape-hatch-30-60" "$(d 30 60 45 no no unknown clean na)" "eligible"
 ok "decide-escape-hatch-30-60-too-old" "$(d 30 60 90 no no unknown clean na)" "skip:outside-window"
 
+# --- Bug 2: protected/compacted/landed/dirty must fail CLOSED on any value
+# outside the sensor's documented vocabulary (including "", which a
+# truncated TSV row produces) rather than silently reading as the
+# PERMISSIVE default ("not protected", "not landed", "not already
+# compacted"). idle_minutes is valid in every case here so these reach the
+# new vocabulary checks instead of being caught early by bad-idle-field.
+ok "decide-malformed-protected-empty"  "$(d 60 0 90 ""      no      unknown clean   na)" "skip:malformed-row"
+ok "decide-malformed-protected-junk"   "$(d 60 0 90 maybe   no      unknown clean   na)" "skip:malformed-row"
+ok "decide-malformed-compacted-empty"  "$(d 60 0 90 no      ""      unknown clean   na)" "skip:malformed-row"
+ok "decide-malformed-compacted-junk"   "$(d 60 0 90 no      maybe   unknown clean   na)" "skip:malformed-row"
+ok "decide-malformed-landed-empty"     "$(d 60 0 90 no      no      ""      clean   na)" "skip:malformed-row"
+ok "decide-malformed-landed-junk"      "$(d 60 0 90 no      no      maybe   clean   na)" "skip:malformed-row"
+ok "decide-malformed-dirty-empty"      "$(d 60 0 90 no      no      unknown ""      na)" "skip:malformed-row"
+ok "decide-malformed-dirty-junk"       "$(d 60 0 90 no      no      unknown maybe   na)" "skip:malformed-row"
+# and the legitimate no-worktree value for landed is NOT malformed
+ok "decide-landed-no-worktree-valid"   "$(d 60 0 90 no      no      no-worktree clean na)" "eligible"
+
 # --- ragged/short row: direct call with far fewer than 13 args must not crash
 out="$(_decide 60 0 sess 2>&1)"; rc=$?
 ok "decide-ragged-no-crash-exit"   "$rc" "0"
@@ -267,6 +284,27 @@ ok  "cli-report-ragged-row-exit0" "$rcr" "0"
 has "cli-report-ragged-row-listed" "$outr" "onlyname"
 has "cli-report-ragged-row-reason" "$(printf '%s' "$outr" | grep onlyname)" "bad-idle-field"
 
+# --- Bug 2: TSV rows truncated AFTER idle_minutes (unlike the ragged-row
+# case above, which truncates at column 1 and is caught early by
+# bad-idle-field) must fail CLOSED as skip:malformed-row, not read the
+# missing protected/compacted/landed/dirty columns as their PERMISSIVE
+# default and come out "eligible". Real `read` -c 10 vars pads missing
+# trailing columns with "", exactly like a genuinely short TSV line does.
+printf 'trunc5sess\tremote\t1\t/cwd\t90\n' > "$FIXTURE_DIR/rows.tsv"
+out5="$(_run report 2>&1)"; rc5=$?
+ok  "cli-report-trunc5-exit0"  "$rc5" "0"
+has "cli-report-trunc5-reason" "$(printf '%s' "$out5" | grep trunc5sess)" "malformed-row"
+
+printf 'trunc6sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\n' > "$FIXTURE_DIR/rows.tsv"
+out6="$(_run report 2>&1)"; rc6=$?
+ok  "cli-report-trunc6-exit0"  "$rc6" "0"
+has "cli-report-trunc6-reason" "$(printf '%s' "$out6" | grep trunc6sess)" "malformed-row"
+
+printf 'trunc7sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\tno\n' > "$FIXTURE_DIR/rows.tsv"
+out7="$(_run report 2>&1)"; rc7=$?
+ok  "cli-report-trunc7-exit0"  "$rc7" "0"
+has "cli-report-trunc7-reason" "$(printf '%s' "$out7" | grep trunc7sess)" "malformed-row"
+
 # --- numeric validation idiom -----------------------------------------------
 outv="$(_run report --min-idle notanumber 2>&1)"; rcv=$?
 ok "cli-report-bad-min-idle-exit2" "$rcv" "2"
@@ -309,6 +347,10 @@ has "cli-relay-happypath-marker-written"   "$(cat "$CLI_HOME/.sessions/compact-m
 STUB_BUSY_POLLS=0
 
 # --- before-relay: not eligible (below the idle window) -> relays directly -
+# Bug 1 fix sibling: outside-window is a BENIGN skip reason (not a pane-
+# safety verdict) and must still fall through to a plain relay — proves the
+# skip:pane-* fail-closed fix below doesn't overcorrect into refusing every
+# non-eligible decision.
 { _row freshsess remote 1 /cwd 5 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 outk="$(_run before-relay freshsess "hello there")"; rck=$?
@@ -324,6 +366,64 @@ _run before-relay freshsess --file "$MSGFILE" >/dev/null 2>&1; rcfile=$?
 ok  "cli-relay-file-variant-exit0" "$rcfile" "0"
 has "cli-relay-file-variant-forwarded" "$(cat "$STUB_LOG")" "send freshsess --file $MSGFILE"
 rm -f "$MSGFILE"
+
+# ============================================================================
+# Bug 1: before-relay must FAIL CLOSED on skip:pane-* — the pane-safety check
+# it just ran (`session-handoff.sh ready`) said the pane itself is unsafe to
+# type into (busy / on an interactive menu / no prompt / holding an unsent
+# draft). Before the fix this fell through to the generic "not stale/
+# eligible — relaying without compacting" branch and sent anyway. The row
+# here is otherwise fully in-window/eligible (idle=90, nothing else skips
+# it) so the ONLY reason _evaluate_row returns skip:pane-<reason> is the
+# `ready` stub reporting NOT-SAFE.
+# ============================================================================
+{ _row busysess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+: > "$STUB_LOG"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="busy"
+outb="$(_run before-relay busysess "should never be sent" 2>&1)"; rcb=$?
+ok    "cli-relay-pane-busy-exit-nonzero"     "$([ "$rcb" -ne 0 ] && echo yes || echo no)" "yes"
+has   "cli-relay-pane-busy-refuses-msg"      "$outb" "not safe to inject into"
+has   "cli-relay-pane-busy-reason-shown"     "$outb" "(busy)"
+lacks "cli-relay-pane-busy-message-not-sent" "$(cat "$STUB_LOG")" "should never be sent"
+lacks "cli-relay-pane-busy-no-compact-sent"  "$(cat "$STUB_LOG")" "/compact"
+
+{ _row draftsess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+: > "$STUB_LOG"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="draft-in-input-box"
+outd="$(_run before-relay draftsess "should also never be sent" 2>&1)"; rcd=$?
+ok    "cli-relay-pane-draft-exit-nonzero"     "$([ "$rcd" -ne 0 ] && echo yes || echo no)" "yes"
+has   "cli-relay-pane-draft-reason-shown"     "$outd" "draft-in-input-box"
+lacks "cli-relay-pane-draft-message-not-sent" "$(cat "$STUB_LOG")" "should also never be sent"
+STUB_READY_REASON="busy"
+
+# ============================================================================
+# Bug 1, the not-found-in-sensor branch: a session the sensor never reported
+# on used to relay with ZERO pane-safety information. Must now consult
+# `ready` directly (via the same _session_handoff indirection, so the stub
+# still intercepts it) and refuse when it comes back NOT-SAFE — and,
+# symmetrically, must still relay when the pane IS safe, so the fix doesn't
+# overcorrect into refusing every unseen session outright.
+# ============================================================================
+: > "$FIXTURE_DIR/rows.tsv"   # sensor has no rows at all -> row_line is empty
+: > "$STUB_LOG"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="menu"
+outn="$(_run before-relay ghostsess "unsafe unseen message" 2>&1)"; rcn2=$?
+ok    "cli-relay-notfound-unsafe-exit-nonzero"     "$([ "$rcn2" -ne 0 ] && echo yes || echo no)" "yes"
+has   "cli-relay-notfound-unsafe-refuses-msg"      "$outn" "not safe to inject into"
+has   "cli-relay-notfound-unsafe-reason-shown"     "$outn" "(menu)"
+lacks "cli-relay-notfound-unsafe-message-not-sent" "$(cat "$STUB_LOG")" "unsafe unseen message"
+
+: > "$STUB_LOG"
+STUB_READY_SESSIONS="ghostsess2"
+outn2="$(_run before-relay ghostsess2 "safe unseen message" 2>&1)"; rcn3=$?
+ok  "cli-relay-notfound-safe-exit0"   "$rcn3" "0"
+has "cli-relay-notfound-safe-says-pane-safe" "$outn2" "pane is safe"
+has "cli-relay-notfound-safe-relayed" "$(cat "$STUB_LOG")" "send ghostsess2 safe unseen message"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="busy"
 
 # ============================================================================
 # install-timer: writes units, enables nothing, refuses to clobber

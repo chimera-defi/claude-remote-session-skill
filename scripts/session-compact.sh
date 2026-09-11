@@ -35,12 +35,14 @@
 # producer in tests instead of running the real scan.
 #
 # Eligibility (ALL must hold; report says which ONE failed first, in this
-# order): idle_minutes is an integer, not "never" (never-touched) -> idle
-# inside the configured window (outside-window) -> protected == no
-# (protected) -> NOT (landed=yes AND dirty=clean) (landed-and-clean) -> not
-# already compacted this idle window, marker-file fallback when the sensor
-# reports compacted=unknown (already-compacted) -> live pane safe to inject,
-# via `session-handoff.sh ready <session>` (pane-<reason>).
+# order): idle_minutes is an integer, not "never" (never-touched) ->
+# protected/compacted/landed/dirty each match the sensor's documented
+# vocabulary, not truncated/garbage (malformed-row) -> idle inside the
+# configured window (outside-window) -> protected == no (protected) -> NOT
+# (landed=yes AND dirty=clean) (landed-and-clean) -> not already compacted
+# this idle window, marker-file fallback when the sensor reports
+# compacted=unknown (already-compacted) -> live pane safe to inject, via
+# `session-handoff.sh ready <session>` (pane-<reason>).
 #
 # Compacting: `session-handoff.sh send <session> "/compact"`, then poll
 # `session-handoff.sh check` until the pane is no longer working (bounded by
@@ -98,9 +100,16 @@ _decide() {
   local min_idle="$1" max_idle="$2"
   # ${N:-} rather than bare $N: a genuinely short/ragged row (fewer than 13
   # args — the "no crash" requirement) must not trip `set -u`'s unbound-
-  # variable error. Missing fields resolve to "", which the checks below
-  # already treat as invalid input (not "never", not a valid integer, not
-  # "yes") — i.e. they fail the same way an explicit garbage value would.
+  # variable error. Missing fields resolve to "" the same way an explicit
+  # empty TSV field would. For idle_minutes that's enough to fail the same
+  # way explicit garbage does (caught below, "not an integer"/"not never").
+  # It is NOT enough for protected/compacted/landed/dirty: those are tested
+  # with `= yes` / case matches, so an empty (or otherwise-unrecognized)
+  # value would silently read as the PERMISSIVE answer — "not protected",
+  # "not landed", "not already compacted" — the opposite of failing closed.
+  # So those four are validated below against the sensor's documented
+  # vocabulary (session-doctor.sh never legitimately emits anything else)
+  # and rejected as skip:malformed-row on any other value, including "".
   local idle_minutes="${7:-}" protected="${9:-}" compacted="${10:-}" landed="${11:-}" dirty="${12:-}" marker_hit="${13:-}"
 
   if [ "$idle_minutes" = never ]; then echo "skip:never-touched"; return; fi
@@ -108,6 +117,23 @@ _decide() {
     ''|*[!0-9]*) echo "skip:bad-idle-field"; return ;;
   esac
   local idle_n=$((10#$idle_minutes))
+
+  case "$protected" in
+    yes|no) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$compacted" in
+    yes|no|unknown) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$landed" in
+    yes|no|unknown|no-worktree) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$dirty" in
+    clean|DIRTY|unknown) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
 
   if [ "$idle_n" -lt "$min_idle" ]; then echo "skip:outside-window"; return; fi
   if [ "$max_idle" != 0 ] && [ "$idle_n" -gt "$max_idle" ]; then echo "skip:outside-window"; return; fi
@@ -209,6 +235,27 @@ _session_handoff() {
   bash "$_SESSION_HANDOFF_BIN" "$@"
 }
 
+# _pane_ready_reason <tmux_session> — the one live call this script makes to
+# decide whether a pane is safe to type into: `session-handoff.sh ready
+# <session>`. Prints "safe" and returns 0 when it is; otherwise prints the
+# failure reason (e.g. "busy", "menu", "no-prompt", "draft-in-input-box", or
+# "unreachable" when `ready`'s own output doesn't carry a reason=... token)
+# and returns 1. Shared by _evaluate_row (the normal eligibility path) and
+# before-relay's not-found-in-sensor branch (Bug 1 fix — that branch used to
+# send with zero information about pane state).
+_pane_ready_reason() {
+  local session="$1" ready_out rc reason
+  ready_out="$(_session_handoff ready "$session" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo safe
+    return 0
+  fi
+  reason="$(printf '%s' "$ready_out" | sed -n 's/.*reason=\(.*\)$/\1/p')"
+  [ -n "$reason" ] || reason="unreachable"
+  printf '%s\n' "$reason"
+  return 1
+}
+
 # _evaluate_row <min_idle> <max_idle> <10 TSV fields> — non-pure wrapper
 # around _decide: resolves the marker-file I/O when needed, then (only if
 # the cheap pure checks all pass) makes the one live call this needs —
@@ -227,15 +274,13 @@ _evaluate_row() {
     printf '%s\n' "$decision"
     return
   fi
-  local ready_out rc reason
-  ready_out="$(_session_handoff ready "$tmux_session" 2>&1)"; rc=$?
-  if [ "$rc" -eq 0 ]; then
+  local pane_reason pane_rc
+  pane_reason="$(_pane_ready_reason "$tmux_session")"; pane_rc=$?
+  if [ "$pane_rc" -eq 0 ]; then
     echo eligible
     return
   fi
-  reason="$(printf '%s' "$ready_out" | sed -n 's/.*reason=\(.*\)$/\1/p')"
-  [ -n "$reason" ] || reason="unreachable"
-  printf 'skip:pane-%s\n' "$reason"
+  printf 'skip:pane-%s\n' "$pane_reason"
 }
 
 _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
@@ -402,18 +447,38 @@ case "$MODE" in
     row_line="$(printf '%s\n' "$TSV" | awk -F'\t' -v s="$SESSION" '$1==s{print; exit}')"
 
     if [ -z "$row_line" ]; then
-      echo "before-relay: '$SESSION' not seen by the sensor — relaying without compacting"
+      # Not seen by the sensor at all — we have zero eligibility signal, but
+      # we can and must still check the ONE thing that's always unsafe to
+      # skip: is the pane actually safe to type into right now. (Bug 1 fix:
+      # this branch used to relay unconditionally here, with no pane check.)
+      pane_reason="$(_pane_ready_reason "$SESSION")"; pane_rc=$?
+      if [ "$pane_rc" -ne 0 ]; then
+        echo "before-relay: '$SESSION' not seen by the sensor AND not safe to inject into (${pane_reason}) — refusing to relay" >&2
+        exit 1
+      fi
+      echo "before-relay: '$SESSION' not seen by the sensor — pane is safe, relaying without compacting"
       _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
       exit $?
     fi
     IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 <<< "$row_line"
 
     decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
-    if [ "$decision" != eligible ]; then
-      echo "before-relay: '$SESSION' not stale/eligible (${decision#skip:}) — relaying without compacting"
-      _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
-      exit $?
-    fi
+    case "$decision" in
+      eligible) : ;;
+      skip:pane-*)
+        # The pane-safety check we JUST ran said this pane is not safe to
+        # type into (busy / on a menu / no prompt / holding an unsent draft)
+        # — fail CLOSED here too, same as the compact-unverified path below.
+        # (Bug 1 fix: this used to fall through to a plain relay like any
+        # other skip reason, injecting into a pane it had itself just flagged
+        # unsafe.)
+        echo "before-relay: '$SESSION' is not safe to inject into (${decision#skip:pane-}) — refusing to relay" >&2
+        exit 1 ;;
+      *)
+        echo "before-relay: '$SESSION' not stale/eligible (${decision#skip:}) — relaying without compacting"
+        _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
+        exit $? ;;
+    esac
 
     echo "before-relay: '$SESSION' is stale and eligible — compacting first"
     result="$(_do_compact "$SESSION" "$TIMEOUT")"; rc2=$?
