@@ -90,9 +90,17 @@ audit_one() {
     # never contain more than what was actually reported.
     mapfile -t wip_files < <(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE")
     [ "${#wip_files[@]}" -gt 0 ] && git -C "$cwd" add -- "${wip_files[@]}" 2>/dev/null
-    git -C "$cwd" commit -q -m "wip(session-preserve): checkpoint before reaping $s" 2>/dev/null \
-      && echo "   WIP committed on $br" || echo "   WIP commit FAILED — do not reap"
-    dirty=0
+    # Only clear `dirty` when the commit actually lands. A failed commit (no
+    # git identity configured, a rejecting pre-commit hook, GPG signing
+    # misconfigured, ...) must fall through to NOT-SAFE-TO-REAP below —
+    # otherwise the printed "do not reap" warning is immediately contradicted
+    # by a SAFE-TO-REAP verdict a few lines later.
+    if git -C "$cwd" commit -q -m "wip(session-preserve): checkpoint before reaping $s" 2>/dev/null; then
+      echo "   WIP committed on $br"
+      dirty=0
+    else
+      echo "   WIP commit FAILED — do not reap"
+    fi
   fi
 
   if [ "$MODE_RESCUE" = yes ] && [ "$untracked" -gt 0 ]; then

@@ -91,6 +91,21 @@ has "wip-then-safe"    "$out" "SAFE-TO-REAP"
 ok  "wip-exit0"         "$rc" "0"
 ok  "wip-clean-after"   "$(git -C "$R2" status --porcelain | grep -vE '^\?\? \.claude/' | wc -l | tr -d ' ')" "0"
 
+# 4b. --wip commit rejected (e.g. by a pre-commit hook) -> `dirty` must NOT be
+# cleared, so the audit still falls through to NOT-SAFE-TO-REAP instead of
+# printing a contradictory SAFE-TO-REAP right after "do not reap".
+R2B="$WORK/repo2b"; mkrepo "$R2B"
+mkdir -p "$R2B/.git/hooks"
+printf '#!/bin/sh\nexit 1\n' > "$R2B/.git/hooks/pre-commit"; chmod +x "$R2B/.git/hooks/pre-commit"
+echo "one" > "$R2B/tracked.txt"; git -C "$R2B" add tracked.txt; git -C "$R2B" commit --quiet --no-verify -m "add tracked"
+echo "two" > "$R2B/tracked.txt"
+S_HOOKFAIL="$(spawn_in "$R2B")"
+out="$(bash "$SP" "$S_HOOKFAIL" --wip 2>&1)"; rc=$?
+has "wip-hookfail-message" "$out" "WIP commit FAILED"
+has "wip-hookfail-not-safe" "$out" "NOT-SAFE-TO-REAP"
+has "wip-hookfail-reason"  "$out" "uncommitted-tracked-changes"
+ok  "wip-hookfail-exit1"   "$rc" "1"
+
 # 5. Untracked file -> NOT-SAFE-TO-REAP; --rescue copies it out and clears the flag.
 R3="$WORK/repo3"; mkrepo "$R3"
 echo "orphan" > "$R3/scratch.txt"
