@@ -90,6 +90,20 @@ if command -v tmux >/dev/null 2>&1; then
   outf2="$(bash "$SEND" "$S2" --file "$MSGFILE" 2>&1)"
   if printf '%s' "$outf2" | grep -qE 'landed on|UNVERIFIED on'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: file-flag-content-sent — got: $outf2"; fi
   rm -f "$MSGFILE"
+
+  # 5c. --file pointing at a path that does not exist, on a session that DOES
+  # exist, must be reported as an unreadable file — not misreported as the
+  # unrelated "message is empty or whitespace-only" refusal (a failed `cat`
+  # used to leave MSG empty and fall through to that check silently).
+  outf3="$(bash "$SEND" "$S2" --file "/no/such/path-$$" 2>&1)"; rcf3=$?
+  has "unreadable-file-reported" "$outf3" "could not read --file path"
+  ok  "unreadable-file-exit2"    "$rcf3" "2"
+  if printf '%s' "$outf3" | grep -q "empty or whitespace-only"; then
+    fail=$((fail+1)); echo "FAIL: unreadable-file-not-misreported — got: $outf3"
+  else
+    pass=$((pass+1))
+  fi
+
   tmux kill-session -t "$S2" 2>/dev/null || true
 fi
 

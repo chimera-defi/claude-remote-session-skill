@@ -106,8 +106,17 @@ case "$MODE" in
 
   send)
     S="${1:?usage: session-handoff send <tmux-session> (<msg> | --file <path>)}"; shift
-    if [ "${1:-}" = "--file" ]; then MSG="$(cat "${2:?--file needs a path}")"; else MSG="${1:?message required}"; fi
     tmux has-session -t "$S" 2>/dev/null || { echo "send: '$S' — no such tmux session" >&2; exit 2; }
+    if [ "${1:-}" = "--file" ]; then
+      FILE="${2:?--file needs a path}"
+      # A missing/unreadable path must be reported as such, not silently
+      # swallowed into an empty MSG — that used to surface as the unrelated
+      # "message is empty or whitespace-only" refusal below, hiding the real
+      # cause (cat's own stderr line is easy to miss/strip by a caller).
+      MSG="$(cat "$FILE")" || { echo "send: could not read --file path: $FILE" >&2; exit 2; }
+    else
+      MSG="${1:?message required}"
+    fi
     st="$(_state_of "$S")"
     case "$st" in
       dead)     echo "send: '$S' is $st (supervisor loop not in claude) — refusing to send" >&2; exit 2;;
