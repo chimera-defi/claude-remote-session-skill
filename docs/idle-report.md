@@ -43,15 +43,41 @@ is the safety property. Rows flagged `[P]` are **protected**
    dotted paths (`/home/agents/.openclaw` → `-home-agents--openclaw`). Not
    documented anywhere in Claude Code — verified by checking the dirs exist.
 5. **Idle signal** = max `timestamp` over all `*.jsonl` entries with `type ==
-   "user"`, **excluding entries flagged `isCompactSummary`**. A `/compact`
-   writes its summary back as a `type:user` entry, so counting it would make a
-   just-compacted session look freshly active — and then go idle again ~30min
-   later, forever. Idle is therefore measured from the last *genuine* user turn.
-   No transcript dir/files, or files with zero `user` entries, both mean
-   **"never messaged"** — shown distinctly (`never: no transcript` /
-   `never: no user msgs`) because a spawned-but-never-touched session is a
-   stronger reap signal than one that merely went quiet after real use. "never"
-   rows always appear (they sort first, oldest).
+   "user"`, **excluding all FIVE artifacts one `/compact` invocation writes**, not
+   just the obvious one. A `/compact` writes its summary back as an
+   `isCompactSummary:true` `type:user` entry — that one was excluded from the
+   start — but confirmed against two REAL `sweep --apply` runs on this host
+   (2026-09-11), excluding only that entry was **not enough**: idle still reset
+   from days to single-digit minutes on both, because FOUR MORE `type:user`
+   artifacts land alongside it and are just as synthetic:
+   - the bare `/compact` keystroke that triggers the whole cascade;
+   - an `isMeta:true` `<local-command-caveat>` wrapper (Claude Code re-emits this
+     for ANY local slash command, not just `/compact`);
+   - the `<command-name>/compact</command-name>` echo of the command itself;
+   - the `<local-command-stdout>Compacted…` line written once compaction
+     finishes — in the two real runs, this one carried the LATEST timestamp of
+     all five, so it (not the caveat, the echo, or the trigger) was what
+     actually dominated the idle calculation pre-fix.
+
+   `isMeta` is excluded **unconditionally** (any command): it's pure caveat
+   boilerplate, and excluding it loses no human-presence signal because the
+   sibling command-name echo (kept as genuine, for every command OTHER than
+   `/compact`) carries essentially the same timestamp. The other three
+   (bare trigger, command-name echo, stdout line) are excluded **only** when
+   tied to `/compact` specifically (exact match on the bare trigger, not a
+   prefix — a real transcript on this host has a genuine chat message
+   `/compact handoff first` that is NOT a command invocation). Do **not**
+   generalize any of this to "any `<command-name>` echo" or "any bare slash
+   command" or "any `<local-command-stdout>`": a human typing `/clear`,
+   `/context`, `/model`, etc. is real evidence of presence, and
+   blanket-excluding those would push toward compacting a session someone is
+   actively using — the dangerous direction.
+
+   Idle is therefore measured from the last *genuine* user turn. No transcript
+   dir/files, or files with zero `user` entries, both mean **"never messaged"** —
+   shown distinctly (`never: no transcript` / `never: no user msgs`) because a
+   spawned-but-never-touched session is a stronger reap signal than one that merely
+   went quiet after real use. "never" rows always appear (they sort first, oldest).
 
 > **`type:user` includes tool-result turns.** In Claude Code transcripts, a tool
 > result is delivered as a `type:"user"` message. So a session looping
