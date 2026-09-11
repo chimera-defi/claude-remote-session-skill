@@ -186,6 +186,90 @@ age for a bounced session, the dangerous direction for a reap decision.
 `#{session_created}` is used only as a fallback for a live session with zero
 log entries.
 
+## Orienting in a folder: what ran here before, what runs here now
+
+A session spawning into a folder that's had prior sessions starts blind. Instead
+of hand-grepping tmux/registry/git log:
+
+```bash
+session-doctor history <foldername>   # exact worktree name, an absolute path, or a substring
+session-doctor history crss           # substring — every matching worktree
+```
+
+Two sections per worktree: **NOW** (live sessions with this cwd, with idle
+minutes) and **PAST** (prior sessions from the transcript dir, with first/last
+`type:user`, turn count, size). A session that's live is cross-referenced, not
+double-counted. Closes with branch / `landed=` / clean-or-DIRTY and the last 5
+commits.
+
+**Transcripts outlive worktrees**, so this still answers "what happened here"
+for a folder that's already been deleted — that's the common case for genuinely
+past work, and it's why the PAST section reads the transcript dir rather than
+the worktree. Report-only, same boundary as `idle-report`/`land-check`.
+
+## Cross-session knowledge: write it to agent-memory, not to a new bus
+
+For durable facts other sessions should inherit ("here's what we learned"),
+the host-wide convention already exists — **do not build a per-repo bus for
+this**. Write a freeform markdown note to `/home/agents/agent-memory/agents/claude/public/`
+(cross-agent facts go to `shared/public/`), then run:
+
+```bash
+gbrain-sync-memory          # without this the note is invisible to other sessions
+```
+
+The read path is **gbrain search/recall**, not raw file reads — search first and
+cite source ids (`brain:agent-claude-public:<slug>`) rather than dumping folders
+into context. The sync is real and current (`agent-claude-public` indexes ~69
+pages), but it is **manual**: a note that isn't synced does not exist as far as
+every other session is concerned.
+
+Two traps worth knowing. The per-namespace `MEMORY.md` index is **stale** —
+most notes aren't listed in it, so don't treat it as a table of contents. And
+`agents/claude/public/` is a nested git repo whose tracking has silently
+stopped (most 2026-09 content is untracked), so durability rests on the gbrain
+index, not on git.
+
+Live "who else is working here right now" is a **different question** and does
+not belong in a curated knowledge store — that's `session-doctor history`
+above, which derives presence from live processes instead of asking sessions to
+declare it.
+
+## Compact before relaying into an idle/stale session
+
+Relaying a follow-up into a session that's been sitting a while pays to reprocess its whole
+bloated transcript on every subsequent turn. Compact first — but use the one command, which
+does the staleness check, compacts, waits for completion, and only then relays:
+
+```bash
+session-compact before-relay <name> "the actual task"   # or --file <path>
+```
+
+It **fails closed**: if the compact can't be verified complete, the message is not sent, so
+you never land a task mid-summarization. Hand-rolling this (`session-send "/compact"`, eyeball
+`tmux capture-pane`, send the real task) is the fallback only if `session-compact` isn't
+deployed yet. Same staleness signal as the bloat-before-routing check — a status line reading
+`new task? /clear to save NNNk tokens`, or a long idle gap.
+
+**Don't compact a session idle under ~60 minutes.** Claude Code opts into the **1-hour**
+prompt-cache TTL (not the API's 5-minute default), and that TTL is a *sliding window refreshed
+on every read* — so a session idle 30–60min still has a live cache, and compacting it destroys
+value the resumer would have hit at ~0.1× cost. That window is the most expensive moment to
+compact, not the cheapest. `session-compact` defaults to `--min-idle 60` for this reason. See
+[`docs/session-compaction.md`](docs/session-compaction.md) for the measurements.
+
+**Auto-compact reality check** (verified against the actual Claude Code changelog, not
+guessed): auto-compaction is a real built-in feature and is on by default — it is **not** a
+`settings.json` boolean like `autoCompactEnabled`/`autoCompactWindow`; those exact key names
+were fabricated once by a guide agent asked about this and do not exist in
+`~/.claude/settings.json` or the installed CLI's schema. The real controls are the in-session
+`/autocompact` dialog and `/config`, plus env var `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window
+scales with the model's context size (Sonnet 5 on its full 1M window auto-compacts around
+~967K tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact
+is broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
+this more aggressive; the pre-compact-before-relay habit above is the actual lever for
+proactive cost control, not a spawn-time config toggle.
+
 ## Preserve before reaping (recycling a bloated session)
 
 Long-lived sessions accumulate context until every turn is slow and expensive.

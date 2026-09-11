@@ -1,0 +1,542 @@
+#!/usr/bin/env bash
+# session-compact.sh — find idle sessions worth reclaiming and issue /compact
+# into them. session-doctor.sh stays the report-only SENSOR (idle-report
+# --minutes N --tsv); ALL mutation lives here. See docs/session-compaction.md
+# for the full design rationale — this header is a summary, not the source of
+# truth.
+#
+# Usage:
+#   session-compact.sh report                        # who is eligible and why/why not — mutates nothing
+#   session-compact.sh sweep --dry-run                # what a sweep WOULD compact
+#   session-compact.sh sweep --apply                  # actually compact
+#   session-compact.sh before-relay <session> <msg>   # compact IF stale, verify, then relay
+#   session-compact.sh before-relay <session> --file <path>
+#   session-compact.sh install-timer                  # write systemd units; enable NOTHING
+#
+#   report/sweep window flags: --min-idle N (default 60) --max-idle N (default 0 = unbounded)
+#   before-relay/sweep --apply: --timeout N (default 240; seconds to wait for a compact to finish)
+#   install-timer: --force (overwrite existing unit files)
+#
+# Why the default window is 60min+, unbounded (NOT the original 30-60min):
+# Claude Code opts into a 1-hour prompt-cache TTL for ordinary interactive
+# sessions, and that TTL is a SLIDING WINDOW refreshed on every cache read —
+# so "idle N minutes" IS "N minutes since the cache was last refreshed".
+# Below 60min the cache is still alive: compacting there destroys a cache a
+# resumer would have hit at ~0.1x cost, making 30-60min the MOST expensive
+# window to compact in, not the cheapest. Past 60min the TTL has lapsed, so
+# the incremental cache cost of compacting drops to zero. See
+# docs/session-compaction.md ("The default window is 60min+, not 30-60min")
+# for the full derivation, measurement, and caveats. The original window is
+# still one flag away: --min-idle 30 --max-idle 60.
+#
+# Data source: shells out to `session-doctor.sh idle-report --minutes N --tsv`
+# (co-located first, then PATH — same resolution session-send.sh uses for
+# session-handoff). Override with $SESSION_COMPACT_SENSOR to inject a fixture
+# producer in tests instead of running the real scan.
+#
+# Eligibility (ALL must hold; report says which ONE failed first, in this
+# order): idle_minutes is an integer, not "never" (never-touched) ->
+# protected/compacted/landed/dirty each match the sensor's documented
+# vocabulary, not truncated/garbage (malformed-row) -> idle inside the
+# configured window (outside-window) -> protected == no (protected) -> NOT
+# (landed=yes AND dirty=clean) (landed-and-clean) -> not already compacted
+# this idle window, marker-file fallback when the sensor reports
+# compacted=unknown (already-compacted) -> live pane safe to inject, via
+# `session-handoff.sh ready <session>` (pane-<reason>).
+#
+# Compacting: `session-handoff.sh send <session> "/compact"`, then poll
+# `session-handoff.sh check` until the pane is no longer working (bounded by
+# --timeout, default 240s — a compact measures ~101s wall-clock). On timeout,
+# report it and do NOT write a success marker. `before-relay` fails CLOSED:
+# if a compact was issued but completion could not be verified, the message
+# is NOT sent.
+set -uo pipefail
+
+# ── pure-ish helpers (source-guarded below so tests can exercise them) ───────
+
+# _find_helper <basename> — resolve a sibling script co-located first (repo/
+# dev layout: <basename>.sh next to this script), then on PATH (deployed
+# layout: flat copies in ~/.local/bin with the .sh dropped). Prints the path
+# and returns 0, or prints nothing and returns 1 — callers must fail SAFE on
+# a miss. Copied from session-doctor.sh's helper of the same name/contract.
+_find_helper() {
+  local base="$1" here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+  if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
+  if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
+  return 1
+}
+
+# _validate_uint <flag-name> <var-name> — validates the NAMED variable's
+# current value and canonicalizes it in place (base-10, leading-zero-safe —
+# same idiom used throughout this repo: session-doctor.sh --days, session-
+# alias.sh). Takes a variable NAME (nameref), not its value, and is called as
+# a plain statement, NOT `X="$(_validate_uint ...)"` — that command-
+# substitution form runs this in a subshell, where `exit 2` would only kill
+# the subshell and silently leave $X empty instead of failing the script (a
+# real bug caught in testing: an invalid --min-idle was swallowed, not
+# rejected).
+_validate_uint() {
+  local name="$1"
+  local -n ref="$2"
+  case "$ref" in
+    ''|*[!0-9]*) echo "session-compact: $name requires a non-negative integer, got '$ref'" >&2; exit 2 ;;
+  esac
+  ref=$((10#$ref))
+}
+
+# _decide <min_idle> <max_idle> <tmux_session> <remote_name> <pid> <cwd> \
+#         <idle_minutes> <last_genuine_user_ts> <protected> \
+#         <compacted_since_last_turn> <landed> <dirty> <marker_hit>
+#
+# PURE — no I/O, no subprocesses, no filesystem/tmux access. Args 3-12 are
+# the sensor's 10 TSV columns in contract order, unchanged. <marker_hit>
+# (yes/no/na) is NOT one of the 10 columns: it is the pre-computed result of
+# checking the compact-marker file for the compacted=unknown fallback path
+# (see _marker_hit, which does the actual I/O) — the caller looks it up and
+# hands in the answer so this function itself never touches the filesystem.
+# Prints "eligible" or "skip:<reason>" on stdout; never exits/fails.
+_decide() {
+  local min_idle="$1" max_idle="$2"
+  # ${N:-} rather than bare $N: a genuinely short/ragged row (fewer than 13
+  # args — the "no crash" requirement) must not trip `set -u`'s unbound-
+  # variable error. Missing fields resolve to "" the same way an explicit
+  # empty TSV field would. For idle_minutes that's enough to fail the same
+  # way explicit garbage does (caught below, "not an integer"/"not never").
+  # It is NOT enough for protected/compacted/landed/dirty: those are tested
+  # with `= yes` / case matches, so an empty (or otherwise-unrecognized)
+  # value would silently read as the PERMISSIVE answer — "not protected",
+  # "not landed", "not already compacted" — the opposite of failing closed.
+  # So those four are validated below against the sensor's documented
+  # vocabulary (session-doctor.sh never legitimately emits anything else)
+  # and rejected as skip:malformed-row on any other value, including "".
+  local idle_minutes="${7:-}" protected="${9:-}" compacted="${10:-}" landed="${11:-}" dirty="${12:-}" marker_hit="${13:-}"
+
+  if [ "$idle_minutes" = never ]; then echo "skip:never-touched"; return; fi
+  case "$idle_minutes" in
+    ''|*[!0-9]*) echo "skip:bad-idle-field"; return ;;
+  esac
+  local idle_n=$((10#$idle_minutes))
+
+  case "$protected" in
+    yes|no) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$compacted" in
+    yes|no|unknown) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$landed" in
+    yes|no|unknown|no-worktree) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+  case "$dirty" in
+    clean|DIRTY|unknown) : ;;
+    *) echo "skip:malformed-row"; return ;;
+  esac
+
+  if [ "$idle_n" -lt "$min_idle" ]; then echo "skip:outside-window"; return; fi
+  if [ "$max_idle" != 0 ] && [ "$idle_n" -gt "$max_idle" ]; then echo "skip:outside-window"; return; fi
+
+  if [ "$protected" = yes ]; then echo "skip:protected"; return; fi
+
+  if [ "$landed" = yes ] && [ "$dirty" = clean ]; then echo "skip:landed-and-clean"; return; fi
+
+  case "$compacted" in
+    yes) echo "skip:already-compacted"; return ;;
+    unknown)
+      if [ "$marker_hit" = yes ]; then echo "skip:already-compacted"; return; fi
+      ;;
+  esac
+
+  echo eligible
+}
+
+# _marker_file <tmux_session> -> path to its compact-marker JSON file.
+_marker_file() { printf '%s\n' "$HOME/.sessions/compact-markers/$1.json"; }
+
+# _marker_hit <tmux_session> <last_genuine_user_ts> -> yes|no. I/O: reads the
+# marker file. Only meaningful when the sensor's compacted_since_last_turn
+# column reads "unknown" (older CLI, no compact_boundary marker in the
+# transcript — see docs/session-compaction.md point 4).
+_marker_hit() {
+  local session="$1" ts="$2" f stored
+  f="$(_marker_file "$session")"
+  [ -f "$f" ] || { echo no; return; }
+  stored="$(python3 -c "
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get('last_user_ts_at_compact', ''))
+except Exception:
+    print('')
+" "$f" 2>/dev/null)"
+  if [ -n "$stored" ] && [ "$stored" = "$ts" ]; then echo yes; else echo no; fi
+}
+
+# _write_marker <tmux_session> <last_genuine_user_ts> <injected_at_iso> <result>
+# I/O: atomic write via mktemp+mv under flock — the session-alias.sh
+# store_upsert idiom (`exec 9>"$f.lock"; flock 9` ... `flock -u 9`), NOT
+# record-spawn-telemetry.sh's unlocked append (wrong pattern for a
+# read-then-overwrite file like this one). Written after EVERY successful
+# compact regardless of detection mode — cheap, and it's the only safety net
+# on older CLI builds that lack the compact_boundary transcript marker.
+_write_marker() {
+  local session="$1" ts="$2" injected_at="$3" result="$4" dir f tmp
+  dir="$HOME/.sessions/compact-markers"
+  mkdir -p "$dir"
+  f="$dir/$session.json"
+  exec 9>"$f.lock"
+  flock 9
+  tmp="$(mktemp "$f.XXXXXX")"
+  python3 -c "
+import json, sys
+json.dump({'session': sys.argv[1], 'last_user_ts_at_compact': sys.argv[2],
+           'injected_at': sys.argv[3], 'result': sys.argv[4]}, open(sys.argv[5], 'w'))
+" "$session" "$ts" "$injected_at" "$result" "$tmp"
+  mv -f "$tmp" "$f"
+  flock -u 9
+}
+
+_now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# ── shelling out to the sensor / session-handoff (I/O) ───────────────────────
+
+# _fetch_tsv <min_idle> -> the sensor's TSV to stdout; propagates its exit
+# status. $SESSION_COMPACT_SENSOR overrides the real sensor entirely — set to
+# a full command (e.g. "bash /path/to/fixture.sh"); it is intentionally
+# word-split so a multi-word override works without requiring an exported
+# array, and is invoked with the same --minutes/--tsv args the real sensor
+# gets so a fixture can ignore-or-honor them as it likes.
+_fetch_tsv() {
+  local min="$1"
+  if [ -n "${SESSION_COMPACT_SENSOR:-}" ]; then
+    # shellcheck disable=SC2086
+    $SESSION_COMPACT_SENSOR --minutes "$min" --tsv
+    return $?
+  fi
+  local bin
+  bin="$(_find_helper session-doctor)" || {
+    echo "session-compact: could not locate session-doctor (looked next to this script and on PATH)" >&2
+    return 127
+  }
+  bash "$bin" idle-report --minutes "$min" --tsv
+}
+
+_SESSION_HANDOFF_BIN=""
+# _session_handoff <args...> — resolve session-handoff co-located first, then
+# on PATH (same resolution session-send.sh uses), memoized per invocation.
+_session_handoff() {
+  if [ -z "$_SESSION_HANDOFF_BIN" ]; then
+    _SESSION_HANDOFF_BIN="$(_find_helper session-handoff)" || {
+      echo "session-compact: could not locate session-handoff (looked next to this script and on PATH)" >&2
+      return 127
+    }
+  fi
+  bash "$_SESSION_HANDOFF_BIN" "$@"
+}
+
+# _pane_ready_reason <tmux_session> — the one live call this script makes to
+# decide whether a pane is safe to type into: `session-handoff.sh ready
+# <session>`. Prints "safe" and returns 0 when it is; otherwise prints the
+# failure reason (e.g. "busy", "menu", "no-prompt", "draft-in-input-box", or
+# "unreachable" when `ready`'s own output doesn't carry a reason=... token)
+# and returns 1. Shared by _evaluate_row (the normal eligibility path) and
+# before-relay's not-found-in-sensor branch (Bug 1 fix — that branch used to
+# send with zero information about pane state).
+_pane_ready_reason() {
+  local session="$1" ready_out rc reason
+  ready_out="$(_session_handoff ready "$session" 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo safe
+    return 0
+  fi
+  reason="$(printf '%s' "$ready_out" | sed -n 's/.*reason=\(.*\)$/\1/p')"
+  [ -n "$reason" ] || reason="unreachable"
+  printf '%s\n' "$reason"
+  return 1
+}
+
+# _evaluate_row <min_idle> <max_idle> <10 TSV fields> — non-pure wrapper
+# around _decide: resolves the marker-file I/O when needed, then (only if
+# the cheap pure checks all pass) makes the one live call this needs —
+# `session-handoff.sh ready <session>` — for the pane-safety verdict. Prints
+# "eligible" or "skip:<reason>".
+_evaluate_row() {
+  local min_idle="$1" max_idle="$2"; shift 2
+  local tmux_session="$1" last_user_ts="$6" compacted="$8"
+  local marker_hit=na
+  if [ "$compacted" = unknown ]; then
+    marker_hit="$(_marker_hit "$tmux_session" "$last_user_ts")"
+  fi
+  local decision
+  decision="$(_decide "$min_idle" "$max_idle" "$@" "$marker_hit")"
+  if [ "$decision" != eligible ]; then
+    printf '%s\n' "$decision"
+    return
+  fi
+  local pane_reason pane_rc
+  pane_reason="$(_pane_ready_reason "$tmux_session")"; pane_rc=$?
+  if [ "$pane_rc" -eq 0 ]; then
+    echo eligible
+    return
+  fi
+  printf 'skip:pane-%s\n' "$pane_reason"
+}
+
+_pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
+  local out
+  out="$(_session_handoff check "$1" 2>&1)" || true
+  printf '%s' "$out" | grep -oE 'state=[a-z]+' | head -1 | cut -d= -f2
+}
+
+declare -A _COMPACT_ISSUED=()
+# _do_compact <tmux_session> <timeout_seconds> -> prints one of: compacted |
+# send-failed | timeout. Exit code 0 only for "compacted" (fully verified).
+# Refuses to send /compact to the SAME session twice within one invocation
+# (per-session guard — sweep legitimately compacts many DIFFERENT sessions in
+# one run; this only stops re-issuing to one already handled).
+_do_compact() {
+  local session="$1" timeout="$2" out rc waited=0 seen_busy=no state
+
+  if [ -n "${_COMPACT_ISSUED[$session]+x}" ]; then
+    echo "session-compact: INTERNAL — refusing to send /compact to '$session' a second time in this invocation" >&2
+    echo send-failed
+    return 1
+  fi
+  _COMPACT_ISSUED[$session]=1
+
+  out="$(_session_handoff send "$session" "/compact" 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "session-compact: /compact to '$session' did not land: $out" >&2
+    echo send-failed
+    return 1
+  fi
+
+  # Wait for completion (measured ~101s wall-clock — see design doc). Poll
+  # `check`'s state rather than reimplementing a spinner matcher. Require
+  # having OBSERVED busy at least once before accepting "ready" as done:
+  # `send`'s own "landed" verdict can fire the instant the /compact text is
+  # echoed into the transcript, a beat before Claude Code actually starts the
+  # compaction spinner — so a "ready" reading taken immediately after send
+  # returns is not trustworthy evidence the compact finished.
+  while [ "$waited" -lt "$timeout" ]; do
+    state="$(_pane_state "$session")"
+    case "$state" in
+      busy) seen_busy=yes ;;
+      ready) [ "$seen_busy" = yes ] && { echo compacted; return 0; } ;;
+    esac
+    sleep 3
+    waited=$((waited+3))
+  done
+  echo timeout
+  return 1
+}
+
+# ── mode dispatch ─────────────────────────────────────────────────────────
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+MODE="${1:-}"; shift || true
+
+_usage() {
+  echo "usage: session-compact.sh (report [--min-idle N] [--max-idle N]" >&2
+  echo "         | sweep (--dry-run|--apply) [--min-idle N] [--max-idle N] [--timeout N]" >&2
+  echo "         | before-relay <session> (<msg>|--file <path>) [--timeout N]" >&2
+  echo "         | install-timer [--force])" >&2
+  exit 2
+}
+
+case "$MODE" in
+  report|sweep)
+    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --min-idle) MIN_IDLE="$2"; shift 2 ;;
+        --max-idle) MAX_IDLE="$2"; shift 2 ;;
+        --timeout)  TIMEOUT="$2"; shift 2 ;;
+        --dry-run)  DRY_RUN=yes; shift ;;
+        --apply)    APPLY=yes; shift ;;
+        *) echo "session-compact: $MODE: unrecognized argument '$1'" >&2; exit 2 ;;
+      esac
+    done
+    _validate_uint --min-idle MIN_IDLE
+    _validate_uint --max-idle MAX_IDLE
+    _validate_uint --timeout TIMEOUT
+
+    if [ "$MODE" = sweep ]; then
+      if [ "$DRY_RUN" = yes ] && [ "$APPLY" = yes ]; then
+        echo "session-compact: sweep: pass exactly one of --dry-run or --apply, not both" >&2
+        exit 2
+      fi
+      if [ "$DRY_RUN" = no ] && [ "$APPLY" = no ]; then
+        echo "session-compact: sweep: refusing to default to mutating — pass --dry-run or --apply" >&2
+        exit 2
+      fi
+    fi
+
+    TSV="$(_fetch_tsv "$MIN_IDLE")"; rc=$?
+    [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
+
+    window_desc="idle >= ${MIN_IDLE}m"
+    [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
+
+    if [ "$MODE" = report ]; then
+      echo "=== session-compact report: $window_desc — REPORT ONLY, mutates nothing ==="
+      printf '%-40s %-9s %-8s %s\n' "TMUX SESSION" "ELIGIBLE" "IDLE" "REASON"
+      n=0
+      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+        [ -n "$c1" ] || continue
+        n=$((n+1))
+        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+        case "$decision" in
+          eligible) elig=yes; reason=eligible ;;
+          skip:*)   elig=no;  reason="${decision#skip:}" ;;
+          *)        elig=no;  reason="$decision" ;;
+        esac
+        printf '%-40s %-9s %-8s %s\n' "$c1" "$elig" "$c5" "$reason"
+      done <<< "$TSV"
+      echo "  --- $n candidate(s) scanned. Report only; mutates nothing."
+    else
+      echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc ==="
+      n_eligible=0; n_compacted=0; n_failed=0
+      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+        [ -n "$c1" ] || continue
+        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+        [ "$decision" = eligible ] || continue
+        n_eligible=$((n_eligible+1))
+        if [ "$DRY_RUN" = yes ]; then
+          echo "would-compact: $c1 (idle=${c5}m)"
+          continue
+        fi
+        echo "compacting: $c1 (idle=${c5}m) ..."
+        result="$(_do_compact "$c1" "$TIMEOUT")"; rc2=$?
+        if [ "$rc2" -eq 0 ]; then
+          _write_marker "$c1" "$c6" "$(_now_iso)" compacted
+          n_compacted=$((n_compacted+1))
+          echo "  -> compacted: $c1"
+        else
+          n_failed=$((n_failed+1))
+          echo "  -> FAILED ($result): $c1 — NOT writing a success marker" >&2
+        fi
+      done <<< "$TSV"
+      if [ "$DRY_RUN" = yes ]; then
+        echo "sweep --dry-run: $n_eligible session(s) would be compacted"
+      else
+        echo "sweep --apply: $n_eligible eligible, $n_compacted compacted, $n_failed failed"
+      fi
+    fi
+    ;;
+
+  before-relay)
+    # --timeout is only recognized as a LEADING flag, before the session
+    # positional — never after, so a free-form message can never collide
+    # with it (session-handoff.sh's own --file check is the same exact-
+    # string-before-positional shape).
+    TIMEOUT=240
+    if [ "${1:-}" = "--timeout" ]; then TIMEOUT="$2"; shift 2; fi
+    _validate_uint --timeout TIMEOUT
+    SESSION="${1:?usage: session-compact.sh before-relay <tmux-session> (<msg>|--file <path>) [--timeout N]}"; shift
+    if [ "${1:-}" = "--file" ]; then
+      MSG_ARGS=(--file "${2:?--file needs a path}")
+    else
+      MSG_ARGS=("${1:?message required}")
+    fi
+
+    MIN_IDLE=60; MAX_IDLE=0
+    TSV="$(_fetch_tsv 0)"; rc=$?
+    [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
+    row_line="$(printf '%s\n' "$TSV" | awk -F'\t' -v s="$SESSION" '$1==s{print; exit}')"
+
+    if [ -z "$row_line" ]; then
+      # Not seen by the sensor at all — we have zero eligibility signal, but
+      # we can and must still check the ONE thing that's always unsafe to
+      # skip: is the pane actually safe to type into right now. (Bug 1 fix:
+      # this branch used to relay unconditionally here, with no pane check.)
+      pane_reason="$(_pane_ready_reason "$SESSION")"; pane_rc=$?
+      if [ "$pane_rc" -ne 0 ]; then
+        echo "before-relay: '$SESSION' not seen by the sensor AND not safe to inject into (${pane_reason}) — refusing to relay" >&2
+        exit 1
+      fi
+      echo "before-relay: '$SESSION' not seen by the sensor — pane is safe, relaying without compacting"
+      _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
+      exit $?
+    fi
+    IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 <<< "$row_line"
+
+    decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+    case "$decision" in
+      eligible) : ;;
+      skip:pane-*)
+        # The pane-safety check we JUST ran said this pane is not safe to
+        # type into (busy / on a menu / no prompt / holding an unsent draft)
+        # — fail CLOSED here too, same as the compact-unverified path below.
+        # (Bug 1 fix: this used to fall through to a plain relay like any
+        # other skip reason, injecting into a pane it had itself just flagged
+        # unsafe.)
+        echo "before-relay: '$SESSION' is not safe to inject into (${decision#skip:pane-}) — refusing to relay" >&2
+        exit 1 ;;
+      *)
+        echo "before-relay: '$SESSION' not stale/eligible (${decision#skip:}) — relaying without compacting"
+        _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
+        exit $? ;;
+    esac
+
+    echo "before-relay: '$SESSION' is stale and eligible — compacting first"
+    result="$(_do_compact "$SESSION" "$TIMEOUT")"; rc2=$?
+    if [ "$rc2" -ne 0 ]; then
+      echo "before-relay: compact of '$SESSION' could not be verified ($result) — FAILING CLOSED, message NOT sent" >&2
+      exit 1
+    fi
+    _write_marker "$SESSION" "$c6" "$(_now_iso)" compacted
+    echo "before-relay: compact verified — relaying message"
+    _session_handoff send "$SESSION" "${MSG_ARGS[@]}"
+    exit $?
+    ;;
+
+  install-timer)
+    FORCE=no
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --force) FORCE=yes; shift ;;
+        *) echo "session-compact: install-timer: unrecognized argument '$1'" >&2; exit 2 ;;
+      esac
+    done
+    UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    STATE_DIR="$HOME/.local/state/session-compact"
+    SVC="$UD/session-compact-report.service"
+    TMR="$UD/session-compact-report.timer"
+    if [ "$FORCE" != yes ] && { [ -f "$SVC" ] || [ -f "$TMR" ]; }; then
+      echo "session-compact: install-timer: unit file(s) already exist ($SVC and/or $TMR) — refusing to overwrite without --force" >&2
+      exit 2
+    fi
+    mkdir -p "$UD" "$STATE_DIR"
+    cat > "$SVC" <<EOF
+[Unit]
+Description=session-compact report-only scan (report mode; never mutates)
+
+[Service]
+Type=oneshot
+ExecStart=$HOME/.local/bin/session-compact report
+StandardOutput=append:$STATE_DIR/report.log
+StandardError=append:$STATE_DIR/report.log
+EOF
+    cat > "$TMR" <<EOF
+[Unit]
+Description=Trigger for session-compact-report.service
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    echo "session-compact: wrote $SVC"
+    echo "session-compact: wrote $TMR"
+    echo "session-compact: NOT enabled (report mode only; no mutation ever happens from this unit)."
+    echo "session-compact: to opt in, run:"
+    echo "  systemctl --user enable --now session-compact-report.timer"
+    ;;
+
+  *) _usage ;;
+esac
+fi

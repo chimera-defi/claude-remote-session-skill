@@ -43,7 +43,11 @@ is the safety property. Rows flagged `[P]` are **protected**
    dotted paths (`/home/agents/.openclaw` → `-home-agents--openclaw`). Not
    documented anywhere in Claude Code — verified by checking the dirs exist.
 5. **Idle signal** = max `timestamp` over all `*.jsonl` entries with `type ==
-   "user"`. No transcript dir/files, or files with zero `user` entries, both mean
+   "user"`, **excluding entries flagged `isCompactSummary`**. A `/compact`
+   writes its summary back as a `type:user` entry, so counting it would make a
+   just-compacted session look freshly active — and then go idle again ~30min
+   later, forever. Idle is therefore measured from the last *genuine* user turn.
+   No transcript dir/files, or files with zero `user` entries, both mean
    **"never messaged"** — shown distinctly (`never: no transcript` /
    `never: no user msgs`) because a spawned-but-never-touched session is a
    stronger reap signal than one that merely went quiet after real use. "never"
