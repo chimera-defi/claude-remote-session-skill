@@ -186,6 +186,55 @@ age for a bounced session, the dangerous direction for a reap decision.
 `#{session_created}` is used only as a fallback for a live session with zero
 log entries.
 
+## Orienting in a folder: what ran here before, what runs here now
+
+A session spawning into a folder that's had prior sessions starts blind. Instead
+of hand-grepping tmux/registry/git log:
+
+```bash
+session-doctor history <foldername>   # exact worktree name, an absolute path, or a substring
+session-doctor history crss           # substring — every matching worktree
+```
+
+Two sections per worktree: **NOW** (live sessions with this cwd, with idle
+minutes) and **PAST** (prior sessions from the transcript dir, with first/last
+`type:user`, turn count, size). A session that's live is cross-referenced, not
+double-counted. Closes with branch / `landed=` / clean-or-DIRTY and the last 5
+commits.
+
+**Transcripts outlive worktrees**, so this still answers "what happened here"
+for a folder that's already been deleted — that's the common case for genuinely
+past work, and it's why the PAST section reads the transcript dir rather than
+the worktree. Report-only, same boundary as `idle-report`/`land-check`.
+
+## Cross-session knowledge: write it to agent-memory, not to a new bus
+
+For durable facts other sessions should inherit ("here's what we learned"),
+the host-wide convention already exists — **do not build a per-repo bus for
+this**. Write a freeform markdown note to `/home/agents/agent-memory/agents/claude/public/`
+(cross-agent facts go to `shared/public/`), then run:
+
+```bash
+gbrain-sync-memory          # without this the note is invisible to other sessions
+```
+
+The read path is **gbrain search/recall**, not raw file reads — search first and
+cite source ids (`brain:agent-claude-public:<slug>`) rather than dumping folders
+into context. The sync is real and current (`agent-claude-public` indexes ~69
+pages), but it is **manual**: a note that isn't synced does not exist as far as
+every other session is concerned.
+
+Two traps worth knowing. The per-namespace `MEMORY.md` index is **stale** —
+most notes aren't listed in it, so don't treat it as a table of contents. And
+`agents/claude/public/` is a nested git repo whose tracking has silently
+stopped (most 2026-09 content is untracked), so durability rests on the gbrain
+index, not on git.
+
+Live "who else is working here right now" is a **different question** and does
+not belong in a curated knowledge store — that's `session-doctor history`
+above, which derives presence from live processes instead of asking sessions to
+declare it.
+
 ## Preserve before reaping (recycling a bloated session)
 
 Long-lived sessions accumulate context until every turn is slow and expensive.
