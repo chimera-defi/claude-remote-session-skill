@@ -5,6 +5,7 @@
 #
 #   session-handoff targets                     # live sessions + health + model
 #   session-handoff check <tmux-session>        # one session's health (exit 0 = ready)
+#   session-handoff ready <tmux-session>        # positive injection-safety check (exit 0 = safe)
 #   session-handoff send  <tmux-session> <msg>  # relay a message + verify it landed
 #   session-handoff send  <tmux-session> --file <path>
 #
@@ -12,6 +13,16 @@
 # submit line-by-line), presses Enter, and VERIFIES the session actually started
 # working — retrying Enter if the input stayed buffered — instead of trusting
 # that the keys were sent. It prints one of: landed | unverified.
+#
+# `ready` is a separate, POSITIVE predicate: not-busy is not the same as
+# safe-to-inject. If a human (or another agent) left an unsubmitted draft
+# sitting in the pane's input box, the pane shows no spinner — but pasting
+# into it would concatenate onto their draft and Enter would submit the
+# corrupted merge. `ready` also refuses when the pane is on an interactive
+# menu widget (arrow-key only; plain text sent into it is silently dropped —
+# see SKILL.md "Detecting a stuck-on-a-menu session") or has no visible
+# prompt at all. `send` does not consult `ready` yet — see the predicate's
+# comment for adoption notes.
 set -uo pipefail
 
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
@@ -24,6 +35,16 @@ set -uo pipefail
 # matters for a collapsed multi-line paste that doesn't echo into the transcript.
 _is_working() {
   printf '%s' "$1" | grep -qE 'esc to interrupt|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
+}
+
+# _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
+# widget (numbered options + checkboxes, arrow-key navigation)? Free text sent
+# into it is not a valid input and is silently dropped — see SKILL.md
+# "Detecting a stuck-on-a-menu session". Prefer the distinctive hint strings
+# over trying to parse the numbered option list / checkbox glyphs, which are
+# too generic to grep for reliably on their own.
+_is_on_menu() {
+  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit'
 }
 
 # _frag — a distinctive single-line fragment of a (possibly multi-line) message,
@@ -41,6 +62,132 @@ _transcript_region() { printf '%s\n' "$2" | awk '/❯/{last=NR} {a[NR]=$0} END{f
 _on_input_line() { _input_region "$1" "$2" | grep -qF "$1"; }
 # _in_transcript — did the fragment reach the conversation (submitted + echoed)?
 _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
+
+# _has_prompt — is there a real ❯ input line visible anywhere in the capture?
+# Absent during startup (still in the supervisor loop / model not yet in a TUI
+# frame) or if the capture is empty/garbled.
+_has_prompt() { printf '%s' "$1" | grep -qF '❯'; }
+
+# _strip_ansi — drop ANSI CSI sequences (ESC '[' params letter), e.g. color /
+# bold / dim SGR codes from `tmux capture-pane -e`. Used to make the busy /
+# menu / prompt checks immune to styling, since those grep for literal
+# substrings that must survive regardless of which colors wrap them.
+_strip_ansi() {
+  local esc; esc=$'\x1b'
+  printf '%s' "$1" | sed -E "s/${esc}\\[[0-9;]*[A-Za-z]//g"
+}
+
+# _is_dim_span — is $1 (raw, ANSI-preserving) ENTIRELY a "dim" (SGR 2) styled
+# run, optionally reset with ESC[0m at the end? This is how Claude Code's TUI
+# renders its auto-suggested "next action" ghost text in an otherwise-empty
+# input box — it is NOT a user draft (confirmed empirically 2026-09-11:
+# `tmux capture-pane -p -e` on live sessions shows `ESC[2m<suggestion>ESC[0m`
+# after the ❯ marker on idle panes, vs. no such wrapping when real text is
+# there). The terminal's cursor cell can split the run — if the cursor sits on
+# the first character of the ghost text, that one glyph renders reverse-video
+# (`ESC[7m`) and the rest resumes dim (`ESC[0;2m…`) — so both the plain-dim and
+# cursor-split shapes are matched. A real user draft is rendered without the
+# dim attribute, so it will not match this and correctly falls through to
+# "not a dim span" -> treated as a genuine draft.
+#
+# The opener is matched EXACTLY as `2m` or `0;2m` (not `[0-9;]*2m`) on
+# purpose: a wildcard there would also match 256-color codes that merely
+# happen to end in digit 2 (e.g. `38;5;12m`, `38;5;22m` — ordinary colors, not
+# the dim attribute), which would misclassify real colored draft text as safe.
+#
+# The load-bearing assumption here — that a genuine user-typed draft renders
+# WITHOUT the dim attribute — was VERIFIED empirically on 2026-09-11 against a
+# disposable session (`ah-draft-probe-0911-0630`, CC v2.1.206), not assumed.
+# A real unsubmitted draft captures as `ESC[39m❯ <NBSP>this is a real
+# unsubmitted draft` — no `ESC[2m` anywhere — while that same pane's organic
+# ghost text captures as `ESC[39m❯ <NBSP>ESC[2mmark the rest complete tooESC[0m`.
+# All six probed cases classified correctly, including the adversarial ones:
+#   - single-char draft (`x`)                     -> draft  (short drafts not missed)
+#   - draft containing the literal text `[2m`     -> draft  (matches the real ESC
+#                                                    byte, not the substring)
+#   - draft typed over existing ghost text        -> draft  (typing REPLACES the
+#                                                    placeholder; they never coexist)
+#   - box cleared with C-u, ghost text resurfaces -> safe
+# Re-verify if Claude Code's TUI changes how it styles placeholder text; that is
+# the one upstream change that would silently invert this predicate.
+_is_dim_span() {
+  local s="$1" esc nbsp; esc=$'\x1b'; nbsp=$'\xc2\xa0'
+  printf '%s' "$s" | grep -Eq \
+    "^[[:space:]${nbsp}]*((${esc}\\[0;2m)|(${esc}\\[2m)|(${esc}\\[7m.${esc}\\[0;2m))[^${esc}]*${esc}\\[0m[[:space:]${nbsp}]*\$"
+}
+
+# _input_box_empty — reuses _input_region, whose output always starts AT the
+# pane's last ❯ line. Take just that line and check whether anything other
+# than the ❯ glyph and surrounding whitespace remains — and if there IS
+# visible text, whether it's entirely a dim ghost suggestion (_is_dim_span)
+# rather than a real unsubmitted draft. Accepts either a plain capture (no
+# escapes — dim detection is then simply unavailable, so any leftover text
+# reads as a draft) or an ANSI-preserving one (`capture-pane -e`), which is
+# what `ready` passes so dim ghost text can be told apart from a real draft.
+# (Caller must confirm _has_prompt first; with no ❯ at all this reports
+# "empty" vacuously, which is the wrong signal to act on — that case should be
+# diagnosed as no-prompt instead.)
+#
+# tmux pads the cell right after the `❯` glyph with U+00A0 (NO-BREAK SPACE,
+# not a plain 0x20 space) rather than an ordinary space — confirmed against
+# live captures. POSIX `[[:space:]]` does NOT match NBSP (by design, in any
+# locale), so the trim below strips it explicitly alongside real whitespace;
+# without this, every pane — including genuinely empty ones — reads as
+# "1 leftover byte" and gets misclassified as a draft.
+_input_box_empty() {
+  local cap="$1" line rest visible nbsp; nbsp=$'\xc2\xa0'
+  line="$(_input_region "" "$cap" | head -1)"
+  rest="${line#*❯}"
+  visible="$(_strip_ansi "$rest" | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
+  [ -z "$visible" ] && return 0
+  _is_dim_span "$rest"
+}
+
+# _safety_reason — classify a captured pane's injection-safety in one word.
+# Expects an ANSI-preserving capture (`tmux capture-pane -p -e`) so the
+# draft-vs-ghost-text distinction in _input_box_empty is available; a plain
+# (`-p`) capture still works for busy/menu/no-prompt, and degrades safely on
+# the draft check (no dim info -> any leftover input-line text reads as a
+# real draft).
+#   busy                : Claude is actively generating (spinner / esc to interrupt)
+#   menu                : an interactive AskUserQuestion-style widget is up —
+#                          plain text sent into it is silently dropped
+#   no-prompt           : no ❯ input line visible (still starting up, or an
+#                          unrecognized layout)
+#   draft-in-input-box  : a real ❯ prompt, but unsubmitted text is sitting on
+#                          it — pasting now would concatenate onto someone's draft
+#   safe                : none of the above — a message can be sent (the input
+#                          box is either truly empty or only has Claude Code's
+#                          own dim "suggested next action" ghost text, which a
+#                          paste cleanly overwrites)
+# Order matters: busy and menu are checked before the prompt/draft checks
+# because both can coexist with leftover text on the input line (e.g. a menu
+# widget ignores stray keystrokes rather than clearing them), and busy/menu
+# are the more actionable diagnoses in that case. The busy/menu/prompt checks
+# run on an ANSI-STRIPPED copy so their literal-substring greps aren't broken
+# by color codes landing mid-phrase; only the draft check needs the raw form.
+_safety_reason() {
+  local raw="$1" stripped; stripped="$(_strip_ansi "$raw")"
+  _is_working "$stripped" && { echo busy; return; }
+  _is_on_menu "$stripped" && { echo menu; return; }
+  _has_prompt "$stripped" || { echo no-prompt; return; }
+  _input_box_empty "$raw" || { echo draft-in-input-box; return; }
+  echo safe
+}
+
+# _is_safe_to_inject — the POSITIVE readiness predicate: exit 0 only when a
+# message can be pasted + Enter-submitted without corrupting someone's draft,
+# vanishing into a menu widget, or racing active generation. The absence of
+# "busy" is NOT sufficient — see the top-of-file note. `send` does not gate on
+# this yet (see its comment above). Note the `case "$st"` below in `send` has
+# no `ready)` arm — a pane with a draft or a menu up is classified `ready` by
+# _state_of today (it only distinguishes busy from not-busy) and falls
+# straight through to the paste with zero warning; that fall-through is
+# exactly what this predicate would need to gate. `busy` already has its own
+# warn+proceed arm and should keep it: gating `_is_safe_to_inject` naively
+# over the whole case would also swallow `busy` into a hard refusal, breaking
+# the existing "message queues behind current work" contract.
+_is_safe_to_inject() { [ "$(_safety_reason "$1")" = safe ]; }
 
 # _verdict — combine the signals for one capture.
 #   buffered   : still on the input line -> press Enter again
@@ -60,6 +207,10 @@ _remote_of() { case "$1" in ah_*) echo "ah-${1#ah_}";; agenthost_*) echo "agenth
 
 _pane_cmd() { tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null; }
 _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
+# _capture_ansi — like _capture, but keeps SGR escape codes (`-e`). `ready`
+# uses this so _safety_reason / _input_box_empty can tell a real draft apart
+# from Claude Code's dim "suggested next action" ghost text (see _is_dim_span).
+_capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 
 # _model_of — best-effort resolved model for a session (from its start script,
 # else the most recent session-starts.log line).
@@ -102,6 +253,19 @@ case "$MODE" in
     active=no; [ -n "$rem" ] && systemctl --user is-active --quiet "${rem}.service" 2>/dev/null && active=yes
     echo "check: $S  state=$st  unit-active=$active  model=$(_model_of "$S")"
     [ "$st" = ready ] && exit 0 || exit 1
+    ;;
+
+  ready)
+    S="${1:?usage: session-handoff ready <tmux-session>}"
+    if ! tmux has-session -t "$S" 2>/dev/null; then echo "ready: '$S' — no such tmux session"; exit 2; fi
+    reason="$(_safety_reason "$(_capture_ansi "$S")")"
+    if [ "$reason" = safe ]; then
+      echo "ready: $S SAFE"
+      exit 0
+    else
+      echo "ready: $S NOT-SAFE reason=$reason"
+      exit 1
+    fi
     ;;
 
   send)
@@ -153,6 +317,6 @@ case "$MODE" in
     fi
     ;;
 
-  *) echo "usage: session-handoff (targets | check <s> | send <s> <msg>|--file <p>)"; exit 2;;
+  *) echo "usage: session-handoff (targets | check <s> | ready <s> | send <s> <msg>|--file <p>)"; exit 2;;
 esac
 fi
