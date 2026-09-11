@@ -127,6 +127,60 @@ WHITESPACE_CAP='
 
    '
 
+# --- multi-line input-box fixtures (regression: _input_box_empty must look
+# at the WHOLE box, not just the first captured line) ------------------------
+
+# headline repro: shift+enter (or a paste starting with a newline) leaves a
+# BLANK first line with the real draft text on line 2. Reading only line 1
+# (the pre-fix behavior) sees nothing and reports SAFE — the dangerous
+# direction: `ready`/`send` would then paste onto this unsent draft.
+BLANK_FIRST_LINE_DRAFT_PANE='● Ready.
+────────────────────────────────────────────────────────
+❯
+  please do not delete the production database, just checking in
+────────────────────────────────────────────────────────
+  [Sonnet 5] session-launcher-0718'
+
+# multi-line draft with real text on line 1 AND line 2 — must also be caught
+# (this one was already caught pre-fix via the line-1 check; kept as a
+# regression guard that the box-wide rewrite didn't break the easy case).
+MULTI_LINE_DRAFT_LINE1_PANE='● Ready.
+────────────────────────────────────────────────────────
+❯ please look into this
+  and also this second line
+────────────────────────────────────────────────────────
+  [Sonnet 5] session-launcher-0718'
+
+# multi-line box where every line past the ❯ line is only whitespace/NBSP
+# padding (tmux pads box rows to terminal width) — no real draft anywhere in
+# the box -> must still read SAFE, not be misclassified as a draft just
+# because the box spans more than one line.
+NBSP=$'\xc2\xa0'
+MULTI_LINE_WHITESPACE_ONLY_PANE="● Ready.
+────────────────────────────────────────────────────────
+❯
+  ${NBSP}${NBSP}${NBSP}
+────────────────────────────────────────────────────────
+  [Sonnet 5] session-launcher-0718"
+
+# single dim ghost line immediately followed by the border row — boundary
+# case for the nbound scan (border is the very next line after content, not
+# several lines down) -> still SAFE, same as DIM_PLACEHOLDER_PANE, and must
+# not sweep the border/status line into the box.
+DIM_THEN_IMMEDIATE_BORDER_PANE="● Ready.
+────────────────────────────────────────────────────────
+${ESC}[39m❯ ${ESC}[2mdelete the backup ref${ESC}[0m
+────────────────────────────────────────────────────────
+  [Sonnet 5] session-launcher-0718"
+
+# truncated capture: a ❯ line with trailing text but NO border row at all
+# (e.g. tmux capture-pane returned a partial pane mid-resize) — must not
+# crash, and with no border found the box runs to the end of the capture, so
+# the visible draft text still correctly reads as NOT empty.
+TRUNCATED_NO_BORDER_PANE='● Ready.
+────────────────────────────────────────────────────────
+❯ some text with no trailing border'
+
 # --- _safety_reason: one-word diagnosis ---------------------------------------
 ok "reason-ready"       "$(_safety_reason "$READY_PANE")"      "safe"
 ok "reason-busy"        "$(_safety_reason "$BUSY_PANE")"       "busy"
@@ -171,6 +225,37 @@ ok "inputbox-empty-on-ready" "$(_input_box_empty "$READY_PANE" && echo yes || ec
 ok "inputbox-empty-on-draft" "$(_input_box_empty "$DRAFT_PANE" && echo yes || echo no)" "no"
 ok "inputbox-empty-on-quoted" "$(_input_box_empty "$QUOTED_PANE" && echo yes || echo no)" "no"
 ok "inputbox-empty-on-dim" "$(_input_box_empty "$DIM_PLACEHOLDER_PANE" && echo yes || echo no)" "yes"
+ok "inputbox-empty-on-empty-cap" "$(_input_box_empty "$EMPTY_CAP" && echo yes || echo no)" "yes"
+ok "inputbox-empty-on-whitespace-cap" "$(_input_box_empty "$WHITESPACE_CAP" && echo yes || echo no)" "yes"
+
+# --- _input_box_empty / _safety_reason: multi-line input-box regressions ------
+# (see fixture block above for why each of these matters)
+ok "inputbox-not-empty-on-blank-first-line-draft" \
+  "$(_input_box_empty "$BLANK_FIRST_LINE_DRAFT_PANE" && echo yes || echo no)" "no"
+ok "reason-blank-first-line-draft" \
+  "$(_safety_reason "$BLANK_FIRST_LINE_DRAFT_PANE")" "draft-in-input-box"
+ok "safe-blank-first-line-draft" \
+  "$(_is_safe_to_inject "$BLANK_FIRST_LINE_DRAFT_PANE" && echo yes || echo no)" "no"
+
+ok "inputbox-not-empty-on-multiline-line1-draft" \
+  "$(_input_box_empty "$MULTI_LINE_DRAFT_LINE1_PANE" && echo yes || echo no)" "no"
+ok "reason-multiline-line1-draft" \
+  "$(_safety_reason "$MULTI_LINE_DRAFT_LINE1_PANE")" "draft-in-input-box"
+
+ok "inputbox-empty-on-multiline-whitespace-only" \
+  "$(_input_box_empty "$MULTI_LINE_WHITESPACE_ONLY_PANE" && echo yes || echo no)" "yes"
+ok "reason-multiline-whitespace-only" \
+  "$(_safety_reason "$MULTI_LINE_WHITESPACE_ONLY_PANE")" "safe"
+
+ok "inputbox-empty-on-dim-then-immediate-border" \
+  "$(_input_box_empty "$DIM_THEN_IMMEDIATE_BORDER_PANE" && echo yes || echo no)" "yes"
+ok "reason-dim-then-immediate-border" \
+  "$(_safety_reason "$DIM_THEN_IMMEDIATE_BORDER_PANE")" "safe"
+
+ok "inputbox-not-empty-on-truncated-no-border" \
+  "$(_input_box_empty "$TRUNCATED_NO_BORDER_PANE" && echo yes || echo no)" "no"
+ok "reason-truncated-no-border" \
+  "$(_safety_reason "$TRUNCATED_NO_BORDER_PANE")" "draft-in-input-box"
 
 # --- _is_dim_span: direct coverage of the exact-opener matching ---------------
 # The false-positive-proofing case that matters most: a 256-color code that

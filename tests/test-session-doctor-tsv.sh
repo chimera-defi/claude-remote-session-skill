@@ -27,6 +27,53 @@ ok  "minutes-nonnumeric-exit2"    "$nm_rc" "2"
 # note) — trimmed to not start with "--minutes".
 has "minutes-nonnumeric-message"  "$nm_out" "requires a non-negative integer, got 'abc'"
 
+# ── _default_branch: local origin/HEAD must be tried BEFORE ever shelling out
+# to `gh` (perf fix — idle-report --tsv, via _wt_landed, is about to run
+# unattended on an hourly timer across every worktree's main repo; an
+# up-to-5s `gh repo view` network round-trip per DISTINCT repo per run no
+# longer scales). A fixture reusing a hermetic non-github origin (like the
+# defbr-clone-origin-head fixture in test-session-doctor.sh) would pass on
+# BOTH the old gh-first code and the new local-first code, since the
+# github.com gate keeps gh untried either way — proving nothing about
+# ordering. This fixture uses a REAL github.com origin URL (never dialed —
+# `gh` is stubbed) with a DISTINCTIVE branch name on origin/HEAD (not main/
+# master, so a hardcoded-fallback bug can't coincidentally match) so the
+# assertions below can only pass if the local ref was actually consulted
+# first, not gh.
+if command -v git >/dev/null 2>&1; then
+  DBLBASE="$(mktemp -d)"
+  DBLREPO="$DBLBASE/repo"; mkdir -p "$DBLREPO"
+  git -C "$DBLREPO" init -q -b main
+  git -C "$DBLREPO" config user.email t@t.com; git -C "$DBLREPO" config user.name t
+  git -C "$DBLREPO" commit -q --allow-empty -m init
+  git -C "$DBLREPO" remote add origin https://github.com/fakeorg/fakerepo.git
+  # Point origin/HEAD at a distinctive, never-otherwise-used branch name; the
+  # symref target need not resolve to a real ref for `git symbolic-ref
+  # --quiet` to read it back (verified: dangling-target read-back works).
+  git -C "$DBLREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk-marker-branch
+
+  # `gh` stub: records every invocation to a marker file AND answers with a
+  # DIFFERENT branch than the local ref, so either assertion below (the
+  # resolved value, or the invocation marker) independently catches a
+  # regression back to gh-first ordering.
+  GHSTUB2DIR="$DBLBASE/ghstub"; mkdir -p "$GHSTUB2DIR"
+  GH_INVOKED_MARKER="$DBLBASE/gh-was-invoked"
+  cat > "$GHSTUB2DIR/gh" <<STUB_EOF
+#!/usr/bin/env bash
+touch "$GH_INVOKED_MARKER"
+echo "wrong-branch-from-gh"
+exit 0
+STUB_EOF
+  chmod +x "$GHSTUB2DIR/gh"
+
+  defbr_local_first="$(PATH="$GHSTUB2DIR:$PATH" _default_branch "$DBLREPO")"
+  ok  "defbr-local-origin-head-wins-over-gh" "$defbr_local_first" "trunk-marker-branch"
+  ok  "defbr-gh-not-invoked-when-local-ref-present" \
+    "$([ -f "$GH_INVOKED_MARKER" ] && echo yes || echo no)" "no"
+
+  rm -rf "$DBLBASE"
+fi
+
 # ── _tsv_git_status: reuse of _wt_landed/_wt_dirty (not reimplemented),
 # no-worktree/unknown for a missing or non-git path, and per-cwd caching
 # (mirrors the _DEFBR_CACHE idiom above _default_branch). The function sets

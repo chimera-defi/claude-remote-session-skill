@@ -135,12 +135,41 @@ _is_dim_span() {
 # without this, every pane — including genuinely empty ones — reads as
 # "1 leftover byte" and gets misclassified as a draft.
 _input_box_empty() {
-  local cap="$1" line rest visible nbsp; nbsp=$'\xc2\xa0'
-  line="$(_input_region "" "$cap" | head -1)"
-  rest="${line#*❯}"
-  visible="$(_strip_ansi "$rest" | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
+  local cap="$1" region stripped nbound box rest visible nbsp
+  nbsp=$'\xc2\xa0'
+  region="$(_input_region "" "$cap")"
+  stripped="$(_strip_ansi "$region")"
+  # The input BOX is bounded above by the ❯ line and below by the next
+  # border/separator line (a row that is ENTIRELY '─' once ANSI styling is
+  # stripped) — NOT "everything to end of buffer", which is _input_region's
+  # broader definition (it also sweeps in the border line itself plus the
+  # status line(s) below the box, e.g. "[Sonnet 5] session-name"; treating
+  # those as draft content would make every pane look non-empty and break
+  # the SAFE case entirely). Find that boundary first.
+  nbound="$(printf '%s\n' "$stripped" | awk 'NR==1{next} /^─+$/{print NR-1; f=1; exit} END{if(!f) print NR}')"
+  [ -n "$nbound" ] || nbound=1
+  box="$(printf '%s\n' "$region" | head -n "$nbound")"
+  # A genuinely multi-line unsubmitted draft can have a BLANK first line
+  # (e.g. shift+enter pressed before typing, or a paste that starts with a
+  # blank line) with real text on line 2+. Checking only the first line (an
+  # earlier cut of this function, via `head -1`) silently read that as an
+  # empty box -> SAFE — the dangerous direction, confirmed by direct
+  # reproduction against this function. Strip the ❯ prefix off line 1 only
+  # (line 2+ carries no such prefix) and look at the WHOLE box, not just its
+  # first line.
+  rest="$(printf '%s\n' "$box" | sed '1s/^[^❯]*❯//')"
+  visible="$(_strip_ansi "$rest" | tr -d '\n' | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
   [ -z "$visible" ] && return 0
-  _is_dim_span "$rest"
+  # Claude Code's dim "suggested next action" ghost text is always exactly
+  # one line in practice (confirmed empirically — see _is_dim_span's
+  # comment); a box spanning more than one line is therefore never ghost
+  # text, so treat it as a real draft directly rather than feeding
+  # multi-line content to a regex anchored for a single span.
+  if [ "$(printf '%s\n' "$box" | wc -l)" -le 1 ]; then
+    _is_dim_span "$rest"
+  else
+    return 1
+  fi
 }
 
 # _safety_reason — classify a captured pane's injection-safety in one word.

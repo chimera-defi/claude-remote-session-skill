@@ -174,29 +174,43 @@ declare -A _DEFBR_CACHE
 # _default_branch <repo> -> the repo's REAL default branch name (no origin/
 # prefix). Every git call here is -C-scoped to the given repo, never to $PWD or
 # any other repo — a stale/decoy ref living in some OTHER repo on disk can
-# never leak into this answer. Prefers GitHub's actual setting via `gh` (a
-# hardcoded "main" assumption, or a stale local origin/HEAD, can silently
-# disagree with reality — an observed failure: a stale origin/main decoy in one
-# repo made an unrelated fleet look unlanded). Falls back sanely when `gh` is
-# absent/unauthenticated or the repo has no (or a non-GitHub) remote: origin/
-# HEAD -> local main -> local master -> current HEAD (same chain session-git-
-# prep.sh uses for the same problem). `gh` is only ever tried against a
-# github.com origin (never invoked for a local-path/other-host remote — keeps
-# this fast and hermetic in tests) and bounded with `timeout` so a
-# hung/unreachable network call can't stall a whole worktree scan.
+# never leak into this answer (the observed failure mode this -C scoping
+# exists to prevent: a stale origin/main decoy in one repo made an unrelated
+# fleet look unlanded).
+#
+# Resolution order is LOCAL-FIRST, not gh-first: `git symbolic-ref
+# refs/remotes/origin/HEAD` (no network, set in most clones) is tried before
+# ever shelling out to `gh`. This is a deliberate perf tradeoff, not an
+# oversight — idle-report --tsv (this function's hottest caller, via
+# _wt_landed/_tsv_git_status) is about to run unattended on an hourly systemd
+# timer across every worktree's main repo; at up to N sequential 5s-timeout
+# `gh repo view` network round-trips per run, that no longer scales. The
+# accepted risk is a STALE local origin/HEAD (e.g. the upstream default
+# branch was renamed after this clone's last `git remote set-head`/fetch
+# --prune) silently disagreeing with GitHub's actual setting — narrow in
+# practice, and fails toward the conservative side in _wt_landed (a wrong
+# base ref tends to read as landed=no/unknown, i.e. "keep the worktree",
+# never a false "safe to delete"). `gh` remains the fallback when there's no
+# usable local origin/HEAD (repo has no remote, or a non-GitHub remote, or
+# `gh` itself is absent/unauthenticated): origin/HEAD -> gh repo view -> local
+# main -> local master -> current HEAD (same chain session-git-prep.sh uses
+# for the same problem). `gh` is only ever tried against a github.com origin
+# (never invoked for a local-path/other-host remote — keeps this fast and
+# hermetic in tests) and bounded with `timeout` so a hung/unreachable network
+# call can't stall a whole worktree scan.
 _default_branch() {
   local repo="$1" def="" url slug
   if [ -n "${_DEFBR_CACHE[$repo]+x}" ]; then printf '%s\n' "${_DEFBR_CACHE[$repo]}"; return; fi
-  if command -v gh >/dev/null 2>&1 && url="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
+  if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    def="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')"
+  fi
+  if [ -z "$def" ] && command -v gh >/dev/null 2>&1 && url="$(git -C "$repo" remote get-url origin 2>/dev/null)"; then
     case "$url" in
       *github.com*)
         slug="$(printf '%s' "$url" | sed -E 's#^(git@github\.com:|https://github\.com/|git://github\.com/)##; s#\.git$##')"
         def="$(timeout 5 gh repo view "$slug" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
         ;;
     esac
-  fi
-  if [ -z "$def" ] && git -C "$repo" remote get-url origin >/dev/null 2>&1; then
-    def="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')"
   fi
   if [ -z "$def" ]; then
     if   git -C "$repo" show-ref --verify --quiet refs/heads/main;   then def=main
@@ -311,8 +325,36 @@ _encode_cwd() {
 # otherwise every candidate whose name CONTAINS the query substring is
 # returned. Prints nothing and returns 1 when there is no match at all.
 _history_matches() {
-  local query="$1" wt_base="$2" proj_base="$3" qname d dn n prefix found=0
-  case "$query" in */*) qname="$(basename "${query%/}")" ;; *) qname="$query" ;; esac
+  local query="$1" wt_base="$2" proj_base="$3" qname d dn n prefix found=0 trimmed
+  # A query that LOOKS like a path (contains a slash, or is exactly "." or
+  # "..") and resolves to a real, existing directory is authoritative: use it
+  # exactly as given (resolved to an absolute path) and skip name-based
+  # matching entirely. Without this short-circuit, an absolute path whose
+  # basename happens to be a substring of some unrelated worktree name (e.g.
+  # a main-repo checkout that lives OUTSIDE ~/.claude/worktrees/, whose
+  # basename is also a substring of a stale worktree dir like
+  # "agenthost-<same-name>-<date>") gets silently hijacked by the substring
+  # fallback below instead of matching the literal folder the caller named.
+  # CONFIRMED: `history /home/agents/workspace/claude-remote-session-skill`
+  # (a real, existing directory, NOT under wt_base) matched a long-deleted
+  # `agenthost-claude-remote-session-skill-20260715-0630` worktree instead —
+  # the basename-based substring search never even looked at whether the
+  # literal path existed. A query that does NOT resolve to a real directory
+  # (folder already deleted from disk, or a bare name/substring with no
+  # slash) still falls through to the name-based search below exactly as
+  # before, so PAST-only lookups by name are unaffected.
+  case "$query" in
+    */*|.|..)
+      trimmed="${query%/}"
+      [ -n "$trimmed" ] || trimmed="/"
+      if [ -d "$trimmed" ]; then
+        printf '%s\n' "$(cd "$trimmed" >/dev/null 2>&1 && pwd)"
+        return 0
+      fi
+      qname="$(basename "$trimmed")"
+      ;;
+    *) qname="$query" ;;
+  esac
   local -A seen=()
   local -a candidates=()
   for d in "$wt_base"/*/; do

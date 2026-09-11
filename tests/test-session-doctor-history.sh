@@ -41,6 +41,42 @@ no_out="$(_history_matches "zzz-totally-unmatched" "$WTB" "$PROJB")"; no_rc=$?
 ok "match-none-empty-output" "$no_out" ""
 ok "match-none-nonzero-rc" "$no_rc" "1"
 
+# ── regression: a real path OUTSIDE wt_base must win over a same-basename-
+# substring decoy INSIDE wt_base (CONFIRMED bug: the old code discarded any
+# slash-containing query down to its bare basename BEFORE checking whether
+# the literal path existed, then only searched under wt_base — so a real
+# path outside wt_base got degraded into a substring search and hijacked by
+# any candidate whose name merely contains that basename). The decoy name
+# below mirrors the real repro: a long-deleted "agenthost-<name>-<date>"
+# worktree whose basename contains the queried repo's basename as a
+# substring.
+EXT_DIR="$MBASE/external/claude-remote-session-skill"
+mkdir -p "$EXT_DIR"
+mkdir -p "$WTB/agenthost-claude-remote-session-skill-20260715-0630"
+EXT_CANON="$(cd "$EXT_DIR" && pwd)"
+
+ok "match-real-outside-path-wins-over-decoy" \
+  "$(_history_matches "$EXT_DIR" "$WTB" "$PROJB")" "$EXT_CANON"
+ok "match-real-outside-path-trailing-slash" \
+  "$(_history_matches "$EXT_DIR/" "$WTB" "$PROJB")" "$EXT_CANON"
+
+# ── relative path with a slash, and bare "." — both must resolve via the
+# same authoritative real-directory short-circuit, canonicalized.
+RELCHILD="$MBASE/relbase/child"
+mkdir -p "$RELCHILD"
+RELCHILD_CANON="$(cd "$RELCHILD" && pwd)"
+ok "match-relative-path-with-slash" \
+  "$(cd "$MBASE/relbase" && _history_matches "./child" "$WTB" "$PROJB")" "$RELCHILD_CANON"
+ok "match-bare-dot" \
+  "$(cd "$RELCHILD" && _history_matches "." "$WTB" "$PROJB")" "$RELCHILD_CANON"
+
+# ── exact-name match must win outright over a substring decoy, not just
+# happen to be included among possibly-multiple substring hits.
+mkdir -p "$WTB/ah-foo-0101-0100-plus"
+exact_out="$(_history_matches "ah-foo-0101-0100" "$WTB" "$PROJB")"
+ok "match-exact-beats-substring-value"      "$exact_out" "$WTB/ah-foo-0101-0100"
+ok "match-exact-beats-substring-linecount"  "$(printf '%s\n' "$exact_out" | grep -c .)" "1"
+
 rm -rf "$MBASE"
 
 # ── _history_report: PAST parsing (turn counting, ordering, zero-user files) ─
