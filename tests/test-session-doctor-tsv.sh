@@ -29,7 +29,12 @@ has "minutes-nonnumeric-message"  "$nm_out" "requires a non-negative integer, go
 
 # ── _tsv_git_status: reuse of _wt_landed/_wt_dirty (not reimplemented),
 # no-worktree/unknown for a missing or non-git path, and per-cwd caching
-# (mirrors the _DEFBR_CACHE idiom above _default_branch) ─────────────────────
+# (mirrors the _DEFBR_CACHE idiom above _default_branch). The function sets
+# globals _TSV_LANDED/_TSV_DIRTY rather than printing a value — see its own
+# comment for why a `$(...)`-capturing call site would silently defeat the
+# cache (the array write happens inside the forked subshell and is discarded
+# when it exits) — so these tests call it directly too, exactly like the real
+# idle-report --tsv call site now does, not via command substitution.
 if command -v git >/dev/null 2>&1; then
   GSBASE="$(mktemp -d)"
   GSREPO="$GSBASE/repo"; mkdir -p "$GSREPO"
@@ -37,38 +42,30 @@ if command -v git >/dev/null 2>&1; then
   git -C "$GSREPO" config user.email t@t.com; git -C "$GSREPO" config user.name t
   git -C "$GSREPO" commit -q --allow-empty -m init
 
-  status="$(_tsv_git_status "$GSREPO")"
-  ok "tsv-git-status-landed" "${status%%$'\t'*}" "yes"
-  ok "tsv-git-status-dirty"  "${status#*$'\t'}"  "clean"
+  _tsv_git_status "$GSREPO"
+  ok "tsv-git-status-landed" "$_TSV_LANDED" "yes"
+  ok "tsv-git-status-dirty"  "$_TSV_DIRTY"  "clean"
+  first_landed="$_TSV_LANDED"; first_dirty="$_TSV_DIRTY"
 
-  # Caching: a repeated cwd must not re-shell git — call once, delete the
-  # directory, call again for the SAME cwd, and confirm the second call still
-  # returns the FIRST (cached) answer rather than flipping to
-  # no-worktree/unknown once the directory is actually gone. Both calls have
-  # to run in the SAME subshell for this to prove anything: _TSV_STATUS_CACHE
-  # is an in-process associative array, so capturing each call via its own
-  # separate `$(...)` would fork a fresh subshell per call and the cache
-  # write from call 1 would never be visible to call 2.
-  cache_pair="$(
-    _tsv_git_status "$GSREPO"
-    rm -rf "$GSREPO"
-    _tsv_git_status "$GSREPO"
-  )"
-  cache_first="$(printf '%s\n' "$cache_pair" | sed -n '1p')"
-  cache_second="$(printf '%s\n' "$cache_pair" | sed -n '2p')"
-  ok "tsv-git-status-cache-first-correct" "$cache_first" "$status"
-  ok "tsv-git-status-cached" "$cache_second" "$cache_first"
+  # Caching: a repeated cwd must not re-shell git — delete the directory,
+  # call again for the SAME cwd (directly, in this same shell — no `$(...)`),
+  # and confirm it still returns the FIRST (cached) answer rather than
+  # flipping to no-worktree/unknown once the directory is actually gone.
+  rm -rf "$GSREPO"
+  _tsv_git_status "$GSREPO"
+  ok "tsv-git-status-cached-landed" "$_TSV_LANDED" "$first_landed"
+  ok "tsv-git-status-cached-dirty"  "$_TSV_DIRTY"  "$first_dirty"
 
   # A path that never existed -> no-worktree/unknown, not a crash.
-  gone="$(_tsv_git_status "$GSBASE/never-existed-$$")"
-  ok "tsv-git-status-missing-landed" "${gone%%$'\t'*}" "no-worktree"
-  ok "tsv-git-status-missing-dirty"  "${gone#*$'\t'}"  "unknown"
+  _tsv_git_status "$GSBASE/never-existed-$$"
+  ok "tsv-git-status-missing-landed" "$_TSV_LANDED" "no-worktree"
+  ok "tsv-git-status-missing-dirty"  "$_TSV_DIRTY"  "unknown"
 
   # An existing directory that is not a git working tree at all.
   NOTGIT="$GSBASE/plain-dir"; mkdir -p "$NOTGIT"
-  notgit="$(_tsv_git_status "$NOTGIT")"
-  ok "tsv-git-status-notgit-landed" "${notgit%%$'\t'*}" "no-worktree"
-  ok "tsv-git-status-notgit-dirty"  "${notgit#*$'\t'}"  "unknown"
+  _tsv_git_status "$NOTGIT"
+  ok "tsv-git-status-notgit-landed" "$_TSV_LANDED" "no-worktree"
+  ok "tsv-git-status-notgit-dirty"  "$_TSV_DIRTY"  "unknown"
 
   rm -rf "$GSBASE"
 fi

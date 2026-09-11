@@ -240,34 +240,43 @@ _wt_landed() {
 }
 
 declare -A _TSV_STATUS_CACHE
-# _tsv_git_status <cwd> -> "landed<TAB>dirty" for idle-report --tsv columns 9/10
-# (landed: yes|no|unknown|no-worktree; dirty: clean|DIRTY|unknown). Reuses
-# _wt_dirty/_wt_landed/_wt_mainrepo exactly as worktree-stale/land-check do — no
-# reimplementation. "no-worktree"/"unknown" when cwd no longer exists on disk or
-# git doesn't recognize it as a working tree at all (transcripts commonly
-# outlive worktrees — see _history_footer below for the same problem). Cached
-# per-cwd (mirrors the _DEFBR_CACHE idiom above _default_branch) so a cwd that
-# repeats across multiple idle rows doesn't re-shell git for each one.
+# _tsv_git_status <cwd> -> sets globals _TSV_LANDED/_TSV_DIRTY for idle-report
+# --tsv columns 9/10 (landed: yes|no|unknown|no-worktree; dirty:
+# clean|DIRTY|unknown). Reuses _wt_dirty/_wt_landed/_wt_mainrepo exactly as
+# worktree-stale/land-check do — no reimplementation. "no-worktree"/"unknown"
+# when cwd no longer exists on disk or git doesn't recognize it as a working
+# tree at all (transcripts commonly outlive worktrees — see _history_footer
+# below for the same problem).
+#
+# Cached per-cwd (mirrors the _DEFBR_CACHE idiom above _default_branch) so a
+# cwd that repeats across multiple idle rows doesn't re-shell git for each
+# one. Deliberately sets globals instead of printing a value for the caller
+# to capture via `$(...)`: command substitution forks a subshell, and an
+# associative-array write made inside that subshell is discarded the instant
+# it exits — a `status="$(_tsv_git_status "$cwd")"` call site would silently
+# repopulate an empty cache on every single row and never actually cache
+# anything. Callers MUST invoke this directly (no `$(...)` wrapper) for the
+# cache to have any effect.
 _tsv_git_status() {
-  local cwd="$1" landed dirty mainrepo landedinfo
+  local cwd="$1" mainrepo landedinfo
   if [ -n "${_TSV_STATUS_CACHE[$cwd]+x}" ]; then
-    printf '%s\n' "${_TSV_STATUS_CACHE[$cwd]}"
+    _TSV_LANDED="${_TSV_STATUS_CACHE[$cwd]%%$'\t'*}"
+    _TSV_DIRTY="${_TSV_STATUS_CACHE[$cwd]#*$'\t'}"
     return
   fi
   if [ ! -d "$cwd" ] || ! git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    landed="no-worktree"; dirty="unknown"
+    _TSV_LANDED="no-worktree"; _TSV_DIRTY="unknown"
   else
-    dirty="$(_wt_dirty "$cwd")"
+    _TSV_DIRTY="$(_wt_dirty "$cwd")"
     mainrepo="$(_wt_mainrepo "$cwd")"
     if [ -n "$mainrepo" ]; then
       landedinfo="$(_wt_landed "$cwd" "$mainrepo")"
-      landed="${landedinfo#*landed=}"
+      _TSV_LANDED="${landedinfo#*landed=}"
     else
-      landed="unknown"
+      _TSV_LANDED="unknown"
     fi
   fi
-  _TSV_STATUS_CACHE[$cwd]="$landed"$'\t'"$dirty"
-  printf '%s\n' "${_TSV_STATUS_CACHE[$cwd]}"
+  _TSV_STATUS_CACHE[$cwd]="$_TSV_LANDED"$'\t'"$_TSV_DIRTY"
 }
 
 # ── history helpers ────────────────────────────────────────────────────────
@@ -836,11 +845,13 @@ else:
       if [ "$TSV" = yes ]; then
         while IFS=$'\t' read -r tmux_session remote_name pid cwd idle_minutes last_ts prot compacted; do
           [ -n "$tmux_session" ] && [ -n "$cwd" ] || continue
-          status="$(_tsv_git_status "$cwd")"
-          landed="${status%%$'\t'*}"
-          dirty="${status#*$'\t'}"
+          # Called directly (NOT via `$(...)`) so _TSV_STATUS_CACHE's writes
+          # land in THIS while loop's own subshell and actually persist across
+          # iterations — see _tsv_git_status's comment above for why a
+          # command-substitution call site would silently defeat the cache.
+          _tsv_git_status "$cwd"
           printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$tmux_session" "$remote_name" "$pid" "$cwd" "$idle_minutes" "$last_ts" "$prot" "$compacted" "$landed" "$dirty"
+            "$tmux_session" "$remote_name" "$pid" "$cwd" "$idle_minutes" "$last_ts" "$prot" "$compacted" "$_TSV_LANDED" "$_TSV_DIRTY"
         done
       else
         cat
