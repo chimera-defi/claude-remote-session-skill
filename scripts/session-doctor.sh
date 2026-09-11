@@ -841,6 +841,66 @@ for line in sys.stdin:
                 if t == 'user':
                     if o.get('isCompactSummary'):
                         continue   # the /compact write itself is not genuine activity
+                    # A completed /compact leaves THREE MORE type:user artifacts
+                    # in the transcript beyond the isCompactSummary write above,
+                    # and none of them is genuine activity either. Confirmed
+                    # against two REAL sweep --apply runs on this host
+                    # (2026-09-11): excluding only isCompactSummary was NOT
+                    # enough to fix the resulting idle-reset bug, because the
+                    # /compact keystroke itself is EARLIER than these three, so
+                    # it was never the max timestamp — these three were:
+                    #   1. an isMeta:true local-command-caveat wrapper Claude
+                    #      Code re-emits for ANY local slash command, not just
+                    #      /compact.
+                    #   2. the command-name echo of /compact itself.
+                    #   3. the local-command-stdout line Claude Code writes once
+                    #      compaction finishes (reads 'Compacted ...'). This one
+                    #      lands LAST and LATEST of the four, so it — not 1 or 2
+                    #      — is what actually dominated genuine_mx pre-fix.
+                    # Also excluded: the bare '/compact' keystroke that triggers
+                    # the whole cascade (see below).
+                    #
+                    # isMeta is excluded UNCONDITIONALLY (any command, not just
+                    # /compact): it is pure caveat boilerplate, and excluding it
+                    # loses no human-presence signal, because Claude Code writes
+                    # a sibling command-name echo (kept as genuine here) at
+                    # essentially the same timestamp for every OTHER command —
+                    # confirmed against a real /clear in a live transcript.
+                    #
+                    # The command-name echo, the bare trigger, and the stdout
+                    # line are, by contrast, excluded ONLY when tied to /compact
+                    # specifically. Do NOT generalize this to 'any command-name
+                    # echo' or 'any bare slash command' or 'any local-command-
+                    # stdout': a human typing /clear, /context, /model, etc. is
+                    # real evidence of presence, and blanket-excluding those
+                    # would push toward compacting a session someone is
+                    # actively using — the dangerous direction. (/model and
+                    # /login were both observed emitting their own
+                    # local-command-stdout line on this host; an un-scoped
+                    # 'starts with local-command-stdout' exclusion would have
+                    # swallowed those genuine turns too.)
+                    #
+                    # The bare-trigger match is EXACT ('/compact', stripped),
+                    # not a prefix match: a real transcript on this host holds
+                    # a genuine chat message '/compact handoff first' that is
+                    # NOT a command invocation (no caveat/echo/stdout cascade
+                    # follows it) — a prefix match would have wrongly swallowed
+                    # that real human turn.
+                    if o.get('isMeta'):
+                        continue
+                    msg = o.get('message') or {}
+                    content = msg.get('content')
+                    if not isinstance(content, str):
+                        content = ''
+                    if content.startswith('<command-name>/compact</command-name>'):
+                        continue
+                    if content.strip() == '/compact':
+                        continue
+                    # ANSI dim styling (e.g. ESC[2m) sits between the tag and
+                    # 'Compacted' on a real capture, so match within a short
+                    # window after the tag rather than requiring adjacency.
+                    if content.startswith('<local-command-stdout>') and 'Compacted' in content[:64]:
+                        continue
                     ts = o.get('timestamp')
                     if ts and (genuine_mx is None or ts > genuine_mx): genuine_mx = ts
                 elif t == 'system' and o.get('subtype') == 'compact_boundary':

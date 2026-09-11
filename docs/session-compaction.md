@@ -117,13 +117,35 @@ are not meant to agree; both independently show a real reduction.
 4. **That detection is version-gated.** These fields exist on v2.1.206; transcripts
    from older builds don't have them. When absent, fall back to the marker file at
    `~/.sessions/compact-markers/<session>.json` rather than assuming "never compacted".
-5. **`/compact` itself writes a `type:user` entry**, so a naive idle calculation sees
-   a just-compacted session as freshly active, and ~30min later it re-enters the idle
-   window and gets compacted again, forever. Idle is therefore computed from the last
-   **genuine** user turn — entries with `isCompactSummary:true` are excluded.
+5. **One `/compact` invocation writes FIVE `type:user` artifacts, not one**, so a
+   naive idle calculation sees a just-compacted session as freshly active, and
+   ~30min later it re-enters the idle window and gets compacted again, forever —
+   this is not hypothetical, it happened for real (2026-09-11, two live sessions,
+   `idle-report` dropping from days to minutes on both after a routine
+   `sweep --apply`). The `isCompactSummary:true` entry is the obvious one and was
+   excluded from the start, but FOUR MORE artifacts land alongside it and are just
+   as much "the tool talking to itself, not a person": the bare `/compact`
+   keystroke that triggers the cascade, an `isMeta:true` local-command-caveat
+   wrapper, the `<command-name>/compact</command-name>` echo, and the
+   `<local-command-stdout>Compacted…` line written once compaction finishes.
+   **All five are excluded**, not just the summary — see `session-doctor.sh`'s
+   idle-report scan for the exact match on each and why each scope is drawn where
+   it is (isMeta is dropped for every command; the other three are matched to
+   `/compact` specifically, never generalized to other slash commands — doing so
+   would risk treating a real `/clear`/`/context`/etc. turn as idle, the dangerous
+   direction). Idle is therefore computed from the last **genuine** user turn.
 6. **`type:user` includes tool-result turns** (inherited from `idle-report`), so an
    autonomously-looping agent counts as active and is never compacted out from under
    itself. Intentional.
+7. **A completed compact is also the primary signal `session-compact.sh` itself polls
+   for** after sending `/compact` (point 3's `compact_boundary`/`isCompactSummary`
+   marker, checked for a timestamp newer than a pre-send baseline) — not pane text.
+   An earlier version relied solely on the pane going busy-then-ready, and that
+   produced a false "timeout" on two genuinely-successful real compacts: the pane
+   never visibly went `busy` (by `_is_working`'s patterns) even once across either
+   run, so the busy-before-ready guard never released. Pane-state is now a fallback
+   only, still gated the same way, for sessions/builds where the transcript signal
+   isn't available.
 
 ## The injection hazard — why a positive readiness check exists
 
