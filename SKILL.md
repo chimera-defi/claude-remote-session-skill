@@ -235,6 +235,41 @@ not belong in a curated knowledge store — that's `session-doctor history`
 above, which derives presence from live processes instead of asking sessions to
 declare it.
 
+## Compact before relaying into an idle/stale session
+
+Relaying a follow-up into a session that's been sitting a while pays to reprocess its whole
+bloated transcript on every subsequent turn. Compact first — but use the one command, which
+does the staleness check, compacts, waits for completion, and only then relays:
+
+```bash
+session-compact before-relay <name> "the actual task"   # or --file <path>
+```
+
+It **fails closed**: if the compact can't be verified complete, the message is not sent, so
+you never land a task mid-summarization. Hand-rolling this (`session-send "/compact"`, eyeball
+`tmux capture-pane`, send the real task) is the fallback only if `session-compact` isn't
+deployed yet. Same staleness signal as the bloat-before-routing check — a status line reading
+`new task? /clear to save NNNk tokens`, or a long idle gap.
+
+**Don't compact a session idle under ~60 minutes.** Claude Code opts into the **1-hour**
+prompt-cache TTL (not the API's 5-minute default), and that TTL is a *sliding window refreshed
+on every read* — so a session idle 30–60min still has a live cache, and compacting it destroys
+value the resumer would have hit at ~0.1× cost. That window is the most expensive moment to
+compact, not the cheapest. `session-compact` defaults to `--min-idle 60` for this reason. See
+[`docs/session-compaction.md`](docs/session-compaction.md) for the measurements.
+
+**Auto-compact reality check** (verified against the actual Claude Code changelog, not
+guessed): auto-compaction is a real built-in feature and is on by default — it is **not** a
+`settings.json` boolean like `autoCompactEnabled`/`autoCompactWindow`; those exact key names
+were fabricated once by a guide agent asked about this and do not exist in
+`~/.claude/settings.json` or the installed CLI's schema. The real controls are the in-session
+`/autocompact` dialog and `/config`, plus env var `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window
+scales with the model's context size (Sonnet 5 on its full 1M window auto-compacts around
+~967K tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact
+is broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
+this more aggressive; the pre-compact-before-relay habit above is the actual lever for
+proactive cost control, not a spawn-time config toggle.
+
 ## Preserve before reaping (recycling a bloated session)
 
 Long-lived sessions accumulate context until every turn is slow and expensive.
