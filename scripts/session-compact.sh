@@ -44,12 +44,17 @@
 # compacted=unknown (already-compacted) -> live pane safe to inject, via
 # `session-handoff.sh ready <session>` (pane-<reason>).
 #
-# Compacting: `session-handoff.sh send <session> "/compact"`, then poll
-# `session-handoff.sh check` until the pane is no longer working (bounded by
-# --timeout, default 240s — a compact measures ~101s wall-clock). On timeout,
-# report it and do NOT write a success marker. `before-relay` fails CLOSED:
-# if a compact was issued but completion could not be verified, the message
-# is NOT sent.
+# Compacting: `session-handoff.sh send <session> "/compact"`, then poll for
+# completion (bounded by --timeout, default 240s — a compact measures ~101s
+# wall-clock). PRIMARY signal is the transcript (ground truth — a newer
+# compact_boundary/isCompactSummary marker than a pre-send baseline);
+# pane-state (`session-handoff.sh check`) is a fallback only. See
+# _do_compact's own comment for why: pane-state ALONE previously produced a
+# false "timeout" on two genuinely-successful real compacts (Bug B, confirmed
+# 2026-09-11) because the pane never reported `busy` even once during either
+# run. On timeout (neither signal confirms), report it and do NOT write a
+# success marker. `before-relay` fails CLOSED: if a compact was issued but
+# completion could not be verified, the message is NOT sent.
 set -uo pipefail
 
 # ── pure-ish helpers (source-guarded below so tests can exercise them) ───────
@@ -65,6 +70,74 @@ _find_helper() {
   if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
   if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
   return 1
+}
+
+# _encode_cwd <path> -> the ~/.claude/projects/<encoded> transcript-dir name
+# for that cwd. Copied verbatim from session-doctor.sh's algorithm (same
+# comment there): '.' -> '-' FIRST, then '/' -> '-'. Not re-derived — this
+# ordering is load-bearing and already verified empirically over there.
+_encode_cwd() {
+  local p="$1"
+  p="${p//./-}"
+  printf '%s\n' "${p//\//-}"
+}
+
+# _compact_marker_newer <cwd> <baseline_ts-or-empty> -> the newest ISO-8601
+# timestamp, STRICTLY AFTER <baseline_ts>, of any type:system/
+# subtype:compact_boundary or type:user/isCompactSummary:true entry across
+# every *.jsonl in <cwd>'s transcript dir — or empty if none qualify (dir
+# missing, no matching entry, or nothing newer than the baseline). ISO-8601
+# strings sort correctly as plain strings (same trick session-doctor.sh's
+# idle-report already relies on for genuine_mx/compact_mx), so the "newer
+# than" comparison is done as a string compare inside Python rather than in
+# shell — deliberately: this repo's scripts avoid bash's `[[ ]]` (not used
+# anywhere in this file or session-doctor.sh/session-handoff.sh), and POSIX
+# `[ ]` has no string `>`/`<` operator at all, only numeric -gt/-lt.
+#
+# This is Bug B's completion signal: a completed /compact is ground truth in
+# the transcript (docs/session-compaction.md point 3), unlike the pane's
+# on-screen text, which is what _pane_state below actually gets wrong (see
+# _do_compact's comment). Called once before send() to snapshot a baseline,
+# then repeatedly during the poll loop with that baseline — never called with
+# an empty baseline mid-poll, so a session that had ALREADY been compacted
+# once before this call can't be mistaken for freshly-completing on the very
+# first poll.
+_compact_marker_newer() {
+  local cwd="$1" baseline="$2" dir
+  dir="$HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  [ -d "$dir" ] || { echo ""; return; }
+  python3 -c "
+import sys, glob, json, os
+d, baseline = sys.argv[1], sys.argv[2]
+mx = None
+for fn in glob.glob(os.path.join(d, '*.jsonl')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                # Cheap prefilter before json.loads (same trick session-
+                # doctor.sh's idle-report scan uses) — skip lines that can't
+                # possibly be either marker shape.
+                if 'compact_boundary' not in line and 'isCompactSummary' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                ts = None
+                if o.get('type') == 'system' and o.get('subtype') == 'compact_boundary':
+                    ts = o.get('timestamp')
+                elif o.get('type') == 'user' and o.get('isCompactSummary'):
+                    ts = o.get('timestamp')
+                if not ts:
+                    continue
+                if baseline and ts <= baseline:
+                    continue
+                if mx is None or ts > mx:
+                    mx = ts
+    except OSError:
+        pass   # transcript file gone mid-scan — just skip it
+print(mx or '')
+" "$dir" "$baseline"
 }
 
 # _validate_uint <flag-name> <var-name> — validates the NAMED variable's
@@ -290,13 +363,51 @@ _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
 }
 
 declare -A _COMPACT_ISSUED=()
-# _do_compact <tmux_session> <timeout_seconds> -> prints one of: compacted |
-# send-failed | timeout. Exit code 0 only for "compacted" (fully verified).
-# Refuses to send /compact to the SAME session twice within one invocation
-# (per-session guard — sweep legitimately compacts many DIFFERENT sessions in
-# one run; this only stops re-issuing to one already handled).
+# _do_compact <tmux_session> <timeout_seconds> [<cwd>] -> prints one of:
+# compacted | send-failed | timeout. Exit code 0 only for "compacted" (fully
+# verified). Refuses to send /compact to the SAME session twice within one
+# invocation (per-session guard — sweep legitimately compacts many DIFFERENT
+# sessions in one run; this only stops re-issuing to one already handled).
+#
+# <cwd> is OPTIONAL (both real call sites have it — the sensor's column 4 —
+# but tests calling this directly may omit it) and drives the PRIMARY
+# completion signal: the transcript. Bug B (found by running this for real
+# against two live sessions 2026-09-11): both compactions genuinely succeeded
+# — panes showed "Compacted (ctrl+o to see full summary)" — but this function
+# sat the full --timeout and reported "timeout" both times, writing no
+# success marker. Root cause, confirmed by reading _pane_state's call chain
+# down to _is_working (session-handoff.sh): the pane-state poll below required
+# observing `busy` at least once before it would accept `ready` as done, and
+# during a real compact `busy` was never observed even once — a compact
+# genuinely measures ~101s wall-clock (docs/session-compaction.md) against a
+# 240s default timeout, so if `busy` had ever been seen, a `ready` poll well
+# before the timeout would have caught it and returned early; it never did,
+# for the entire window, on two separate real runs. The only reading
+# consistent with that is that Claude Code's compacting indicator doesn't
+# match `_is_working`'s spinner/"esc to interrupt" patterns — NOT investigated
+# further live (this host is read-only for this fix: no sending text into
+# real panes), because the fix below doesn't need pane text to be correct at
+# all: it moves the PRIMARY signal off the pane entirely.
+#
+# The transcript is ground truth and already the documented-preferred
+# idempotency signal (docs/session-compaction.md point 3: a completed compact
+# writes a type:system/subtype:compact_boundary entry, or isCompactSummary on
+# older builds). So: snapshot the newest such marker BEFORE sending, then poll
+# for a NEWER one — exactly the comparison session-doctor.sh's idle-report
+# already does for column 8, reused here via _compact_marker_newer. Pane state
+# is kept as a FALLBACK ONLY (still gated on the same seen-busy-before-ready
+# rule as before), for: no cwd given, no transcript dir for that cwd, or an
+# older CLI whose transcript never gets a fresh marker within the timeout for
+# some other reason. Both signals are checked every poll — whichever confirms
+# first wins — so a working pane-state reading (if the indicator IS matched on
+# some build) still short-circuits the wait instead of always burning time on
+# a transcript re-scan first.
+#
+# Stays FAIL CLOSED: neither signal confirming within --timeout is still
+# "timeout", exit 1, no marker written by the caller — this function does not
+# relax that to paper over Bug B, only fixes the false negative.
 _do_compact() {
-  local session="$1" timeout="$2" out rc waited=0 seen_busy=no state
+  local session="$1" timeout="$2" cwd="${3:-}" out rc waited=0 seen_busy=no state baseline_ts newer
 
   if [ -n "${_COMPACT_ISSUED[$session]+x}" ]; then
     echo "session-compact: INTERNAL — refusing to send /compact to '$session' a second time in this invocation" >&2
@@ -305,6 +416,9 @@ _do_compact() {
   fi
   _COMPACT_ISSUED[$session]=1
 
+  baseline_ts=""
+  [ -n "$cwd" ] && baseline_ts="$(_compact_marker_newer "$cwd" "")"
+
   out="$(_session_handoff send "$session" "/compact" 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "session-compact: /compact to '$session' did not land: $out" >&2
@@ -312,14 +426,22 @@ _do_compact() {
     return 1
   fi
 
-  # Wait for completion (measured ~101s wall-clock — see design doc). Poll
-  # `check`'s state rather than reimplementing a spinner matcher. Require
-  # having OBSERVED busy at least once before accepting "ready" as done:
-  # `send`'s own "landed" verdict can fire the instant the /compact text is
-  # echoed into the transcript, a beat before Claude Code actually starts the
-  # compaction spinner — so a "ready" reading taken immediately after send
-  # returns is not trustworthy evidence the compact finished.
+  # Wait for completion (measured ~101s wall-clock — see design doc).
+  # Transcript check first (the primary, reliable signal); pane-state check
+  # second (fallback — see the function comment above for both). Require
+  # having OBSERVED busy at least once before accepting "ready" as done on the
+  # pane-state path specifically: `send`'s own "landed" verdict can fire the
+  # instant the /compact text is echoed into the transcript, a beat before
+  # Claude Code actually starts the compaction spinner — so a "ready" reading
+  # taken immediately after send returns is not trustworthy evidence the
+  # compact finished. This restriction does not apply to the transcript path,
+  # which has its own, independent ground-truth check (a NEWER marker than
+  # the pre-send baseline).
   while [ "$waited" -lt "$timeout" ]; do
+    if [ -n "$cwd" ]; then
+      newer="$(_compact_marker_newer "$cwd" "$baseline_ts")"
+      [ -n "$newer" ] && { echo compacted; return 0; }
+    fi
     state="$(_pane_state "$session")"
     case "$state" in
       busy) seen_busy=yes ;;
@@ -408,7 +530,7 @@ case "$MODE" in
           continue
         fi
         echo "compacting: $c1 (idle=${c5}m) ..."
-        result="$(_do_compact "$c1" "$TIMEOUT")"; rc2=$?
+        result="$(_do_compact "$c1" "$TIMEOUT" "$c4")"; rc2=$?
         if [ "$rc2" -eq 0 ]; then
           _write_marker "$c1" "$c6" "$(_now_iso)" compacted
           n_compacted=$((n_compacted+1))
@@ -481,7 +603,7 @@ case "$MODE" in
     esac
 
     echo "before-relay: '$SESSION' is stale and eligible — compacting first"
-    result="$(_do_compact "$SESSION" "$TIMEOUT")"; rc2=$?
+    result="$(_do_compact "$SESSION" "$TIMEOUT" "$c4")"; rc2=$?
     if [ "$rc2" -ne 0 ]; then
       echo "before-relay: compact of '$SESSION' could not be verified ($result) — FAILING CLOSED, message NOT sent" >&2
       exit 1

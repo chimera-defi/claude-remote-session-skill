@@ -201,6 +201,81 @@ sendcount="$(grep -c 'CALL send compacttwice /compact' "$STUB_LOG")"
 ok "docompact-no-double-issue-single-send" "$sendcount" "1"
 
 # ============================================================================
+# Bug B: _do_compact must detect completion from the TRANSCRIPT — ground
+# truth, independent of pane text — not just from observed pane state. Real
+# bug, confirmed 2026-09-11 against two live sessions: a genuinely-completed
+# compact ("Compacted (ctrl+o to see full summary)" visibly on the pane) was
+# reported "timeout" by this function, because the pane-state path requires
+# observing `busy` at least once before accepting `ready`, and `busy` was
+# never observed even once across the ENTIRE timeout on either real run — see
+# _do_compact's own comment for the confirmed mechanism (compaction measures
+# ~101s, well inside a 240s timeout, so if `busy` had ever been seen a later
+# `ready` poll would have caught it well before timing out; it never did).
+# STUB_BUSY_POLLS=999 below means the pane NEVER reports busy — under the OLD
+# pane-only logic this could only ever end in "timeout"; success here can only
+# come from the transcript path.
+# ============================================================================
+_encode_cwd_test_dir() {  # <home> <cwd> -> the transcript dir path (mkdir -p'd)
+  local home="$1" cwd="$2" dir
+  dir="$home/.claude/projects/$(_encode_cwd "$cwd")"
+  mkdir -p "$dir"
+  printf '%s\n' "$dir"
+}
+
+_reset_stub_env
+STUB_BUSY_POLLS=999
+DOTB_HOME="$(mktemp -d)"
+DOTB_CWD="$DOTB_HOME/proj"; mkdir -p "$DOTB_CWD"
+DOTB_PROJDIR="$(_encode_cwd_test_dir "$DOTB_HOME" "$DOTB_CWD")"
+# A STALE pre-existing marker — proves the fix snapshots a BASELINE and
+# requires something NEWER than it, not merely "a marker exists somewhere in
+# the file" (which would false-positive on a session compacted long ago that
+# hasn't had a fresh turn since).
+cat > "$DOTB_PROJDIR/old.jsonl" <<'EOF'
+{"type":"system","subtype":"compact_boundary","timestamp":"2020-01-01T00:00:00.000Z"}
+EOF
+HOME="$DOTB_HOME"
+# Simulates the real compact completing mid-poll (without waiting out a real
+# ~101s compact): append a FRESH compact_boundary 1s after send, in the
+# background, while _do_compact (foreground, 3s poll interval) is waiting.
+( sleep 1; printf '{"type":"system","subtype":"compact_boundary","timestamp":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$DOTB_PROJDIR/live.jsonl" ) &
+BGPID=$!
+out="$(_do_compact transcriptok 30 "$DOTB_CWD")"; rc=$?
+wait "$BGPID" 2>/dev/null
+HOME="$_REAL_HOME"
+ok "docompact-transcript-success-exit"   "$rc" "0"
+ok "docompact-transcript-success-output" "$out" "compacted"
+rm -rf "$DOTB_HOME"
+
+# Fail-closed sibling: cwd given, transcript dir exists, but nothing EVER
+# postdates the baseline (only the same stale 2020 marker sits there the
+# whole time) AND the pane never resolves either (STUB_BUSY_POLLS=999 again)
+# — must still time out, exit nonzero, print "timeout", same as the pane-only
+# case above. This is the fail-closed requirement: "can't confirm" must never
+# be relaxed into a false "compacted", regardless of which signal is used.
+_reset_stub_env
+STUB_BUSY_POLLS=999
+DOTB_HOME2="$(mktemp -d)"
+DOTB_CWD2="$DOTB_HOME2/proj"; mkdir -p "$DOTB_CWD2"
+DOTB_PROJDIR2="$(_encode_cwd_test_dir "$DOTB_HOME2" "$DOTB_CWD2")"
+cat > "$DOTB_PROJDIR2/old.jsonl" <<'EOF'
+{"type":"system","subtype":"compact_boundary","timestamp":"2020-01-01T00:00:00.000Z"}
+EOF
+HOME="$DOTB_HOME2"
+out="$(_do_compact transcriptnever 2 "$DOTB_CWD2")"; rc=$?
+HOME="$_REAL_HOME"
+ok "docompact-transcript-failclosed-exit"   "$rc" "1"
+ok "docompact-transcript-failclosed-output" "$out" "timeout"
+rm -rf "$DOTB_HOME2"
+
+# No-cwd callers (existing tests above, and any caller that omits the new
+# 3rd arg entirely) must keep working exactly as before — pane-state only,
+# no transcript lookup attempted. Not a new assertion on its own; the
+# pre-existing docompact-success-*/docompact-timeout-* tests above already
+# call _do_compact with only 2 args and still pass, which IS the proof.
+
+# ============================================================================
 # Layer 3: CLI/subprocess tests. Copy session-compact.sh ALONE into an
 # isolated dir (no session-doctor.sh/session-handoff.sh sibling — forces
 # PATH-only resolution, exactly like test-session-send.sh's DEPLOY pattern),
