@@ -863,15 +863,24 @@ case "$MODE" in
       fi
 
       # detail: the underlying _decide/_evaluate_row reason, surfaced in NOTE
-      # even when several reasons collapse to the SAME verdict category (the
-      # design brief pins the VERDICT column to exactly 5 values — it does
-      # NOT ask for already-compacted/landed-and-clean/malformed-row to be
-      # invisible, just for them not to invent a 6th verdict label. Without
-      # this, a session idle for 11697m with compacted=yes prints "skip:
-      # under thresholds" with no indication it is nowhere NEAR any
-      # threshold — it was already compacted this idle window, which is
-      # exactly the guard that keeps --apply from re-issuing /compact to it
-      # forever; see _sweep_decide's comment).
+      # even when the verdict column already names it (kept for the free-text
+      # explanation, not for disambiguation — see below).
+      #
+      # SUPERSEDES the prior comment here (kept in git history, not repeated):
+      # this used to argue for pinning VERDICT to exactly 5 values and
+      # collapsing already-compacted/landed-and-clean/malformed-row/
+      # never-touched/bad-idle-field into one shared "skip: under thresholds"
+      # label, on the theory that NOTE already disambiguates them. In
+      # practice that hid real problems: a MALFORMED sensor row and a session
+      # that simply isn't idle enough are operationally very different (one
+      # is a bug to investigate, the other is normal), but both printed the
+      # identical verdict — an operator scanning the VERDICT column alone
+      # (the column this table is sorted/skimmed by) could not tell them
+      # apart without reading every NOTE. Each cause now gets its own short,
+      # distinct label instead. "skip: under thresholds" is preserved for the
+      # one case it always correctly described and still describes:
+      # skip:outside-window (idle/context genuinely below both trigger
+      # thresholds) — that keeps falling through to the wildcard below.
       decision="$(_sweep_decide "$MIN_IDLE" "$MAX_IDLE" "$ctx_pct" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
       detail="-"
       case "$decision" in
@@ -879,11 +888,11 @@ case "$MODE" in
         eligible:context)       verdict="would-compact: context" ;;
         skip:protected)         verdict="skip: protected" ;;
         skip:pane-*)            verdict="skip: busy"; detail="live pane: ${decision#skip:pane-}" ;;
-        skip:already-compacted) verdict="skip: under thresholds"; detail="already compacted this idle window" ;;
-        skip:landed-and-clean)  verdict="skip: under thresholds"; detail="worktree landed + clean" ;;
-        skip:malformed-row)     verdict="skip: under thresholds"; detail="malformed sensor row" ;;
-        skip:never-touched)     verdict="skip: under thresholds"; detail="never had a genuine user turn" ;;
-        skip:bad-idle-field)    verdict="skip: under thresholds"; detail="unparseable idle field" ;;
+        skip:already-compacted) verdict="skip: compacted"; detail="already compacted this idle window" ;;
+        skip:landed-and-clean)  verdict="skip: landed+clean"; detail="worktree landed + clean" ;;
+        skip:malformed-row)     verdict="skip: malformed row"; detail="malformed sensor row" ;;
+        skip:never-touched)     verdict="skip: never touched"; detail="never had a genuine user turn" ;;
+        skip:bad-idle-field)    verdict="skip: bad idle field"; detail="unparseable idle field" ;;
         *)                      verdict="skip: under thresholds" ;;
       esac
       if [ "$note" = "-" ]; then
