@@ -182,12 +182,14 @@ lacks "busy-is-not-would-compact"    "$(row busysess)" "would-compact"
 has   "protected-wins" "$(row protsess)" "skip: protected"
 lacks "protected-is-not-would-compact" "$(row protsess)" "would-compact"
 
-# --- 5. unparseable transcript -> degrades to idle-only and SAYS SO; never
-# guesses a percentage (idle=10m is itself under the 60m idle trigger, so
-# with context unavailable neither trigger can fire) ------------------------
-has "unparseable-shows-na"        "$(row unparsesess)" "n/a"
-has "unparseable-verdict"         "$(row unparsesess)" "skip: under thresholds"
-has "unparseable-reports-degraded-fallback" "$(row unparsesess)" "idle-only fallback"
+# --- 5. unparseable transcript, idle=10m: under the 60m idle trigger but
+# over the context trigger's 5m floor, so this reaches the context-path
+# eligibility check with an unmeasurable percentage -> distinct, loud
+# skip:context-unknown (NOT a silent idle-only fallback, and NOT collapsed
+# into "skip: under thresholds") — never guesses a percentage (rule 6) ------
+has "unparseable-shows-na"      "$(row unparsesess)" "n/a"
+has "unparseable-verdict"       "$(row unparsesess)" "skip: context unknown"
+has "unparseable-loud-note"     "$(row unparsesess)" "_model_window_for"
 
 echo "session-compact-sweep: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
