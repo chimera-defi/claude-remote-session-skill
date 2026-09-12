@@ -146,8 +146,34 @@ _input_box_empty() {
   # status line(s) below the box, e.g. "[Sonnet 5] session-name"; treating
   # those as draft content would make every pane look non-empty and break
   # the SAFE case entirely). Find that boundary first.
-  nbound="$(printf '%s\n' "$stripped" | awk 'NR==1{next} /^─+$/{print NR-1; f=1; exit} END{if(!f) print NR}')"
-  [ -n "$nbound" ] || nbound=1
+  #
+  # This is a plain bash loop with LITERAL (non-regex) substring stripping,
+  # not an awk/grep `/^─+$/`-style quantified regex: '─' is a multi-byte
+  # UTF-8 character, and a quantified regex over it only matches when the
+  # tool is both running in a UTF-8 locale AND is itself multibyte-aware
+  # (GNU grep/gawk are, but only under a UTF-8 locale; mawk — Debian/
+  # Ubuntu's default `awk` — never is, in any locale). Under mawk, or any
+  # awk/grep in a non-UTF-8 locale (e.g. LC_ALL=C/POSIX, common in minimal
+  # containers and CI), that regex silently never matches the border line,
+  # nbound falls through to "whole buffer", and the status/permission-mode
+  # lines below the box get read as draft text — every idle pane then
+  # misclassifies as draft-in-input-box, and `ready` never reports safe.
+  # Literal substring removal (bash `${var//X/}`) is a byte-for-byte search
+  # with no quantifier or char-class involved, so it is correct regardless
+  # of locale or awk/grep build. Confirmed reproducing against mawk in a
+  # POSIX/C locale, which is what surfaced this.
+  local nbound_n=0 nbound_ln
+  nbound=0
+  while IFS= read -r nbound_ln; do
+    nbound_n=$((nbound_n + 1))
+    [ "$nbound_n" -eq 1 ] && continue
+    if [ -n "$nbound_ln" ] && [ -z "${nbound_ln//─/}" ]; then
+      nbound=$((nbound_n - 1))
+      break
+    fi
+  done <<<"$stripped"
+  [ "$nbound" -gt 0 ] || nbound="$nbound_n"
+  [ -n "$nbound" ] && [ "$nbound" -gt 0 ] || nbound=1
   box="$(printf '%s\n' "$region" | head -n "$nbound")"
   # A genuinely multi-line unsubmitted draft can have a BLANK first line
   # (e.g. shift+enter pressed before typing, or a paste that starts with a
