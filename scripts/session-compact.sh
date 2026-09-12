@@ -6,16 +6,32 @@
 # truth.
 #
 # Usage:
-#   session-compact.sh report                        # who is eligible and why/why not — mutates nothing
-#   session-compact.sh sweep --dry-run                # what a sweep WOULD compact
-#   session-compact.sh sweep --apply                  # actually compact
+#   session-compact.sh report                        # who is eligible and why/why not (idle-window model) — mutates nothing
+#   session-compact.sh sweep                          # context-aware two-trigger report (idle OR context) — mutates nothing, exits 0
 #   session-compact.sh before-relay <session> <msg>   # compact IF stale, verify, then relay
 #   session-compact.sh before-relay <session> --file <path>
 #   session-compact.sh install-timer                  # write systemd units; enable NOTHING
 #
-#   report/sweep window flags: --min-idle N (default 60) --max-idle N (default 0 = unbounded)
-#   before-relay/sweep --apply: --timeout N (default 240; seconds to wait for a compact to finish)
+#   report window flags: --min-idle N (default 60) --max-idle N (default 0 = unbounded)
+#   before-relay: --timeout N (default 240; seconds to wait for a compact to finish)
 #   install-timer: --force (overwrite existing unit files)
+#
+# `sweep` is intentionally a DIFFERENT eligibility model than `report` and
+# `before-relay` (which still run on the idle-window model below, unedited):
+#   trigger A: idle >= 60 minutes
+#   trigger B: context >= 80% of the model's window AND idle >= 5 minutes
+#              (the 5-minute floor exists so a session is never compacted
+#              mid-turn purely because it is context-heavy)
+# Context % is read directly from the session's own transcript (last
+# assistant message's usage: input + cache_read + cache_creation tokens,
+# divided by a per-model window — see _model_window_for). If that can't be
+# read/parsed, the session degrades to idle-only (trigger A) and the report
+# says so — it never guesses a percentage. See _sweep_trigger/_sweep_verdict
+# for the exact rule and docs/session-compaction.md for rationale once this
+# lands. `sweep --apply` is NOT implemented yet on this branch — this commit
+# is report-only by design; a follow-up commit adds --apply, reusing
+# _do_compact (the SAME compaction mechanism report/before-relay already use)
+# rather than a second implementation.
 #
 # Why the default window is 60min+, unbounded (NOT the original 30-60min):
 # Claude Code opts into a 1-hour prompt-cache TTL for ordinary interactive
@@ -138,6 +154,113 @@ for fn in glob.glob(os.path.join(d, '*.jsonl')):
         pass   # transcript file gone mid-scan — just skip it
 print(mx or '')
 " "$dir" "$baseline"
+}
+
+# ── sweep v2: context-aware trigger (idle-OR-context, busy-checked) ─────────
+# Added on top of the idle-window model above WITHOUT touching it: `report`
+# and `before-relay` still run entirely on `_decide`/`_evaluate_row`, unedited,
+# so every one of their existing tests stays a valid contract. `sweep` gets
+# its own trigger model below because its thresholds are genuinely different
+# in shape (idle-window vs. OR-of-two-triggers) — bolting that onto `_decide`
+# would mean adding a context-pct positional argument to a function whose
+# exact positional signature ~25 existing assertions pin by hand.
+
+# _model_window_for <model-string> -> token count, or "" if unrecognized.
+# ONE table, not scattered (see design brief). Sonnet-5/Opus-5 (any point
+# release matching *sonnet*/*opus*) default to a 1,000,000-token window;
+# Haiku (*haiku*) to 200,000 — documented defaults, not a measured fact this
+# repo has anywhere else. A model string matching neither is UNKNOWN on
+# purpose: callers must degrade to idle-only rather than divide by a guessed
+# number — the same "never guess a percentage" rule that governs an
+# unparseable transcript (see _context_snapshot below).
+_model_window_for() {
+  case "$1" in
+    *sonnet*|*opus*) echo 1000000 ;;
+    *haiku*)         echo 200000 ;;
+    *)               echo "" ;;
+  esac
+}
+
+# _context_snapshot <cwd> -> "tokens\tmodel" for the LAST assistant message
+# (by timestamp, across every *.jsonl in the cwd's transcript dir — same
+# multi-file-per-cwd handling _compact_marker_newer uses above) that carries a
+# real `message.usage` object, or "" if the transcript dir is missing, has no
+# such message, or every candidate's model is the literal string
+# "<synthetic>". That synthetic-model exclusion is load-bearing, not
+# defensive filler: a REAL transcript on this host (2026-08-26,
+# .../agent-host-control-framework) carries a trailing assistant entry with
+# model="<synthetic>" and all-zero usage AFTER the last real turn (a hook- or
+# statusline-injected pseudo-turn, not a model call) — picking it as "last"
+# would silently report 0 tokens / 0% for a session that is actually at
+# whatever its last REAL turn left it at. Tokens = input_tokens +
+# cache_read_input_tokens + cache_creation_input_tokens (current context as
+# of that turn — NOT + output_tokens, which hasn't been read back in as
+# context by anything yet). "" on any parse failure — never a guessed number.
+_context_snapshot() {
+  local cwd="$1" dir
+  dir="$HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  [ -d "$dir" ] || { echo ""; return; }
+  python3 -c "
+import sys, glob, json, os
+d = sys.argv[1]
+best_ts = None
+best = None
+for fn in glob.glob(os.path.join(d, '*.jsonl')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                if '\"assistant\"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get('type') != 'assistant':
+                    continue
+                msg = o.get('message') or {}
+                model = msg.get('model')
+                if not model or model == '<synthetic>':
+                    continue
+                usage = msg.get('usage')
+                if not isinstance(usage, dict):
+                    continue
+                ts = o.get('timestamp')
+                if not ts:
+                    continue
+                if best_ts is None or ts > best_ts:
+                    best_ts = ts
+                    best = (usage, model)
+    except OSError:
+        pass   # transcript file gone mid-scan — just skip it
+if best is None:
+    print('')
+else:
+    usage, model = best
+    def num(k):
+        try:
+            return int(usage.get(k) or 0)
+        except Exception:
+            return 0
+    tokens = num('input_tokens') + num('cache_read_input_tokens') + num('cache_creation_input_tokens')
+    print('%d\t%s' % (tokens, model))
+" "$dir"
+}
+
+# _context_pct_for_row <cwd> -> "tokens\tpct" or "" (degraded — no transcript,
+# no usable usage entry, or a model _model_window_for doesn't recognize).
+# Callers MUST treat "" as "context trigger unavailable, fall back to
+# idle-only for this session and report the degradation" — never substitute a
+# guessed window just to produce a number.
+_context_pct_for_row() {
+  local cwd="$1" raw tokens model window
+  raw="$(_context_snapshot "$cwd")"
+  [ -n "$raw" ] || { echo ""; return; }
+  tokens="${raw%%$'\t'*}"
+  model="${raw#*$'\t'}"
+  case "$tokens" in ''|*[!0-9]*) echo ""; return ;; esac
+  window="$(_model_window_for "$model")"
+  [ -n "$window" ] || { echo ""; return; }
+  printf '%s\t%s\n' "$tokens" "$(( tokens * 100 / window ))"
 }
 
 # _validate_uint <flag-name> <var-name> — validates the NAMED variable's
@@ -362,6 +485,78 @@ _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
   printf '%s' "$out" | grep -oE 'state=[a-z]+' | head -1 | cut -d= -f2
 }
 
+# _sweep_trigger <idle_minutes> <protected> <context_pct-or-empty> -> one of
+# trigger:idle | trigger:context | skip:protected | skip:under-thresholds |
+# skip:bad-idle-field. PURE — no I/O, no pane check (that's layered on top by
+# _sweep_verdict below, same "pure decision, then live check" split
+# _decide/_evaluate_row already use). Two triggers, thresholds fixed on
+# purpose (not exposed as flags — see design brief):
+#   A. idle >= 60 minutes.
+#   B. context >= 80% AND idle >= 5 minutes — the 5-minute floor exists so a
+#      context-heavy session is never compacted mid-turn.
+# <context_pct> may be "" (context unavailable for this session — see
+# _context_pct_for_row) — trigger B just can't fire then; trigger A is
+# unaffected, so a plain idle-only fallback still works correctly.
+_SWEEP_IDLE_TRIGGER_MIN=60
+_SWEEP_CONTEXT_TRIGGER_PCT=80
+_SWEEP_CONTEXT_IDLE_FLOOR=5
+
+_sweep_trigger() {
+  local idle_minutes="$1" protected="$2" context_pct="$3" idle_n
+
+  case "$idle_minutes" in
+    ''|*[!0-9]*) echo "skip:bad-idle-field"; return ;;
+  esac
+  idle_n=$((10#$idle_minutes))
+
+  if [ "$protected" = yes ]; then echo "skip:protected"; return; fi
+
+  if [ "$idle_n" -ge "$_SWEEP_IDLE_TRIGGER_MIN" ]; then echo "trigger:idle"; return; fi
+
+  case "$context_pct" in
+    ''|*[!0-9]*) : ;;
+    *)
+      if [ "$context_pct" -ge "$_SWEEP_CONTEXT_TRIGGER_PCT" ] && [ "$idle_n" -ge "$_SWEEP_CONTEXT_IDLE_FLOOR" ]; then
+        echo "trigger:context"; return
+      fi
+      ;;
+  esac
+
+  echo "skip:under-thresholds"
+}
+
+# _sweep_verdict <idle_minutes> <protected> <context_pct> <tmux_session> ->
+# the final printable verdict: "would-compact: idle" | "would-compact:
+# context" | "skip: protected" | "skip: busy" | "skip: under thresholds".
+# Non-pure: layers the ONE live call this needs — the EXISTING _pane_state
+# helper (session-handoff.sh check, which itself shells to real `tmux
+# capture-pane` and greps for the spinner-glyph/"esc to interrupt" pattern
+# _is_working already implements there) — on top of the pure _sweep_trigger.
+# No second busy-detector is implemented here. A pane that _pane_state can't
+# read at all (dead/unreachable) reads as "not busy" here — deliberately: an
+# unreachable pane can't be actively processing anything, and the actual
+# /compact send in _do_compact fails safely on its own if the session is
+# truly gone.
+_sweep_verdict() {
+  local idle="$1" protected="$2" ctxpct="$3" session="$4" trig
+  trig="$(_sweep_trigger "$idle" "$protected" "$ctxpct")"
+  case "$trig" in
+    skip:protected)        echo "skip: protected"; return ;;
+    skip:bad-idle-field)   echo "skip: under thresholds"; return ;;
+    skip:under-thresholds) echo "skip: under thresholds"; return ;;
+  esac
+  # trig is trigger:idle or trigger:context from here — never compact a busy
+  # pane regardless of which trigger fired.
+  if [ "$(_pane_state "$session")" = busy ]; then
+    echo "skip: busy"
+    return
+  fi
+  case "$trig" in
+    trigger:idle)    echo "would-compact: idle" ;;
+    trigger:context) echo "would-compact: context" ;;
+  esac
+}
+
 declare -A _COMPACT_ISSUED=()
 # _do_compact <tmux_session> <timeout_seconds> [<cwd>] -> prints one of:
 # compacted | send-failed | timeout. Exit code 0 only for "compacted" (fully
@@ -461,39 +656,24 @@ MODE="${1:-}"; shift || true
 
 _usage() {
   echo "usage: session-compact.sh (report [--min-idle N] [--max-idle N]" >&2
-  echo "         | sweep (--dry-run|--apply) [--min-idle N] [--max-idle N] [--timeout N]" >&2
+  echo "         | sweep                    # report-only for now; --apply lands in a follow-up commit" >&2
   echo "         | before-relay <session> (<msg>|--file <path>) [--timeout N]" >&2
   echo "         | install-timer [--force])" >&2
   exit 2
 }
 
 case "$MODE" in
-  report|sweep)
-    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no
+  report)
+    MIN_IDLE=60; MAX_IDLE=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --min-idle) MIN_IDLE="$2"; shift 2 ;;
         --max-idle) MAX_IDLE="$2"; shift 2 ;;
-        --timeout)  TIMEOUT="$2"; shift 2 ;;
-        --dry-run)  DRY_RUN=yes; shift ;;
-        --apply)    APPLY=yes; shift ;;
         *) echo "session-compact: $MODE: unrecognized argument '$1'" >&2; exit 2 ;;
       esac
     done
     _validate_uint --min-idle MIN_IDLE
     _validate_uint --max-idle MAX_IDLE
-    _validate_uint --timeout TIMEOUT
-
-    if [ "$MODE" = sweep ]; then
-      if [ "$DRY_RUN" = yes ] && [ "$APPLY" = yes ]; then
-        echo "session-compact: sweep: pass exactly one of --dry-run or --apply, not both" >&2
-        exit 2
-      fi
-      if [ "$DRY_RUN" = no ] && [ "$APPLY" = no ]; then
-        echo "session-compact: sweep: refusing to default to mutating — pass --dry-run or --apply" >&2
-        exit 2
-      fi
-    fi
 
     TSV="$(_fetch_tsv "$MIN_IDLE")"; rc=$?
     [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
@@ -501,51 +681,60 @@ case "$MODE" in
     window_desc="idle >= ${MIN_IDLE}m"
     [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
 
-    if [ "$MODE" = report ]; then
-      echo "=== session-compact report: $window_desc — REPORT ONLY, mutates nothing ==="
-      printf '%-40s %-9s %-8s %s\n' "TMUX SESSION" "ELIGIBLE" "IDLE" "REASON"
-      n=0
-      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
-        [ -n "$c1" ] || continue
-        n=$((n+1))
-        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
-        case "$decision" in
-          eligible) elig=yes; reason=eligible ;;
-          skip:*)   elig=no;  reason="${decision#skip:}" ;;
-          *)        elig=no;  reason="$decision" ;;
-        esac
-        printf '%-40s %-9s %-8s %s\n' "$c1" "$elig" "$c5" "$reason"
-      done <<< "$TSV"
-      echo "  --- $n candidate(s) scanned. Report only; mutates nothing."
-    else
-      echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc ==="
-      n_eligible=0; n_compacted=0; n_failed=0
-      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
-        [ -n "$c1" ] || continue
-        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
-        [ "$decision" = eligible ] || continue
-        n_eligible=$((n_eligible+1))
-        if [ "$DRY_RUN" = yes ]; then
-          echo "would-compact: $c1 (idle=${c5}m)"
-          continue
-        fi
-        echo "compacting: $c1 (idle=${c5}m) ..."
-        result="$(_do_compact "$c1" "$TIMEOUT" "$c4")"; rc2=$?
-        if [ "$rc2" -eq 0 ]; then
-          _write_marker "$c1" "$c6" "$(_now_iso)" compacted
-          n_compacted=$((n_compacted+1))
-          echo "  -> compacted: $c1"
-        else
-          n_failed=$((n_failed+1))
-          echo "  -> FAILED ($result): $c1 — NOT writing a success marker" >&2
-        fi
-      done <<< "$TSV"
-      if [ "$DRY_RUN" = yes ]; then
-        echo "sweep --dry-run: $n_eligible session(s) would be compacted"
-      else
-        echo "sweep --apply: $n_eligible eligible, $n_compacted compacted, $n_failed failed"
-      fi
+    echo "=== session-compact report: $window_desc — REPORT ONLY, mutates nothing ==="
+    printf '%-40s %-9s %-8s %s\n' "TMUX SESSION" "ELIGIBLE" "IDLE" "REASON"
+    n=0
+    while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+      [ -n "$c1" ] || continue
+      n=$((n+1))
+      decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+      case "$decision" in
+        eligible) elig=yes; reason=eligible ;;
+        skip:*)   elig=no;  reason="${decision#skip:}" ;;
+        *)        elig=no;  reason="$decision" ;;
+      esac
+      printf '%-40s %-9s %-8s %s\n' "$c1" "$elig" "$c5" "$reason"
+    done <<< "$TSV"
+    echo "  --- $n candidate(s) scanned. Report only; mutates nothing."
+    ;;
+
+  sweep)
+    # v2: two-trigger, context-aware model (see _sweep_trigger's comment for
+    # the exact rule) — a DIFFERENT eligibility model than report/before-relay
+    # still use (those two are untouched, see the comment above
+    # _model_window_for). Deliberately its own flag surface: the two
+    # thresholds are fixed, not configurable, so there is no --min-idle/
+    # --max-idle here. Default (no args) is a REPORT ONLY dry run that exits
+    # 0 — a sweep that mutates by default is too dangerous to ship. --apply
+    # is not implemented on this commit (report-only is this commit's whole
+    # deliverable) — it lands in a follow-up commit that reuses _do_compact.
+    if [ $# -gt 0 ]; then
+      echo "session-compact: sweep: this build is report-only — unrecognized argument '$1' (no flags are implemented yet)" >&2
+      exit 2
     fi
+
+    TSV="$(_fetch_tsv 0)"; rc=$?
+    [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
+
+    echo "=== session-compact sweep: context-aware (idle>=${_SWEEP_IDLE_TRIGGER_MIN}m OR context>=${_SWEEP_CONTEXT_TRIGGER_PCT}%+idle>=${_SWEEP_CONTEXT_IDLE_FLOOR}m) — REPORT ONLY, mutates nothing ==="
+    printf '%-32s %-8s %-11s %-6s %-22s %s\n' "SESSION" "IDLE(m)" "CTX_TOKENS" "CTX%" "VERDICT" "NOTE"
+    n=0
+    while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+      [ -n "$c1" ] || continue
+      n=$((n+1))
+      ctx_raw="$(_context_pct_for_row "$c4")"
+      if [ -n "$ctx_raw" ]; then
+        ctx_tokens="${ctx_raw%%$'\t'*}"
+        ctx_pct="${ctx_raw#*$'\t'}"
+        note="-"
+      else
+        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript or unrecognized model) — idle-only fallback"
+      fi
+      verdict="$(_sweep_verdict "$c5" "$c7" "$ctx_pct" "$c1")"
+      ctx_pct_display="${ctx_pct:-n/a}"
+      printf '%-32s %-8s %-11s %-6s %-22s %s\n' "${c1:0:32}" "$c5" "$ctx_tokens" "$ctx_pct_display" "$verdict" "$note"
+    done <<< "$TSV"
+    echo "  --- $n session(s) scanned. Report only; mutates nothing."
     ;;
 
   before-relay)
