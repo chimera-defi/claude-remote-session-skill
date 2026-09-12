@@ -538,22 +538,70 @@ _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
   printf '%s' "$out" | grep -oE 'state=[a-z]+' | head -1 | cut -d= -f2
 }
 
-# _sweep_decide <min_idle> <max_idle> <context_pct-or-empty> <10 TSV fields>
-# -> "eligible:idle" | "eligible:context" | "skip:<reason>" (the SAME skip
-# vocabulary _decide/_evaluate_row already use — nothing new is invented).
-# Reuses _evaluate_row for BOTH checks below rather than re-deriving
-# protected/landed/already-compacted/pane-safety — deliberately: an earlier
-# version of this function re-implemented those checks against just
-# (idle_minutes, protected, context_pct) and, under review, that turned out
-# to reopen a real bug idle-report's own history warns about (#60/#61): a
-# compact does NOT reset idle_minutes (idle is measured from the last GENUINE
-# user turn, and idle-report's whole point is that a /compact summary itself
-# does not count as one), so a session sitting idle at low context forever
-# would get /compact re-issued on EVERY sweep run, indefinitely, unless
-# something consults the sensor's `compacted` column / the marker file the
-# way _decide already does. Routing eligibility back through _evaluate_row
-# inherits that guard (and protected/landed-and-clean/pane-safety) for free,
-# on BOTH triggers, instead of re-deriving a narrower and buggier copy.
+# _sweep_evaluate_row_managed <min_idle> <max_idle> <managed_only> <10 TSV
+# fields> -> same vocabulary as _evaluate_row ("eligible" | "skip:<reason>").
+#
+# When managed_only=no this is BYTE-IDENTICAL to calling _evaluate_row
+# directly — the retry branch below never runs. This is what keeps sweep's
+# no-flag behavior unchanged (see the brief this shipped under, and
+# tests/test-session-compact-sweep.sh / tests/test-session-compact.sh, which
+# pin the unflagged path).
+#
+# When managed_only=yes AND the plain call answers skip:landed-and-clean,
+# retries the SAME row through the REAL _evaluate_row with the dirty field
+# (the 10th TSV field) forced to "DIRTY" — a legitimately valid value,
+# distinct from "clean" — so _decide's `landed=yes && dirty=clean` guard
+# cannot fire on the retry. Every OTHER field is untouched, so every OTHER
+# guard _decide/_evaluate_row enforce still runs for real on the retry and
+# can still block: protected, already-compacted (including the
+# compacted=unknown + marker-file fallback), malformed-row, never-touched,
+# bad-idle-field, and the live pane-safety check. This is the same argument
+# _sweep_decide's own comment makes for why eligibility routes through
+# _evaluate_row instead of a narrower re-derived copy — re-deriving "is it
+# ALSO already-compacted" from scratch here would risk reopening exactly the
+# re-issue-forever bug that guard exists to prevent (see #60/#61 below).
+#
+# Rationale for the override existing at all (see the brief): landed-and-
+# clean exists to protect UNKNOWN sessions — compacting one that's never
+# resumed is pure token cost — but it is wrong for MANAGED (allowlisted)
+# sessions, because allowlist membership means the orchestrator WILL send
+# another mission; resumption is expected by definition. --managed-only
+# already restricts the whole sweep to allowlisted, currently-live sessions
+# before this function is ever called (see the TSV-filtering step in the
+# `sweep` dispatch below), so "managed_only=yes" here always means "this
+# specific row is in scope."
+_sweep_evaluate_row_managed() {
+  local min_idle="$1" max_idle="$2" managed_only="$3"; shift 3
+  local decision
+  decision="$(_evaluate_row "$min_idle" "$max_idle" "$@")"
+  if [ "$decision" = "skip:landed-and-clean" ] && [ "$managed_only" = yes ]; then
+    set -- "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" DIRTY
+    decision="$(_evaluate_row "$min_idle" "$max_idle" "$@")"
+  fi
+  printf '%s\n' "$decision"
+}
+
+# _sweep_decide <min_idle> <max_idle> <context_pct-or-empty> <managed_only>
+# <10 TSV fields> -> "eligible:idle" | "eligible:context" | "skip:<reason>"
+# (the SAME skip vocabulary _decide/_evaluate_row already use — nothing new
+# is invented). Reuses _sweep_evaluate_row_managed (itself a thin wrapper
+# around _evaluate_row — see its comment for the managed-only override, and
+# for why the override lives here rather than in _decide/_evaluate_row
+# themselves: those two are called directly by report and before-relay, and
+# must stay byte-identical for those callers) for BOTH checks below rather
+# than re-deriving protected/landed/already-compacted/pane-safety —
+# deliberately: an earlier version of this function re-implemented those
+# checks against just (idle_minutes, protected, context_pct) and, under
+# review, that turned out to reopen a real bug idle-report's own history
+# warns about (#60/#61): a compact does NOT reset idle_minutes (idle is
+# measured from the last GENUINE user turn, and idle-report's whole point is
+# that a /compact summary itself does not count as one), so a session
+# sitting idle at low context forever would get /compact re-issued on EVERY
+# sweep run, indefinitely, unless something consults the sensor's
+# `compacted` column / the marker file the way _decide already does. Routing
+# eligibility back through _evaluate_row inherits that guard (and
+# protected/landed-and-clean/pane-safety) for free, on BOTH triggers,
+# instead of re-deriving a narrower and buggier copy.
 #   Trigger A: _evaluate_row with the caller's own <min_idle>/<max_idle>
 #              (defaults 60/0 — same as this repo's pre-existing sweep).
 #   Trigger B: _evaluate_row with a fixed 5-minute floor, promoted to
@@ -566,13 +614,18 @@ _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
 #              all, or (pane-safety) only after the window already passed —
 #              so a second live pane check at a looser window cannot change
 #              the answer, and calling B there would just double the I/O.
+#              The managed-only override is applied identically on BOTH
+#              triggers (via _sweep_evaluate_row_managed) — a managed,
+#              landed+clean session should not be defeated on the context
+#              trigger either, only on whichever guard (already-compacted,
+#              protected, busy pane, ...) legitimately still applies.
 _SWEEP_CONTEXT_TRIGGER_PCT=80
 _SWEEP_CONTEXT_IDLE_FLOOR=5
 
 _sweep_decide() {
-  local min_idle="$1" max_idle="$2" context_pct="$3"; shift 3
+  local min_idle="$1" max_idle="$2" context_pct="$3" managed_only="$4"; shift 4
   local decision_a decision_b
-  decision_a="$(_evaluate_row "$min_idle" "$max_idle" "$@")"
+  decision_a="$(_sweep_evaluate_row_managed "$min_idle" "$max_idle" "$managed_only" "$@")"
   if [ "$decision_a" = eligible ]; then
     echo "eligible:idle"
     return
@@ -581,7 +634,7 @@ _sweep_decide() {
     printf '%s\n' "$decision_a"
     return
   fi
-  decision_b="$(_evaluate_row "$_SWEEP_CONTEXT_IDLE_FLOOR" 0 "$@")"
+  decision_b="$(_sweep_evaluate_row_managed "$_SWEEP_CONTEXT_IDLE_FLOOR" 0 "$managed_only" "$@")"
   if [ "$decision_b" != eligible ]; then
     printf '%s\n' "$decision_b"
     return
@@ -881,7 +934,7 @@ case "$MODE" in
       # one case it always correctly described and still describes:
       # skip:outside-window (idle/context genuinely below both trigger
       # thresholds) — that keeps falling through to the wildcard below.
-      decision="$(_sweep_decide "$MIN_IDLE" "$MAX_IDLE" "$ctx_pct" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+      decision="$(_sweep_decide "$MIN_IDLE" "$MAX_IDLE" "$ctx_pct" "$MANAGED_ONLY" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
       detail="-"
       case "$decision" in
         eligible:idle)          verdict="would-compact: idle" ;;
