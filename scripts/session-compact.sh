@@ -669,8 +669,15 @@ _sweep_decide() {
     printf '%s\n' "$decision_b"
     return
   fi
+  # Same "cannot measure need => do not act" rule as trigger A above: unknown
+  # context must not be treated as "below 80%, therefore outside-window" —
+  # that framing is only true when context IS known and simply too low. An
+  # unmeasurable context is a DIFFERENT problem (a table gap or an unreadable
+  # transcript) and gets the SAME distinct, loud skip:context-unknown code
+  # trigger A uses, so it surfaces instead of blending into the routine
+  # under-threshold case.
   case "$context_pct" in
-    ''|*[!0-9]*) echo "skip:outside-window"; return ;;
+    ''|*[!0-9]*) echo "skip:context-unknown"; return ;;
   esac
   if [ "$context_pct" -ge "$_SWEEP_CONTEXT_TRIGGER_PCT" ]; then
     echo "eligible:context"
@@ -942,7 +949,14 @@ case "$MODE" in
         ctx_pct="${ctx_raw#*$'\t'}"
         note="-"
       else
-        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript or unrecognized model) — idle-only fallback"
+        # NOT "— idle-only fallback": as of the context floor on trigger A
+        # and skip:context-unknown on trigger B (see _sweep_decide), unknown
+        # context no longer means either trigger evaluates on idle alone —
+        # it means neither trigger can fire at all. This base note is the
+        # generic, decision-agnostic fact ("we don't know"); the specific
+        # skip:context-unknown case below overrides it with the full loud
+        # explanation.
+        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript or unrecognized model)"
       fi
 
       # detail: the underlying _decide/_evaluate_row reason, surfaced in NOTE

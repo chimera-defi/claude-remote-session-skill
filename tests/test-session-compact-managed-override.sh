@@ -191,7 +191,9 @@ lacks "noflag-no-scope-text"           "$out_plain" "scope:"
 # ============================================================================
 # Group 3 (brief scenario 6): the five relabelled skip causes each report
 # their own distinct VERDICT — plain sweep, no --managed-only involved, all
-# using /nonexistent-cwd (idle-only fallback, no transcript needed).
+# using /nonexistent-cwd (all five guards fire before context is ever
+# consulted, so the context-unknown path never applies here — no transcript
+# needed).
 # ============================================================================
 export STUB_TMUX_SESSIONS="lb_compacted lb_landedclean lb_malformed lb_nevertouched lb_badidle"
 export STUB_TMUX_BUSY_SESSIONS=""

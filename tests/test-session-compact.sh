@@ -439,8 +439,9 @@ outprotfresh="$(_run sweep)"; rcprotfresh=$?
 ok  "cli-sweep-protected-under-window-exit0"   "$rcprotfresh" "0"
 has "cli-sweep-protected-under-window-verdict" "$(printf '%s' "$outprotfresh" | grep protfreshsess)" "skip: protected"
 
-# --- under thresholds: low idle, no context data available (no transcript
-# for /nonexistent-cwd) -> "skip: under thresholds" plus a printed
+# --- under thresholds: low idle (below EVEN the 5m context-trigger floor,
+# so context is never consulted at all), no context data available (no
+# transcript for /nonexistent-cwd) -> "skip: under thresholds" plus a printed
 # degradation note — never a guessed percentage (rule 6) --------------------
 : > "$STUB_LOG"
 { _row freshsweepsess remote 1 /nonexistent-cwd 2 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
@@ -448,7 +449,7 @@ outfresh="$(_run sweep)"; rcfresh=$?
 row_fresh="$(printf '%s' "$outfresh" | grep freshsweepsess)"
 ok  "cli-sweep-under-thresholds-exit0"         "$rcfresh" "0"
 has "cli-sweep-under-thresholds-verdict"       "$row_fresh" "skip: under thresholds"
-has "cli-sweep-under-thresholds-degraded-note" "$row_fresh" "idle-only fallback"
+has "cli-sweep-under-thresholds-degraded-note" "$row_fresh" "context unavailable"
 STUB_READY_SESSIONS=""
 STUB_READY_REASON="busy"
 
