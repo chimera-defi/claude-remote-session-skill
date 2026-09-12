@@ -56,10 +56,14 @@ spawn_in() {
   printf '%s' "$s"
 }
 
-# 1. No such tmux session at all -> proc gone -> SAFE-TO-REAP, nothing to preserve.
+# 1. No such tmux session at all -> proc gone, AND no worktree matches its
+# name either -> genuinely SAFE-TO-REAP, but under a reason string distinct
+# from a clean, actually-audited worktree (see tests 10-12 below for the
+# fallback that finds a real worktree instead of stopping here).
 out="$(bash "$SP" "no-such-session-$$" 2>&1)"; rc=$?
 has "dead-session-unknown-rundir" "$out" "UNKNOWN (proc gone)"
 has "dead-session-safe" "$out" "SAFE-TO-REAP"
+has "dead-session-distinct-reason" "$out" "no rundir and no worktree found"
 ok  "dead-session-exit0" "$rc" "0"
 
 # 2. Live session, cwd is not a git repo -> SAFE-TO-REAP.
@@ -217,6 +221,73 @@ ok  "detached-exit1"    "$rc" "1"
 out="$(bash "$SP" --all 2>&1)"; rc=$?
 if [ "$rc" = 0 ] || [ "$rc" = 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: all-completes-no-crash — got rc=$rc; out: $out"; fi
 ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")" "0"
+
+# 10. FAIL-OPEN REGRESSION: a dead session (no tmux session at all, so
+# rundir_of() fails outright — the COMMON case for a reap, not an edge case)
+# whose name maps to a worktree dir that actually has real, unsaved work in
+# it. Before the 2026-09-12 fix this printed "SAFE-TO-REAP (nothing to
+# preserve)" purely because the PROCESS was gone, never once looking at the
+# WORKTREE — the exact bug that nearly cost 320 lines of unsaved work on the
+# live host (see the header comment). Must now fall back to locating and
+# auditing the worktree, and correctly report NOT-SAFE-TO-REAP.
+WT_BASE="$HOME/.claude/worktrees"; mkdir -p "$WT_BASE"
+R7="$WT_BASE/ah-sp-repro-$$"; mkrepo "$R7"
+echo "unsaved work" > "$R7/scratch.txt"    # untracked, real work
+S_DEAD_DIRTY="ah_sp-repro-$$"               # no tmux session spawned for this name
+out="$(bash "$SP" "$S_DEAD_DIRTY" 2>&1)"; rc=$?
+has "deadwt-found-via-fallback" "$out" "located via worktree lookup"
+has "deadwt-not-safe"           "$out" "NOT-SAFE-TO-REAP"
+has "deadwt-reason"             "$out" "untracked-files"
+ok  "deadwt-exit1"              "$rc" "1"
+
+# 11. Same fallback path, but the located worktree is genuinely CLEAN -> must
+# fall through to the SAME SAFE-TO-REAP verdict a live session would get
+# (not a separate, weaker message). The session name carries a SECOND
+# underscore in its slug (ah_sp_clean_$$) to prove only the FIRST "_" after
+# the ah/agenthost prefix is converted to "-" — matching the mapping observed
+# on the host (ah_hh-0717-0224 -> ah-hh-0717-0224) — and later underscores in
+# the slug are left alone.
+R8="$WT_BASE/ah-sp_clean_$$"; mkrepo "$R8"
+S_DEAD_CLEAN="ah_sp_clean_$$"
+out="$(bash "$SP" "$S_DEAD_CLEAN" 2>&1)"; rc=$?
+has "deadwt-clean-found" "$out" "located via worktree lookup"
+has "deadwt-clean-safe"  "$out" "SAFE-TO-REAP (work is on branch"
+ok  "deadwt-clean-exit0" "$rc" "0"
+
+# 12. Worktree DIRECTORY suffixed by session-git-prep on a name collision
+# (dirname no longer matches the guessed base exactly), but its BRANCH is
+# still session/<base> — the exact case session-doctor.sh's worktree-stale
+# already special-cases for the same reason (dirname collisions get a -$$
+# suffix; the branch survives unsuffixed). Must still be found by scanning
+# every worktree dir and matching on ITS OWN branch, not just the direct
+# dirname guess, and the printed rundir must be the REAL suffixed path.
+R9="$WT_BASE/ah-sp-collide-$$-9999"; mkrepo "$R9"
+git -C "$R9" checkout --quiet -b "session/ah-sp-collide-$$"
+echo "unsaved" > "$R9/scratch.txt"
+S_COLLIDE_DEAD="ah_sp-collide-$$"
+out="$(bash "$SP" "$S_COLLIDE_DEAD" 2>&1)"; rc=$?
+has "deadwt-collide-found-suffixed" "$out" "$R9"
+has "deadwt-collide-not-safe"       "$out" "NOT-SAFE-TO-REAP"
+ok  "deadwt-collide-exit1"          "$rc" "1"
+
+# 13. Collision case where the dirname-guessed dir and the branch-owning dir
+# are TWO DIFFERENT, COEXISTING directories: $dir/<base> exists, is clean,
+# and sits on an unrelated branch (left behind by session-git-prep's -$$
+# rename on collision — see the worktree_of() comment); the REAL worktree is
+# $dir/<base>-<pid>, dirty, on branch session/<base>. A naive dirname-first
+# lookup would return the clean decoy and report SAFE-TO-REAP while the
+# actual dirty worktree goes unaudited — the exact fail-open class this
+# whole fix targets. Branch match must win over the dirname match.
+R10="$WT_BASE/ah-sp-decoy-$$"; mkrepo "$R10"   # clean, dirname matches guess exactly
+R11="$WT_BASE/ah-sp-decoy-$$-5555"; mkrepo "$R11"  # dirty, dirname does NOT match
+git -C "$R11" checkout --quiet -b "session/ah-sp-decoy-$$"
+echo "unsaved" > "$R11/scratch.txt"
+S_DECOY_DEAD="ah_sp-decoy-$$"
+out="$(bash "$SP" "$S_DECOY_DEAD" 2>&1)"; rc=$?
+has "decoy-finds-real-dirty-worktree" "$out" "$R11"
+has "decoy-not-safe"                  "$out" "NOT-SAFE-TO-REAP"
+has "decoy-reason"                    "$out" "untracked-files"
+ok  "decoy-exit1"                     "$rc" "1"
 
 echo "session-preserve: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

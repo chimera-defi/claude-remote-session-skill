@@ -12,6 +12,19 @@
 # upstream configured — so 10,162 local-only commits were reported as "0
 # unpushed". Never use @{u} for this. Use `git log HEAD --not --remotes`, and
 # treat "repo has no remote at all" as its own finding.
+#
+# FAIL-OPEN FIX (2026-09-12): when rundir_of() fails (no tmux session, no live
+# claude proc under it — the COMMON case when reaping DEAD sessions, not an
+# edge case) this used to print "SAFE-TO-REAP (nothing to preserve)" and exit
+# 0. That verdict was inferred from the PROCESS being gone, not from the
+# WORKTREE being clean, and destroyed real work on this host (an orphaned
+# worktree carrying 320 uncommitted/untracked lines audited as "nothing to
+# preserve"). Now falls back to worktree_of(), which locates the session's
+# worktree on disk from its tmux name and runs the SAME audit against it
+# (dirty/untracked/reachability, same as a live session). Only when no
+# worktree can be found either is it genuinely safe — reported under a
+# distinct string ("no rundir and no worktree found") so that case can never
+# be mistaken for an audited, actually-clean worktree.
 set -uo pipefail
 
 RESCUE_ROOT="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
@@ -24,7 +37,7 @@ while [ $# -gt 0 ]; do
     --rescue) MODE_RESCUE=yes; shift ;;
     --wip)    MODE_WIP=yes; shift ;;
     --all)    ALL=yes; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
@@ -38,12 +51,67 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
   readlink "/proc/$cpid/cwd" 2>/dev/null
 }
 
+# tmux_to_base <tmux-session> -> worktree/systemd-unit base name, or "" if
+# not one of ours. Mirrors session-doctor.sh's tmux_to_base exactly (same
+# name, same case arms — kept as a local copy rather than sourced, matching
+# how every script in this repo is a standalone deployable file): the first
+# "_" after the ah/agenthost prefix becomes "-". ah_hh-0717-0224 ->
+# ah-hh-0717-0224; agenthost_foo -> agenthost-foo. Any later "_" in the slug
+# is left alone.
+tmux_to_base() { case "$1" in agenthost_*) echo "agenthost-${1#agenthost_}";; ah_*) echo "ah-${1#ah_}";; *) echo "";; esac; }
+
+# worktree_of <tmux-session> -> best-guess worktree dir on disk, used when
+# rundir_of() can't find a live process to ask. Scans every dir under the
+# worktrees root ONCE, preferring a BRANCH match (session/<base>) over a
+# dirname match, not the reverse:
+#
+# session-git-prep.sh suffixes the worktree DIRECTORY with -$$ on a name
+# collision while leaving the branch (session/<base>) unsuffixed (see
+# session-doctor.sh worktree-stale, which special-cases this the same way).
+# So on a collision, TWO dirs can exist for the same <base> — the original
+# $dir/$base (left behind on whatever branch it happened to be on, possibly
+# clean) and the real, suffixed $dir/$base-<pid> (on session/<base>, possibly
+# dirty). Trusting the dirname hit first would silently audit the WRONG one
+# and report the real, dirty worktree as untouched — the exact fail-open
+# class this whole fix exists to close. The branch is therefore checked
+# first and wins immediately; a dirname match is only used as a fallback if
+# no directory anywhere under the root carries that branch.
+#
+# There is no fixed list of "known main repos" in this codebase to run
+# `git worktree list` against from the other side; asking each worktree for
+# its own branch is the same authoritative signal without needing one.
+# Prints nothing and returns 1 if neither lookup finds a directory.
+worktree_of() {
+  local sess="$1" base dir wt branch fallback=""
+  base="$(tmux_to_base "$sess")"
+  [ -n "$base" ] || return 1
+  dir="${WORKTREES_BASE:-$HOME/.claude/worktrees}"
+  [ -d "$dir" ] || return 1
+  for wt in "$dir"/*/; do
+    [ -d "$wt" ] || continue
+    wt="${wt%/}"
+    branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" || true
+    if [ "$branch" = "session/$base" ]; then printf '%s' "$wt"; return 0; fi
+    [ -z "$fallback" ] && [ "$(basename "$wt")" = "$base" ] && fallback="$wt"
+  done
+  [ -n "$fallback" ] && { printf '%s' "$fallback"; return 0; }
+  return 1
+}
+
 audit_one() {
-  local s="$1" cwd br nremote local_only unreach dirty untracked reasons
+  local s="$1" cwd br nremote local_only unreach dirty untracked reasons via
   cwd=$(rundir_of "$s")
+  via=""
+  if [ -z "$cwd" ]; then
+    cwd=$(worktree_of "$s")
+    [ -n "$cwd" ] && via=" (proc gone; located via worktree lookup)"
+  fi
   echo "### $s"
-  if [ -z "$cwd" ]; then echo "   rundir: UNKNOWN (proc gone) — verdict: SAFE-TO-REAP (nothing to preserve)"; return 0; fi
-  echo "   rundir: $cwd"
+  if [ -z "$cwd" ]; then
+    echo "   rundir: UNKNOWN (proc gone) — verdict: SAFE-TO-REAP (no rundir and no worktree found)"
+    return 0
+  fi
+  echo "   rundir: $cwd$via"
   if ! git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
     echo "   (not a git repo) — verdict: SAFE-TO-REAP"; return 0
   fi
