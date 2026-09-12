@@ -121,6 +121,12 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wire
 # ============================================================================
 CTX_CWD="$FAKE_HOME/proj-ctx-landedclean"
 _fixture_transcript "$CTX_CWD" 900000 claude-sonnet-4-6   # 90%
+# mo_landedclean now needs a KNOWN, sufficient context too: the idle trigger
+# requires context >= _SWEEP_IDLE_CONTEXT_FLOOR_PCT (see _sweep_decide's own
+# comment), so a nonexistent (context-unknown) cwd would now skip:context-
+# unknown instead of demonstrating the override this row exists to prove.
+LANDEDCLEAN_CWD="$FAKE_HOME/proj-mo-landedclean"
+_fixture_transcript "$LANDEDCLEAN_CWD" 500000 claude-sonnet-4-6   # 50%
 
 export STUB_TMUX_SESSIONS="mo_landedclean mo_compacted mo_protected mo_busy mo_ctxlandedclean"
 export STUB_TMUX_BUSY_SESSIONS="mo_busy"
@@ -128,7 +134,7 @@ export STUB_TMUX_BUSY_SESSIONS="mo_busy"
   # 1. plain landed+clean, over the 60m idle trigger, nothing else masking it
   #    -> THE bug this commit fixes: must flip to would-compact under
   #    --managed-only.
-  _row mo_landedclean      remote 1 /nonexistent-cwd-a 90 2026-01-01T00:00:00 no no  yes clean
+  _row mo_landedclean      remote 1 "$LANDEDCLEAN_CWD" 90 2026-01-01T00:00:00 no no  yes clean
   # 3. ALSO already-compacted (compacted=yes) -> the infinite-loop guard.
   #    Without it, --apply would re-issue /compact to this session on EVERY
   #    sweep run forever, because idle-report never resets idle_minutes

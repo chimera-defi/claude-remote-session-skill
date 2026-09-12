@@ -6,14 +6,18 @@
 # pointed at a fixture TSV. No real tmux, no real session, no real /compact
 # anywhere in this file.
 #
-# Unlike that file, these tests don't need fixture transcripts: the filter
-# under test operates purely on the sensor's tmux_session column (c1), BEFORE
-# _sweep_decide/_context_pct_for_row ever run — so every fixture row here uses
-# a nonexistent cwd (same idiom test-session-compact.sh's CLI layer already
-# uses for its sweep tests) and degrades to the idle-only trigger, which is
-# all that's needed to get a deterministic, non-masking verdict
-# ("would-compact: idle") for any IN-SCOPE, ready, non-protected row — so "did
-# this session get evaluated at all" is unambiguous from the verdict column.
+# The filter under test operates purely on the sensor's tmux_session column
+# (c1), BEFORE _sweep_decide/_context_pct_for_row ever run, so context is not
+# what these tests are about. It still has to be a KNOWN, sufficient value
+# though: unknown context now makes the idle trigger skip (skip:context-
+# unknown — see _sweep_decide's own comment), so a nonexistent-cwd row can no
+# longer reach a deterministic "would-compact: idle" the way it used to. The
+# four live sessions below all get a real fixture transcript at 50% — clears
+# the idle trigger's context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without
+# approaching the separate 80% context-trigger threshold — purely so "did
+# this session get evaluated at all" stays unambiguous from the verdict
+# column; the context MATH itself is exercised in
+# tests/test-session-compact-sweep.sh, not here.
 #
 # $SESSION_COMPACT_MANAGED_FILE is used for EVERY invocation below — this file
 # never reads or writes the real $HOME/.claude/session-compact-managed.
@@ -21,6 +25,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
+# shellcheck disable=SC1090
+source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if printf '%s' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
@@ -86,6 +92,18 @@ _row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"; }
 
 FAKE_HOME="$(mktemp -d)"
 
+# _fixture_transcript <cwd> <tokens> <model> — same helper as
+# test-session-compact-sweep.sh. Needed now (previously wasn't) because the
+# idle trigger requires a KNOWN context >= _SWEEP_IDLE_CONTEXT_FLOOR_PCT —
+# see the header comment above.
+_fixture_transcript() {
+  local cwd="$1" tokens="$2" model="$3" dir
+  dir="$FAKE_HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  mkdir -p "$dir" "$cwd"
+  printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"model":"%s","usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":50}}}\n' \
+    "$model" "$tokens" > "$dir/fixture.jsonl"
+}
+
 _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wired up
   PATH="$BIN:$PATH" SESSION_COMPACT_SENSOR="$FIXTURE_DIR/sensor.sh" \
     HOME="$FAKE_HOME" bash "$ISO/session-compact.sh" "$@"
@@ -93,16 +111,28 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wire
 
 # Four LIVE sessions (all present in tmux AND in the sensor's TSV), all idle
 # 90m (over the default 60m idle trigger), landed=no dirty=clean (never
-# landed-and-clean), compacted=no (never already-compacted) — so an IN-SCOPE
-# row always reaches a clean "would-compact: idle" verdict with nothing else
-# masking it.
+# landed-and-clean), compacted=no (never already-compacted), context=50%
+# (clears the idle trigger's context floor without approaching the separate
+# 80% context-trigger threshold) — so an IN-SCOPE row always reaches a clean
+# "would-compact: idle" verdict with nothing else masking it.
 export STUB_TMUX_SESSIONS="sessa sessb sessc sessd"
 export STUB_TMUX_BUSY_SESSIONS=""
+# $FAKE_HOME-relative (not literal /nonexistent-cwd-*): _fixture_transcript's
+# `mkdir -p ... "$cwd"` needs somewhere writable to create the cwd dir itself
+# in, not a root-level path.
+SESSA_CWD="$FAKE_HOME/proj-sessa"
+SESSB_CWD="$FAKE_HOME/proj-sessb"
+SESSC_CWD="$FAKE_HOME/proj-sessc"
+SESSD_CWD="$FAKE_HOME/proj-sessd"
+_fixture_transcript "$SESSA_CWD" 500000 claude-sonnet-4-6
+_fixture_transcript "$SESSB_CWD" 500000 claude-sonnet-4-6
+_fixture_transcript "$SESSC_CWD" 500000 claude-sonnet-4-6
+_fixture_transcript "$SESSD_CWD" 500000 claude-sonnet-4-6
 {
-  _row sessa remote 1 /nonexistent-cwd-a 90 2026-01-01T00:00:00 no no unknown clean
-  _row sessb remote 1 /nonexistent-cwd-b 90 2026-01-01T00:00:00 no no unknown clean
-  _row sessc remote 1 /nonexistent-cwd-c 90 2026-01-01T00:00:00 no no unknown clean
-  _row sessd remote 1 /nonexistent-cwd-d 90 2026-01-01T00:00:00 no no unknown clean
+  _row sessa remote 1 "$SESSA_CWD" 90 2026-01-01T00:00:00 no no unknown clean
+  _row sessb remote 1 "$SESSB_CWD" 90 2026-01-01T00:00:00 no no unknown clean
+  _row sessc remote 1 "$SESSC_CWD" 90 2026-01-01T00:00:00 no no unknown clean
+  _row sessd remote 1 "$SESSD_CWD" 90 2026-01-01T00:00:00 no no unknown clean
 } > "$FIXTURE_DIR/rows.tsv"
 
 # `deadsess` is deliberately NOT in STUB_TMUX_SESSIONS and NOT in rows.tsv —

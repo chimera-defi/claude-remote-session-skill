@@ -622,12 +622,42 @@ _sweep_evaluate_row_managed() {
 _SWEEP_CONTEXT_TRIGGER_PCT=80
 _SWEEP_CONTEXT_IDLE_FLOOR=5
 
+# _SWEEP_IDLE_CONTEXT_FLOOR_PCT — trigger A (idle) additionally requires
+# context_pct >= this floor before it fires. Idle time alone is not need: a
+# session idle 90 minutes at 8% context has nothing worth reclaiming — long
+# idle only means the prompt cache has gone cold, which makes compacting
+# CHEAP, not WORTHWHILE. This floor is deliberately much lower than
+# _SWEEP_CONTEXT_TRIGGER_PCT (80): trigger A still exists specifically for
+# sessions that are idle AND carrying meaningful context, it is not meant to
+# require near-full context the way the dedicated context trigger (B) does.
+# Unknown context (unparseable transcript, or a model absent from
+# _model_window_for's table) does NOT satisfy this floor either — seeing "80"
+# in this file already isn't enough, an unmeasurable percentage must never
+# be treated as if it cleared a numeric floor. See the eligible:idle branch
+# below.
+_SWEEP_IDLE_CONTEXT_FLOOR_PCT=40
+
 _sweep_decide() {
   local min_idle="$1" max_idle="$2" context_pct="$3" managed_only="$4"; shift 4
   local decision_a decision_b
   decision_a="$(_sweep_evaluate_row_managed "$min_idle" "$max_idle" "$managed_only" "$@")"
   if [ "$decision_a" = eligible ]; then
-    echo "eligible:idle"
+    # Idle-window-and-guards-clear is necessary but no longer sufficient: also
+    # require a MEASURED context_pct >= the floor above. Unknown context
+    # (empty/non-numeric — see _context_pct_for_row's contract) must SKIP,
+    # never silently compact just because idle alone said yes ("if we cannot
+    # measure need, we do not act") — skip:context-unknown carries its own
+    # loud note (see the sweep dispatch's VERDICT case statement) so a
+    # missing-model gap is visible instead of silent, the same failure mode
+    # the *fable* addition to _model_window_for above was diagnosed from.
+    case "$context_pct" in
+      ''|*[!0-9]*) echo "skip:context-unknown"; return ;;
+    esac
+    if [ "$context_pct" -ge "$_SWEEP_IDLE_CONTEXT_FLOOR_PCT" ]; then
+      echo "eligible:idle"
+    else
+      echo "skip:context-too-small"
+    fi
     return
   fi
   if [ "$decision_a" != "skip:outside-window" ]; then
@@ -939,6 +969,18 @@ case "$MODE" in
       case "$decision" in
         eligible:idle)          verdict="would-compact: idle" ;;
         eligible:context)       verdict="would-compact: context" ;;
+        skip:context-too-small)
+          verdict="skip: context too small"
+          detail="idle trigger needs context >= ${_SWEEP_IDLE_CONTEXT_FLOOR_PCT}% (has ${ctx_pct}%) — idle alone is not need"
+          ;;
+        skip:context-unknown)
+          verdict="skip: context unknown"
+          # Direct override, not `detail`: this is deliberately NOT the
+          # generic ctx_raw-empty note set above (that note describes
+          # degrading to idle-only, which is exactly what must NOT happen
+          # here) — see _sweep_decide's comment for why unknown must skip.
+          note="cannot verify need: context is unreadable (unparseable/missing transcript, or the model is missing from _model_window_for's table) — refusing to compact on idle alone until context can be measured; if the transcript looks fine, the model likely needs adding to _model_window_for"
+          ;;
         skip:protected)         verdict="skip: protected" ;;
         skip:pane-*)            verdict="skip: busy"; detail="live pane: ${decision#skip:pane-}" ;;
         skip:already-compacted) verdict="skip: compacted"; detail="already compacted this idle window" ;;

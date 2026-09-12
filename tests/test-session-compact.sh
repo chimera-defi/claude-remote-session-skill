@@ -309,6 +309,20 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with stubs wired u
 CLI_HOME="$(mktemp -d)"
 _reset_stub_env
 
+# _fixture_transcript <cwd> <tokens> <model> — same helper as
+# test-session-compact-sweep.sh, needed for exactly one row below (readysess)
+# that must clear the idle trigger's new context floor
+# (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without a real context percentage becoming
+# the point of this CLI-contract section (that coverage lives in
+# tests/test-session-compact-sweep.sh).
+_fixture_transcript() {
+  local cwd="$1" tokens="$2" model="$3" dir
+  dir="$CLI_HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  mkdir -p "$dir" "$cwd"
+  printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"model":"%s","usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":50}}}\n' \
+    "$model" "$tokens" > "$dir/fixture.jsonl"
+}
+
 # --- report: basic eligible/skip rows, defaults are 60 / unbounded ---------
 {
   _row readysess   remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean
@@ -345,18 +359,27 @@ has "cli-report-escape-hatch-window-text" "$out2" "idle >= 30m, <= 60m"
 # These exercise the CLI contract (flags, exit codes, verdict text) through
 # the same stubbed-session-handoff harness as the rest of this file — same
 # ready-based pane-safety stub _evaluate_row already drives everywhere else,
-# no second busy-detector or stub protocol. Rows below use /nonexistent-cwd
-# — no transcript dir exists there, so context is always "unavailable" and
-# every row degrades to idle-only (rule 6: never guess a percentage).
-# Fixture-JSONL + real-tmux-stub coverage for an ACTUAL context trigger
-# (>=80% usage) lives in tests/test-session-compact-sweep.sh, which needs
-# real files on disk to produce a real token count.
+# no second busy-detector or stub protocol. Most rows below use
+# /nonexistent-cwd — no transcript dir exists there, so context is always
+# "unavailable" (skip:context-unknown — see _sweep_decide) rather than the
+# old "degrades to idle-only" behavior. readysess is the one exception in
+# this section: its whole point is exercising the idle trigger's CLI/apply
+# mechanics (flags, pane check, marker write), which is no longer reachable
+# on unknown context, so it gets a real fixture transcript at 50% — clears
+# the idle trigger's context floor without approaching the separate 80%
+# context-trigger threshold. Fixture-JSONL + real-tmux-stub coverage for an
+# ACTUAL context trigger (>=80% usage) lives in
+# tests/test-session-compact-sweep.sh, which needs real files on disk to
+# produce a real token count.
 # ============================================================================
+
+READY_CWD="$CLI_HOME/proj-ready"
+_fixture_transcript "$READY_CWD" 500000 claude-sonnet-4-6   # 50%
 
 # --- neither --dry-run nor --apply: DEFAULT is now dry-run (used to be a
 # hard error) — exits 0, mutates nothing, but DOES check the pane -----------
 : > "$STUB_LOG"
-{ _row readysess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+{ _row readysess remote 1 "$READY_CWD" 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 STUB_READY_SESSIONS="readysess"
 outn="$(_run sweep)"; rcn=$?
 ok  "cli-sweep-bare-defaults-to-dryrun-exit0" "$rcn" "0"
