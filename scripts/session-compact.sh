@@ -176,18 +176,25 @@ print(mx or '')
 # exact positional signature ~25 existing assertions pin by hand.
 
 # _model_window_for <model-string> -> token count, or "" if unrecognized.
-# ONE table, not scattered (see design brief). Sonnet-5/Opus-5 (any point
-# release matching *sonnet*/*opus*) default to a 1,000,000-token window;
-# Haiku (*haiku*) to 200,000 — documented defaults, not a measured fact this
-# repo has anywhere else. A model string matching neither is UNKNOWN on
+# ONE table, not scattered (see design brief). Sonnet-5/Opus-5/Fable-5 (any
+# point release matching *sonnet*/*opus*/*fable*) default to a 1,000,000-token
+# window; Haiku (*haiku*) to 200,000 — documented defaults, not a measured fact
+# this repo has anywhere else. A model string matching none is UNKNOWN on
 # purpose: callers must degrade to idle-only rather than divide by a guessed
 # number — the same "never guess a percentage" rule that governs an
 # unparseable transcript (see _context_snapshot below).
+#
+# *fable* added 2026-09-12 after a live dry-run showed all three `claude-fable-5`
+# orchestrator sessions reporting "context unavailable" — their transcripts were
+# large (3.4M-4.1M) and perfectly parseable; the model simply wasn't in this
+# table, so the 80%-context trigger was silently inert on exactly the most
+# bloated sessions on the host. Adding a model here is required whenever a new
+# model starts being spawned, and the symptom is silence, not an error.
 _model_window_for() {
   case "$1" in
-    *sonnet*|*opus*) echo 1000000 ;;
-    *haiku*)         echo 200000 ;;
-    *)               echo "" ;;
+    *sonnet*|*opus*|*fable*) echo 1000000 ;;
+    *haiku*)                 echo 200000 ;;
+    *)                       echo "" ;;
   esac
 }
 
