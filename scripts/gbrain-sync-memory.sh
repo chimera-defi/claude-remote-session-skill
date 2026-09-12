@@ -15,7 +15,8 @@
 #   Never let this wrapper claim success it did not verify.
 set -uo pipefail
 
-REPO="/home/agents/agent-memory"
+AGENT_MEMORY_ROOT="${AGENT_MEMORY_ROOT:-/home/agents/agent-memory}"
+REPO="$AGENT_MEMORY_ROOT"
 
 SOURCES=(agent-claude-public agent-claude-private agent-shared-public)
 EXTRA=(agent-codex-public agent-hermes-public agent-openclaw-public agent-opencode-public)
