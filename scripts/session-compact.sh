@@ -813,10 +813,40 @@ case "$MODE" in
     TSV="$(_fetch_tsv 0)"; rc=$?
     [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
 
+    # Apply the scope filter BEFORE the eligibility pass below, not after: a
+    # non-managed session must never even reach _sweep_decide, so it can never
+    # print as a `skip:` row in the table — it is out of scope, not skipped
+    # (see the brief's item 5). n_live counts, of the allowlist's n_managed
+    # entries, how many actually matched a row in the sensor's TSV — since
+    # the sensor (session-doctor.sh idle-report) only ever enumerates
+    # currently-live claude sessions (see its own header comment), "matched a
+    # row" and "is live" are the same test; anything else in the allowlist is
+    # a stale entry and is dropped here silently (not printed as skip:stale),
+    # only counted. TSV is REASSIGNED unconditionally to the filtered result
+    # (never `${TSV_FILTERED:-$TSV}` or similar) — an EMPTY filtered result
+    # (every allowlist entry stale) must still leave TSV empty, not silently
+    # revert to the fleet-wide fetch above. That "no coalescing fallback"
+    # property is exactly what tests/test-session-compact-managed.sh's
+    # tamper-verified fail-safe assertions exist to pin.
+    scope_note=""
+    if [ "$MANAGED_ONLY" = yes ]; then
+      n_live=0
+      TSV_FILTERED=""
+      while IFS=$'\t' read -r _row_session _row_rest; do
+        [ -n "$_row_session" ] || continue
+        if [ -n "${_MANAGED_SET[$_row_session]+x}" ]; then
+          n_live=$((n_live+1))
+          TSV_FILTERED="${TSV_FILTERED}${_row_session}$(printf '\t')${_row_rest}"$'\n'
+        fi
+      done <<< "$TSV"
+      TSV="$TSV_FILTERED"
+      scope_note="; scope: managed-only ($n_managed managed, $n_live live)"
+    fi
+
     window_desc="idle >= ${MIN_IDLE}m"
     [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
 
-    echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc, OR context >= ${_SWEEP_CONTEXT_TRIGGER_PCT}% + idle >= ${_SWEEP_CONTEXT_IDLE_FLOOR}m ==="
+    echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc, OR context >= ${_SWEEP_CONTEXT_TRIGGER_PCT}% + idle >= ${_SWEEP_CONTEXT_IDLE_FLOOR}m${scope_note} ==="
     printf '%-32s %-8s %-11s %-6s %-22s %s\n' "SESSION" "IDLE(m)" "CTX_TOKENS" "CTX%" "VERDICT" "NOTE"
     n=0; n_eligible=0; n_compacted=0; n_failed=0
     while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
