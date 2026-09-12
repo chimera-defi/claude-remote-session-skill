@@ -14,6 +14,12 @@
 #
 #   report/sweep window flags: --min-idle N (default 60) --max-idle N (default 0 = unbounded)
 #   before-relay/sweep --apply: --timeout N (default 240; seconds to wait for a compact to finish)
+#   sweep --managed-only: opt-in scope filter. Only considers sessions named,
+#     one per line, in $SESSION_COMPACT_MANAGED_FILE (default
+#     $HOME/.claude/session-compact-managed; # comments/blank lines ignored).
+#     FAILS SAFE: a missing/empty/no-usable-entries allowlist means ZERO
+#     sessions in scope, NEVER fleet-wide. Without this flag, behavior is
+#     unchanged. See the sweep dispatch's own comment for the full rationale.
 #   install-timer: --force (overwrite existing unit files)
 #
 # `sweep` is intentionally a DIFFERENT eligibility model than `report` and
@@ -296,6 +302,36 @@ _validate_uint() {
     ''|*[!0-9]*) echo "session-compact: $name requires a non-negative integer, got '$ref'" >&2; exit 2 ;;
   esac
   ref=$((10#$ref))
+}
+
+# _managed_allowlist_file -> the allowlist path to read for `sweep
+# --managed-only`: $SESSION_COMPACT_MANAGED_FILE if set (tests point this at
+# a fixture so they never read or write the real file), else
+# $HOME/.claude/session-compact-managed. Pure string logic, no I/O of its own.
+_managed_allowlist_file() {
+  printf '%s\n' "${SESSION_COMPACT_MANAGED_FILE:-$HOME/.claude/session-compact-managed}"
+}
+
+# _read_managed_allowlist <path> -> one usable tmux-session-name per line to
+# stdout: each line of <path>, trimmed of leading/trailing whitespace, with
+# blank lines and whole-line '#' comments dropped. A missing file prints
+# nothing and returns 0 — NOT an error. This function has no fallback logic
+# of its own on purpose: "prints nothing" is exactly the signal `sweep`'s
+# --managed-only dispatch treats as "the allowlist is empty" (see the sweep
+# dispatch's own comment for why that must mean zero sessions in scope, never
+# fleet-wide).
+_read_managed_allowlist() {
+  local f="$1" line trimmed
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -n "$trimmed" ] || continue
+    case "$trimmed" in
+      '#'*) continue ;;
+    esac
+    printf '%s\n' "$trimmed"
+  done < "$f"
 }
 
 # _decide <min_idle> <max_idle> <tmux_session> <remote_name> <pid> <cwd> \
@@ -659,7 +695,7 @@ MODE="${1:-}"; shift || true
 
 _usage() {
   echo "usage: session-compact.sh (report [--min-idle N] [--max-idle N]" >&2
-  echo "         | sweep [--dry-run|--apply] [--min-idle N] [--max-idle N] [--timeout N]  # default: --dry-run" >&2
+  echo "         | sweep [--dry-run|--apply] [--min-idle N] [--max-idle N] [--timeout N] [--managed-only]  # default: --dry-run" >&2
   echo "         | before-relay <session> (<msg>|--file <path>) [--timeout N]" >&2
   echo "         | install-timer [--force])" >&2
   exit 2
@@ -714,14 +750,15 @@ case "$MODE" in
     # a hard error — a sweep that mutates by default is too dangerous to
     # ship, but refusing to run at all by default is needless friction for
     # what should be the routine, safe invocation.
-    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no
+    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no; MANAGED_ONLY=no
     while [ $# -gt 0 ]; do
       case "$1" in
-        --min-idle) MIN_IDLE="$2"; shift 2 ;;
-        --max-idle) MAX_IDLE="$2"; shift 2 ;;
-        --timeout)  TIMEOUT="$2"; shift 2 ;;
-        --dry-run)  DRY_RUN=yes; shift ;;
-        --apply)    APPLY=yes; shift ;;
+        --min-idle)     MIN_IDLE="$2"; shift 2 ;;
+        --max-idle)     MAX_IDLE="$2"; shift 2 ;;
+        --timeout)      TIMEOUT="$2"; shift 2 ;;
+        --dry-run)      DRY_RUN=yes; shift ;;
+        --apply)        APPLY=yes; shift ;;
+        --managed-only) MANAGED_ONLY=yes; shift ;;
         *) echo "session-compact: sweep: unrecognized argument '$1'" >&2; exit 2 ;;
       esac
     done
@@ -734,6 +771,41 @@ case "$MODE" in
       exit 2
     fi
     if [ "$DRY_RUN" = no ] && [ "$APPLY" = no ]; then DRY_RUN=yes; fi
+
+    # --managed-only opt-in scope filter (see docs/session-compaction.md and
+    # the brief this shipped under): WITHOUT this flag, everything below is a
+    # no-op and behavior is byte-identical to before. WITH it, sweep must only
+    # ever consider sessions named, one per line, in the allowlist file (see
+    # _read_managed_allowlist) — never the whole fleet. n_managed/n_live are
+    # computed here (n_managed) and cross-referenced against the sensor's live
+    # rows below (n_live) purely for the scope-line report ("N managed, M
+    # live"); a stale allowlist entry (named session no longer live) is
+    # dropped silently from the table, not reported as a skip.
+    #
+    # FAIL SAFE: an allowlist that is missing, empty, or has no usable entries
+    # (blank/comment-only) means ZERO sessions in scope — full stop, exit 0,
+    # right here, before the sensor is even consulted. This must NEVER fall
+    # through to the unfiltered fleet-wide fetch below: a misconfigured or
+    # accidentally-deleted allowlist compacting the entire host is the exact
+    # failure this flag exists to prevent, so "can't determine scope" and
+    # "scope is the whole fleet" must never be reachable by the same code
+    # path. See tests/test-session-compact-managed.sh for the tamper-verified
+    # proof that breaking this exits somewhere other than here.
+    MANAGED_FILE="$(_managed_allowlist_file)"
+    n_managed=0
+    declare -A _MANAGED_SET=()
+    if [ "$MANAGED_ONLY" = yes ]; then
+      while IFS= read -r _managed_name; do
+        [ -n "$_managed_name" ] || continue
+        n_managed=$((n_managed+1))
+        _MANAGED_SET["$_managed_name"]=1
+      done < <(_read_managed_allowlist "$MANAGED_FILE")
+      if [ "$n_managed" -eq 0 ]; then
+        echo "=== session-compact sweep --managed-only: allowlist ($MANAGED_FILE) is missing, empty, or has no usable entries — 0 sessions in scope. Refusing to fall back to fleet-wide scanning. ==="
+        echo "sweep --managed-only: 0 managed, 0 live — 0 session(s) in scope."
+        exit 0
+      fi
+    fi
 
     # Sweep must SEE every live session, not just ones already past
     # MIN_IDLE — the context trigger can fire well under it — so the sensor
