@@ -29,12 +29,15 @@ columns, no header and no summary/footer line, in this exact order:
 2. `remote_name`
 3. `pid`
 4. `cwd`
-5. `idle_minutes`
+5. `idle_minutes` (integer minutes, or the literal `never` for a session with
+   no genuine user turn at all — `session-compact.sh` handles this value
+   explicitly, so a consumer must not assume it always parses as a number)
 6. `last_genuine_user_ts` (`-` if the session was never messaged)
 7. `protected` (`yes`/`no`)
 8. `compacted_since_last_turn` (`yes`/`no`/`unknown` — see "How it works" below)
-9. `landed` (same signal as `land-check`/`worktree-stale`; `unknown`/`no-worktree` if not applicable)
-10. `dirty` (same signal as `land-check`/`worktree-stale`; `unknown`/`no-worktree` if not applicable)
+9. `landed` (same signal as `land-check`/`worktree-stale`: `yes`/`no`/`unknown`/`no-worktree`)
+10. `dirty` (same signal as `land-check`/`worktree-stale`: `clean`/`DIRTY`/`unknown` — pairs with
+    `landed=no-worktree` as `dirty=unknown`; `no-worktree` itself is never a `dirty` value)
 
 Consume it with `while IFS=$'\t' read -r ...`. `session-compact.sh` is the
 primary consumer — see
