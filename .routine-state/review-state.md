@@ -38,10 +38,20 @@ there.
   header comment (comments can drift from code same as docs can).
   Doc-only change; no script logic touched. Ran the full 17-file/636-
   assertion test suite before and after — all pass, as expected for a
-  doc-only diff. PR #66 opened; CI (`shell-tests`) was in_progress at the
-  time this state file was written (not blocking-watched, per the "never
-  use a bare `gh pr checks --watch`" rule) — a future run's PHASE 0 gate
-  should check its actual status before assuming green.
+  doc-only diff. PR #66 opened.
+
+  Codex (chatgpt-codex-connector[bot]) reviewed the PR automatically and
+  caught two real inaccuracies in the --tsv column docs this run added:
+  column 5 (`idle_minutes`) can be the literal `never` (not just an
+  integer) for a never-messaged session, and column 10 (`dirty`)'s
+  documented vocabulary was wrong (`unknown`/`no-worktree` instead of the
+  actual `clean`/`DIRTY`/`unknown` — `no-worktree` only ever appears in
+  column 9, `landed`). Both verified directly against
+  `session-doctor.sh`'s `idle_field` assignment and `_tsv_git_status()`,
+  fixed in commit 7652d5f, and replied to + resolved both review threads.
+  Lesson: even a "verified against the actual print statement" doc pass
+  can still get a field's *value vocabulary* wrong distinct from its
+  *column order* — worth double-checking both independently next time.
 
 ## findings_rejected
 
