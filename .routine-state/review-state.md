@@ -5,48 +5,57 @@ or re-litigate something an earlier run already found, fixed, or rejected.
 
 ## last_run
 
-- date: 2026-09-12
+- date: 2026-09-21
 - status: completed
 - gh_mode: mcp (gh binary absent; mcp__github__ tools used for the whole run)
 - pr: (opened this run)
-- branch: nightly-review-2026-09-12
+- branch: nightly-review-2026-09-21
 
 ## PHASE 0 gate note
 
-No open `nightly-review-*` PR existed at the start of this run. `main` was
-at a9de42b (#61, merged 2026-09-11) - includes #58, #60 and #61, all
-merged and settled since the 2026-09-10 run's state file was written (that
-file's own backlog-clear note already covered #54/#55/#58; #60 and #61
-were new work this run had not seen before).
+Open PR #66 (`nightly-review-2026-09-15`, docs: idle-report `--minutes`/
+`--tsv` flags) was still open at the start of this run - green (Codex review
+completed, no findings) and cleanly mergeable, just unmerged (waiting on a
+human; 5 straight nightly runs since, #67-#71, all filed "no changes"
+diagnostic issues rather than stacking a second PR on it). Per the phase-0
+gate this run did not touch or re-review PR #66's own diff; it read the
+diff to confirm nothing in tonight's finding overlapped it, then looked for
+something genuinely new. `main` itself is unchanged since 9e65b73
+(2026-09-15, also PR #66's base).
 
 ## findings_reported
 
-- `scripts/session-handoff.sh` `_input_box_empty`'s border-line detection
-  (`nbound`) used an awk regex `/^─+$/` to find the separator line below
-  the input box. '─' is multi-byte UTF-8; a quantified regex over it only
-  matches under a UTF-8-locale-aware multibyte engine (gawk under a UTF-8
-  locale) - mawk (Debian/Ubuntu's default `awk`) is never multibyte-aware,
-  in any locale, and GNU grep/awk under a non-UTF-8 locale (LC_ALL=C/
-  POSIX) have the same problem. This sandbox runs mawk with
-  LC_CTYPE=POSIX, and the regex silently never matched: nbound fell back
-  to "whole buffer," which pulled the status/permission-mode lines below
-  the box in as if they were draft content, so every genuinely idle pane
-  misclassified as `draft-in-input-box` and `_is_safe_to_inject` /
-  `ready` never reported safe. This landed in #60 (2026-09-11, the new
-  positive inject-safety predicate) and had not yet had a nightly-review
-  pass - confirmed via `git log -S` that the buggy line was introduced in
-  that PR, not older code.
-  Fixed by replacing the awk regex with a plain bash loop using literal
-  (non-regex) substring stripping (`${line//─/}`) to detect the
-  all-border-char line - a byte-for-byte search with no quantifier or
-  char-class involved, so it is correct regardless of locale or awk/grep
-  build. No new test file was added: the existing
-  `tests/test-session-handoff-ready.sh` already encodes the exact
-  scenarios this broke (clean-ready pane, dim-placeholder pane, cursor-
-  split placeholder, multiline-whitespace-only draft, the CLI-level
-  `ready` subcommand) and is suficient regression coverage going forward,
-  since the fix itself removes the locale/awk-implementation dependency
-  rather than papering over one symptom.
+- `scripts/session-git-prep.sh`'s worktree-collision path: `REMOTE_NAME` is
+  stable across systemd restarts of the SAME session (it's baked into that
+  session's generated `<remote>-start.sh`, not regenerated per spawn - see
+  `new-session.sh` lines ~293/358/396). So when a session's canonical repo
+  was dirty/busy at spawn time (put into an isolated worktree), EVERY
+  restart of that same session re-invokes `session-git-prep.sh` with the
+  identical `REMOTE`. The collision-handling code unconditionally suffixed
+  `$WT` with `-$$` the instant a path already existed there (the
+  "belt-and-suspenders" line), BEFORE ever checking whether that existing
+  path was already the session's own registered worktree from its prior
+  run. The subsequent "if $WT is already a valid worktree, reuse it" check
+  then only ever inspected the already-suffixed (and thus brand-new,
+  not-yet-existing) path, so it could never actually fire.
+  Reproduced directly (see repro in the PR): first invocation creates
+  worktree W1 on branch `session/<remote>`; write a WIP file into W1;
+  second invocation with the identical REMOTE against the still-dirty
+  canonical repo creates a NEW worktree W2 on a distinct `-$$`-suffixed
+  branch, emits W2 (not W1), and W1 (plus the WIP file inside it) is left
+  orphaned - registered in git but no longer referenced by anything, never
+  cleaned up automatically (`worktree-stale` only removes worktrees whose
+  OWNING session is dead, and this one's session is very much alive).
+  Fixed by moving the "already a registered worktree of this repo? reuse
+  it" check to before the suffix decision, so a stable-REMOTE restart finds
+  and reuses its own prior worktree immediately. Verified the pre-existing
+  belt-and-suspenders suffix path still fires correctly for the genuine
+  case it defends against (a stray non-worktree path occupying `$WT`).
+  +3 assertions in tests/test-session-git-prep.sh (25 -> 28): same worktree
+  path returned across two invocations with the same REMOTE, a WIP file
+  written into it survives, and `git worktree list` shows exactly 2 entries
+  (canonical + the one reused worktree), not 3. Full 17-file/639-assertion
+  suite green before and after.
 
 ## findings_rejected
 
@@ -54,62 +63,73 @@ were new work this run had not seen before).
 
 ## verified_already_fixed (not re-reported, not re-litigated)
 
-- **session-alias poisoning**: still fully fixed and covered (80
-  assertions in tests/test-session-alias.sh; guard fires as expected in
-  this run's baseline). Do not re-propose this validation.
+- **session-alias poisoning**: still fully fixed and covered (80 assertions
+  in tests/test-session-alias.sh; guard fires as expected in this run's
+  baseline, including the case-folded `AH-`/`Ah-` prefix check and the
+  every-`[0-9]{4}-[0-9]{4}`-pair-checked date logic). Do not re-propose this
+  validation.
+- **session-git-prep.sh worktree-dir-suffixed/branch-unsuffixed quirk on a
+  GENUINE collision** (two different sessions/REMOTEs racing for the same
+  path): this is intentional, documented, and already correctly
+  special-cased by `session-doctor.sh` `worktree-stale` (prefers a branch
+  match over a dirname match) and `session-preserve.sh` `worktree_of()`
+  (same ordering, with an explicit regression test for it). Not a bug -
+  confirmed via a targeted repro this run that a stray non-worktree path at
+  `$WT` still correctly falls through to the `-$$` retry. Only the
+  SAME-REMOTE-restart case above was broken.
+- **`--days`/`--minutes` mutual exclusivity in `session-doctor.sh
+  idle-report`** (claimed in PR #66's still-open doc update): re-verified
+  against the actual flag-parsing block (`DAYS_SET`/`MINUTES_SET` check,
+  lines ~76-78) - correctly enforced, doc claim is accurate.
 - **README.md `--alias` persistence doc-drift**: merged 2026-09-11 as
   0237bbb (#54). Settled.
 - **session-preserve.sh `--wip` false SAFE-TO-REAP on a failed commit**:
   merged 2026-09-11 as 890ea3b (#55). Settled.
 - **session-handoff.sh `send --file` masking read errors**: merged
   2026-09-11 as 12bf3b5 (#58). Settled.
+- **session-handoff.sh mawk/non-UTF8-locale border detection**: merged
+  2026-09-12 as 5601fc0 (#62). Settled.
+- **session-preserve.sh fail-open when rundir_of() finds no live proc**:
+  merged 2026-09-12 as 9e65b73 (#63). Settled.
+- **reap-local doesn't gate on session-preserve**: confirmed (again) that
+  `do_reap()` only touches the systemd unit, start script and tmux session
+  - never worktree files/dirs - so no live-data-destruction path exists
+  through it. Consistent with the 2026-09-14 through 2026-09-20 runs'
+  conclusion; not re-flagging further absent a change in that area.
 
 ## attempt_counts
 
-- files read this run: this state file (from the 2026-09-10 run, carried
-  onto `main` via #58), SKILL.md, README.md, `references/*.md`, all of
-  `scripts/`, focusing on what changed since 2026-09-10 (`session-
-  compact.sh` is new; `session-handoff.sh`, `session-doctor.sh`,
-  `session-preserve.sh` gained substantial new code in #60/#61).
-- test suite: ran all 17 tests/test-*.sh files on `main` before starting.
-  16 of 17 files were clean; `test-session-handoff-ready.sh` showed
-  49 pass / 16 fail - all 16 failures traced to the single nbound bug
-  above. After the fix: all 17 files clean, 65/65 in that file, no
-  regressions elsewhere (spot-checked `session-compact.sh` does not call
-  into `_input_box_empty`/`_safety_reason`, so this fix is self-contained).
-- searched the rest of `scripts/` for the same class of bug (a quantified
-  regex bracket/`+`/`*` wrapping a non-ASCII multi-byte literal) - found
-  none outside the fixed line; the other non-ASCII regex uses in
-  session-handoff.sh (`_is_working`'s spinner-glyph class, `_input_region`'s
-  `/❯/` literal, the `[^❯]*` prompt-strip) are either unquantified literal
-  matches or already covered green by passing tests, so left as-is.
-- PR CI: watched via the PR's check-runs rollup after pushing (never a
-  bare blocking `gh pr checks --watch`).
+- files read this run: this state file, SKILL.md, README.md,
+  `references/*.md`, all of `scripts/` (with a full line-by-line read of
+  `session-git-prep.sh` specifically, since it had gone the longest without
+  a dedicated deep pass per prior state files' notes), `tests/test-session-
+  git-prep.sh`.
+- test suite: ran all 17 `tests/test-*.sh` files on `main` (9e65b73) before
+  starting - all green, 636 assertions. After the fix: 17 files, 639
+  assertions, still green (net +3 from the new regression coverage).
+- reproduced the bug live in a scratch repo (two `session-git-prep.sh`
+  invocations with the same REPO/SESS/REMOTE against a dirty canonical
+  tree) before writing any fix, and re-ran the same repro after the fix to
+  confirm the worktree is now reused and the WIP file survives.
+- PR CI: will be checked via the PR's check-runs/status rollup after
+  pushing (never a bare blocking `gh pr checks --watch`).
 
 ## Notes for future runs
 
-- The reap/recycle "safe to reap" agreement between `session-preserve.sh`
-  and `session-registry.sh`, flagged by the 2026-09-10 run as lower-
-  scrutiny surface, was not revisited this run - this run's budget went
-  to the mawk/locale bug instead, which was a live, currently-broken
-  predicate rather than a hypothetical edge case. Worth a look next time
-  nothing more urgent turns up.
-- `session-compact.sh` (new in #60/#61) and its two test files
-  (`test-session-compact.sh`, 114 assertions) were read but not
-  line-by-line audited to the same depth as `session-handoff.sh` this
-  run. It does not depend on the fixed function, so it is unaffected by
-  tonight's bug, but it is a large, fresh piece of code that could use a
-  dedicated pass.
-- General lesson worth restating: any future regex over one of this
-  repo's non-ASCII glyphs (❯, ─, the spinner set, NBSP) needs a `git log
-  -S`-style check for whether it is QUANTIFIED (`+`, `*`, or a `{...}`
-  count) over the multi-byte literal itself. Unquantified literal
-  matches (`/❯/`, `[^❯]*` stopping at a single literal) are fine in any
-  locale/awk build; a quantified span over the multi-byte bytes
-  themselves (`─+`) is the pattern that silently breaks under mawk or a
-  non-UTF-8 locale. This run's fix is the second time this file has
-  needed a byte-vs-character care note (see `_input_box_empty`'s NBSP
-  comment from an earlier run) - it may be worth eventually enforcing a
-  UTF-8 locale explicitly at the top of these scripts instead of relying
-  on every regex author to remember this, but that is a bigger,
-  cross-cutting change and out of scope for one bounded nightly fix.
+- PR #66 has now been open and green for 6+ nights awaiting human merge.
+  Nothing to do about that from here (never self-approve/merge), but if it
+  keeps sitting, it may be worth a human noticing `docs/idle-report.md`'s
+  fix is still unmerged.
+- `session-compact.sh` (664 lines, audited in full per the 2026-09-14 run's
+  #65) has not been re-read line-by-line since; still nothing prompting a
+  fresh pass.
+- The general lesson from tonight: a script that's "correct" in the common
+  case (fresh spawn) can still hide a stale-cached-decision bug in its
+  RESTART/re-invocation path, especially when a value the script treats as
+  disposable/unique (here, assuming `REMOTE` looks timestamped-and-thus-
+  fresh, per the very comment this run removed) is actually stable at a
+  higher layer (systemd unit / generated start script) that the script
+  itself never sees. Worth asking, for any script keyed by an
+  externally-supplied "session identity" value, whether that value is
+  really fresh-per-invocation or persistent-per-session before writing
+  collision-avoidance logic that assumes the former.
