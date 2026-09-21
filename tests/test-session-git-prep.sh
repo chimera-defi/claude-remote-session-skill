@@ -139,4 +139,18 @@ if command -v tmux >/dev/null 2>&1; then
   ok "legacy-lock-canonical-branch-unchanged" "$(git -C "$R8" rev-parse --abbrev-ref HEAD)" "main"
 fi
 
+# 11. REMOTE is stable across systemd restarts of the SAME session (baked into
+# its generated start script, not regenerated per spawn) — so a second run
+# with the SAME remote name against a still-dirty repo must REUSE the worktree
+# from the first run, not orphan it into a fresh -$$-suffixed one and lose any
+# uncommitted work sitting inside it. Regression for exactly that data loss.
+R9="$WORK/repo9"; mkrepo "$R9"
+echo "uncommitted" > "$R9/dirty.txt"
+out1="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
+echo "in-progress work" > "$out1/wip.txt"
+out2="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
+ok "restart-reuses-same-worktree" "$out2" "$out1"
+ok "restart-keeps-wip-file" "$([ -f "$out2/wip.txt" ] && echo yes || echo no)" "yes"
+ok "restart-no-orphan-worktree" "$(git -C "$R9" worktree list | wc -l | tr -d ' ')" "2"
+
 echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
