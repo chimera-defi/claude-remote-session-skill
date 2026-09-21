@@ -166,7 +166,7 @@ echo "uncommitted" > "$R10/dirty.txt"
 # Force the PID-suffix path by pre-occupying the unsuffixed dir with a stray
 # (non-worktree) directory, producing a real worktree at "remote-prefix-<pid>".
 mkdir -p "$HOME/.claude/worktrees/remote-prefix"
-out_first="$(bash "$SGP" "$R10" sess-prefix remote-prefix 2>/dev/null)"
+bash "$SGP" "$R10" sess-prefix remote-prefix >/dev/null 2>/dev/null
 # Now make the UNSUFFIXED path an unrelated, non-worktree directory again —
 # it just happens to be a path-prefix of the real suffixed worktree above.
 rm -rf "$HOME/.claude/worktrees/remote-prefix"
