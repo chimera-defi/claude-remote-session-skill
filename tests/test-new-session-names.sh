@@ -64,6 +64,28 @@ DATEEOF
   has "same-minute-collision-suffixed" "$second_session" '^ah_cft-0101-0000-2$'
 fi
 
+# Regression: a name whose tmux session is DEAD but whose worktree is still
+# registered on disk (a reaped-but-uncleaned session — reap-local never
+# touches worktree files) must ALSO be treated as taken, not reused. Reusing
+# it would let a brand-new spawn silently inherit a reaped session's
+# possibly-dirty worktree via session-git-prep.sh's own (intentional) same-
+# REMOTE-restart reuse logic (found in review, chatgpt-codex-connector, PR
+# #72). No live tmux session is created here at all — only the worktree dir.
+DATESTUB2="$(mktemp -d)"
+cat > "$DATESTUB2/date" <<'DATEEOF'
+#!/usr/bin/env bash
+case "$1" in
+  +%m%d-%H%M) echo "0101-0000" ;;
+  *) exec /usr/bin/env date "$@" ;;
+esac
+DATEEOF
+chmod +x "$DATESTUB2/date"
+WTHOME="$(mktemp -d)"
+mkdir -p "$WTHOME/.claude/worktrees/ah-retained-wt-test-0101-0000"
+retained="$(HOME="$WTHOME" PATH="$DATESTUB2:$PATH" bash "$NS" --dry-run retained-wt-test 2>/dev/null)"
+rm -rf "$DATESTUB2" "$WTHOME"
+has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=ah-retained-wt-test-0101-0000-2'
+
 # ── Real (non-dry-run) collision suffix must also be "-2", not "-3" ──────────
 # (found by Codex review on this PR): the bounded mkdir-lock loop added above
 # built the next candidate name AFTER incrementing n instead of before, so the
