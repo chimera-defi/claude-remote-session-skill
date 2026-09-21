@@ -8,7 +8,7 @@ or re-litigate something an earlier run already found, fixed, or rejected.
 - date: 2026-09-21
 - status: completed
 - gh_mode: mcp (gh binary absent; mcp__github__ tools used for the whole run)
-- pr: (opened this run)
+- pr: https://github.com/chimera-defi/claude-remote-session-skill/pull/72
 - branch: nightly-review-2026-09-21
 
 ## PHASE 0 gate note
@@ -56,6 +56,35 @@ something genuinely new. `main` itself is unchanged since 9e65b73
   written into it survives, and `git worktree list` shows exactly 2 entries
   (canonical + the one reused worktree), not 3. Full 17-file/639-assertion
   suite green before and after.
+
+- **Two follow-on bugs in the fix above, both caught by Codex's PR review
+  (chatgpt-codex-connector) on PR #72 itself, both verified and fixed same
+  night:**
+  1. The reuse check's `grep -qF "worktree $WT"` was a fixed-string
+     SUBSTRING search, not an exact match. An unsuffixed `$WT` that is a
+     literal path prefix of a real, unrelated, already-registered
+     `-<pid>`-suffixed worktree (e.g. `.../remote-y` vs a genuinely
+     registered `.../remote-y-393`) matched anyway, so the script emitted
+     the unrelated directory as the run dir even though it wasn't a git
+     worktree at all (`rev-parse --is-inside-work-tree` failed on it once
+     emitted) - reproduced directly. Fixed with `grep -qxF` (exact
+     whole-line match). +2 assertions in tests/test-session-git-prep.sh
+     (28 -> 30).
+  2. `new-session.sh`'s same-minute collision-avoidance only checks LIVE
+     tmux sessions, not retained worktrees. `reap-local` never removes
+     worktree files, so a reaped session's worktree can outlive it;
+     respawning the same folder+alias within the same clock-minute (ID is
+     minute-granularity) could reissue that reaped session's exact
+     REMOTE_NAME, and the (intentional) same-REMOTE reuse logic from
+     finding #1 above would then silently hand the brand-new session the
+     reaped session's leftover, possibly-dirty worktree. Fixed by adding
+     `name_taken()` to new-session.sh, checked in both the --dry-run and
+     real (mkdir-lock) collision loops: a candidate is taken if EITHER a
+     live tmux session exists under it OR
+     `~/.claude/worktrees/<remote_name>` still exists on disk. +1
+     assertion in tests/test-new-session-names.sh (41 -> 42).
+  Both threads replied to and resolved on PR #72. Full suite after both
+  fixes: 17 files, 643 assertions, green.
 
 ## findings_rejected
 
