@@ -133,7 +133,7 @@ REASON="dirty=$([ -n "$DIRTY" ] && echo yes || echo no) busy=$([ -n "$BUSY" ] &&
 # suffix below: unconditionally suffixing here used to orphan the prior
 # worktree, and any uncommitted work inside it, on every restart of a session
 # whose canonical repo was dirty/busy at spawn time.
-if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qF "worktree $WT"; then
+if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $WT"; then
   log "worktree at $WT already registered (prior run of '$REMOTE'); reusing -> $WT"
   emit "$WT"
 fi
