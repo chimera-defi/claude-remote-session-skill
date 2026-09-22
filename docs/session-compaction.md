@@ -7,8 +7,8 @@ remembered; this makes it a checkable, testable operation.
 
 ```
 session-compact.sh report                      # who is eligible, and why/why not — mutates nothing
-session-compact.sh sweep --dry-run             # what an idle-window sweep WOULD compact
-session-compact.sh sweep --apply               # actually compact the idle window
+session-compact.sh sweep --dry-run             # what the idle/high-context sweep WOULD compact
+session-compact.sh sweep --apply               # compact eligible idle/high-context sessions
 session-compact.sh before-relay <sess> <msg>   # compact IF stale, verify, then relay the message
 session-compact.sh install-timer               # write the systemd units (does NOT enable them)
 ```
@@ -269,3 +269,7 @@ sweeping and the cache question is settled.
   those sessions actually gets used again.
 
 Cadence / where this fits: see [`references/session-lifecycle.md`](../references/session-lifecycle.md).
+
+## Managed-orchestrator high-context policy (2026-09-22)
+
+The fleet-wide high-context sweep trigger remains **80% of the model context window plus 5 minutes idle**. For allowlisted managed orchestrators invoked with --managed-only, the high-context trigger is deliberately lower at **50% plus 5 minutes idle**. The idle-window path still requires its separate 40% context floor. This keeps compaction out of active turns while ensuring persistent orchestrators checkpoint/compact well before context pressure becomes acute. Long-running orchestrators should additionally create a durable checkpoint and compact at major phase boundaries and at least once per active 24-hour period.

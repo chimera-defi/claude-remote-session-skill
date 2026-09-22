@@ -12,9 +12,9 @@
 # though: unknown context now makes the idle trigger skip (skip:context-
 # unknown — see _sweep_decide's own comment), so a nonexistent-cwd row can no
 # longer reach a deterministic "would-compact: idle" the way it used to. The
-# four live sessions below all get a real fixture transcript at 50% — clears
+# four live sessions below all get a real fixture transcript at 45% — clears
 # the idle trigger's context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without
-# approaching the separate 80% context-trigger threshold — purely so "did
+# approaching the separate 50% managed context-trigger threshold — purely so "did
 # this session get evaluated at all" stays unambiguous from the verdict
 # column; the context MATH itself is exercised in
 # tests/test-session-compact-sweep.sh, not here.
@@ -111,9 +111,9 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wire
 
 # Four LIVE sessions (all present in tmux AND in the sensor's TSV), all idle
 # 90m (over the default 60m idle trigger), landed=no dirty=clean (never
-# landed-and-clean), compacted=no (never already-compacted), context=50%
+# landed-and-clean), compacted=no (never already-compacted), context=45%
 # (clears the idle trigger's context floor without approaching the separate
-# 80% context-trigger threshold) — so an IN-SCOPE row always reaches a clean
+# 50% managed context-trigger threshold) — so an IN-SCOPE row always reaches a clean
 # "would-compact: idle" verdict with nothing else masking it.
 export STUB_TMUX_SESSIONS="sessa sessb sessc sessd"
 export STUB_TMUX_BUSY_SESSIONS=""
@@ -124,10 +124,10 @@ SESSA_CWD="$FAKE_HOME/proj-sessa"
 SESSB_CWD="$FAKE_HOME/proj-sessb"
 SESSC_CWD="$FAKE_HOME/proj-sessc"
 SESSD_CWD="$FAKE_HOME/proj-sessd"
-_fixture_transcript "$SESSA_CWD" 500000 claude-sonnet-4-6
-_fixture_transcript "$SESSB_CWD" 500000 claude-sonnet-4-6
-_fixture_transcript "$SESSC_CWD" 500000 claude-sonnet-4-6
-_fixture_transcript "$SESSD_CWD" 500000 claude-sonnet-4-6
+_fixture_transcript "$SESSA_CWD" 450000 claude-sonnet-4-6
+_fixture_transcript "$SESSB_CWD" 450000 claude-sonnet-4-6
+_fixture_transcript "$SESSC_CWD" 450000 claude-sonnet-4-6
+_fixture_transcript "$SESSD_CWD" 450000 claude-sonnet-4-6
 {
   _row sessa remote 1 "$SESSA_CWD" 90 2026-01-01T00:00:00 no no unknown clean
   _row sessb remote 1 "$SESSB_CWD" 90 2026-01-01T00:00:00 no no unknown clean

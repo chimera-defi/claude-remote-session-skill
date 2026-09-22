@@ -26,7 +26,7 @@
 # `before-relay` (which still run on the idle-window model below, UNCHANGED):
 #   trigger A: idle >= --min-idle minutes (default 60 — same threshold/flag
 #              this repo's sweep always had)
-#   trigger B: context >= 80% of the model's window AND idle >= 5 minutes
+#   trigger B: context >= 80% fleet-wide, or >=50% under --managed-only, AND idle >= 5 minutes
 #              (the 5-minute floor exists so a session is never compacted
 #              mid-turn purely because it is context-heavy)
 # Both triggers are evaluated via _evaluate_row (see _sweep_decide) — NOT a
@@ -193,7 +193,7 @@ print(mx or '')
 # *fable* added 2026-09-12 after a live dry-run showed all three `claude-fable-5`
 # orchestrator sessions reporting "context unavailable" — their transcripts were
 # large (3.4M-4.1M) and perfectly parseable; the model simply wasn't in this
-# table, so the 80%-context trigger was silently inert on exactly the most
+# table, so the high-context trigger was silently inert on exactly the most
 # bloated sessions on the host. Adding a model here is required whenever a new
 # model starts being spawned, and the symptom is silence, not an error.
 _model_window_for() {
@@ -271,8 +271,8 @@ else:
 
 # _context_pct_for_row <cwd> -> "tokens\tpct" or "" (degraded — no transcript,
 # no usable usage entry, or a model _model_window_for doesn't recognize).
-# Callers MUST treat "" as "context trigger unavailable, fall back to
-# idle-only for this session and report the degradation" — never substitute a
+# Callers MUST treat "" as "context unavailable: skip need-based compaction
+# for this session and report the degradation" — never substitute a
 # guessed window just to produce a number.
 _context_pct_for_row() {
   local cwd="$1" raw tokens model window
@@ -620,6 +620,7 @@ _sweep_evaluate_row_managed() {
 #              trigger either, only on whichever guard (already-compacted,
 #              protected, busy pane, ...) legitimately still applies.
 _SWEEP_CONTEXT_TRIGGER_PCT=80
+_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT=50
 _SWEEP_CONTEXT_IDLE_FLOOR=5
 
 # _SWEEP_IDLE_CONTEXT_FLOOR_PCT — trigger A (idle) additionally requires
@@ -627,11 +628,11 @@ _SWEEP_CONTEXT_IDLE_FLOOR=5
 # session idle 90 minutes at 8% context has nothing worth reclaiming — long
 # idle only means the prompt cache has gone cold, which makes compacting
 # CHEAP, not WORTHWHILE. This floor is deliberately much lower than
-# _SWEEP_CONTEXT_TRIGGER_PCT (80): trigger A still exists specifically for
+# _SWEEP_CONTEXT_TRIGGER_PCT (80 fleet default; 50 for --managed-only): trigger A still exists specifically for
 # sessions that are idle AND carrying meaningful context, it is not meant to
 # require near-full context the way the dedicated context trigger (B) does.
 # Unknown context (unparseable transcript, or a model absent from
-# _model_window_for's table) does NOT satisfy this floor either — seeing "80"
+# _model_window_for's table) does NOT satisfy this floor either — seeing a numeric trigger
 # in this file already isn't enough, an unmeasurable percentage must never
 # be treated as if it cleared a numeric floor. See the eligible:idle branch
 # below.
@@ -639,7 +640,8 @@ _SWEEP_IDLE_CONTEXT_FLOOR_PCT=40
 
 _sweep_decide() {
   local min_idle="$1" max_idle="$2" context_pct="$3" managed_only="$4"; shift 4
-  local decision_a decision_b
+  local decision_a decision_b context_trigger_pct="$_SWEEP_CONTEXT_TRIGGER_PCT"
+  if [ "$managed_only" = yes ]; then context_trigger_pct="$_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT"; fi
   decision_a="$(_sweep_evaluate_row_managed "$min_idle" "$max_idle" "$managed_only" "$@")"
   if [ "$decision_a" = eligible ]; then
     # Idle-window-and-guards-clear is necessary but no longer sufficient: also
@@ -670,7 +672,7 @@ _sweep_decide() {
     return
   fi
   # Same "cannot measure need => do not act" rule as trigger A above: unknown
-  # context must not be treated as "below 80%, therefore outside-window" —
+  # context must not be treated as "below the configured threshold, therefore outside-window" —
   # that framing is only true when context IS known and simply too low. An
   # unmeasurable context is a DIFFERENT problem (a table gap or an unreadable
   # transcript) and gets the SAME distinct, loud skip:context-unknown code
@@ -679,7 +681,7 @@ _sweep_decide() {
   case "$context_pct" in
     ''|*[!0-9]*) echo "skip:context-unknown"; return ;;
   esac
-  if [ "$context_pct" -ge "$_SWEEP_CONTEXT_TRIGGER_PCT" ]; then
+  if [ "$context_pct" -ge "$context_trigger_pct" ]; then
     echo "eligible:context"
   else
     echo "skip:outside-window"
@@ -936,7 +938,9 @@ case "$MODE" in
     window_desc="idle >= ${MIN_IDLE}m"
     [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
 
-    echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc, OR context >= ${_SWEEP_CONTEXT_TRIGGER_PCT}% + idle >= ${_SWEEP_CONTEXT_IDLE_FLOOR}m${scope_note} ==="
+    context_trigger_pct="$_SWEEP_CONTEXT_TRIGGER_PCT"
+    [ "$MANAGED_ONLY" = yes ] && context_trigger_pct="$_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT"
+    echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc, OR context >= $context_trigger_pct% + idle >= ${_SWEEP_CONTEXT_IDLE_FLOOR}m$scope_note ==="
     printf '%-32s %-8s %-11s %-6s %-22s %s\n' "SESSION" "IDLE(m)" "CTX_TOKENS" "CTX%" "VERDICT" "NOTE"
     n=0; n_eligible=0; n_compacted=0; n_failed=0
     while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
