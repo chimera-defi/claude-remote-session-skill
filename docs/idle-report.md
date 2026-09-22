@@ -1,17 +1,47 @@
 # `session-doctor idle-report` — the reusable "candidates to reap" list
 
-`session-doctor.sh idle-report [--days N]` lists **live local** claude
-`--remote-control` sessions that have had **no `type:user` transcript activity in
-the last N days** (default **N=2** = "today or yesterday"). It exists so this
-stops getting hand-rolled ad hoc every time someone wants to clean up idle
+`session-doctor.sh idle-report [--days N | --minutes N] [--tsv]` lists **live
+local** claude `--remote-control` sessions that have had **no `type:user`
+transcript activity in the last N days** (default **N=2** = "today or
+yesterday") or, with `--minutes`, the last N minutes. It exists so this stops
+getting hand-rolled ad hoc every time someone wants to clean up idle
 sessions — it's the productionized version of a prototype that kept getting
 rewritten in sessions-management conversations.
 
 ```
-session-doctor.sh idle-report            # idle ≥2 days (default)
-session-doctor.sh idle-report --days 7   # idle ≥7 days
-session-doctor.sh idle-report --days 0   # no threshold — list every live session
+session-doctor.sh idle-report               # idle ≥2 days (default)
+session-doctor.sh idle-report --days 7      # idle ≥7 days
+session-doctor.sh idle-report --days 0      # no threshold — list every live session
+session-doctor.sh idle-report --minutes 30  # idle ≥30 minutes — finer-grained than --days
+session-doctor.sh idle-report --tsv         # machine-readable rows, no header/summary (see below)
 ```
+
+`--minutes` and `--days` are mutually exclusive (giving both is a usage
+error, not additive) — pick whichever granularity fits. `--tsv` combines with
+either.
+
+## `--tsv` output (for scripts, e.g. `session-compact.sh`)
+
+With `--tsv`, each still-idle session prints as one line of 10 tab-separated
+columns, no header and no summary/footer line, in this exact order:
+
+1. `tmux_session`
+2. `remote_name`
+3. `pid`
+4. `cwd`
+5. `idle_minutes` (integer minutes, or the literal `never` for a session with
+   no genuine user turn at all — `session-compact.sh` handles this value
+   explicitly, so a consumer must not assume it always parses as a number)
+6. `last_genuine_user_ts` (`-` if the session was never messaged)
+7. `protected` (`yes`/`no`)
+8. `compacted_since_last_turn` (`yes`/`no`/`unknown` — see "How it works" below)
+9. `landed` (same signal as `land-check`/`worktree-stale`: `yes`/`no`/`unknown`/`no-worktree`)
+10. `dirty` (same signal as `land-check`/`worktree-stale`: `clean`/`DIRTY`/`unknown` — pairs with
+    `landed=no-worktree` as `dirty=unknown`; `no-worktree` itself is never a `dirty` value)
+
+Consume it with `while IFS=$'\t' read -r ...`. `session-compact.sh` is the
+primary consumer — see
+[`session-compaction.md`](session-compaction.md).
 
 ## Report-only — it never kills (same boundary as `registry-stale`)
 
