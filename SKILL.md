@@ -165,6 +165,27 @@ Connect from Claude Code app: look for `ah-<alias>-<MMDD-HHMM>` in remote sessio
 Each spawn gets a unique name — never collides with same-minute sessions.
 (Scripts are local-only — see Key Rules.)
 
+## Fleet/server health: fleet-status
+
+"How's the fleet/server doing, any old sessions, is everything healthy" is a
+recurring ask — don't hand-derive it from a pile of separate commands each
+time:
+
+```bash
+fleet-status              # everything: sessions + host/gbrain + rtk telemetry
+fleet-status --sessions   # sessions section only (tmux/systemd/registry/stale worktrees)
+fleet-status --host       # host/gbrain section only
+```
+
+It composes existing read-only tools rather than re-implementing them:
+`session-doctor report` + `worktree-stale` for sessions, the latest
+`server-health-audit.service` JSON snapshot (`~/.gbrain/server-health/runs/<ts>/summary.json`,
+refreshed every ~15min) for host resources and gbrain health instead of
+re-running `gbrain doctor` live every call, and `rtk gain` for token-savings
+telemetry. Prints the snapshot's age so staleness is visible. On-demand only
+— no timer runs this automatically; invoke it whenever you want the composite
+view instead of re-deriving the command list from scratch.
+
 ## Finding stale sessions: session-registry
 
 "Which sessions are older than N days" is a cheap, repeatable query — no manual

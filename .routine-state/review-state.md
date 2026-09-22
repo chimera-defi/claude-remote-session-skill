@@ -149,6 +149,8 @@ something genuinely new. `main` itself is unchanged since 9e65b73
   Nothing to do about that from here (never self-approve/merge), but if it
   keeps sitting, it may be worth a human noticing `docs/idle-report.md`'s
   fix is still unmerged.
+  Update: the operator merged both #66 and this run's #72 directly on
+  2026-09-22 (outside a nightly run). `main` now includes both.
 - `session-compact.sh` (664 lines, audited in full per the 2026-09-14 run's
   #65) has not been re-read line-by-line since; still nothing prompting a
   fresh pass.
