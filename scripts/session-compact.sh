@@ -6,16 +6,48 @@
 # truth.
 #
 # Usage:
-#   session-compact.sh report                        # who is eligible and why/why not — mutates nothing
-#   session-compact.sh sweep --dry-run                # what a sweep WOULD compact
-#   session-compact.sh sweep --apply                  # actually compact
+#   session-compact.sh report                        # who is eligible and why/why not (idle-window model) — mutates nothing
+#   session-compact.sh sweep (--dry-run|--apply)      # context-aware two-trigger sweep (idle OR context); default (no flag) is --dry-run
 #   session-compact.sh before-relay <session> <msg>   # compact IF stale, verify, then relay
 #   session-compact.sh before-relay <session> --file <path>
 #   session-compact.sh install-timer                  # write systemd units; enable NOTHING
 #
 #   report/sweep window flags: --min-idle N (default 60) --max-idle N (default 0 = unbounded)
 #   before-relay/sweep --apply: --timeout N (default 240; seconds to wait for a compact to finish)
+#   sweep --managed-only: opt-in scope filter. Only considers sessions named,
+#     one per line, in $SESSION_COMPACT_MANAGED_FILE (default
+#     $HOME/.claude/session-compact-managed; # comments/blank lines ignored).
+#     FAILS SAFE: a missing/empty/no-usable-entries allowlist means ZERO
+#     sessions in scope, NEVER fleet-wide. Without this flag, behavior is
+#     unchanged. See the sweep dispatch's own comment for the full rationale.
 #   install-timer: --force (overwrite existing unit files)
+#
+# `sweep` is intentionally a DIFFERENT eligibility model than `report` and
+# `before-relay` (which still run on the idle-window model below, UNCHANGED):
+#   trigger A: idle >= --min-idle minutes (default 60 — same threshold/flag
+#              this repo's sweep always had)
+#   trigger B: context >= 80% fleet-wide, or >=50% under --managed-only, AND idle >= 5 minutes
+#              (the 5-minute floor exists so a session is never compacted
+#              mid-turn purely because it is context-heavy)
+# Both triggers are evaluated via _evaluate_row (see _sweep_decide) — NOT a
+# separate, narrower reimplementation — specifically so protected/landed-and-
+# clean/already-compacted/pane-safety all still apply to trigger B exactly as
+# they already do to trigger A. This matters concretely for already-
+# compacted: idle-report deliberately does NOT reset idle_minutes across a
+# compact (a /compact summary is not a "genuine" turn — see idle-report's own
+# comment), so without routing back through _decide's compacted-column/
+# marker check, a low-context idle session would get /compact re-issued on
+# every single sweep run, forever.
+# Context % is read directly from the session's own transcript (last
+# assistant message's usage: input + cache_read + cache_creation tokens,
+# divided by a per-model window — see _model_window_for). If that can't be
+# read/parsed, the session degrades to idle-only (trigger A only) and the
+# report says so — it never guesses a percentage. `sweep --apply` reuses
+# _do_compact/_write_marker unchanged (the SAME compaction mechanism report/
+# before-relay already use) and is just as fail-closed as it always was: a
+# compact that can't be verified logs FAILED and moves to the next session,
+# writing no marker. See _sweep_decide's comment for the exact rule and
+# docs/session-compaction.md for rationale once this lands.
 #
 # Why the default window is 60min+, unbounded (NOT the original 30-60min):
 # Claude Code opts into a 1-hour prompt-cache TTL for ordinary interactive
@@ -140,6 +172,169 @@ print(mx or '')
 " "$dir" "$baseline"
 }
 
+# ── sweep v2: context-aware trigger (idle-OR-context, busy-checked) ─────────
+# Added on top of the idle-window model above WITHOUT touching it: `report`
+# and `before-relay` still run entirely on `_decide`/`_evaluate_row`, unedited,
+# so every one of their existing tests stays a valid contract. `sweep` gets
+# its own trigger model below because its thresholds are genuinely different
+# in shape (idle-window vs. OR-of-two-triggers) — bolting that onto `_decide`
+# would mean adding a context-pct positional argument to a function whose
+# exact positional signature ~25 existing assertions pin by hand.
+
+# _model_window_for <model-string> -> token count, or "" if unrecognized.
+# ONE table, not scattered (see design brief). Sonnet-5/Opus-5/Fable-5 (any
+# point release matching *sonnet*/*opus*/*fable*) default to a 1,000,000-token
+# window; Haiku (*haiku*) to 200,000 — documented defaults, not a measured fact
+# this repo has anywhere else. A model string matching none is UNKNOWN on
+# purpose: callers must degrade to idle-only rather than divide by a guessed
+# number — the same "never guess a percentage" rule that governs an
+# unparseable transcript (see _context_snapshot below).
+#
+# *fable* added 2026-09-12 after a live dry-run showed all three `claude-fable-5`
+# orchestrator sessions reporting "context unavailable" — their transcripts were
+# large (3.4M-4.1M) and perfectly parseable; the model simply wasn't in this
+# table, so the high-context trigger was silently inert on exactly the most
+# bloated sessions on the host. Adding a model here is required whenever a new
+# model starts being spawned, and the symptom is silence, not an error.
+_model_window_for() {
+  case "$1" in
+    *sonnet*|*opus*|*fable*) echo 1000000 ;;
+    *haiku*)                 echo 200000 ;;
+    *)                       echo "" ;;
+  esac
+}
+
+# _context_snapshot <cwd> -> "tokens\tmodel" for the LAST assistant message
+# (by timestamp, across every *.jsonl in the cwd's transcript dir — same
+# multi-file-per-cwd handling _compact_marker_newer uses above) that carries a
+# real `message.usage` object, or "" if the transcript dir is missing, has no
+# such message, or every candidate's model is the literal string
+# "<synthetic>". That synthetic-model exclusion is load-bearing, not
+# defensive filler: a REAL transcript on this host (2026-08-26,
+# .../agent-host-control-framework) carries a trailing assistant entry with
+# model="<synthetic>" and all-zero usage AFTER the last real turn (a hook- or
+# statusline-injected pseudo-turn, not a model call) — picking it as "last"
+# would silently report 0 tokens / 0% for a session that is actually at
+# whatever its last REAL turn left it at. Tokens = input_tokens +
+# cache_read_input_tokens + cache_creation_input_tokens (current context as
+# of that turn — NOT + output_tokens, which hasn't been read back in as
+# context by anything yet). "" on any parse failure — never a guessed number.
+_context_snapshot() {
+  local cwd="$1" dir
+  dir="$HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  [ -d "$dir" ] || { echo ""; return; }
+  python3 -c "
+import sys, glob, json, os
+d = sys.argv[1]
+best_ts = None
+best = None
+for fn in glob.glob(os.path.join(d, '*.jsonl')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                if '\"assistant\"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get('type') != 'assistant':
+                    continue
+                msg = o.get('message') or {}
+                model = msg.get('model')
+                if not model or model == '<synthetic>':
+                    continue
+                usage = msg.get('usage')
+                if not isinstance(usage, dict):
+                    continue
+                ts = o.get('timestamp')
+                if not ts:
+                    continue
+                if best_ts is None or ts > best_ts:
+                    best_ts = ts
+                    best = (usage, model)
+    except OSError:
+        pass   # transcript file gone mid-scan — just skip it
+if best is None:
+    print('')
+else:
+    usage, model = best
+    def num(k):
+        try:
+            return int(usage.get(k) or 0)
+        except Exception:
+            return 0
+    tokens = num('input_tokens') + num('cache_read_input_tokens') + num('cache_creation_input_tokens')
+    print('%d\t%s' % (tokens, model))
+" "$dir"
+}
+
+# _context_pct_for_row <cwd> -> "tokens\tpct" or "" (degraded — no transcript,
+# no usable usage entry, or a model _model_window_for doesn't recognize).
+# Callers MUST treat "" as "context unavailable: skip need-based compaction
+# for this session and report the degradation" — never substitute a
+# guessed window just to produce a number.
+_context_pct_for_row() {
+  local cwd="$1" raw tokens model window
+  raw="$(_context_snapshot "$cwd")"
+  [ -n "$raw" ] || { echo ""; return; }
+  tokens="${raw%%$'\t'*}"
+  model="${raw#*$'\t'}"
+  case "$tokens" in ''|*[!0-9]*) echo ""; return ;; esac
+  window="$(_model_window_for "$model")"
+  [ -n "$window" ] || { echo ""; return; }
+  printf '%s\t%s\n' "$tokens" "$(( tokens * 100 / window ))"
+}
+
+# Managed compaction is a phase-boundary action. Bind the active transcript
+# identity to ~/.claude/tasks/<sessionId> and fail closed while any phase task
+# is in_progress. Tests may override SESSION_COMPACT_TASKS_ROOT.
+_managed_task_state_for_cwd() {
+  local cwd="$1" project_dir tasks_root
+  project_dir="$HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  tasks_root="${SESSION_COMPACT_TASKS_ROOT:-$HOME/.claude/tasks}"
+  [ -d "$project_dir" ] || { echo unknown; return; }
+  python3 - "$project_dir" "$tasks_root" <<'PYTASK'
+import glob, json, os, sys
+project_dir, tasks_root = sys.argv[1], sys.argv[2]
+best = None
+for fn in glob.glob(os.path.join(project_dir, '*.jsonl')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                if 'assistant' not in line or 'usage' not in line:
+                    continue
+                try: obj = json.loads(line)
+                except Exception: continue
+                if obj.get('type') != 'assistant': continue
+                msg = obj.get('message')
+                if not isinstance(msg, dict) or not isinstance(msg.get('usage'), dict): continue
+                if msg.get('model') == '<synthetic>': continue
+                ts = obj.get('timestamp')
+                if not ts: continue
+                candidate = (ts, os.path.splitext(os.path.basename(fn))[0])
+                if best is None or candidate[0] > best[0]: best = candidate
+    except OSError:
+        continue
+if best is None:
+    print('unknown'); raise SystemExit
+session_id = best[1]
+task_dir = os.path.join(tasks_root, session_id)
+if not os.path.isdir(task_dir):
+    print('clear'); raise SystemExit
+active = 0
+for fn in glob.glob(os.path.join(task_dir, '*.json')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh: obj = json.load(fh)
+    except Exception:
+        print('unknown'); raise SystemExit
+    if not isinstance(obj, dict):
+        print('unknown'); raise SystemExit
+    if obj.get('status') == 'in_progress': active += 1
+print(('active:%d' % active) if active else 'clear')
+PYTASK
+}
+
 # _validate_uint <flag-name> <var-name> — validates the NAMED variable's
 # current value and canonicalizes it in place (base-10, leading-zero-safe —
 # same idiom used throughout this repo: session-doctor.sh --days, session-
@@ -156,6 +351,36 @@ _validate_uint() {
     ''|*[!0-9]*) echo "session-compact: $name requires a non-negative integer, got '$ref'" >&2; exit 2 ;;
   esac
   ref=$((10#$ref))
+}
+
+# _managed_allowlist_file -> the allowlist path to read for `sweep
+# --managed-only`: $SESSION_COMPACT_MANAGED_FILE if set (tests point this at
+# a fixture so they never read or write the real file), else
+# $HOME/.claude/session-compact-managed. Pure string logic, no I/O of its own.
+_managed_allowlist_file() {
+  printf '%s\n' "${SESSION_COMPACT_MANAGED_FILE:-$HOME/.claude/session-compact-managed}"
+}
+
+# _read_managed_allowlist <path> -> one usable tmux-session-name per line to
+# stdout: each line of <path>, trimmed of leading/trailing whitespace, with
+# blank lines and whole-line '#' comments dropped. A missing file prints
+# nothing and returns 0 — NOT an error. This function has no fallback logic
+# of its own on purpose: "prints nothing" is exactly the signal `sweep`'s
+# --managed-only dispatch treats as "the allowlist is empty" (see the sweep
+# dispatch's own comment for why that must mean zero sessions in scope, never
+# fleet-wide).
+_read_managed_allowlist() {
+  local f="$1" line trimmed
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [ -n "$trimmed" ] || continue
+    case "$trimmed" in
+      '#'*) continue ;;
+    esac
+    printf '%s\n' "$trimmed"
+  done < "$f"
 }
 
 # _decide <min_idle> <max_idle> <tmux_session> <remote_name> <pid> <cwd> \
@@ -362,6 +587,156 @@ _pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
   printf '%s' "$out" | grep -oE 'state=[a-z]+' | head -1 | cut -d= -f2
 }
 
+# _sweep_evaluate_row_managed <min_idle> <max_idle> <managed_only> <10 TSV
+# fields> -> same vocabulary as _evaluate_row ("eligible" | "skip:<reason>").
+#
+# When managed_only=no this is BYTE-IDENTICAL to calling _evaluate_row
+# directly — the retry branch below never runs. This is what keeps sweep's
+# no-flag behavior unchanged (see the brief this shipped under, and
+# tests/test-session-compact-sweep.sh / tests/test-session-compact.sh, which
+# pin the unflagged path).
+#
+# When managed_only=yes AND the plain call answers skip:landed-and-clean,
+# retries the SAME row through the REAL _evaluate_row with the dirty field
+# (the 10th TSV field) forced to "DIRTY" — a legitimately valid value,
+# distinct from "clean" — so _decide's `landed=yes && dirty=clean` guard
+# cannot fire on the retry. Every OTHER field is untouched, so every OTHER
+# guard _decide/_evaluate_row enforce still runs for real on the retry and
+# can still block: protected, already-compacted (including the
+# compacted=unknown + marker-file fallback), malformed-row, never-touched,
+# bad-idle-field, and the live pane-safety check. This is the same argument
+# _sweep_decide's own comment makes for why eligibility routes through
+# _evaluate_row instead of a narrower re-derived copy — re-deriving "is it
+# ALSO already-compacted" from scratch here would risk reopening exactly the
+# re-issue-forever bug that guard exists to prevent (see #60/#61 below).
+#
+# Rationale for the override existing at all (see the brief): landed-and-
+# clean exists to protect UNKNOWN sessions — compacting one that's never
+# resumed is pure token cost — but it is wrong for MANAGED (allowlisted)
+# sessions, because allowlist membership means the orchestrator WILL send
+# another mission; resumption is expected by definition. --managed-only
+# already restricts the whole sweep to allowlisted, currently-live sessions
+# before this function is ever called (see the TSV-filtering step in the
+# `sweep` dispatch below), so "managed_only=yes" here always means "this
+# specific row is in scope."
+_sweep_evaluate_row_managed() {
+  local min_idle="$1" max_idle="$2" managed_only="$3"; shift 3
+  local decision
+  decision="$(_evaluate_row "$min_idle" "$max_idle" "$@")"
+  if [ "$decision" = "skip:landed-and-clean" ] && [ "$managed_only" = yes ]; then
+    set -- "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" DIRTY
+    decision="$(_evaluate_row "$min_idle" "$max_idle" "$@")"
+  fi
+  printf '%s\n' "$decision"
+}
+
+# _sweep_decide <min_idle> <max_idle> <context_pct-or-empty> <managed_only>
+# <10 TSV fields> -> "eligible:idle" | "eligible:context" | "skip:<reason>"
+# (the SAME skip vocabulary _decide/_evaluate_row already use — nothing new
+# is invented). Reuses _sweep_evaluate_row_managed (itself a thin wrapper
+# around _evaluate_row — see its comment for the managed-only override, and
+# for why the override lives here rather than in _decide/_evaluate_row
+# themselves: those two are called directly by report and before-relay, and
+# must stay byte-identical for those callers) for BOTH checks below rather
+# than re-deriving protected/landed/already-compacted/pane-safety —
+# deliberately: an earlier version of this function re-implemented those
+# checks against just (idle_minutes, protected, context_pct) and, under
+# review, that turned out to reopen a real bug idle-report's own history
+# warns about (#60/#61): a compact does NOT reset idle_minutes (idle is
+# measured from the last GENUINE user turn, and idle-report's whole point is
+# that a /compact summary itself does not count as one), so a session
+# sitting idle at low context forever would get /compact re-issued on EVERY
+# sweep run, indefinitely, unless something consults the sensor's
+# `compacted` column / the marker file the way _decide already does. Routing
+# eligibility back through _evaluate_row inherits that guard (and
+# protected/landed-and-clean/pane-safety) for free, on BOTH triggers,
+# instead of re-deriving a narrower and buggier copy.
+#   Trigger A: _evaluate_row with the caller's own <min_idle>/<max_idle>
+#              (defaults 60/0 — same as this repo's pre-existing sweep).
+#   Trigger B: _evaluate_row with a fixed 5-minute floor, promoted to
+#              "eligible:context" only when that ALSO clears
+#              _SWEEP_CONTEXT_TRIGGER_PCT. Only consulted when A's decision
+#              was SPECIFICALLY skip:outside-window — any other A reason
+#              (protected/landed-and-clean/already-compacted/malformed/
+#              never-touched/pane-unsafe) is idle-window-independent: _decide
+#              checks all of those either before consulting the window at
+#              all, or (pane-safety) only after the window already passed —
+#              so a second live pane check at a looser window cannot change
+#              the answer, and calling B there would just double the I/O.
+#              The managed-only override is applied identically on BOTH
+#              triggers (via _sweep_evaluate_row_managed) — a managed,
+#              landed+clean session should not be defeated on the context
+#              trigger either, only on whichever guard (already-compacted,
+#              protected, busy pane, ...) legitimately still applies.
+_SWEEP_CONTEXT_TRIGGER_PCT=80
+_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT=50
+_SWEEP_CONTEXT_IDLE_FLOOR=5
+
+# _SWEEP_IDLE_CONTEXT_FLOOR_PCT — trigger A (idle) additionally requires
+# context_pct >= this floor before it fires. Idle time alone is not need: a
+# session idle 90 minutes at 8% context has nothing worth reclaiming — long
+# idle only means the prompt cache has gone cold, which makes compacting
+# CHEAP, not WORTHWHILE. This floor is deliberately much lower than
+# _SWEEP_CONTEXT_TRIGGER_PCT (80 fleet default; 50 for --managed-only): trigger A still exists specifically for
+# sessions that are idle AND carrying meaningful context, it is not meant to
+# require near-full context the way the dedicated context trigger (B) does.
+# Unknown context (unparseable transcript, or a model absent from
+# _model_window_for's table) does NOT satisfy this floor either — seeing a numeric trigger
+# in this file already isn't enough, an unmeasurable percentage must never
+# be treated as if it cleared a numeric floor. See the eligible:idle branch
+# below.
+_SWEEP_IDLE_CONTEXT_FLOOR_PCT=40
+
+_sweep_decide() {
+  local min_idle="$1" max_idle="$2" context_pct="$3" managed_only="$4"; shift 4
+  local decision_a decision_b context_trigger_pct="$_SWEEP_CONTEXT_TRIGGER_PCT"
+  if [ "$managed_only" = yes ]; then context_trigger_pct="$_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT"; fi
+  decision_a="$(_sweep_evaluate_row_managed "$min_idle" "$max_idle" "$managed_only" "$@")"
+  if [ "$decision_a" = eligible ]; then
+    # Idle-window-and-guards-clear is necessary but no longer sufficient: also
+    # require a MEASURED context_pct >= the floor above. Unknown context
+    # (empty/non-numeric — see _context_pct_for_row's contract) must SKIP,
+    # never silently compact just because idle alone said yes ("if we cannot
+    # measure need, we do not act") — skip:context-unknown carries its own
+    # loud note (see the sweep dispatch's VERDICT case statement) so a
+    # missing-model gap is visible instead of silent, the same failure mode
+    # the *fable* addition to _model_window_for above was diagnosed from.
+    case "$context_pct" in
+      ''|*[!0-9]*) echo "skip:context-unknown"; return ;;
+    esac
+    if [ "$context_pct" -ge "$_SWEEP_IDLE_CONTEXT_FLOOR_PCT" ]; then
+      echo "eligible:idle"
+    else
+      echo "skip:context-too-small"
+    fi
+    return
+  fi
+  if [ "$decision_a" != "skip:outside-window" ]; then
+    printf '%s\n' "$decision_a"
+    return
+  fi
+  decision_b="$(_sweep_evaluate_row_managed "$_SWEEP_CONTEXT_IDLE_FLOOR" 0 "$managed_only" "$@")"
+  if [ "$decision_b" != eligible ]; then
+    printf '%s\n' "$decision_b"
+    return
+  fi
+  # Same "cannot measure need => do not act" rule as trigger A above: unknown
+  # context must not be treated as "below the configured threshold, therefore outside-window" —
+  # that framing is only true when context IS known and simply too low. An
+  # unmeasurable context is a DIFFERENT problem (a table gap or an unreadable
+  # transcript) and gets the SAME distinct, loud skip:context-unknown code
+  # trigger A uses, so it surfaces instead of blending into the routine
+  # under-threshold case.
+  case "$context_pct" in
+    ''|*[!0-9]*) echo "skip:context-unknown"; return ;;
+  esac
+  if [ "$context_pct" -ge "$context_trigger_pct" ]; then
+    echo "eligible:context"
+  else
+    echo "skip:outside-window"
+  fi
+}
+
 declare -A _COMPACT_ISSUED=()
 # _do_compact <tmux_session> <timeout_seconds> [<cwd>] -> prints one of:
 # compacted | send-failed | timeout. Exit code 0 only for "compacted" (fully
@@ -461,39 +836,24 @@ MODE="${1:-}"; shift || true
 
 _usage() {
   echo "usage: session-compact.sh (report [--min-idle N] [--max-idle N]" >&2
-  echo "         | sweep (--dry-run|--apply) [--min-idle N] [--max-idle N] [--timeout N]" >&2
+  echo "         | sweep [--dry-run|--apply] [--min-idle N] [--max-idle N] [--timeout N] [--managed-only]  # default: --dry-run" >&2
   echo "         | before-relay <session> (<msg>|--file <path>) [--timeout N]" >&2
   echo "         | install-timer [--force])" >&2
   exit 2
 }
 
 case "$MODE" in
-  report|sweep)
-    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no
+  report)
+    MIN_IDLE=60; MAX_IDLE=0
     while [ $# -gt 0 ]; do
       case "$1" in
         --min-idle) MIN_IDLE="$2"; shift 2 ;;
         --max-idle) MAX_IDLE="$2"; shift 2 ;;
-        --timeout)  TIMEOUT="$2"; shift 2 ;;
-        --dry-run)  DRY_RUN=yes; shift ;;
-        --apply)    APPLY=yes; shift ;;
         *) echo "session-compact: $MODE: unrecognized argument '$1'" >&2; exit 2 ;;
       esac
     done
     _validate_uint --min-idle MIN_IDLE
     _validate_uint --max-idle MAX_IDLE
-    _validate_uint --timeout TIMEOUT
-
-    if [ "$MODE" = sweep ]; then
-      if [ "$DRY_RUN" = yes ] && [ "$APPLY" = yes ]; then
-        echo "session-compact: sweep: pass exactly one of --dry-run or --apply, not both" >&2
-        exit 2
-      fi
-      if [ "$DRY_RUN" = no ] && [ "$APPLY" = no ]; then
-        echo "session-compact: sweep: refusing to default to mutating — pass --dry-run or --apply" >&2
-        exit 2
-      fi
-    fi
 
     TSV="$(_fetch_tsv "$MIN_IDLE")"; rc=$?
     [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
@@ -501,51 +861,249 @@ case "$MODE" in
     window_desc="idle >= ${MIN_IDLE}m"
     [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
 
-    if [ "$MODE" = report ]; then
-      echo "=== session-compact report: $window_desc — REPORT ONLY, mutates nothing ==="
-      printf '%-40s %-9s %-8s %s\n' "TMUX SESSION" "ELIGIBLE" "IDLE" "REASON"
-      n=0
-      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
-        [ -n "$c1" ] || continue
-        n=$((n+1))
-        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
-        case "$decision" in
-          eligible) elig=yes; reason=eligible ;;
-          skip:*)   elig=no;  reason="${decision#skip:}" ;;
-          *)        elig=no;  reason="$decision" ;;
-        esac
-        printf '%-40s %-9s %-8s %s\n' "$c1" "$elig" "$c5" "$reason"
-      done <<< "$TSV"
-      echo "  --- $n candidate(s) scanned. Report only; mutates nothing."
-    else
-      echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc ==="
-      n_eligible=0; n_compacted=0; n_failed=0
-      while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
-        [ -n "$c1" ] || continue
-        decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
-        [ "$decision" = eligible ] || continue
-        n_eligible=$((n_eligible+1))
-        if [ "$DRY_RUN" = yes ]; then
-          echo "would-compact: $c1 (idle=${c5}m)"
-          continue
-        fi
-        echo "compacting: $c1 (idle=${c5}m) ..."
-        result="$(_do_compact "$c1" "$TIMEOUT" "$c4")"; rc2=$?
-        if [ "$rc2" -eq 0 ]; then
-          _write_marker "$c1" "$c6" "$(_now_iso)" compacted
-          n_compacted=$((n_compacted+1))
-          echo "  -> compacted: $c1"
-        else
-          n_failed=$((n_failed+1))
-          echo "  -> FAILED ($result): $c1 — NOT writing a success marker" >&2
-        fi
-      done <<< "$TSV"
-      if [ "$DRY_RUN" = yes ]; then
-        echo "sweep --dry-run: $n_eligible session(s) would be compacted"
-      else
-        echo "sweep --apply: $n_eligible eligible, $n_compacted compacted, $n_failed failed"
+    echo "=== session-compact report: $window_desc — REPORT ONLY, mutates nothing ==="
+    printf '%-40s %-9s %-8s %s\n' "TMUX SESSION" "ELIGIBLE" "IDLE" "REASON"
+    n=0
+    while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+      [ -n "$c1" ] || continue
+      n=$((n+1))
+      decision="$(_evaluate_row "$MIN_IDLE" "$MAX_IDLE" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+      case "$decision" in
+        eligible) elig=yes; reason=eligible ;;
+        skip:*)   elig=no;  reason="${decision#skip:}" ;;
+        *)        elig=no;  reason="$decision" ;;
+      esac
+      printf '%-40s %-9s %-8s %s\n' "$c1" "$elig" "$c5" "$reason"
+    done <<< "$TSV"
+    echo "  --- $n candidate(s) scanned. Report only; mutates nothing."
+    ;;
+
+  sweep)
+    # Two-trigger, context-aware model (see _sweep_decide's comment for the
+    # exact rule and why it reuses _evaluate_row twice instead of deriving
+    # its own narrower copy) — a DIFFERENT eligibility model than report/
+    # before-relay still use (those two are UNCHANGED). The flag surface,
+    # compaction mechanism (_do_compact/_write_marker), and fail-closed
+    # behavior on an unverified compact are ALL unchanged from this repo's
+    # pre-existing sweep — only the eligibility SOURCE changed (idle-window
+    # OR context, instead of idle-window only), plus one default: neither
+    # --dry-run nor --apply given now means dry-run (report-only) instead of
+    # a hard error — a sweep that mutates by default is too dangerous to
+    # ship, but refusing to run at all by default is needless friction for
+    # what should be the routine, safe invocation.
+    MIN_IDLE=60; MAX_IDLE=0; TIMEOUT=240; DRY_RUN=no; APPLY=no; MANAGED_ONLY=no
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --min-idle)     MIN_IDLE="$2"; shift 2 ;;
+        --max-idle)     MAX_IDLE="$2"; shift 2 ;;
+        --timeout)      TIMEOUT="$2"; shift 2 ;;
+        --dry-run)      DRY_RUN=yes; shift ;;
+        --apply)        APPLY=yes; shift ;;
+        --managed-only) MANAGED_ONLY=yes; shift ;;
+        *) echo "session-compact: sweep: unrecognized argument '$1'" >&2; exit 2 ;;
+      esac
+    done
+    _validate_uint --min-idle MIN_IDLE
+    _validate_uint --max-idle MAX_IDLE
+    _validate_uint --timeout TIMEOUT
+
+    if [ "$DRY_RUN" = yes ] && [ "$APPLY" = yes ]; then
+      echo "session-compact: sweep: pass at most one of --dry-run or --apply, not both" >&2
+      exit 2
+    fi
+    if [ "$DRY_RUN" = no ] && [ "$APPLY" = no ]; then DRY_RUN=yes; fi
+
+    # --managed-only opt-in scope filter (see docs/session-compaction.md and
+    # the brief this shipped under): WITHOUT this flag, everything below is a
+    # no-op and behavior is byte-identical to before. WITH it, sweep must only
+    # ever consider sessions named, one per line, in the allowlist file (see
+    # _read_managed_allowlist) — never the whole fleet. n_managed/n_live are
+    # computed here (n_managed) and cross-referenced against the sensor's live
+    # rows below (n_live) purely for the scope-line report ("N managed, M
+    # live"); a stale allowlist entry (named session no longer live) is
+    # dropped silently from the table, not reported as a skip.
+    #
+    # FAIL SAFE: an allowlist that is missing, empty, or has no usable entries
+    # (blank/comment-only) means ZERO sessions in scope — full stop, exit 0,
+    # right here, before the sensor is even consulted. This must NEVER fall
+    # through to the unfiltered fleet-wide fetch below: a misconfigured or
+    # accidentally-deleted allowlist compacting the entire host is the exact
+    # failure this flag exists to prevent, so "can't determine scope" and
+    # "scope is the whole fleet" must never be reachable by the same code
+    # path. See tests/test-session-compact-managed.sh for the tamper-verified
+    # proof that breaking this exits somewhere other than here.
+    MANAGED_FILE="$(_managed_allowlist_file)"
+    n_managed=0
+    declare -A _MANAGED_SET=()
+    if [ "$MANAGED_ONLY" = yes ]; then
+      while IFS= read -r _managed_name; do
+        [ -n "$_managed_name" ] || continue
+        n_managed=$((n_managed+1))
+        _MANAGED_SET["$_managed_name"]=1
+      done < <(_read_managed_allowlist "$MANAGED_FILE")
+      if [ "$n_managed" -eq 0 ]; then
+        echo "=== session-compact sweep --managed-only: allowlist ($MANAGED_FILE) is missing, empty, or has no usable entries — 0 sessions in scope. Refusing to fall back to fleet-wide scanning. ==="
+        echo "sweep --managed-only: 0 managed, 0 live — 0 session(s) in scope."
+        exit 0
       fi
     fi
+
+    # Sweep must SEE every live session, not just ones already past
+    # MIN_IDLE — the context trigger can fire well under it — so the sensor
+    # is asked for everything (0), unlike report's MIN_IDLE-filtered fetch.
+    TSV="$(_fetch_tsv 0)"; rc=$?
+    [ "$rc" -eq 0 ] || { echo "session-compact: sensor command failed (exit $rc)" >&2; exit 1; }
+
+    # Apply the scope filter BEFORE the eligibility pass below, not after: a
+    # non-managed session must never even reach _sweep_decide, so it can never
+    # print as a `skip:` row in the table — it is out of scope, not skipped
+    # (see the brief's item 5). n_live counts, of the allowlist's n_managed
+    # entries, how many actually matched a row in the sensor's TSV — since
+    # the sensor (session-doctor.sh idle-report) only ever enumerates
+    # currently-live claude sessions (see its own header comment), "matched a
+    # row" and "is live" are the same test; anything else in the allowlist is
+    # a stale entry and is dropped here silently (not printed as skip:stale),
+    # only counted. TSV is REASSIGNED unconditionally to the filtered result
+    # (never `${TSV_FILTERED:-$TSV}` or similar) — an EMPTY filtered result
+    # (every allowlist entry stale) must still leave TSV empty, not silently
+    # revert to the fleet-wide fetch above. That "no coalescing fallback"
+    # property is exactly what tests/test-session-compact-managed.sh's
+    # tamper-verified fail-safe assertions exist to pin.
+    scope_note=""
+    if [ "$MANAGED_ONLY" = yes ]; then
+      n_live=0
+      TSV_FILTERED=""
+      while IFS=$'\t' read -r _row_session _row_rest; do
+        [ -n "$_row_session" ] || continue
+        if [ -n "${_MANAGED_SET[$_row_session]+x}" ]; then
+          n_live=$((n_live+1))
+          TSV_FILTERED="${TSV_FILTERED}${_row_session}$(printf '\t')${_row_rest}"$'\n'
+        fi
+      done <<< "$TSV"
+      TSV="$TSV_FILTERED"
+      scope_note="; scope: managed-only ($n_managed managed, $n_live live)"
+    fi
+
+    window_desc="idle >= ${MIN_IDLE}m"
+    [ "$MAX_IDLE" != 0 ] && window_desc="$window_desc, <= ${MAX_IDLE}m"
+
+    context_trigger_pct="$_SWEEP_CONTEXT_TRIGGER_PCT"
+    [ "$MANAGED_ONLY" = yes ] && context_trigger_pct="$_SWEEP_MANAGED_CONTEXT_TRIGGER_PCT"
+    echo "=== session-compact sweep --$([ "$DRY_RUN" = yes ] && echo dry-run || echo apply): $window_desc, OR context >= $context_trigger_pct% + idle >= ${_SWEEP_CONTEXT_IDLE_FLOOR}m$scope_note ==="
+    printf '%-32s %-8s %-11s %-6s %-22s %s\n' "SESSION" "IDLE(m)" "CTX_TOKENS" "CTX%" "VERDICT" "NOTE"
+    n=0; n_eligible=0; n_compacted=0; n_failed=0
+    while IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10; do
+      [ -n "$c1" ] || continue
+      n=$((n+1))
+
+      ctx_raw="$(_context_pct_for_row "$c4")"
+      if [ -n "$ctx_raw" ]; then
+        ctx_tokens="${ctx_raw%%$'\t'*}"
+        ctx_pct="${ctx_raw#*$'\t'}"
+        note="-"
+      else
+        # NOT "— idle-only fallback": as of the context floor on trigger A
+        # and skip:context-unknown on trigger B (see _sweep_decide), unknown
+        # context no longer means either trigger evaluates on idle alone —
+        # it means neither trigger can fire at all. This base note is the
+        # generic, decision-agnostic fact ("we don't know"); the specific
+        # skip:context-unknown case below overrides it with the full loud
+        # explanation.
+        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript or unrecognized model)"
+      fi
+
+      # detail: the underlying _decide/_evaluate_row reason, surfaced in NOTE
+      # even when the verdict column already names it (kept for the free-text
+      # explanation, not for disambiguation — see below).
+      #
+      # SUPERSEDES the prior comment here (kept in git history, not repeated):
+      # this used to argue for pinning VERDICT to exactly 5 values and
+      # collapsing already-compacted/landed-and-clean/malformed-row/
+      # never-touched/bad-idle-field into one shared "skip: under thresholds"
+      # label, on the theory that NOTE already disambiguates them. In
+      # practice that hid real problems: a MALFORMED sensor row and a session
+      # that simply isn't idle enough are operationally very different (one
+      # is a bug to investigate, the other is normal), but both printed the
+      # identical verdict — an operator scanning the VERDICT column alone
+      # (the column this table is sorted/skimmed by) could not tell them
+      # apart without reading every NOTE. Each cause now gets its own short,
+      # distinct label instead. "skip: under thresholds" is preserved for the
+      # one case it always correctly described and still describes:
+      # skip:outside-window (idle/context genuinely below both trigger
+      # thresholds) — that keeps falling through to the wildcard below.
+      decision="$(_sweep_decide "$MIN_IDLE" "$MAX_IDLE" "$ctx_pct" "$MANAGED_ONLY" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+      if [ "$MANAGED_ONLY" = yes ]; then
+        case "$decision" in
+          eligible:*)
+            task_state="$(_managed_task_state_for_cwd "$c4")"
+            case "$task_state" in
+              active:*) decision="skip:active-task"; active_task_count="${task_state#active:}" ;;
+              clear) : ;;
+              *) decision="skip:task-state-unknown" ;;
+            esac
+            ;;
+        esac
+      fi
+      detail="-"
+      case "$decision" in
+        eligible:idle)          verdict="would-compact: idle" ;;
+        eligible:context)       verdict="would-compact: context" ;;
+        skip:context-too-small)
+          verdict="skip: context too small"
+          detail="idle trigger needs context >= ${_SWEEP_IDLE_CONTEXT_FLOOR_PCT}% (has ${ctx_pct}%) — idle alone is not need"
+          ;;
+        skip:context-unknown)
+          verdict="skip: context unknown"
+          # Direct override, not `detail`: this is deliberately NOT the
+          # generic ctx_raw-empty note set above (that note describes
+          # degrading to idle-only, which is exactly what must NOT happen
+          # here) — see _sweep_decide's comment for why unknown must skip.
+          note="cannot verify need: context is unreadable (unparseable/missing transcript, or the model is missing from _model_window_for's table) — refusing to compact on idle alone until context can be measured; if the transcript looks fine, the model likely needs adding to _model_window_for"
+          ;;
+        skip:protected)         verdict="skip: protected" ;;
+        skip:active-task)       verdict="skip: active task"; detail="${active_task_count:-1} in_progress Claude task(s); checkpoint/finish phase before compacting" ;;
+        skip:task-state-unknown) verdict="skip: task state unknown"; detail="cannot bind managed session to a readable Claude task ledger; fail closed" ;;
+        skip:pane-*)            verdict="skip: busy"; detail="live pane: ${decision#skip:pane-}" ;;
+        skip:already-compacted) verdict="skip: compacted"; detail="already compacted this idle window" ;;
+        skip:landed-and-clean)  verdict="skip: landed+clean"; detail="worktree landed + clean" ;;
+        skip:malformed-row)     verdict="skip: malformed row"; detail="malformed sensor row" ;;
+        skip:never-touched)     verdict="skip: never touched"; detail="never had a genuine user turn" ;;
+        skip:bad-idle-field)    verdict="skip: bad idle field"; detail="unparseable idle field" ;;
+        *)                      verdict="skip: under thresholds" ;;
+      esac
+      if [ "$note" = "-" ]; then
+        note="$detail"
+      elif [ "$detail" != "-" ]; then
+        note="$note; $detail"
+      fi
+      printf '%-32s %-8s %-11s %-6s %-22s %s\n' "${c1:0:32}" "$c5" "$ctx_tokens" "${ctx_pct:-n/a}" "$verdict" "$note"
+
+      case "$decision" in
+        eligible:*)
+          n_eligible=$((n_eligible+1))
+          if [ "$DRY_RUN" = yes ]; then
+            echo "would-compact: $c1 (idle=${c5}m)"
+            continue
+          fi
+          echo "compacting: $c1 (idle=${c5}m) ..."
+          result="$(_do_compact "$c1" "$TIMEOUT" "$c4")"; rc2=$?
+          if [ "$rc2" -eq 0 ]; then
+            _write_marker "$c1" "$c6" "$(_now_iso)" compacted
+            n_compacted=$((n_compacted+1))
+            echo "  -> compacted: $c1"
+          else
+            n_failed=$((n_failed+1))
+            echo "  -> FAILED ($result): $c1 — NOT writing a success marker" >&2
+          fi
+          ;;
+      esac
+    done <<< "$TSV"
+    if [ "$DRY_RUN" = yes ]; then
+      echo "sweep --dry-run: $n_eligible session(s) would be compacted"
+    else
+      echo "sweep --apply: $n_eligible eligible, $n_compacted compacted, $n_failed failed"
+    fi
+    echo "  --- $n session(s) scanned."
     ;;
 
   before-relay)

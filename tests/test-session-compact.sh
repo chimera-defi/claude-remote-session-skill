@@ -309,6 +309,20 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with stubs wired u
 CLI_HOME="$(mktemp -d)"
 _reset_stub_env
 
+# _fixture_transcript <cwd> <tokens> <model> — same helper as
+# test-session-compact-sweep.sh, needed for exactly one row below (readysess)
+# that must clear the idle trigger's new context floor
+# (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without a real context percentage becoming
+# the point of this CLI-contract section (that coverage lives in
+# tests/test-session-compact-sweep.sh).
+_fixture_transcript() {
+  local cwd="$1" tokens="$2" model="$3" dir
+  dir="$CLI_HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  mkdir -p "$dir" "$cwd"
+  printf '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"model":"%s","usage":{"input_tokens":%d,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":50}}}\n' \
+    "$model" "$tokens" > "$dir/fixture.jsonl"
+}
+
 # --- report: basic eligible/skip rows, defaults are 60 / unbounded ---------
 {
   _row readysess   remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean
@@ -328,11 +342,50 @@ out2="$(_run report --min-idle 30 --max-idle 60)"; rc2=$?
 ok  "cli-report-escape-hatch-exit0" "$rc2" "0"
 has "cli-report-escape-hatch-window-text" "$out2" "idle >= 30m, <= 60m"
 
-# --- sweep with neither --dry-run nor --apply exits 2, mutates nothing -----
+# ============================================================================
+# sweep: context-aware two-trigger model. Trigger A (idle >= --min-idle,
+# default 60 — the SAME threshold/flag this repo's sweep always had) behaves
+# exactly as before; the only default-behavior change is what happens when
+# NEITHER --dry-run nor --apply is given (used to be a hard error; now means
+# --dry-run — a sweep that mutates by default is too dangerous to ship, but
+# refusing to run at all was needless friction for the routine, safe case).
+# See scripts/session-compact.sh's `sweep)` dispatch + _sweep_decide's
+# comment for the full rationale, especially why trigger B (context) is
+# routed back through _evaluate_row rather than a narrower reimplementation:
+# doing otherwise would re-issue /compact to an already-compacted, still-idle
+# session on every single sweep run, forever (idle-report deliberately does
+# not reset idle_minutes across a compact).
+#
+# These exercise the CLI contract (flags, exit codes, verdict text) through
+# the same stubbed-session-handoff harness as the rest of this file — same
+# ready-based pane-safety stub _evaluate_row already drives everywhere else,
+# no second busy-detector or stub protocol. Most rows below use
+# /nonexistent-cwd — no transcript dir exists there, so context is always
+# "unavailable" (skip:context-unknown — see _sweep_decide) rather than the
+# old "degrades to idle-only" behavior. readysess is the one exception in
+# this section: its whole point is exercising the idle trigger's CLI/apply
+# mechanics (flags, pane check, marker write), which is no longer reachable
+# on unknown context, so it gets a real fixture transcript at 50% — clears
+# the idle trigger's context floor without approaching the separate 80%
+# context-trigger threshold. Fixture-JSONL + real-tmux-stub coverage for an
+# ACTUAL context trigger (>=80% usage) lives in
+# tests/test-session-compact-sweep.sh, which needs real files on disk to
+# produce a real token count.
+# ============================================================================
+
+READY_CWD="$CLI_HOME/proj-ready"
+_fixture_transcript "$READY_CWD" 500000 claude-sonnet-4-6   # 50%
+
+# --- neither --dry-run nor --apply: DEFAULT is now dry-run (used to be a
+# hard error) — exits 0, mutates nothing, but DOES check the pane -----------
 : > "$STUB_LOG"
-_run sweep >/dev/null 2>&1; rcn=$?
-ok "cli-sweep-neither-flag-exit2" "$rcn" "2"
-ok "cli-sweep-neither-flag-no-calls" "$(cat "$STUB_LOG")" ""
+{ _row readysess remote 1 "$READY_CWD" 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+STUB_READY_SESSIONS="readysess"
+outn="$(_run sweep)"; rcn=$?
+ok  "cli-sweep-bare-defaults-to-dryrun-exit0" "$rcn" "0"
+has "cli-sweep-bare-would-compact"            "$outn" "would-compact: readysess"
+has "cli-sweep-bare-pane-check-happened"      "$(cat "$STUB_LOG")" "ready readysess"
+lacks "cli-sweep-bare-no-send"                "$(cat "$STUB_LOG")" "send"
 
 # --- sweep --dry-run performs no send (ready calls are fine, send is not) --
 : > "$STUB_LOG"
@@ -351,6 +404,54 @@ has "cli-sweep-apply-compacted" "$outa" "compacted: readysess"
 has "cli-sweep-apply-sent-compact" "$(cat "$STUB_LOG")" "send readysess /compact"
 has "cli-sweep-apply-marker-written" "$(cat "$CLI_HOME/.sessions/compact-markers/readysess.json" 2>&1)" '"result": "compacted"'
 STUB_BUSY_POLLS=0
+
+# --- both flags at once: still rejected --------------------------------------
+: > "$STUB_LOG"
+_run sweep --dry-run --apply >/dev/null 2>&1; rcboth=$?
+ok "cli-sweep-both-flags-exit2" "$rcboth" "2"
+
+# --- busy pane -> skip: busy, even though idle alone would trigger (rule 4:
+# never compact a session that is actively processing) ----------------------
+: > "$STUB_LOG"
+{ _row busysweepsess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="busy"
+outbusy="$(_run sweep)"; rcbusy=$?
+ok  "cli-sweep-busy-exit0"   "$rcbusy" "0"
+has "cli-sweep-busy-verdict" "$(printf '%s' "$outbusy" | grep busysweepsess)" "skip: busy"
+
+# --- protected, idle already >= min-idle -> skip: protected, and the pane is
+# never even checked (same short-circuit-before-live-call _evaluate_row
+# already uses) --------------------------------------------------------------
+: > "$STUB_LOG"
+{ _row protsweepsess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 yes no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+outprot="$(_run sweep)"; rcprot=$?
+ok    "cli-sweep-protected-exit0"       "$rcprot" "0"
+has   "cli-sweep-protected-verdict"     "$(printf '%s' "$outprot" | grep protsweepsess)" "skip: protected"
+lacks "cli-sweep-protected-no-pane-call" "$(cat "$STUB_LOG")" "protsweepsess"
+
+# --- protected AND under trigger A's window: trigger B must ALSO see
+# protected, not silently read as eligible just because idle>=5 — this is
+# the "unmask outside-window" path _sweep_decide's own comment describes ----
+: > "$STUB_LOG"
+{ _row protfreshsess remote 1 /nonexistent-cwd 10 2026-01-01T00:00:00 yes no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+outprotfresh="$(_run sweep)"; rcprotfresh=$?
+ok  "cli-sweep-protected-under-window-exit0"   "$rcprotfresh" "0"
+has "cli-sweep-protected-under-window-verdict" "$(printf '%s' "$outprotfresh" | grep protfreshsess)" "skip: protected"
+
+# --- under thresholds: low idle (below EVEN the 5m context-trigger floor,
+# so context is never consulted at all), no context data available (no
+# transcript for /nonexistent-cwd) -> "skip: under thresholds" plus a printed
+# degradation note — never a guessed percentage (rule 6) --------------------
+: > "$STUB_LOG"
+{ _row freshsweepsess remote 1 /nonexistent-cwd 2 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
+outfresh="$(_run sweep)"; rcfresh=$?
+row_fresh="$(printf '%s' "$outfresh" | grep freshsweepsess)"
+ok  "cli-sweep-under-thresholds-exit0"         "$rcfresh" "0"
+has "cli-sweep-under-thresholds-verdict"       "$row_fresh" "skip: under thresholds"
+has "cli-sweep-under-thresholds-degraded-note" "$row_fresh" "context unavailable"
+STUB_READY_SESSIONS=""
+STUB_READY_REASON="busy"
 
 # --- ragged/short TSV row through the real read-loop: no crash -------------
 printf 'onlyname\n' > "$FIXTURE_DIR/rows.tsv"
