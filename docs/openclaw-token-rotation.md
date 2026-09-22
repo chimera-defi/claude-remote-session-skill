@@ -1,6 +1,7 @@
 # openclaw gateway token — rotation plan (investigated 2026-08-10, NOT executed)
 
-Follow-up to the security finding in `context-footprint.md` §3. Rotating a live
+Follow-up to the inline-gateway-token finding from the 2026-08-10 context
+audit (the write-up no longer lives in `context-footprint.md`). Rotating a live
 shared secret without flipping every consumer together would break the gateway
 bridge, so the **full rotation (§ steps 1, 3–6) remains a plan only — not
 executed**; it needs a human to run the ordered steps below during a controlled
