@@ -258,7 +258,10 @@ _verdict() {
 # ── live helpers ──────────────────────────────────────────────────────────────
 
 # tmux session name -> remote-control name (ah_/agenthost_ are ours).
-_remote_of() { case "$1" in ah_*) echo "ah-${1#ah_}";; agenthost_*) echo "agenthost-${1#agenthost_}";; *) echo "";; esac; }
+# Mirrors session-doctor.sh's / session-preserve.sh's tmux_to_base exactly —
+# same name on purpose so a fix to one copy greps up the others (scripts
+# deploy standalone to ~/.local/bin, so it stays a local copy, not sourced).
+tmux_to_base() { case "$1" in ah_*) echo "ah-${1#ah_}";; agenthost_*) echo "agenthost-${1#agenthost_}";; *) echo "";; esac; }
 
 _pane_cmd() { tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null; }
 _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
@@ -270,7 +273,7 @@ _capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 # _model_of — best-effort resolved model for a session (from its start script,
 # else the most recent session-starts.log line).
 _model_of() {
-  local rem sc; rem="$(_remote_of "$1")"; [ -n "$rem" ] || { echo "?"; return; }
+  local rem sc; rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo "?"; return; }
   sc="$HOME/.local/bin/${rem}-start.sh"
   if [ -f "$sc" ]; then sed -n 's/^MODEL="\(.*\)"$/\1/p' "$sc" | head -1; return; fi
   grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* model=\([^ ]*\) .*/\1/p' | tail -1
@@ -304,7 +307,7 @@ case "$MODE" in
   check)
     S="${1:?usage: session-handoff check <tmux-session>}"
     if ! tmux has-session -t "$S" 2>/dev/null; then echo "check: '$S' — no such tmux session"; exit 2; fi
-    st="$(_state_of "$S")"; rem="$(_remote_of "$S")"
+    st="$(_state_of "$S")"; rem="$(tmux_to_base "$S")"
     active=no; [ -n "$rem" ] && systemctl --user is-active --quiet "${rem}.service" 2>/dev/null && active=yes
     echo "check: $S  state=$st  unit-active=$active  model=$(_model_of "$S")"
     [ "$st" = ready ] && exit 0 || exit 1
@@ -372,6 +375,6 @@ case "$MODE" in
     fi
     ;;
 
-  *) echo "usage: session-handoff (targets | check <s> | ready <s> | send <s> <msg>|--file <p>)"; exit 2;;
+  *) echo "usage: session-handoff (targets | check <s> | ready <s> | send <s> <msg>|--file <p>)" >&2; exit 2;;
 esac
 fi

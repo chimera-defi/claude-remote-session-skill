@@ -1048,6 +1048,6 @@ else:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]"; exit 2;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
