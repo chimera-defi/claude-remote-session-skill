@@ -31,10 +31,10 @@ capture the pane. CLI **v2.1.206**, model resolved to **Sonnet 5**
   only change is cache behaviour.
 - **MCP schemas cost 0 tokens upfront** (deferred) — confirmed, not a contributor.
 
-### Where the builder's 11.3k comes from (System-tools drill-down)
+### Where the builder's ~10.3k comes from (System-tools drill-down)
 
-`--tools` is an **exhaustive allowlist over the built-in set**. The 11.3k saving
-is entirely from dropping **6 upfront-schema tools**:
+`--tools` is an **exhaustive allowlist over the built-in set**. The ~10.3k saving
+is entirely from dropping **5 upfront-schema tools**:
 
 | Dropped tool | ~upfront cost |
 |---|---:|

@@ -70,7 +70,7 @@ Use `workspace/` for repo sessions, `.sessions/` for utilities (managers, monito
 ## Key Rules
 
 - `--dangerously-skip-permissions` always — sessions must never prompt
-- Sentinel file `.sessions-init` prevents 0s exit on fresh workdirs triggering 300s backoff
+- Sentinel file `.sessions-init-<remote_name>` prevents 0s exit on fresh workdirs triggering 300s backoff
 - Auto-wire `using-superpowers` and all global skills into every session — do not wait for user to request it
 - One Bash call for the entire recipe — do not split into multiple tool calls
 - Scripts are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — no repo commits
@@ -127,6 +127,7 @@ new-session <foldername> sessions     # force .sessions/
 new-session <foldername> --alias x    # explicit short alias (THIS spawn only)
 new-session <foldername> --alias x --set-default-alias   # ...and make it the folder default
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
+new-session <foldername> --force      # spawn despite the low-RAM preflight refusal (the gate is advisory otherwise)
 new-session --help                    # print usage and exit (no session spawned)
 
 new-session <foldername> --task "..."        # spawn AND kick off, in one shot
