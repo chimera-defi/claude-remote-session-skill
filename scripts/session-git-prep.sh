@@ -123,22 +123,30 @@ fi
 WT_BASE="$HOME/.claude/worktrees"
 mkdir -p "$WT_BASE" 2>/dev/null || true
 WT="$WT_BASE/$REMOTE"
-[ -e "$WT" ] && WT="$WT_BASE/${REMOTE}-$$"   # belt-and-suspenders; REMOTE is timestamped
 BR="session/$REMOTE"
 REASON="dirty=$([ -n "$DIRTY" ] && echo yes || echo no) busy=$([ -n "$BUSY" ] && echo yes || echo no)"
+
+# REMOTE is stable across systemd restarts of the SAME session (it's baked into
+# that session's generated start script, not regenerated per spawn) — so a
+# worktree already registered at $WT is almost always this session's own from
+# a prior run, not a stray collision. Reuse it BEFORE ever considering the -$$
+# suffix below: unconditionally suffixing here used to orphan the prior
+# worktree, and any uncommitted work inside it, on every restart of a session
+# whose canonical repo was dirty/busy at spawn time.
+if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $WT"; then
+  log "worktree at $WT already registered (prior run of '$REMOTE'); reusing -> $WT"
+  emit "$WT"
+fi
+[ -e "$WT" ] && WT="$WT_BASE/${REMOTE}-$$"   # belt-and-suspenders: path exists but isn't a worktree of this repo
 
 if git -C "$REPO" worktree add --quiet -b "$BR" "$WT" "$BASE" 2>/dev/null; then
   log "canonical unavailable ($REASON); isolated worktree on '$BR' from '$BASE' -> $WT"
   emit "$WT"
 fi
 
-# Worktree add failed — the branch/dir may already exist from a prior run.
-# 1. If $WT already is a valid worktree of this repo, reuse it.
-if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qF "worktree $WT"; then
-  log "worktree at $WT already registered; reusing -> $WT"
-  emit "$WT"
-fi
-# 2. Retry once with a unique suffix so a second session doesn't collide.
+# Worktree add still failed (e.g. branch "$BR" exists but isn't the $WT we
+# just checked). Retry once with a unique suffix so a second session doesn't
+# collide.
 WT2="$WT_BASE/${REMOTE}-$$"
 BR2="session/${REMOTE}-$$"
 if git -C "$REPO" worktree add --quiet -b "$BR2" "$WT2" "$BASE" 2>/dev/null; then

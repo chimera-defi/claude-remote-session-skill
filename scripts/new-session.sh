@@ -309,10 +309,28 @@ REMOTE_NAME="ah-${BODY}"
 # name is confirmed free. --dry-run never reserves anything (mirrors
 # session-alias's --no-save: a preview must not mutate shared state), so it
 # only does the plain liveness check.
+# name_taken <session> <remote_name> — is this candidate name unavailable?
+# Live tmux session -> yes. Also yes when a worktree is still registered at
+# ~/.claude/worktrees/<remote_name>: reap-local never removes worktree files
+# (see session-doctor.sh reap), so a reaped session's worktree can outlive
+# its tmux session and its systemd unit. Respawning the SAME folder+alias
+# within the same clock-minute (ID is minute-granularity) would otherwise
+# reissue that reaped session's exact REMOTE_NAME, and session-git-prep.sh
+# treats a REMOTE_NAME's own registered worktree as safe to reuse across a
+# restart (by design, so a live session's restart doesn't orphan itself) —
+# which would silently hand this brand-new session someone else's leftover,
+# possibly-dirty worktree (found in review, chatgpt-codex-connector, PR #72).
+# Reserving the name until a human runs worktree-stale keeps that reuse path
+# limited to genuine restarts of the SAME session.
+name_taken() {
+  tmux has-session -t "$1" 2>/dev/null && return 0
+  [ -e "$HOME/.claude/worktrees/$2" ] && return 0
+  return 1
+}
 if command -v tmux >/dev/null 2>&1; then
   if [ "$DRYRUN" = yes ]; then
     n=2
-    while tmux has-session -t "$SESSION" 2>/dev/null; do
+    while name_taken "$SESSION" "$REMOTE_NAME"; do
       BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
     done
   else
@@ -328,9 +346,10 @@ if command -v tmux >/dev/null 2>&1; then
     # loudly instead once a persistent failure is implausibly still "just a race".
     while :; do
       if mkdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null; then
-        if tmux has-session -t "$SESSION" 2>/dev/null; then
-          # Name was already live (a prior, non-racing spawn) — free the lock
-          # we just took and move on to the next candidate name.
+        if name_taken "$SESSION" "$REMOTE_NAME"; then
+          # Name was already live or worktree-retained (a prior, non-racing
+          # spawn or a reaped-but-uncleaned session) — free the lock we just
+          # took and move on to the next candidate name.
           rmdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null
         else
           # A lock dir surviving past this process's exit is a crashed/killed

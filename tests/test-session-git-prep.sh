@@ -139,4 +139,41 @@ if command -v tmux >/dev/null 2>&1; then
   ok "legacy-lock-canonical-branch-unchanged" "$(git -C "$R8" rev-parse --abbrev-ref HEAD)" "main"
 fi
 
+# 11. REMOTE is stable across systemd restarts of the SAME session (baked into
+# its generated start script, not regenerated per spawn) — so a second run
+# with the SAME remote name against a still-dirty repo must REUSE the worktree
+# from the first run, not orphan it into a fresh -$$-suffixed one and lose any
+# uncommitted work sitting inside it. Regression for exactly that data loss.
+R9="$WORK/repo9"; mkrepo "$R9"
+echo "uncommitted" > "$R9/dirty.txt"
+out1="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
+echo "in-progress work" > "$out1/wip.txt"
+out2="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
+ok "restart-reuses-same-worktree" "$out2" "$out1"
+ok "restart-keeps-wip-file" "$([ -f "$out2/wip.txt" ] && echo yes || echo no)" "yes"
+ok "restart-no-orphan-worktree" "$(git -C "$R9" worktree list | wc -l | tr -d ' ')" "2"
+
+# 12. The reuse check must match the COMPLETE worktree-list line, not just a
+# fixed-string substring: an unsuffixed $WT that is merely a PATH PREFIX of a
+# real, unrelated, PID-suffixed worktree (e.g. $WT=".../remote-z" vs a
+# registered ".../remote-z-12345") must NOT be treated as that worktree and
+# reused — it's a different, unrelated directory that may not even be a git
+# worktree at all. Regression for a prefix false-positive caught in PR review
+# (chatgpt-codex-connector, PR #72): `grep -F "worktree $WT"` matches any
+# porcelain line where "$WT" is a literal prefix, not just an exact path.
+R10="$WORK/repo10"; mkrepo "$R10"
+echo "uncommitted" > "$R10/dirty.txt"
+# Force the PID-suffix path by pre-occupying the unsuffixed dir with a stray
+# (non-worktree) directory, producing a real worktree at "remote-prefix-<pid>".
+mkdir -p "$HOME/.claude/worktrees/remote-prefix"
+bash "$SGP" "$R10" sess-prefix remote-prefix >/dev/null 2>/dev/null
+# Now make the UNSUFFIXED path an unrelated, non-worktree directory again —
+# it just happens to be a path-prefix of the real suffixed worktree above.
+rm -rf "$HOME/.claude/worktrees/remote-prefix"
+mkdir -p "$HOME/.claude/worktrees/remote-prefix"
+echo "unrelated, not part of any worktree" > "$HOME/.claude/worktrees/remote-prefix/decoy.txt"
+out_second="$(bash "$SGP" "$R10" sess-prefix remote-prefix 2>/dev/null)"
+ok "prefix-collision-not-falsely-reused" "$([ "$out_second" = "$HOME/.claude/worktrees/remote-prefix" ] && echo BUG-reused-unrelated-dir || echo ok)" "ok"
+ok "prefix-collision-emits-real-worktree" "$(git -C "$out_second" rev-parse --is-inside-work-tree 2>/dev/null)" "true"
+
 echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
