@@ -286,6 +286,55 @@ _context_pct_for_row() {
   printf '%s\t%s\n' "$tokens" "$(( tokens * 100 / window ))"
 }
 
+# Managed compaction is a phase-boundary action. Bind the active transcript
+# identity to ~/.claude/tasks/<sessionId> and fail closed while any phase task
+# is in_progress. Tests may override SESSION_COMPACT_TASKS_ROOT.
+_managed_task_state_for_cwd() {
+  local cwd="$1" project_dir tasks_root
+  project_dir="$HOME/.claude/projects/$(_encode_cwd "$cwd")"
+  tasks_root="${SESSION_COMPACT_TASKS_ROOT:-$HOME/.claude/tasks}"
+  [ -d "$project_dir" ] || { echo unknown; return; }
+  python3 - "$project_dir" "$tasks_root" <<'PYTASK'
+import glob, json, os, sys
+project_dir, tasks_root = sys.argv[1], sys.argv[2]
+best = None
+for fn in glob.glob(os.path.join(project_dir, '*.jsonl')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh:
+            for line in fh:
+                if 'assistant' not in line or 'usage' not in line:
+                    continue
+                try: obj = json.loads(line)
+                except Exception: continue
+                if obj.get('type') != 'assistant': continue
+                msg = obj.get('message')
+                if not isinstance(msg, dict) or not isinstance(msg.get('usage'), dict): continue
+                if msg.get('model') == '<synthetic>': continue
+                ts = obj.get('timestamp')
+                if not ts: continue
+                candidate = (ts, os.path.splitext(os.path.basename(fn))[0])
+                if best is None or candidate[0] > best[0]: best = candidate
+    except OSError:
+        continue
+if best is None:
+    print('unknown'); raise SystemExit
+session_id = best[1]
+task_dir = os.path.join(tasks_root, session_id)
+if not os.path.isdir(task_dir):
+    print('clear'); raise SystemExit
+active = 0
+for fn in glob.glob(os.path.join(task_dir, '*.json')):
+    try:
+        with open(fn, encoding='utf-8', errors='ignore') as fh: obj = json.load(fh)
+    except Exception:
+        print('unknown'); raise SystemExit
+    if not isinstance(obj, dict):
+        print('unknown'); raise SystemExit
+    if obj.get('status') == 'in_progress': active += 1
+print(('active:%d' % active) if active else 'clear')
+PYTASK
+}
+
 # _validate_uint <flag-name> <var-name> — validates the NAMED variable's
 # current value and canonicalizes it in place (base-10, leading-zero-safe —
 # same idiom used throughout this repo: session-doctor.sh --days, session-
@@ -983,6 +1032,18 @@ case "$MODE" in
       # skip:outside-window (idle/context genuinely below both trigger
       # thresholds) — that keeps falling through to the wildcard below.
       decision="$(_sweep_decide "$MIN_IDLE" "$MAX_IDLE" "$ctx_pct" "$MANAGED_ONLY" "$c1" "$c2" "$c3" "$c4" "$c5" "$c6" "$c7" "$c8" "$c9" "$c10")"
+      if [ "$MANAGED_ONLY" = yes ]; then
+        case "$decision" in
+          eligible:*)
+            task_state="$(_managed_task_state_for_cwd "$c4")"
+            case "$task_state" in
+              active:*) decision="skip:active-task"; active_task_count="${task_state#active:}" ;;
+              clear) : ;;
+              *) decision="skip:task-state-unknown" ;;
+            esac
+            ;;
+        esac
+      fi
       detail="-"
       case "$decision" in
         eligible:idle)          verdict="would-compact: idle" ;;
@@ -1000,6 +1061,8 @@ case "$MODE" in
           note="cannot verify need: context is unreadable (unparseable/missing transcript, or the model is missing from _model_window_for's table) — refusing to compact on idle alone until context can be measured; if the transcript looks fine, the model likely needs adding to _model_window_for"
           ;;
         skip:protected)         verdict="skip: protected" ;;
+        skip:active-task)       verdict="skip: active task"; detail="${active_task_count:-1} in_progress Claude task(s); checkpoint/finish phase before compacting" ;;
+        skip:task-state-unknown) verdict="skip: task state unknown"; detail="cannot bind managed session to a readable Claude task ledger; fail closed" ;;
         skip:pane-*)            verdict="skip: busy"; detail="live pane: ${decision#skip:pane-}" ;;
         skip:already-compacted) verdict="skip: compacted"; detail="already compacted this idle window" ;;
         skip:landed-and-clean)  verdict="skip: landed+clean"; detail="worktree landed + clean" ;;

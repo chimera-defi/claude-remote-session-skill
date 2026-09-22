@@ -273,3 +273,7 @@ Cadence / where this fits: see [`references/session-lifecycle.md`](../references
 ## Managed-orchestrator high-context policy (2026-09-22)
 
 The fleet-wide high-context sweep trigger remains **80% of the model context window plus 5 minutes idle**. For allowlisted managed orchestrators invoked with --managed-only, the high-context trigger is deliberately lower at **50% plus 5 minutes idle**. The idle-window path still requires its separate 40% context floor. This keeps compaction out of active turns while ensuring persistent orchestrators checkpoint/compact well before context pressure becomes acute. Long-running orchestrators should additionally create a durable checkpoint and compact at major phase boundaries and at least once per active 24-hour period.
+
+## Managed campaign-phase guard (2026-09-22)
+
+Managed-only automatic compaction also inspects the active Claude session task ledger. If the active transcript session has any task with status in_progress, compaction is skipped even when the tmux pane looks idle and the context threshold is exceeded. An unreadable task-state binding also skips fail-closed. The orchestrator checkpoints and completes the phase, compacts, then re-orients before opening the next phase.

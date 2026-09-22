@@ -234,5 +234,27 @@ has   "nomanaged-sessd"         "$out5" "sessd"
 lacks "nomanaged-no-scope-text" "$out5" "scope:"
 has   "nomanaged-scanned-count" "$out5" "--- 4 session(s) scanned."
 
+
+# managed task-state guard
+TASK_CWD="$FAKE_HOME/proj-active-task"
+TASK_ENC="$(_encode_cwd "$TASK_CWD")"
+mkdir -p "$FAKE_HOME/.claude/projects/$TASK_ENC" "$FAKE_HOME/tasks-root/sid-active"
+cat > "$FAKE_HOME/.claude/projects/$TASK_ENC/sid-active.jsonl" <<'JSONL'
+{"type":"assistant","timestamp":"2026-09-22T10:00:00Z","message":{"model":"claude-fable-5","usage":{"input_tokens":10,"cache_read_input_tokens":500000,"cache_creation_input_tokens":0,"output_tokens":1}}}
+JSONL
+cat > "$FAKE_HOME/tasks-root/sid-active/1.json" <<'JSON'
+{"id":"1","status":"in_progress"}
+JSON
+state="$(HOME="$FAKE_HOME" SESSION_COMPACT_TASKS_ROOT="$FAKE_HOME/tasks-root" _managed_task_state_for_cwd "$TASK_CWD")"
+ok "managed-task-active-state" "$state" "active:1"
+cat > "$FAKE_HOME/tasks-root/sid-active/1.json" <<'JSON'
+{"id":"1","status":"completed"}
+JSON
+state="$(HOME="$FAKE_HOME" SESSION_COMPACT_TASKS_ROOT="$FAKE_HOME/tasks-root" _managed_task_state_for_cwd "$TASK_CWD")"
+ok "managed-task-clear-state" "$state" "clear"
+echo '{broken' > "$FAKE_HOME/tasks-root/sid-active/bad.json"
+state="$(HOME="$FAKE_HOME" SESSION_COMPACT_TASKS_ROOT="$FAKE_HOME/tasks-root" _managed_task_state_for_cwd "$TASK_CWD")"
+ok "managed-task-malformed-fails-closed" "$state" "unknown"
+
 echo "session-compact-managed: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
