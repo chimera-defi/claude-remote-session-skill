@@ -48,18 +48,20 @@ Options:
 
 Environment:
   CLAUDE_SESSION_MODEL=<model>  Model for the session. Unset → the PROFILE's
-                                per-role default (opus/sonnet/haiku, see below) —
-                                a bare alias that auto-tracks the latest release
-                                for that tier. Set it to override: a bare alias
-                                still tracks latest, or pass an exact id (e.g.
-                                claude-opus-4-8) to pin one spawn reproducibly.
+                                per-role default (see below): claude-opus-5
+                                (pinned) for orchestrator; sonnet/haiku for
+                                builder/copywriter — bare aliases that
+                                auto-track the latest release for their tier.
+                                Set it to override: a bare alias tracks latest,
+                                or pass an exact id (e.g. claude-opus-4-8) to
+                                pin one spawn reproducibly.
   CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 orchestrator).
                                 orchestrator — full built-in tool set; needed for
                                   multi-agent fan-out (Workflow/Agent/advisor/…).
-                                  Default model: opus.
+                                  Default model: claude-opus-5 (pinned).
                                 builder      — trimmed --tools allowlist; drops the
-                                  orchestration-only schemas to reclaim ~11k of the
+                                  orchestration-only schemas to reclaim ~10.3k of the
                                   ~19.5k System-tools context. Hands-on
                                   implementation that doesn't fan out. Default: sonnet.
                                 copywriter   — same trimmed allowlist; lightweight
