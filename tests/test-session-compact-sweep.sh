@@ -137,11 +137,11 @@ PROT_CWD="$FAKE_HOME/proj-prot"
 BAD_CWD="$FAKE_HOME/proj-bad"
 
 _fixture_transcript "$CTX_CWD"  850000 claude-sonnet-4-6   # 85% of 1,000,000
-# 50%: clears the idle trigger's own context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT
-# = 40 — idle alone is not need) while staying well under the DIFFERENT 80%
-# context-trigger threshold, so this row still isolates "idle trigger fires",
+# 45%: clears the idle trigger's own context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT
+# = 40 — idle alone is not need) while staying under the DIFFERENT 80%
+# fleet context-trigger threshold, so this row still isolates "idle trigger fires",
 # not "context trigger also would have fired".
-_fixture_transcript "$IDLE_CWD" 500000 claude-sonnet-4-6   # 50%
+_fixture_transcript "$IDLE_CWD" 450000 claude-sonnet-4-6   # 45%
 _fixture_transcript "$BUSY_CWD" 950000 claude-sonnet-4-6   # 95%
 _fixture_transcript "$PROT_CWD" 990000 claude-sonnet-4-6   # 99%
 _fixture_unparseable_transcript "$BAD_CWD"
@@ -164,11 +164,11 @@ has "context-trigger-fires"     "$(row ctxsess)" "would-compact: context"
 has "context-trigger-shows-pct" "$(row ctxsess)" " 85 "
 has "context-trigger-shows-tokens" "$(row ctxsess)" "850000"
 
-# --- 2. context=50% (clears the idle trigger's context floor but not the
-# separate 80% context-trigger threshold), idle=90m (over the idle trigger)
+# --- 2. context=45% (clears the idle trigger's context floor but not the
+# separate 80% fleet context-trigger threshold), idle=90m (over the idle trigger)
 # -> idle ---------------------------------------------------------------
 has "idle-trigger-fires"  "$(row idlesess)" "would-compact: idle"
-has "idle-trigger-shows-pct" "$(row idlesess)" " 50 "
+has "idle-trigger-shows-pct" "$(row idlesess)" " 45 "
 
 # --- 3. THE IMPORTANT CASE: context=95% (would ALSO trigger) AND idle=90m
 # (would ALSO trigger via idle) but the pane is BUSY (real spinner text, read

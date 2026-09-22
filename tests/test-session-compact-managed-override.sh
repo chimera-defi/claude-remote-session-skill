@@ -93,7 +93,7 @@ FAKE_HOME="$(mktemp -d)"
 
 # _fixture_transcript <cwd> <tokens> <model> — same helper as
 # test-session-compact-sweep.sh, needed only for the one scenario below that
-# must clear the 80% CONTEXT trigger without clearing the 60m idle trigger.
+# must clear the 50% managed CONTEXT trigger without clearing the 60m idle trigger.
 _fixture_transcript() {
   local cwd="$1" tokens="$2" model="$3" dir
   dir="$FAKE_HOME/.claude/projects/$(_encode_cwd "$cwd")"
@@ -126,7 +126,7 @@ _fixture_transcript "$CTX_CWD" 900000 claude-sonnet-4-6   # 90%
 # comment), so a nonexistent (context-unknown) cwd would now skip:context-
 # unknown instead of demonstrating the override this row exists to prove.
 LANDEDCLEAN_CWD="$FAKE_HOME/proj-mo-landedclean"
-_fixture_transcript "$LANDEDCLEAN_CWD" 500000 claude-sonnet-4-6   # 50%
+_fixture_transcript "$LANDEDCLEAN_CWD" 450000 claude-sonnet-4-6   # 45%
 
 export STUB_TMUX_SESSIONS="mo_landedclean mo_compacted mo_protected mo_busy mo_ctxlandedclean"
 export STUB_TMUX_BUSY_SESSIONS="mo_busy"

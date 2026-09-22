@@ -113,10 +113,10 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wire
 # recognized one (claude-sonnet-4-6, 1,000,000-token window) except
 # ctxunknownsess/ctxunknownbsess, which use an unparseable transcript.
 #
-# Six rows below are the brief's own required scenarios (1-6). Two more
-# (ctxb50sess, ctxbunknownsess) fill code paths those six do not reach:
-# trigger B (the context path, idle < 60m) with a KNOWN-but-under-80% context
-# and trigger B with an UNKNOWN context, respectively — the given six only
+# Six rows below are the brief's own required scenarios (1-6). Three more
+# (ctxb50sess, ctxb49sess, ctxbunknownsess) fill code paths those six do not reach:
+# trigger B with known sub-80% values (50%/49%) and with
+# UNKNOWN context, respectively — the given six only
 # exercise trigger A (idle >= 60m) for both the too-small and the unknown
 # case. See scenario notes 7 and 8 below.
 # ============================================================================
@@ -128,6 +128,7 @@ COMPACTED_CWD="$FAKE_HOME/proj-compacted"
 ATFLOOR_CWD="$FAKE_HOME/proj-atfloor"
 UNDERFLOOR_CWD="$FAKE_HOME/proj-underfloor"
 CTXB50_CWD="$FAKE_HOME/proj-ctxb50"
+CTXB49_CWD="$FAKE_HOME/proj-ctxb49"
 CTXBUNKNOWN_CWD="$FAKE_HOME/proj-ctxbunknown"
 
 _fixture_transcript "$CTXSMALL_CWD"   100000 claude-sonnet-4-6   # 10%
@@ -137,22 +138,23 @@ _fixture_unparseable_transcript "$CTXUNKNOWN_CWD"
 _fixture_transcript "$COMPACTED_CWD"  500000 claude-sonnet-4-6   # 50%
 _fixture_transcript "$ATFLOOR_CWD"    400000 claude-sonnet-4-6   # exactly 40%
 _fixture_transcript "$UNDERFLOOR_CWD" 390000 claude-sonnet-4-6   # exactly 39%
-_fixture_transcript "$CTXB50_CWD"     500000 claude-sonnet-4-6   # 50%
+_fixture_transcript "$CTXB50_CWD"     500000 claude-sonnet-4-6   # exactly 50%
+_fixture_transcript "$CTXB49_CWD"     490000 claude-sonnet-4-6   # exactly 49%
 _fixture_unparseable_transcript "$CTXBUNKNOWN_CWD"
 
-export STUB_TMUX_SESSIONS="ctxsmallsess idleoksess ctxtriggersess ctxunknownsess compactedsess atfloorsess underfloorsess ctxb50sess ctxbunknownsess"
+export STUB_TMUX_SESSIONS="ctxsmallsess idleoksess ctxtriggersess ctxunknownsess compactedsess atfloorsess underfloorsess ctxb50sess ctxb49sess ctxbunknownsess"
 export STUB_TMUX_BUSY_SESSIONS=""
 
 {
   # 1. idle=90m, context=10% -> the whole point of this task: idle alone is
   #    not need, and 10% clears neither the idle trigger's 40% floor nor the
-  #    context trigger's 80% threshold.
+  #    context trigger's 50% threshold.
   _row ctxsmallsess    remote 1 "$CTXSMALL_CWD"   90 2026-01-01T00:00:00 no no unknown clean
   # 2. idle=90m, context=50% -> clears the idle trigger's 40% floor (and is
-  #    irrelevant to the separate 80% context-trigger threshold, since idle
+  #    irrelevant to the separate 50% context-trigger threshold, since idle
   #    already qualifies trigger A first) -> would-compact: idle.
   _row idleoksess       remote 1 "$IDLEOK_CWD"     90 2026-01-01T00:00:00 no no unknown clean
-  # 3. idle=10m (under the 60m idle trigger), context=90% (clears the 80%
+  # 3. idle=10m (under the 60m idle trigger), context=90% (clears the 50%
   #    context trigger, and 10m clears its own 5m floor) -> would-compact:
   #    context.
   _row ctxtriggersess   remote 1 "$CTXTRIGGER_CWD" 10 2026-01-01T00:00:00 no no unknown clean
@@ -173,14 +175,16 @@ export STUB_TMUX_BUSY_SESSIONS=""
   #     idle=90m -> skips (skip: context too small).
   _row underfloorsess   remote 1 "$UNDERFLOOR_CWD" 90 2026-01-01T00:00:00 no no unknown clean
   # 7. discovered gap: trigger B (context path) with a KNOWN context under
-  #    its own 80% threshold, idle=10m (clears trigger B's 5m floor, not
+  #    its own 50% threshold, idle=10m (clears trigger B's 5m floor, not
   #    trigger A's 60m min) -> skip: under thresholds, UNCHANGED from before
   #    this task. None of scenarios 1-6 exercise trigger B with a KNOWN,
   #    merely-insufficient context — only trigger A's floor (1, 2, 6) or
-  #    trigger B's already-covered >=80% case (3). Confirms the idle-trigger
+  #    trigger B's already-covered >=50% case (3). Confirms the idle-trigger
   #    floor didn't accidentally loosen or otherwise touch trigger B's own
   #    threshold check for a context value that IS measurable.
   _row ctxb50sess       remote 1 "$CTXB50_CWD"     10 2026-01-01T00:00:00 no no unknown clean
+  # 7b. boundary: one point below the context trigger (49%), idle=10m -> skip.
+  _row ctxb49sess       remote 1 "$CTXB49_CWD"     10 2026-01-01T00:00:00 no no unknown clean
   # 8. discovered gap: trigger B (context path) with an UNKNOWN context,
   #    idle=10m -> skip: context unknown. Scenario 4 only exercises the
   #    unknown-context path through trigger A (idle=90m, i.e. decision_a).
@@ -227,16 +231,29 @@ has   "atfloor-compacts"        "$(row atfloorsess)"    "would-compact: idle"
 has   "underfloor-skips"        "$(row underfloorsess)" "skip: context too small"
 lacks "underfloor-not-compact"  "$(row underfloorsess)" "would-compact"
 
-# --- 7. discovered gap: trigger B, known context under 80%, idle under 60m
-# -> skip: under thresholds, unchanged -----------------------------------
+# --- 7. fleet trigger remains 80%: 50% and 49% both stay below it ----------
 has   "ctxb50-under-thresholds" "$(row ctxb50sess)" "skip: under thresholds"
+has   "ctxb50-shows-pct" "$(row ctxb50sess)" " 50 "
+has   "ctxb49-under-thresholds" "$(row ctxb49sess)" "skip: under thresholds"
+has   "ctxb49-shows-pct" "$(row ctxb49sess)" " 49 "
 lacks "ctxb50-not-compact"      "$(row ctxb50sess)" "would-compact"
-lacks "ctxb50-not-context-unknown" "$(row ctxb50sess)" "context unknown"
+lacks "ctxb49-not-compact"      "$(row ctxb49sess)" "would-compact"
 
 # --- 8. discovered gap: trigger B, unknown context, idle under 60m ---------
 has   "ctxbunknown-verdict"   "$(row ctxbunknownsess)" "skip: context unknown"
 has   "ctxbunknown-loud-note" "$(row ctxbunknownsess)" "_model_window_for"
 lacks "ctxbunknown-not-compact" "$(row ctxbunknownsess)" "would-compact"
+# --- 9. managed-only trigger is lower: 50% fires, 49% skips ----------------
+ALLOW_FILE="$(mktemp)"
+printf 'ctxb50sess
+ctxb49sess
+' > "$ALLOW_FILE"
+out_mo="$(SESSION_COMPACT_MANAGED_FILE="$ALLOW_FILE" _run sweep --dry-run --managed-only)"; rc_mo=$?
+ok "managed-boundary-exit0" "$rc_mo" "0"
+row_mo(){ printf '%s' "$out_mo" | grep "^$1 "; }
+has "managed-50-compacts" "$(row_mo ctxb50sess)" "would-compact: context"
+has "managed-49-skips" "$(row_mo ctxb49sess)" "skip: under thresholds"
+has "managed-banner-50" "$out_mo" "context >= 50%"
 
 echo "session-compact-need-based: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
