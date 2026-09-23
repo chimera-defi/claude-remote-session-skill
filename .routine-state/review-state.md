@@ -34,10 +34,21 @@ routine's own 2026-09-21 output), #74 (fleet-status composite view), #75
   (though safely: it only ever over-refused, never a false SAFE-TO-REAP).
   This was explicitly flagged by PR #76's author as "for the nightly review
   / a human" rather than fixed inline in that cleanup PR.
-  Fixed by adding `\.sessions-init-[^/]*` to `JUNK_RE`. +2 test cases in
-  tests/test-session-preserve.sh (61 -> 67 assertions): the sentinel alone
-  now audits SAFE-TO-REAP; a sentinel alongside genuine untracked work still
-  correctly blocks reap. Full 22-file suite green before and after;
+  First fix folded `\.sessions-init-[^/]*` into `JUNK_RE`'s shared
+  `(^|/)...(/|$)` group. **Codex's PR #77 review (P1) caught a real bug in
+  that fix**: the shared group matches a path component at ANY depth, so a
+  real file like `docs/.sessions-init-notes` or anything inside a directory
+  literally named `.sessions-init-output/` would also be silently excluded
+  from the audit and `--rescue` — reap could then destroy it. Fixed by
+  splitting the sentinel exclusion into its own `SENTINEL_RE='^\.sessions-
+  init-[^/]*$'`, anchored to the whole relative path so it only matches the
+  single flat root-level file `new-session.sh` actually creates. Replied on
+  the thread (commit 1b7d6f4) and resolved it.
+  +5 test cases total in tests/test-session-preserve.sh (61 -> 70
+  assertions): the sentinel alone audits SAFE-TO-REAP; a sentinel alongside
+  genuine untracked work still blocks reap; a nested `docs/.sessions-init-
+  notes` file and a file inside a `.sessions-init-output/` directory both
+  still correctly block reap. Full 22-file suite green throughout;
   `shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh` (CI's exact
   invocation) clean. PR #77, not yet merged as of this run's end.
 
