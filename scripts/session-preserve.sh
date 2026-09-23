@@ -29,7 +29,13 @@ set -uo pipefail
 
 RESCUE_ROOT="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
 # Junk that every session regenerates — never worth rescuing or blocking a reap.
-JUNK_RE='(^|/)(\.claude/skills|\.claude/token-reduce-state|\.claude/tmp-briefs|\.superpowers|__pycache__|\.pytest_cache|node_modules|\.venv|\.gstack)(/|$)'
+# Includes the spawner's own untracked .sessions-init-<remote> sentinel (see
+# new-session.sh), which sits at the worktree root for the life of every
+# session — session-git-prep.sh and session-doctor.sh's _wt_dirty already
+# ignore it when deciding clean/DIRTY; without it here, EVERY live session
+# audited without --rescue was misreported NOT-SAFE-TO-REAP on that sentinel
+# alone, defeating the audit for the common case (found in review, PR #76).
+JUNK_RE='(^|/)(\.claude/skills|\.claude/token-reduce-state|\.claude/tmp-briefs|\.superpowers|__pycache__|\.pytest_cache|node_modules|\.venv|\.gstack|\.sessions-init-[^/]*)(/|$)'
 
 MODE_RESCUE=no; MODE_WIP=no; TARGET=""; ALL=no
 while [ $# -gt 0 ]; do

@@ -188,6 +188,32 @@ has "junk-wip-then-safe" "$out" "SAFE-TO-REAP"
 ok "junk-wip-real-committed" "$(git -C "$R4B" diff --name-only HEAD)" "node_modules/pkg/index.js"
 ok "junk-wip-junk-not-committed" "$(git -C "$R4B" show HEAD:real.txt)" "two"
 
+# 6c. The spawner's own untracked .sessions-init-<remote> sentinel (touched by
+# new-session.sh's kickoff loop at the worktree root, for the life of the
+# session) must NOT count as untracked work -- session-git-prep.sh and
+# session-doctor.sh's _wt_dirty already treat it as clean; before JUNK_RE
+# covered it here, this audit disagreed and reported NOT-SAFE-TO-REAP on the
+# sentinel alone, on every restarted session, regardless of real work (found
+# in review, PR #76).
+R4C="$WORK/repo4c"; mkrepo "$R4C"
+echo x > "$R4C/.sessions-init-ah-example-0101-0100"
+S_SENTINEL="$(spawn_in "$R4C")"
+out="$(bash "$SP" "$S_SENTINEL" 2>&1)"; rc=$?
+has "sentinel-untracked-safe" "$out" "SAFE-TO-REAP"
+ok  "sentinel-untracked-exit0" "$rc" "0"
+
+# 6d. A sentinel alongside a genuine untracked file must still report
+# NOT-SAFE-TO-REAP for the real file -- the sentinel exclusion must not mask
+# actual unsaved work sitting next to it.
+R4D="$WORK/repo4d"; mkrepo "$R4D"
+echo x > "$R4D/.sessions-init-ah-example-0101-0100"
+echo "real work" > "$R4D/scratch.txt"
+S_SENTINELPLUS="$(spawn_in "$R4D")"
+out="$(bash "$SP" "$S_SENTINELPLUS" 2>&1)"; rc=$?
+has "sentinel-plus-not-safe" "$out" "NOT-SAFE-TO-REAP"
+has "sentinel-plus-reason"   "$out" "untracked-files"
+ok  "sentinel-plus-exit1"    "$rc" "1"
+
 # 7. No remote configured -> flagged explicitly, since local-only commits there
 # have nowhere to be pushed to (the finding that prompted this script, see the
 # header comment: @{u}.. silently reports 0 unpushed with no upstream at all).
