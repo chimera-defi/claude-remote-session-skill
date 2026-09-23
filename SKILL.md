@@ -110,7 +110,8 @@ workdir (repo):  /home/agents/workspace/<foldername>
 workdir (util):  /home/agents/.sessions/<foldername>
 ```
 
-Name-first, date last. Use `workspace/` for repo sessions, `.sessions/` for utilities
+Name-first, date last; every spawn gets a unique name, so it never collides with a
+same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilities
 (managers, monitors, etc.). Legacy `agenthost_`/`agenthost-` sessions keep working;
 `session-doctor` matches both prefixes.
 
