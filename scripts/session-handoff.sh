@@ -20,7 +20,7 @@
 # into it would concatenate onto their draft and Enter would submit the
 # corrupted merge. `ready` also refuses when the pane is on an interactive
 # menu widget (arrow-key only; plain text sent into it is silently dropped —
-# see SKILL.md "Detecting a stuck-on-a-menu session") or has no visible
+# see references/troubleshooting.md "Detecting a stuck-on-a-menu session") or has no visible
 # prompt at all. `send` does not consult `ready` yet — see the predicate's
 # comment for adoption notes.
 set -uo pipefail
@@ -39,7 +39,7 @@ _is_working() {
 
 # _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
 # widget (numbered options + checkboxes, arrow-key navigation)? Free text sent
-# into it is not a valid input and is silently dropped — see SKILL.md
+# into it is not a valid input and is silently dropped — see references/troubleshooting.md
 # "Detecting a stuck-on-a-menu session". Prefer the distinctive hint strings
 # over trying to parse the numbered option list / checkbox glyphs, which are
 # too generic to grep for reliably on their own.

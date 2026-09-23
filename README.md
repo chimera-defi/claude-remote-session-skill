@@ -105,6 +105,16 @@ an explicit `--alias`) — see `SKILL.md` for the resolution rules. Legacy
 
 Once running: open Claude Code on any device → Remote sessions → look for `ah-<alias>-<MMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
 
+## Agent instructions in this repo
+
+| File | For |
+|---|---|
+| `CLAUDE.md` | agents working *on* this repo: finish line for a change, stop-vs-continue rule, anti-patterns, deploy table |
+| `SKILL.md` | spawning and operating sessions, incl. how to write a kickoff task |
+| `handoff/` | routing a task to another session; `references/massaging.md` is the handoff-prompt contract |
+| `references/` | runbooks: troubleshooting/recycling, session lifecycle, fallback recipe |
+| `agents/builder.md` | the Sonnet-pinned `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
+
 ## License
 
 MIT
