@@ -214,6 +214,24 @@ has "sentinel-plus-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "sentinel-plus-reason"   "$out" "untracked-files"
 ok  "sentinel-plus-exit1"    "$rc" "1"
 
+# 6e. The sentinel exemption is anchored to a ROOT-LEVEL file only -- it must
+# NOT swallow a nested path that merely CONTAINS ".sessions-init-" as a path
+# component (e.g. a real doc at docs/.sessions-init-notes, or a real file
+# inside a directory literally named .sessions-init-output/). new-session.sh
+# only ever creates a single flat sentinel at the worktree root; anything
+# with a "/" in it is real, unrelated content that must still block reap
+# (found by Codex review, PR #77 -- the first fix anchored on (^|/)...(/|$),
+# which matches a path component at ANY depth, not just the root).
+R4E="$WORK/repo4e"; mkrepo "$R4E"
+mkdir -p "$R4E/docs" "$R4E/.sessions-init-output"
+echo "real doc" > "$R4E/docs/.sessions-init-notes"
+echo "real result" > "$R4E/.sessions-init-output/result.txt"
+S_NESTEDSENTINEL="$(spawn_in "$R4E")"
+out="$(bash "$SP" "$S_NESTEDSENTINEL" 2>&1)"; rc=$?
+has "nested-sentinel-not-safe" "$out" "NOT-SAFE-TO-REAP"
+has "nested-sentinel-reason"   "$out" "untracked-files"
+ok  "nested-sentinel-exit1"    "$rc" "1"
+
 # 7. No remote configured -> flagged explicitly, since local-only commits there
 # have nowhere to be pushed to (the finding that prompted this script, see the
 # header comment: @{u}.. silently reports 0 unpushed with no upstream at all).
