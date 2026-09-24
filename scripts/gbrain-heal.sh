@@ -5,11 +5,25 @@
 #   1. The nightly embed drain was stalling every night: ollama's recipe batches up
 #      to ~6k-char chunks with no cap, so a single sub-batch can take 42s+ on a
 #      serial llama-server vs. the 60s default GBRAIN_AI_EMBED_TIMEOUT_MS. The
-#      abort isn't honored, so gbrain's own 900s stall watchdog kills the drain
-#      after ~20 chunks and the cursor restarts at page_id 0 next run, hitting the
-#      same huge page every time. VERIFIED FIX: cap batch tokens and raise the
+#      abort isn't honored, so gbrain's own stall watchdog kills the drain after
+#      ~20 chunks and the cursor restarts at page_id 0 next run, hitting the same
+#      huge page every time. VERIFIED FIX: cap batch tokens and raise the
 #      per-batch timeout (gateway.ts:1968 reads GBRAIN_EMBED_MAX_BATCH_TOKENS,
 #      gateway.ts:93 reads GBRAIN_AI_EMBED_TIMEOUT_MS) -- 233 chunks/10min, no stall.
+#   1b. Capping the batch size fixes per-request latency but exposes a second,
+#      distinct livelock (confirmed with a logging proxy): gbrain's stall
+#      watchdog (src/core/embed-stall.ts) is progress-keyed on
+#      `EmbedResult.embedded` -- i.e. it only resets on a PERSISTED CHUNK, and
+#      chunks persist once per PAGE, not per sub-batch (see the module header's
+#      "TRIGGER is SUCCESSFUL forward progress" note). Page 7551 has 1217
+#      chunks -- at ~170 sub-batch requests to finish that one page, even a
+#      healthy 5-19s/request adds up to ~27 minutes with ZERO watchdog-visible
+#      progress, well past the watchdog's 900s default
+#      (DEFAULT_EMBED_STALL_ABORT_SEC). So the watchdog fires mid-page, banks
+#      nothing for that page, and the next run hits the same page again --
+#      deterministic livelock, independent of the batch-size fix. VERIFIED FIX:
+#      also raise GBRAIN_EMBED_STALL_ABORT_SECONDS (resolved in
+#      resolveEmbedStallAbortSeconds()) well past the worst single-page time.
 #   2. The nightly `gbrain-code-refresh.sh` cron syncs portfolio-ssot-live with
 #      --no-embed by design, so hundreds of new unembedded code chunks land daily.
 #      That backlog is expected; a script that treats "any backlog" as unhealthy
@@ -26,24 +40,38 @@
 # this repo copy) rather than reinvented.
 #
 # Usage:
-#   gbrain-heal [--check] [--json]
+#   gbrain-heal [--check] [--json] [--strict]
 #     Read-only (default mode). Runs `doctor --json` (counts FAIL checks) and
-#     `migrate embeddings --status --json` (missing/stale), prints a one-line
-#     verdict, and exits 0 (healthy) / 1 (unhealthy) / 2 (tool error).
+#     `migrate embeddings --status --json` (missing/stale/migration marker),
+#     prints a one-line verdict, and exits 2 on a tool error. Otherwise, one
+#     of three states, each with its own default exit code:
+#       healthy    0 doctor FAILs AND missing==0 AND stale==0        -> exit 0
+#       draining   0 doctor FAILs but an embedding backlog           -> exit 0
+#                  (missing>0 or stale>0) -- expected, see #2           (1 with --strict)
+#       unhealthy  a real doctor FAIL                                -> exit 1 (always)
+#     --strict tightens "draining" to the same zero-tolerance rule
+#     server-health-audit.sh used (marker=none && stale==0 && missing==0 &&
+#     doctor fail==0): use it where a draining backlog really should page.
 #
 #   gbrain-heal --apply [--dry-run] [--embed-budget SECONDS] [--json]
 #     sync --all -> embed --stale (tuned env, time-budgeted) -> extract --stale
-#     -> per-source `dream --source <id>` cycle -> re-check (same as --check).
+#     -> per-source `dream --source <id>` cycle -> re-check (same as --check,
+#     non-strict -- draining is an acceptable end state for --apply).
 #     --dry-run prints the commands each phase would run and executes nothing.
 #     Single-flight via flock: a concurrent --apply exits 0 as a no-op (a
 #     concurrent --check is unaffected -- it is read-only and never locks).
 #     Exit: non-zero if any phase hard-failed, the post-run doctor check has a
-#     FAIL, or the embed phase stalled (backlog>0, zero progress in budget).
-#     A timed-out embed phase that made progress is NOT a failure -- it banks
-#     partial progress and resumes next run, same as gbrain's own drain design.
+#     FAIL, or the embed phase stalled (backlog>0, zero progress in budget --
+#     whether the process was killed by --embed-budget or gbrain's own stall
+#     watchdog aborted it first). A timed-out/stalled-watchdog embed phase that
+#     nonetheless made progress is NOT a failure -- it banks partial progress
+#     and resumes next run, same as gbrain's own drain design.
 #
 # Options:
-#   --embed-budget SECONDS   Wall-clock budget for the embed phase (default 7200).
+#   --embed-budget SECONDS   Wall-clock budget for the embed phase (default 7200;
+#                            keep it comfortably above GBRAIN_EMBED_STALL_ABORT_SECONDS
+#                            so gbrain's own watchdog, not our timeout, is what fires).
+#   --strict                 --check only: exit 1 on a draining backlog too (see above).
 #   --json                   Emit the machine-readable summary on stdout instead
 #                            of the human one-line verdict (both are always
 #                            logged to stderr).
@@ -66,9 +94,10 @@ EMBED_BUDGET=7200
 JSON_OUT=0
 MODE=check
 DRY_RUN=0
+STRICT=0
 
 usage() {
-  sed -n '2,45p' "$0"
+  sed -n '2,84p' "$0"
 }
 
 while [ $# -gt 0 ]; do
@@ -77,6 +106,7 @@ while [ $# -gt 0 ]; do
     --apply) MODE=apply; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) JSON_OUT=1; shift ;;
+    --strict) STRICT=1; shift ;;
     --embed-budget)
       [ $# -ge 2 ] || { echo "gbrain-heal: --embed-budget requires SECONDS" >&2; exit 2; }
       EMBED_BUDGET="$2"; shift 2 ;;
@@ -93,6 +123,17 @@ done
 export GBRAIN_EMBED_MAX_BATCH_TOKENS
 : "${GBRAIN_AI_EMBED_TIMEOUT_MS:=180000}"
 export GBRAIN_AI_EMBED_TIMEOUT_MS
+# The verified fix for root cause #1b: gbrain's stall watchdog
+# (src/core/embed-stall.ts) only resets on a PERSISTED chunk (EmbedResult.embedded),
+# and chunks persist once per page -- so a single huge page (e.g. 7551, 1217
+# chunks, ~170 sub-batch requests) can run ~27min with zero watchdog-visible
+# progress even when every sub-batch is succeeding. Default
+# GBRAIN_EMBED_STALL_ABORT_SECONDS is only 900s, well inside that window, so
+# the watchdog fires mid-page every run and nothing ever banks for it. Raise
+# it well past the worst single-page time; --embed-budget (default 7200) stays
+# the outer bound so gbrain's own watchdog fires first, not our `timeout`.
+: "${GBRAIN_EMBED_STALL_ABORT_SECONDS:=3600}"
+export GBRAIN_EMBED_STALL_ABORT_SECONDS
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 
@@ -109,13 +150,25 @@ if ! command -v "$GBRAIN" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------- do_check
-# Read-only health verdict. Sets CHECK_JSON / CHECK_LINE; returns 0 healthy,
-# 1 unhealthy, 2 tool error. Used standalone (--check) and as --apply's
-# final re-check, so the two never drift.
+# Read-only health verdict. Sets CHECK_JSON / CHECK_LINE; returns 0 (exit-ok
+# per the strict setting), 1 (not ok), 2 tool error. Used standalone (--check)
+# and as --apply's final re-check (always called non-strict there -- draining
+# is an acceptable end state for --apply), so the two never drift.
+#
+# Three states (independent of --strict):
+#   healthy   : doctor_fail_count==0 AND missing==0 AND stale==0
+#   draining  : doctor_fail_count==0 but an embedding backlog (missing>0 or stale>0)
+#   unhealthy : doctor_fail_count>0 (a real doctor FAIL, e.g. cycle_freshness >24h)
+# Default exit: 0 for healthy/draining, 1 for unhealthy. --strict (arg $1=1)
+# additionally requires the server-health-audit.sh:97 zero-tolerance rule
+# (marker.kind=="none" && stale==0 && missing==0 && doctor_fail_count==0), so
+# a draining backlog (or an in-flight embedding migration) exits 1 under
+# --strict even though its state is still reported as "draining".
 CHECK_JSON=""
 CHECK_LINE=""
 
 do_check() {
+  local strict="${1:-0}"
   local doctor_raw status_raw doctor_json status_json py_out
   doctor_raw="$("$GBRAIN" doctor --json 2>&1)"
   status_raw="$("$GBRAIN" migrate embeddings --status --json 2>&1)"
@@ -126,33 +179,54 @@ do_check() {
     CHECK_JSON='{"error":"empty_json"}'
     return 2
   fi
-  py_out="$(python3 - "$doctor_json" "$status_json" <<'PY'
+  py_out="$(python3 - "$doctor_json" "$status_json" "$strict" <<'PY'
 import json, sys
 try:
     doc = json.loads(sys.argv[1])
     st = json.loads(sys.argv[2])
+    strict = sys.argv[3] == "1"
+
+    def is_zero(v):
+        return isinstance(v, (int, float)) and v == 0
+
     checks = doc.get("checks", [])
     fail_count = sum(1 for c in checks if c.get("status") == "fail")
     named = {c.get("name"): c.get("status") for c in checks
              if c.get("name") in ("sync_freshness", "cycle_freshness")}
     missing = st.get("missing_embeddings")
     stale = (st.get("stale_vs_target") or {}).get("stale")
-    healthy = fail_count == 0
+    marker_kind = (st.get("marker") or {}).get("kind")
+
+    if fail_count > 0:
+        state = "unhealthy"
+    elif is_zero(missing) and is_zero(stale):
+        state = "healthy"
+    else:
+        state = "draining"
+
+    strict_ok = (marker_kind == "none") and is_zero(stale) and is_zero(missing) and fail_count == 0
+    exit_ok = strict_ok if strict else (state != "unhealthy")
+
     summary = {
         "doctor_status": doc.get("status"),
         "doctor_fail_count": fail_count,
         "checks": named,
         "embeddings": {"missing": missing, "stale": stale},
-        "healthy": healthy,
+        "marker_kind": marker_kind,
+        "state": state,
+        "strict": strict,
+        "exit_ok": exit_ok,
     }
-    line = "gbrain-heal: %s (doctor=%s fail=%d sync_freshness=%s cycle_freshness=%s embeddings missing=%s stale=%s)" % (
-        "healthy" if healthy else "unhealthy",
-        summary["doctor_status"], fail_count,
+    note = ""
+    if strict and not exit_ok and state != "unhealthy":
+        note = " [--strict: draining backlog / migration marker counts as unhealthy]"
+    line = "gbrain-heal: %s%s (doctor=%s fail=%d sync_freshness=%s cycle_freshness=%s embeddings missing=%s stale=%s marker=%s)" % (
+        state, note, summary["doctor_status"], fail_count,
         named.get("sync_freshness", "?"), named.get("cycle_freshness", "?"),
-        missing, stale,
+        missing, stale, marker_kind,
     )
     print("OK")
-    print("1" if healthy else "0")
+    print("1" if exit_ok else "0")
     print(json.dumps(summary))
     print(line)
 except Exception as e:
@@ -185,7 +259,7 @@ except Exception:
 }
 
 if [ "$MODE" = check ]; then
-  do_check
+  do_check "$STRICT"
   rc=$?
   log "$CHECK_LINE"
   if [ "$JSON_OUT" = 1 ]; then
@@ -254,14 +328,18 @@ run_phase() {
   fi
 }
 
-# Dedicated embed phase (root cause #1): tuned env is already exported
-# globally above. Record missing-before/after so a timeout with progress is
-# distinguished from a genuine stall (backlog>0, zero progress).
+# Dedicated embed phase (root causes #1/#1b): tuned env is already exported
+# globally above. Record missing-before/after so a stalled-out run (whether
+# killed by our own --embed-budget `timeout`, rc=124, or by gbrain's own
+# stall watchdog self-aborting with rc=1 and the message asserted in
+# src/core/embed-stall.ts:assertEmbedNotStalled -- "stall watchdog aborted
+# the drain") is distinguished from a genuine stall (backlog>0, zero
+# progress) vs. a stall-shaped exit that still banked partial progress.
 run_embed_phase() {
-  local t0 t1 rc out missing_before missing_after progress
+  local t0 t1 rc out missing_before missing_after progress backlog stall_exit
   log "── phase: embed"
   if [ "$DRY_RUN" = 1 ]; then
-    log "   DRY-RUN, would run: GBRAIN_EMBED_MAX_BATCH_TOKENS=$GBRAIN_EMBED_MAX_BATCH_TOKENS GBRAIN_AI_EMBED_TIMEOUT_MS=$GBRAIN_AI_EMBED_TIMEOUT_MS timeout ${EMBED_BUDGET}s $GBRAIN embed --stale --include-null-signature"
+    log "   DRY-RUN, would run: GBRAIN_EMBED_MAX_BATCH_TOKENS=$GBRAIN_EMBED_MAX_BATCH_TOKENS GBRAIN_AI_EMBED_TIMEOUT_MS=$GBRAIN_AI_EMBED_TIMEOUT_MS GBRAIN_EMBED_STALL_ABORT_SECONDS=$GBRAIN_EMBED_STALL_ABORT_SECONDS timeout ${EMBED_BUDGET}s $GBRAIN embed --stale --include-null-signature"
     PHASE_NAMES+=("embed"); PHASE_STATUS+=("skipped-dry-run"); PHASE_SECS+=(0)
     return 0
   fi
@@ -275,7 +353,17 @@ run_embed_phase() {
   log "   missing_embeddings before=$missing_before after=$missing_after"
   PHASE_NAMES+=("embed"); PHASE_SECS+=($((t1 - t0)))
 
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+  # A stall-shaped exit is either our own `timeout` killing it (rc=124) or
+  # gbrain's own watchdog self-aborting first (any rc, but its process exits
+  # via `process.exit(1)` after printing this exact substring -- see
+  # src/commands/embed.ts:runEmbed). Either way, don't treat it as an
+  # unconditional hard failure -- check whether it still made progress first.
+  stall_exit=0
+  if [ "$rc" -eq 124 ] || grep -q 'stall watchdog aborted the drain' "$out" 2>/dev/null; then
+    stall_exit=1
+  fi
+
+  if [ "$rc" -ne 0 ] && [ "$stall_exit" -ne 1 ]; then
     PHASE_STATUS+=("failed(rc=$rc)")
     log "   FAILED rc=$rc — last lines:"
     tail -5 "$out" | sed 's/^/     /' | tee -a "$LOG" >&2
@@ -294,10 +382,10 @@ run_embed_phase() {
   if [ "$backlog" -eq 1 ] && [ "$progress" -eq 0 ]; then
     PHASE_STATUS+=("stalled")
     EMBED_STALLED=1
-    log "   STALLED: budget exhausted with ZERO progress (missing stuck at $missing_before)"
-  elif [ "$rc" -eq 124 ]; then
+    log "   STALLED: no progress (missing stuck at $missing_before) -- rc=$rc, stall_exit=$stall_exit"
+  elif [ "$stall_exit" -eq 1 ]; then
     PHASE_STATUS+=("timeout-partial")
-    log "   partial ($((t1 - t0))s): embed budget exhausted, made progress -- NOT a failure, resumes next run"
+    log "   partial ($((t1 - t0))s): embed budget/stall-watchdog exhausted, made progress -- NOT a failure, resumes next run"
   else
     PHASE_STATUS+=("ok")
     log "   ok ($((t1 - t0))s)"
@@ -362,7 +450,10 @@ if [ "$DRY_RUN" = 1 ]; then
   CHECK_JSON='{"dry_run":true}'
   check_rc=0
 else
-  do_check
+  # Always non-strict here: --apply's own exit contract already treats a
+  # draining backlog as an acceptable end state (see header comment); --strict
+  # is a --check-only concern and is intentionally ignored for this re-check.
+  do_check 0
   check_rc=$?
   log "$CHECK_LINE"
 fi
