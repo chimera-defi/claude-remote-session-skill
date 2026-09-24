@@ -33,17 +33,22 @@ EOF
 # .../v1/sessions from $FAKE_REGISTRY_JSON, and DELETE .../v1/sessions/<id>
 # with the code from $FAKE_DELETE_CODES ("<id> <code>" per line; default 200
 # for an unlisted id) — mirrors curl -s -o /dev/null -w '%{http_code}' by
-# printing only the code, nothing else, on a DELETE.
+# printing only the code, nothing else, on a DELETE. Also honors a GET's
+# -o <file> (registry_json() now paginates by writing each page to a file —
+# see registry_json's header comment in session-doctor.sh) by writing the
+# body there instead of stdout; every fixture here is a bare JSON array
+# (no has_more), so registry_json() always stops after this one page.
 STUBBIN="$(mktemp -d)"
 cat > "$STUBBIN/curl" <<'STUB_EOF'
 #!/usr/bin/env bash
 set -u
-method="GET"; url=""
+method="GET"; url=""; outfile=""
 args=("$@"); i=0
 while [ "$i" -lt "${#args[@]}" ]; do
   a="${args[$i]}"
   case "$a" in
     -X) i=$((i+1)); method="${args[$i]}" ;;
+    -o) i=$((i+1)); outfile="${args[$i]}" ;;
     http*) url="$a" ;;
   esac
   i=$((i+1))
@@ -59,11 +64,14 @@ if [ "$method" = "DELETE" ]; then
   printf '%s' "$code"
   exit 0
 fi
-if [ -n "${FAKE_REGISTRY_JSON:-}" ] && [ -f "$FAKE_REGISTRY_JSON" ]; then
-  cat "$FAKE_REGISTRY_JSON"
-else
-  echo '[]'
-fi
+body() {
+  if [ -n "${FAKE_REGISTRY_JSON:-}" ] && [ -f "$FAKE_REGISTRY_JSON" ]; then
+    cat "$FAKE_REGISTRY_JSON"
+  else
+    echo '[]'
+  fi
+}
+if [ -n "$outfile" ]; then body > "$outfile"; else body; fi
 STUB_EOF
 chmod +x "$STUBBIN/curl"
 
