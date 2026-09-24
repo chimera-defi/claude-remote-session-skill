@@ -30,6 +30,18 @@ set -uo pipefail
 RESCUE_ROOT="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
 # Junk that every session regenerates — never worth rescuing or blocking a reap.
 JUNK_RE='(^|/)(\.claude/skills|\.claude/token-reduce-state|\.claude/tmp-briefs|\.superpowers|__pycache__|\.pytest_cache|node_modules|\.venv|\.gstack)(/|$)'
+# The spawner's own untracked .sessions-init-<remote> sentinel (see
+# new-session.sh), which sits at the worktree ROOT for the life of every
+# session — session-git-prep.sh and session-doctor.sh's _wt_dirty already
+# ignore it when deciding clean/DIRTY; without an exclusion here, EVERY live
+# session audited without --rescue was misreported NOT-SAFE-TO-REAP on that
+# sentinel alone, defeating the audit for the common case (found in review,
+# PR #76). Kept as its own whole-path anchor, NOT folded into JUNK_RE's
+# (^|/)...(/|$) group: that group matches a component at any depth, so it
+# would also swallow real work like a nested docs/.sessions-init-notes file
+# or anything inside a .sessions-init-output/ directory (caught by Codex
+# review on PR #77) — the real sentinel is always a single root-level file.
+SENTINEL_RE='^\.sessions-init-[^/]*$'
 
 MODE_RESCUE=no; MODE_WIP=no; TARGET=""; ALL=no
 while [ $# -gt 0 ]; do
@@ -140,11 +152,11 @@ audit_one() {
   echo "   HEAD reachable from a named local branch: $([ "$unreach" = no ] && echo yes || echo 'NO')"
 
   dirty=$(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE" | wc -l)
-  untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | wc -l)
+  untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" | wc -l)
   echo "   uncommitted TRACKED changes (non-junk): $dirty"
   echo "   untracked files (non-junk): $untracked"
   [ "$untracked" -gt 0 ] && git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null \
-      | grep -vE "$JUNK_RE" | head -10 | sed 's/^/       /'
+      | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" | head -10 | sed 's/^/       /'
 
   if [ "$MODE_WIP" = yes ] && [ "$dirty" -gt 0 ]; then
     # Stage exactly the paths counted as "dirty" above (git diff --name-only
@@ -198,7 +210,7 @@ audit_one() {
         echo "   RESCUE FAILED: $rel (path conflict with an earlier rescue?)" >&2
         rescue_failed=1
       fi
-    done < <(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE")
+    done < <(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE")
     [ "$rescue_failed" -eq 0 ] && untracked=0
   fi
 
