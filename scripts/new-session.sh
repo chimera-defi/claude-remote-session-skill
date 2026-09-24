@@ -567,12 +567,55 @@ if [ -n "$TASK" ]; then
   if [ -z "$HANDOFF" ]; then
     echo "WARNING: could not locate session-handoff (looked next to this script and on PATH) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
   else
+    # Require `check` to report ready for NEW_SESSION_TASK_SETTLE (default 3)
+    # CONSECUTIVE 1s-apart polls, not just once, before the first send. `check`
+    # reports ready as soon as the ❯ prompt renders, but on a freshly booted
+    # Claude Code the TUI's bracketed-paste handling can still be wiring
+    # itself up at that exact instant — the very first paste sent right on
+    # the heels of "ready" then lands on a not-quite-live input handler and
+    # is silently dropped (input box stays empty, text never reaches the
+    # transcript). Observed 8/8 on first sends via --task-file, most recently
+    # ah_pf-process-0924-0734, 2026-09-24 07:34; a manual retry seconds later
+    # always landed, pointing at the paste racing readiness rather than
+    # anything wrong with the target session. A few consecutive ready polls
+    # give that handler time to settle before the first paste is ever
+    # attempted, cutting how often the race is hit at all — it does not
+    # replace session-handoff.sh's own recovery (see `send`'s "dropped-first-
+    # paste recovery" comment), which is what catches a race that slips past
+    # this settle window anyway.
     ready=no
+    trust_dialog=no
+    settle_need="${NEW_SESSION_TASK_SETTLE:-3}"
+    settle_have=0
     for _i in $(seq 1 "${NEW_SESSION_TASK_READY_TRIES:-90}"); do
-      bash "$HANDOFF" check "$SESSION" >/dev/null 2>&1 && { ready=yes; break; }
+      check_out="$(bash "$HANDOFF" check "$SESSION" 2>&1)"; check_rc=$?
+      # A menu/dialog widget — most likely Claude Code's first-launch
+      # folder-trust prompt on a worktree never opened before — will not
+      # resolve to "ready" on its own; it is waiting on a human. Stop
+      # polling the instant it shows up rather than burning the whole
+      # NEW_SESSION_TASK_READY_TRIES budget on a state that cannot change
+      # without intervention, and say so plainly. Verified 2026-09-24: no
+      # documented way to pre-accept a folder's trust for an INTERACTIVE
+      # session exists in `claude --help` short of writing
+      # `~/.claude.json`'s per-project `hasTrustDialogAccepted` by hand
+      # (the CLI's only built-in bypass is `-p`/non-interactive mode, which
+      # doesn't apply to a persistent spawned TUI session) — so the honest
+      # move here is to bail loudly, not to fabricate an auto-answer.
+      if printf '%s' "$check_out" | grep -q 'state=menu'; then
+        trust_dialog=yes
+        break
+      fi
+      if [ "$check_rc" -eq 0 ]; then
+        settle_have=$((settle_have + 1))
+        [ "$settle_have" -ge "$settle_need" ] && { ready=yes; break; }
+      else
+        settle_have=0
+      fi
       sleep 1
     done
-    if [ "$ready" != yes ]; then
+    if [ "$trust_dialog" = yes ]; then
+      echo "WARNING: '${SESSION}' — trust dialog open (or another menu/dialog widget) — task NOT sent. Answer it by hand first, e.g.: tmux send-keys -t ${SESSION} 1 Enter" >&2
+    elif [ "$ready" != yes ]; then
       echo "WARNING: '${SESSION}' never reached ready state — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
     elif bash "$HANDOFF" send "$SESSION" "$TASK"; then
       echo "Task sent to ${REMOTE_NAME} and verified landed."

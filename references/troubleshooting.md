@@ -178,3 +178,13 @@ Check `session-preserve` / `git log HEAD --not --remotes` before doing
 anything if there's any doubt — but a stuck-menu session usually has nothing
 to lose: it was mid a *review* pause, not mid an edit.
 
+**A different widget classifies the same way but recovers differently:**
+Claude Code's first-launch workspace-trust dialog ("Do you trust the files in
+this folder? ... Enter to confirm · Esc to cancel") is also detected as
+`menu` (`_is_on_menu` / `_state_of` in `scripts/session-handoff.sh` — see its
+comment for the 2026-09-24 incident this covers), since blind text/Enter is
+just as unsafe there as on the widget above — but it is a numbered
+Yes/No choice, not an arrow-key+checkbox+Submit-page flow: recover with
+`tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the
+Down/Right/Enter sequence above.
+
