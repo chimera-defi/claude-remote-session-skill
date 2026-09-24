@@ -10,8 +10,21 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   session-doctor.sh reap <name> [--force]       # one-shot teardown of a named ALIVE session (tmux+unit); refuses on unlanded work unless --force
+#   session-doctor.sh reap <name> [--force] [--keep-registry]
+#                                           # one-shot teardown of a named ALIVE session (tmux+unit);
+#                                           # refuses on unlanded work unless --force; also deletes
+#                                           # that session's registry entry (by title == base name)
+#                                           # unless --keep-registry — fails soft if the registry is
+#                                           # unreachable, never changes reap's own exit status
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
+#   session-doctor.sh registry-prune [--days N] [--apply]
+#                                           # same candidate set as registry-stale; DRY-RUN by default
+#                                           # (prints deleted/skipped(reason)/failed(code) per row with
+#                                           # no mutation); --apply performs the DELETEs. Always skips
+#                                           # PROTECT-matching titles, any title matching a live tmux
+#                                           # session, and requires_action rows (rows stale >2xN days
+#                                           # are still skipped, just flagged for operator review).
+#                                           # Exits non-zero if any delete failed.
 #   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
 #   session-doctor.sh land-check           # per-worktree unlanded-vs-real-default-branch + real-dirty; report only
 #   session-doctor.sh idle-report [--days N | --minutes N] [--tsv]
@@ -30,8 +43,14 @@
 #     (reap-local) or the operator named it explicitly (reap).
 #   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
 #     unless --force; a missing tmux session or systemd unit never fails the rest of it.
-#   * Registry DELETION is intentionally NOT automated (it is account-facing and
-#     irreversible). registry-stale prints candidates + the exact curl to run by hand.
+#   * registry-stale never deletes (it prints candidates + the exact curl to run by
+#     hand); registry-prune is the automated form of that same candidate set — DRY-RUN
+#     by default, mutates only with --apply, and never touches a PROTECTED title, a
+#     title matching a live tmux session, or a requires_action row.
+#   * reap's registry cleanup reuses registry-prune's same protect check and delete
+#     mechanism, targeted at exactly the one entry it just tore down; --keep-registry
+#     skips it. A registry lookup/delete failure there is soft — it never changes
+#     reap's own exit status.
 #   * Worktree removal is intentionally NOT automated (a dead session's worktree may
 #     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
 #     dirty/landed status, and the exact commands to run by hand after review.
@@ -52,6 +71,8 @@ MODE="${1:-report}"; shift || true
 case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
 TSV=no
+APPLY=no
+KEEP_REGISTRY=no
 MINUTES=""
 DAYS_SET=no
 MINUTES_SET=no
@@ -66,6 +87,8 @@ while [ $# -gt 0 ]; do
     --minutes) MINUTES="$2"; MINUTES_SET=yes; shift 2;;
     --tsv) TSV=yes; shift;;
     --force) FORCE=yes; shift;;
+    --apply) APPLY=yes; shift;;
+    --keep-registry) KEEP_REGISTRY=yes; shift;;
     *) ARGS+=("$1"); shift;;
   esac
 done
@@ -109,6 +132,72 @@ registry_json() {
   curl -s -m 25 https://api.anthropic.com/v1/sessions \
     -H "Authorization: Bearer $tok" -H "x-organization-uuid: $org" \
     -H "anthropic-version: 2023-06-01" -H "anthropic-beta: ccr-byoc-2025-07-29" 2>/dev/null
+}
+
+# _registry_candidates <DAYS> — reads registry JSON on stdin, prints one
+# candidate per line as id<TAB>age<TAB>session_status<TAB>title, oldest-first:
+# exactly registry-stale's long-standing selection (connection_status ==
+# disconnected AND age>DAYS), extracted here so registry-stale (display) and
+# registry-prune (deletion candidates) never drift on what counts as "stale".
+# Exits 1 with no output if the JSON can't be parsed (registry unavailable or
+# malformed) — callers print their own "(registry unavailable)"-style message
+# on failure rather than this function doing it, since registry-stale and
+# registry-prune word that differently.
+_registry_candidates() {
+  local days="$1"
+  python3 -c "
+import sys,json,datetime
+try:
+    arr=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+arr=arr if isinstance(arr,list) else arr.get('sessions',arr.get('data',[]))
+now=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None); DAYS=$days
+def agedays(s):
+    try: return (now-datetime.datetime.fromisoformat((s.get('updated_at') or s.get('created_at'))[:19])).days
+    except Exception: return -1
+cand=[s for s in arr if s.get('connection_status')=='disconnected' and agedays(s)>DAYS]
+cand.sort(key=agedays, reverse=True)
+for s in cand:
+    title=(s.get('title') or '').replace('\t',' ').replace(chr(10),' ')
+    status=(s.get('session_status') or '').replace('\t',' ')
+    print('%s\t%s\t%s\t%s' % (s.get('id'), agedays(s), status, title))
+"
+}
+
+# _title_protected <title> — PROTECT (defined above) is written for machine
+# names (tmux/systemd, always hyphen-separated, e.g. claude-remote-bridge);
+# registry titles can instead be human-typed with spaces (e.g. the real
+# "Agenthost Direct Claude Remote" entry), which the literal PROTECT regex
+# would silently miss. Squeeze whitespace runs to '-' before matching so the
+# same PROTECT terms catch both forms, without widening PROTECT itself (it's
+# also used against tmux/systemd names elsewhere, where that broadening isn't
+# wanted).
+_title_protected() {
+  printf '%s' "$1" | tr -s '[:space:]' '-' | grep -qiE "$PROTECT"
+}
+
+# _registry_delete_one <id> <title> — protect-check + DELETE one registry
+# entry by id, same auth/headers registry_json uses (token/org re-read fresh
+# here rather than threaded through, since callers only have a handful of
+# deletes at most). Prints one outcome line (deleted / skipped(protected) /
+# failed(HTTP code)) and returns non-zero only when the DELETE itself failed
+# (a protect-skip is not a failure). Never prints the token/org.
+_registry_delete_one() {
+  local id="$1" title="$2" tok org http_code
+  if _title_protected "$title"; then
+    echo "  skipped(protected)  $id  $title"
+    return 0
+  fi
+  tok=$(python3 -c "import json;print(json.load(open('$HOME/.claude/.credentials.json'))['claudeAiOauth']['accessToken'])" 2>/dev/null)
+  org=$(python3 -c "import json;print(json.load(open('$HOME/.claude.json')).get('oauthAccount',{}).get('organizationUuid',''))" 2>/dev/null)
+  http_code=$(curl -s -o /dev/null -w '%{http_code}' -m 25 -X DELETE "https://api.anthropic.com/v1/sessions/$id" \
+    -H "Authorization: Bearer $tok" -H "x-organization-uuid: $org" \
+    -H "anthropic-version: 2023-06-01" -H "anthropic-beta: ccr-byoc-2025-07-29" 2>/dev/null)
+  case "$http_code" in
+    2??) echo "  deleted  $id  $title"; return 0 ;;
+    *) echo "  failed($http_code)  $id  $title"; return 1 ;;
+  esac
 }
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
@@ -638,24 +727,76 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
 
   registry-stale)
     echo "=== registry sessions disconnected > ${DAYS}d (deletion candidates; NOT auto-deleted) ==="
-    registry_json | python3 -c "
-import sys,json,datetime
-try: arr=json.load(sys.stdin)
-except: print('  (registry unavailable)'); sys.exit()
-arr=arr if isinstance(arr,list) else arr.get('sessions',arr.get('data',[]))
-now=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None); DAYS=$DAYS
-def agedays(s):
-    try: return (now-datetime.datetime.fromisoformat((s.get('updated_at') or s.get('created_at'))[:19])).days
-    except: return -1
-cand=[s for s in arr if s.get('connection_status')=='disconnected' and agedays(s)>DAYS]
-cand.sort(key=agedays, reverse=True)
-for s in cand:
-    print('  %s  age=%3dd  status=%-9s  %s' % (s.get('id'), agedays(s), s.get('session_status'), (s.get('title') or '')[:40]))
-print('  --- %d candidate(s). To delete one (VERIFY FIRST): ---' % len(cand))
-print('  curl -X DELETE https://api.anthropic.com/v1/sessions/<ID> \\\\')
-print('    -H \"Authorization: Bearer \$TOKEN\" -H \"x-organization-uuid: \$ORG\" \\\\')
-print('    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-2025-07-29\"')
-"
+    if ! out=$(registry_json | _registry_candidates "$DAYS"); then
+      echo "  (registry unavailable)"
+    else
+      n=0
+      while IFS=$'\t' read -r id age status title; do
+        [ -z "$id" ] && continue
+        printf '  %s  age=%3dd  status=%-9s  %s\n' "$id" "$age" "$status" "${title:0:40}"
+        n=$((n+1))
+      done <<< "$out"
+      echo "  --- $n candidate(s). To delete one (VERIFY FIRST): ---"
+      echo "  curl -X DELETE https://api.anthropic.com/v1/sessions/<ID> \\"
+      echo "    -H \"Authorization: Bearer \$TOKEN\" -H \"x-organization-uuid: \$ORG\" \\"
+      echo "    -H \"anthropic-version: 2023-06-01\" -H \"anthropic-beta: ccr-byoc-2025-07-29\""
+    fi
+    ;;
+
+  registry-prune)
+    # Automated form of registry-stale's candidate set (see _registry_candidates
+    # above — reused, not re-derived): registry sessions disconnected > ${DAYS}d.
+    # Default is a dry run (no mutation, "would-delete" preview); --apply performs
+    # the DELETEs, via the same _registry_delete_one helper `reap`'s registry
+    # cleanup uses. This is the standard/automatable replacement for the
+    # hand-run curl registry-stale prints — see its header comment above.
+    echo "=== registry-prune: sessions disconnected > ${DAYS}d ($([ "$APPLY" = yes ] && echo APPLY || echo DRY-RUN)) ==="
+    if ! cand_out=$(registry_json | _registry_candidates "$DAYS"); then
+      echo "  (registry unavailable)"
+      exit 1
+    fi
+    # Live tmux session names, converted to the hyphenated base form registry
+    # titles use (tmux_to_base — the same conversion `report`/`reap-local` use
+    # above), so "any entry whose name matches a live tmux session" compares
+    # like-for-like instead of a fresh ad hoc string comparison.
+    live_bases=""
+    for s in $(live_tmux); do
+      b="$(tmux_to_base "$s")"
+      [ -n "$b" ] && live_bases="$live_bases$b"$'\n'
+    done
+    n_del=0; n_skip=0; n_fail=0
+    while IFS=$'\t' read -r id age status title; do
+      [ -z "$id" ] && continue
+      if _title_protected "$title"; then
+        echo "  skipped(protected)  $id  $title"
+        n_skip=$((n_skip+1)); continue
+      fi
+      if printf '%s' "$live_bases" | grep -qxF "$title"; then
+        echo "  skipped(live-tmux)  $id  $title"
+        n_skip=$((n_skip+1)); continue
+      fi
+      # requires_action is ALWAYS skipped here (never auto-deleted — it may
+      # need a human decision) regardless of age; a row stale beyond 2xDAYS
+      # just gets a louder, distinct message so it surfaces for review instead
+      # of blending into the ordinary skip line.
+      if [ "$status" = "requires_action" ]; then
+        if [ "$age" -gt $((2*DAYS)) ]; then
+          echo "  skipped(requires_action, age=${age}d > $((2*DAYS))d — needs operator review)  $id  $title"
+        else
+          echo "  skipped(requires_action)  $id  $title"
+        fi
+        n_skip=$((n_skip+1)); continue
+      fi
+      if [ "$APPLY" != yes ]; then
+        echo "  would-delete  $id  age=${age}d  $title"
+        n_del=$((n_del+1)); continue
+      fi
+      if _registry_delete_one "$id" "$title"; then n_del=$((n_del+1)); else n_fail=$((n_fail+1)); fi
+    done <<< "$cand_out"
+    echo "  --- $([ "$APPLY" = yes ] && echo deleted || echo would-delete)=$n_del skipped=$n_skip failed=$n_fail ---"
+    if [ "$n_fail" -gt 0 ]; then
+      exit 1
+    fi
     ;;
 
   worktree-stale)
@@ -997,6 +1138,36 @@ else:
       echo "  '$NAME' is not an ah_/agenthost_ session — no systemd unit to tear down" >&2
     fi
     echo "reaped '$NAME'"
+    # Registry cleanup: this session's registry entry (matched by title ==
+    # base name — the hyphenated "ah-..."/"agenthost-..." form the registry
+    # uses for a remote-control session's title, confirmed against a live
+    # pull) is deleted too, unless --keep-registry. Fails soft: an
+    # unreachable or unparsable registry only prints a note here and never
+    # changes reap's own exit status — the teardown above already succeeded,
+    # and that's what reap promises regardless of registry hygiene.
+    if [ "$KEEP_REGISTRY" != yes ] && [ -n "$base" ]; then
+      if reg_json=$(registry_json); then
+        match_id=$(printf '%s' "$reg_json" | python3 -c "
+import sys,json
+try:
+    arr=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+arr=arr if isinstance(arr,list) else arr.get('sessions',arr.get('data',[]))
+target=sys.argv[1]
+for s in arr:
+    if (s.get('title') or '')==target:
+        print(s.get('id')); break
+" "$base" 2>/dev/null)
+        if [ -n "$match_id" ]; then
+          _registry_delete_one "$match_id" "$base"
+        else
+          echo "  registry: no entry found for '$base' (ok)"
+        fi
+      else
+        echo "  registry: unreachable — leaving any registry entry for '$base' in place (reap still counts as done)" >&2
+      fi
+    fi
     ;;
 
   land-check)
@@ -1048,6 +1219,6 @@ else:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name>|registry-stale [--days N]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
