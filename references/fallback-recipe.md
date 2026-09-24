@@ -11,7 +11,7 @@ spawn of the same folder here can collide/no-op instead of getting a
 disambiguated name) — and does not implement `CLAUDE_SESSION_PROFILE` (no
 `builder`/`copywriter` `--tools` trimming), only a bare `CLAUDE_SESSION_MODEL`
 override, defaulting to the same model `new-session.sh`'s default
-`orchestrator` profile resolves to when neither is set (`claude-opus-5`,
+`orchestrator` profile resolves to when neither is set (`claude-opus-5-5`,
 pinned — see `new-session.sh`'s Model selection comment).
 
 The kickoff-verification retry (wait for the pane's shell, then retry the
@@ -84,12 +84,12 @@ _fr_poisoned "$ALIAS" && ALIAS=""
 SESSION="ah_${ALIAS}-${ID}"
 REMOTE_NAME="ah-${ALIAS}-${ID}"
 # Default mirrors new-session.sh's default (no CLAUDE_SESSION_PROFILE, no
-# CLAUDE_SESSION_MODEL): the orchestrator profile pinned to claude-opus-5 —
+# CLAUDE_SESSION_MODEL): the orchestrator profile pinned to claude-opus-5-5 —
 # NOT the bare "sonnet" this fallback used before the per-role profile
 # default landed (new-session.sh commit 66d1e63 / cb733ec). This recipe has
 # no CLAUDE_SESSION_PROFILE support, so an operator who wants the builder/
 # copywriter default here must pass CLAUDE_SESSION_MODEL explicitly.
-MODEL="${CLAUDE_SESSION_MODEL:-claude-opus-5}"
+MODEL="${CLAUDE_SESSION_MODEL:-claude-opus-5-5}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 mkdir -p "$(dirname "$SCRIPT")" "$(dirname "$SERVICE")"
