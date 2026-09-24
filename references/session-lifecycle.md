@@ -8,7 +8,7 @@ count is still high" confusion.
 |-------|-------|-------------|------------|
 | **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
 | **systemd --user unit** | `~/.config/systemd/user/agenthost-*.service` / `ah-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
-| **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | manual `DELETE` (see below) |
+| **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | `session-doctor registry-prune --apply` (or `reap <name>`, which prunes its own entry) |
 | **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos — see `session-git-prep`) | `git worktree remove` (never expires on its own) | manual removal (see below) |
 
 Sessions created before the 2026-07-15 naming change use the `agenthost-`/`agenthost_`
@@ -34,6 +34,8 @@ session-doctor.sh                       # read-only 3-layer audit (default)
 session-doctor.sh reap-local            # DRY-RUN: list dead local tmux + orphan units
 session-doctor.sh reap-local --force    # actually reap them
 session-doctor.sh registry-stale --days 30   # list registry entries disconnected > N days
+session-doctor.sh registry-prune --days 30   # DRY-RUN: same candidates, would-delete/skip/report
+session-doctor.sh registry-prune --apply     # actually delete the non-protected candidates
 session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
 session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) ≥2d — report only
 session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold (list all)
@@ -44,8 +46,13 @@ Safety guarantees:
 - Only reaps local items whose `claude` process is genuinely gone.
 - `reap-local` is dry-run unless `--force` — so a control session merely inside a
   supervisor restart window is never reaped by accident.
-- **Registry deletion is never automated.** `registry-stale` prints candidates and the
-  exact `curl -X DELETE …` to run by hand after you verify each one.
+- **`registry-stale` never deletes** — it prints candidates and the exact
+  `curl -X DELETE …` to run by hand. `registry-prune` is the automated form of the
+  same candidate set (dry-run by default, `--apply` to mutate) — see its own header
+  comment in `scripts/session-doctor.sh` for exactly what it always skips
+  (PROTECT-matching titles, a title matching a live tmux session, `requires_action`
+  rows) and its per-row deleted/skipped/failed outcome. `reap <name>` also prunes
+  that one session's own registry entry on success, unless `--keep-registry`.
 - **Worktree removal is never automated.** `worktree-stale` prints each candidate's
   dirty/unpushed status and the exact `git worktree remove` + `git branch -D` to run by
   hand — a dead session's worktree may hold unpushed work, so this is a review step,
@@ -64,9 +71,9 @@ Safety guarantees:
    deliberately leaves running) you kill by hand: `tmux kill-session -t <name>` +
    `systemctl --user disable --now <name>.service`. Rows flagged `[P]` are protected —
    never reap those.
-3. **Monthly:** `session-doctor.sh registry-stale --days 30`. Verify the list is truly
-   dead (titles + age make this obvious), then `DELETE` them. Anything > 90 days
-   disconnected is essentially always safe to delete.
+3. **Monthly:** `session-doctor.sh registry-prune --days 30` (dry-run), skim the
+   would-delete list, then `registry-prune --days 30 --apply`. `registry-stale` still
+   works for a manual spot-check of the same candidates.
 4. **Monthly:** `session-doctor.sh worktree-stale`. For each candidate, confirm its
    work is merged/pushed or no longer needed, then run the printed removal command.
 5. **After a host reboot:** expect zombies (registry says connected, process gone).
