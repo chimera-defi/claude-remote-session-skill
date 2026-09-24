@@ -128,12 +128,12 @@ fi
 # ── Spawn profile switch + per-role model default (CLAUDE_SESSION_PROFILE) ────
 # A profile selects BOTH the tool footprint AND a default model. builder/
 # copywriter use a bare alias so those role defaults auto-track the latest
-# release for their tier; orchestrator is pinned to claude-opus-5 (2026-08-27,
+# release for their tier; orchestrator is pinned to claude-opus-5-5 (2026-09-24,
 # see scripts/new-session.sh's Model selection comment for why). An explicit
 # CLAUDE_SESSION_MODEL always overrides. Unknown profile → orchestrator + warning.
 outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
 has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
-has "orchestrator-default-model-opus5" "$outp" '^MODEL=claude-opus-5$'
+has "orchestrator-default-model-opus5-5" "$outp" '^MODEL=claude-opus-5-5$'
 has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
 has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
 # A role-default bare alias is INTENDED (auto-upgrade) → must NOT emit the warning.

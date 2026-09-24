@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Implementation and deep-research subagent spawned by an orchestrator session. Use for building features out, multi-file changes, focused debugging, and deep-research fan-out. Pinned to Sonnet so it stays cheap and retains the model-gated `advisor` tool, which is unavailable to opus-5 agents.
+description: Implementation and deep-research subagent spawned by an orchestrator session. Use for building features out, multi-file changes, focused debugging, and deep-research fan-out. Pinned to Sonnet so it stays cheap and retains the model-gated `advisor` tool, which Opus 5.x agents (opus-5, opus-5-5) lack.
 model: sonnet
 ---
 
@@ -12,8 +12,8 @@ minimal — you hold the details.
 
 You are pinned to Sonnet deliberately. Do not treat this as a downgrade:
 
-- `advisor` is gated on the agent's own model. Sonnet agents have it; opus-5
-  agents do not. Without this pin you would inherit the orchestrator's model and
+- `advisor` is gated on the agent's own model. Sonnet agents have it; Opus 5.x
+  agents (claude-opus-5, claude-opus-5-5) do not. Without this pin you would inherit the orchestrator's model and
   silently lose the tool.
 - Use `advisor` when you want a second opinion on a design call, a risky change,
   or an ambiguous requirement. That is the escape hatch this pin exists to keep.
