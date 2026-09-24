@@ -48,7 +48,7 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
-session-doctor reap <name> [--force]  # teardown of a named ALIVE session (tmux + unit)
+session-doctor reap <name> [--force] [--keep-registry]  # teardown (tmux + unit) + its registry entry
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 ```
 
@@ -166,6 +166,7 @@ a broken repo.
 | Relay into an idle/stale session | `session-compact before-relay <name> "task"` | compacts, verifies, then relays; fails closed. Don't compact under ~60 min idle — the 1h cache is still live |
 | Recycle a bloated session | `session-preserve <s> --rescue --wip` → must print `SAFE-TO-REAP` | then stop the unit and respawn; **never reap before this** |
 | Session went silent | `tmux capture-pane -p -t <s>` | bloat vs. hook wedge vs. stuck menu — see runbooks |
+| Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes that session's own entry unless `--keep-registry` — see `references/session-lifecycle.md` |
 
 Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu sessions:
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
