@@ -48,7 +48,7 @@ Options:
 
 Environment:
   CLAUDE_SESSION_MODEL=<model>  Model for the session. Unset → the PROFILE's
-                                per-role default (see below): claude-opus-5
+                                per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/haiku for
                                 builder/copywriter — bare aliases that
                                 auto-track the latest release for their tier.
@@ -58,8 +58,8 @@ Environment:
   CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 orchestrator).
                                 orchestrator — full built-in tool set; needed for
-                                  multi-agent fan-out (Workflow/Agent/advisor/…).
-                                  Default model: claude-opus-5 (pinned).
+                                  multi-agent fan-out (Workflow/Agent/…).
+                                  Default model: claude-opus-5-5 (pinned).
                                 builder      — trimmed --tools allowlist; drops the
                                   orchestration-only schemas to reclaim ~10.3k of the
                                   ~19.5k System-tools context. Hands-on
@@ -72,7 +72,7 @@ Environment:
                                 to orchestrator with a warning.
 
 Examples:
-  new-session my-project                                                     # orchestrator + claude-opus-5 (pinned)
+  new-session my-project                                                     # orchestrator + claude-opus-5-5 (pinned)
   new-session my-project workspace
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
@@ -163,8 +163,8 @@ preflight_capacity || exit 1
 # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND the
 # default model for the spawned session:
 #   orchestrator (default) — full built-in tool set; needed for multi-agent
-#                            fan-out (Workflow, Agent, advisor…). Default:
-#                            claude-opus-5 (pinned, see Model selection below).
+#                            fan-out (Workflow, Agent…). Default:
+#                            claude-opus-5-5 (pinned, see Model selection below).
 #   builder                — trimmed --tools allowlist; drops the orchestration/
 #                            reporting-only schemas to reclaim ~11k of the ~19.5k
 #                            "System tools" context (19.5k→8.2k). Default: sonnet.
@@ -183,20 +183,21 @@ esac
 # Precedence: an explicit CLAUDE_SESSION_MODEL always wins. Otherwise the model
 # defaults PER ROLE from the profile above. builder/copywriter use a BARE alias
 # ON PURPOSE so those role defaults keep tracking Anthropic's latest release for
-# that tier with no edit here. orchestrator is PINNED (2026-08-27, operator
-# request) to claude-opus-5 after direct verification (`claude -p ... --model
-# claude-opus-5` responded; a live persistent spawn ran clean) — it's real and
-# callable but not yet a public model alias and has no advisor-catalog rank
-# (`claude --model claude-opus-5` warns "Advisor disabled ... no advisor rank in
-# the model catalog"), so it's deliberately pinned rather than left to the
-# already-observed opus/opus-4-8/opus-5 drift above. Revisit once Anthropic
-# promotes it to the public `opus` alias target.
-#   orchestrator → claude-opus-5 (pinned)     builder → sonnet     copywriter → haiku
+# that tier with no edit here. orchestrator is PINNED to an exact id (operator
+# request, 2026-08-27) so it doesn't ride the observed opus/opus-4-8/opus-5 alias
+# drift below. Pin history: claude-opus-5 (2026-08-27) → claude-opus-5-5
+# (2026-09-24, after verifying on /usr/bin/claude 2.1.280 that
+# `claude -p ... --model claude-opus-5-5` responds and that bare `opus` now
+# resolves to it). Like opus-5, it has NO `advisor` tool (verified interactively:
+# opus-5-5 and opus-5 answer ADVISOR=NO, sonnet ADVISOR=YES) — fine for an
+# orchestrator, which spawns sonnet builders for a second opinion. Bump the pin
+# only after the same two checks on the next release.
+#   orchestrator → claude-opus-5-5 (pinned)   builder → sonnet     copywriter → haiku
 if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
   MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
 else
   case "$PROFILE" in
-    orchestrator) MODEL=claude-opus-5 ;;
+    orchestrator) MODEL=claude-opus-5-5 ;;
     builder)      MODEL=sonnet ;;
     copywriter)   MODEL=haiku ;;
   esac
@@ -241,7 +242,8 @@ fi
 # deferred built-ins too, so omitting it here made it unreachable ENTIRELY —
 # which presents as "advisor is broken" rather than "never allowlisted".
 # NB it is ALSO gated on the agent's own model, independent of this list
-# (verified 2026-08-27: sonnet-5 and opus-4-8 have it, claude-opus-5 does not).
+# (verified 2026-08-27: sonnet-5 and opus-4-8 have it, claude-opus-5 does not;
+# re-verified 2026-09-24: claude-opus-5-5 does not either).
 # This allowlist is necessary but not sufficient — keep builder on sonnet.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 
