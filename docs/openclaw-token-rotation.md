@@ -110,7 +110,8 @@ leaked to ~13 files):**
 6. **Scrub OLD-token copies** from every file in the Exposure list above
    (including my `context-trim-2026-08-10/settings.json` backup — or delete that
    backup once the profile work is accepted). The old value is inert post-rotation
-   but should not linger in transcripts/backups.
+   but should not linger in transcripts/backups. Done when `grep -rlF "$OLD" <each
+   Exposure-list path>` prints nothing.
 
 ## If you only do one thing
 
