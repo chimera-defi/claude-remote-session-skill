@@ -166,6 +166,7 @@ a broken repo.
 | Relay into an idle/stale session | `session-compact before-relay <name> "task"` | compacts, verifies, then relays; fails closed. Don't compact under ~60 min idle — the 1h cache is still live |
 | Recycle a bloated session | `session-preserve <s> --rescue --wip` → must print `SAFE-TO-REAP` | then stop the unit and respawn; **never reap before this** |
 | Session went silent | `tmux capture-pane -p -t <s>` | bloat vs. hook wedge vs. stuck menu — see runbooks |
+| Is the gbrain brain healthy (draining, freshness-stamped)? | `gbrain-heal --check` (or `--apply` to fix) | read-only verdict from `gbrain doctor` + embed backlog; tolerates a draining backlog, only FAILs on a real doctor FAIL. See [`docs/gbrain-heal.md`](docs/gbrain-heal.md). |
 
 Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu sessions:
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
@@ -191,6 +192,9 @@ durability rests on the gbrain index, not on git.
 
 "Who else is working here right now" is a different question — use
 `session-doctor history`, which derives presence from live processes.
+
+Keeping the brain itself healthy (drained, freshness-stamped) is `gbrain-heal`'s job, not
+`gbrain-sync-memory`'s — see the table above and [`docs/gbrain-heal.md`](docs/gbrain-heal.md).
 
 ## Sessions agent scope
 
