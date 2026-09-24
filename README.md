@@ -112,7 +112,7 @@ Once running: open Claude Code on any device → Remote sessions → look for `a
 |---|---|
 | `CLAUDE.md` | agents working *on* this repo: finish line for a change, stop-vs-continue rule, anti-patterns, deploy table |
 | `SKILL.md` | spawning and operating sessions, incl. how to write a kickoff task |
-| `handoff/` | routing a task to another session; `references/massaging.md` is the handoff-prompt contract |
+| `handoff/` | routing a task to another session; `handoff/references/massaging.md` is the handoff-prompt contract |
 | `references/` | runbooks: troubleshooting/recycling, session lifecycle, fallback recipe |
 | `agents/builder.md` | the Sonnet-pinned `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
 
