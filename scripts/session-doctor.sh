@@ -125,13 +125,78 @@ if [ "$MINUTES_SET" = yes ]; then
   MINUTES=$((10#$MINUTES))
 fi
 
+# registry_json — fetch EVERY page of GET /v1/sessions and return them merged
+# as {"data": [...]}. The registry paginates (confirmed live 2026-09-24: a
+# bare GET returns {data, first_id, has_more, last_id}; production page size
+# is 200; has_more flips false only once exhausted; after_id=<last_id> fetches
+# the next page with zero id overlap with the previous one). A single
+# unpaginated GET here used to silently truncate registry-stale,
+# registry-prune, report's registry summary, and reap's title lookup to the
+# first page — the bug that made `registry-prune --apply` need 6 repeated
+# passes to exhaust a real stale backlog (10/7/4/2/2/1 deletions).
+#
+# Walks pages via after_id until has_more is false, MAX_PAGES is hit (hard
+# cap so a malformed/adversarial has_more:true can't loop forever — each
+# individual GET still has curl's own -m 25 timeout), or a page's JSON fails
+# to parse. A bare JSON array (no has_more/last_id — the shape this
+# repo's non-pagination tests fix as a registry fixture) is treated as a
+# single complete page, same as today. A parse/fetch failure on page 1
+# fails the whole call (return 1, matching the pre-existing credentials-
+# missing failure path below); a failure on page 2+ stops pagination but
+# still returns everything fetched so far, rather than discarding it.
 registry_json() {
   local tok org
   tok=$(python3 -c "import json;print(json.load(open('$HOME/.claude/.credentials.json'))['claudeAiOauth']['accessToken'])" 2>/dev/null) || return 1
   org=$(python3 -c "import json;print(json.load(open('$HOME/.claude.json')).get('oauthAccount',{}).get('organizationUuid',''))" 2>/dev/null)
-  curl -s -m 25 https://api.anthropic.com/v1/sessions \
-    -H "Authorization: Bearer $tok" -H "x-organization-uuid: $org" \
-    -H "anthropic-version: 2023-06-01" -H "anthropic-beta: ccr-byoc-2025-07-29" 2>/dev/null
+
+  local tmpdir
+  tmpdir=$(mktemp -d) || return 1
+  local page=0 max_pages=50 after="" more=yes ok=1 pagefile url meta
+  while [ "$more" = yes ] && [ "$page" -lt "$max_pages" ]; do
+    page=$((page+1))
+    pagefile="$tmpdir/page_$(printf '%03d' "$page").json"
+    url="https://api.anthropic.com/v1/sessions"
+    [ -n "$after" ] && url="${url}?after_id=${after}"
+    curl -s -m 25 "$url" \
+      -H "Authorization: Bearer $tok" -H "x-organization-uuid: $org" \
+      -H "anthropic-version: 2023-06-01" -H "anthropic-beta: ccr-byoc-2025-07-29" \
+      -o "$pagefile" 2>/dev/null
+    meta=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+except Exception:
+    print('error'); sys.exit()
+if isinstance(d, list):
+    print('done')
+elif d.get('has_more') and d.get('last_id'):
+    print('more ' + str(d['last_id']))
+else:
+    print('done')
+" "$pagefile" 2>/dev/null)
+    case "$meta" in
+      more\ *) after="${meta#more }"; more=yes ;;
+      error) [ "$page" -eq 1 ] && ok=0; more=no ;;
+      *) more=no ;;
+    esac
+  done
+
+  if [ "$ok" -ne 1 ]; then
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  python3 -c "
+import json, glob, sys
+merged = []
+for f in sorted(glob.glob(sys.argv[1] + '/page_*.json')):
+    try:
+        d = json.load(open(f))
+    except Exception:
+        continue
+    merged.extend(d if isinstance(d, list) else d.get('data', d.get('sessions', [])))
+print(json.dumps({'data': merged}))
+" "$tmpdir"
+  rm -rf "$tmpdir"
 }
 
 # _registry_candidates <DAYS> — reads registry JSON on stdin, prints one
