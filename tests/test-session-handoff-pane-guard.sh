@@ -43,8 +43,11 @@ command -v python3 >/dev/null 2>&1 || { echo "session-handoff-pane-guard: SKIP (
 WORK="$(mktemp -d)"
 trap 'tmux ls -F "#{session_name}" 2>/dev/null | grep "^hoff-guard-$$-" | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
 
+# Pinned to the last commit BEFORE the fix (#83), not origin/main: once the
+# fix merged, origin/main *is* the fixed script and the "old" checks failed.
+PRE_FIX_REF=6da1e1d1f071132534429b76f1f904e53acc39d8
 OLD_HANDOFF="$WORK/session-handoff-old.sh"
-if git -C "$HERE/.." show origin/main:scripts/session-handoff.sh > "$OLD_HANDOFF" 2>/dev/null; then
+if git -C "$HERE/.." show "$PRE_FIX_REF:scripts/session-handoff.sh" > "$OLD_HANDOFF" 2>/dev/null; then
   HAVE_OLD=yes
 else
   HAVE_OLD=no
@@ -70,7 +73,7 @@ spawn_collapsed() {
   printf '%s' "$s"
 }
 
-# 1a. Pre-fix session-handoff.sh (origin/main) must report UNVERIFIED —
+# 1a. Pre-fix session-handoff.sh (PRE_FIX_REF) must report UNVERIFIED —
 # proves the fixture reproduces the actual bug (only ONE Enter is ever sent,
 # since the old _verdict never recognizes the placeholder as buffered).
 if [ "$HAVE_OLD" = yes ]; then
@@ -81,7 +84,7 @@ if [ "$HAVE_OLD" = yes ]; then
   ok  "old-collapsed-one-enter"  "$(grep -c '^ENTER$' "$WORK/$S1A.log")" "1"
   tmux kill-session -t "$S1A" 2>/dev/null || true
 else
-  echo "SKIP: old-collapsed-* (origin/main not reachable in this checkout)"
+  echo "SKIP: old-collapsed-* (pre-fix ref not reachable in this checkout)"
 fi
 
 # 1b. Fixed session-handoff.sh must retry the Enter and land — the fixture
