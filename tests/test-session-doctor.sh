@@ -249,17 +249,24 @@ if command -v tmux >/dev/null 2>&1; then
 exit 0
 STUB_EOF
   chmod +x "$RSTUB/systemctl"
+  # reap now also deletes the session's registry entry on success (see
+  # test-session-doctor-registry-prune.sh for dedicated coverage of that).
+  # None of these invocations may reach the real Anthropic registry with
+  # real host credentials, so every one below gets a throwaway, credential-
+  # less HOME — registry_json() then fails closed (fails soft: a note, not
+  # an error) instead of firing a live GET/DELETE.
+  RHOME="$(mktemp -d)"
 
   # 1. Protected name -> refused outright, regardless of --force, and nothing
   # is touched (there's no real resource here, so this only checks message +
   # exit code).
-  protout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
+  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
   has "reap-protected-refused" "$protout" "PROTECTED"
   ok  "reap-protected-exit2"   "$protrc" "2"
 
   # 2. Idempotent no-op: tmux session and systemd unit both already absent —
   # must still exit 0, not error.
-  noopout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap ah_reap-noop-test-0101-0900 --force 2>&1)"; nooprc=$?
+  noopout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reap-noop-test-0101-0900 --force 2>&1)"; nooprc=$?
   ok "reap-noop-exit0" "$nooprc" "0"
   has "reap-noop-message" "$noopout" "reaped 'ah_reap-noop-test-0101-0900'"
 
@@ -277,17 +284,17 @@ STUB_EOF
   tmux send-keys -t "$RS" 'sleep 300 &' Enter
   sleep 1
 
-  refuseout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" 2>&1)"; refuserc=$?
+  refuseout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" 2>&1)"; refuserc=$?
   has "reap-refuses-unlanded"        "$refuseout" "REFUSING to reap"
   ok  "reap-refuses-unlanded-exit1"  "$refuserc" "1"
   ok  "reap-refused-session-survives" "$(tmux has-session -t "$RS" 2>/dev/null && echo yes || echo no)" "yes"
 
-  forceout="$(PATH="$RSTUB:$PATH" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" --force 2>&1)"; forcerc=$?
+  forceout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap "$RS" --force 2>&1)"; forcerc=$?
   ok "reap-force-exit0" "$forcerc" "0"
   has "reap-force-message" "$forceout" "reaped '$RS'"
   ok "reap-force-session-gone" "$(tmux has-session -t "$RS" 2>/dev/null && echo yes || echo no)" "no"
 
-  rm -rf "$RSTUB" "$REAPTMP"
+  rm -rf "$RSTUB" "$REAPTMP" "$RHOME"
   tmux kill-session -t "$RS" 2>/dev/null || true
 fi
 
