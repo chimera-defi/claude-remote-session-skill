@@ -4,7 +4,7 @@
 # repo's style this follows.
 #
 # The stub `gbrain` (installed via GBRAIN_BIN, per SPEC-gbrain-heal.md) records
-# every invocation's argv AND the two tuned embed env vars to a capture file,
+# every invocation's argv AND the three tuned embed env vars to a capture file,
 # then answers from scripted JSON fixtures / exit codes / sleep durations set
 # via env vars. This is stricter than test-gbrain-sync-memory.sh's PATH-shadow
 # stub because "tuned env exported and not overriding a pre-set value" can
@@ -47,6 +47,7 @@ CAP="${GBRAIN_STUB_CAPTURE:?GBRAIN_STUB_CAPTURE not set}"
   printf '\n'
   printf '  ENV_BATCH=%s\n' "${GBRAIN_EMBED_MAX_BATCH_TOKENS-<unset>}"
   printf '  ENV_TIMEOUT=%s\n' "${GBRAIN_AI_EMBED_TIMEOUT_MS-<unset>}"
+  printf '  ENV_STALL=%s\n' "${GBRAIN_EMBED_STALL_ABORT_SECONDS-<unset>}"
 } >> "$CAP"
 
 emit_json() {
@@ -76,7 +77,15 @@ case "$cmd" in
   migrate) [ "$sub" = "embeddings" ] && emit_json status ;;
   sources) [ "$sub" = "list" ] && emit_json sources ;;
   sync) exit "${GBRAIN_STUB_EXIT_SYNC:-0}" ;;
-  embed) sleep "${GBRAIN_STUB_EMBED_SLEEP:-0}"; exit "${GBRAIN_STUB_EXIT_EMBED:-0}" ;;
+  embed)
+    sleep "${GBRAIN_STUB_EMBED_SLEEP:-0}"
+    if [ "${GBRAIN_STUB_EMBED_STALL_MSG:-0}" = "1" ]; then
+      # Verbatim substring from gbrain's own
+      # src/commands/embed.ts:runEmbed on a stall-watchdog self-abort
+      # (gbrain's internal watchdog firing, NOT killed by our `timeout`).
+      echo "[embed] exiting non-zero: stall watchdog aborted the drain (reason: stall_timeout); partial progress banked -- re-run to resume."
+    fi
+    exit "${GBRAIN_STUB_EXIT_EMBED:-0}" ;;
   extract) exit "${GBRAIN_STUB_EXIT_EXTRACT:-0}" ;;
   dream) exit "${GBRAIN_STUB_EXIT_DREAM:-0}" ;;
   *) echo "gbrain-stub: unsupported command: $cmd $sub" >&2; exit 1 ;;
@@ -99,9 +108,10 @@ doctor_unhealthy() {
 JSON
   echo "$FIXDIR/doctor-unhealthy.json"
 }
-status_json() { # $1=path $2=missing
+status_json() { # $1=path $2=missing $3=marker_kind (default "none")
+  local marker="${3:-none}"
   cat > "$1" <<JSON
-{"missing_embeddings":$2,"stale_vs_target":{"stale":$2}}
+{"missing_embeddings":$2,"stale_vs_target":{"stale":$2},"marker":{"kind":"$marker"}}
 JSON
   echo "$1"
 }
@@ -146,10 +156,54 @@ GBRAIN_STUB_STATUS_SEQ="$(status_json "$FIXDIR/status-1.json" 500)"
 export GBRAIN_STUB_STATUS_SEQ
 out2="$(run "$CAP2" "$STATE2" --check --json 2>&1)"; rc2=$?
 ok "check-unhealthy-exit-code" "$rc2" "1"
-contains "check-unhealthy-json" "$out2" '"healthy": false'
+contains "check-unhealthy-json" "$out2" '"state": "unhealthy"'
+contains "check-unhealthy-exit-ok-false" "$out2" '"exit_ok": false'
 contains "check-unhealthy-fail-count" "$out2" '"doctor_fail_count": 2'
 unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ
 rm -rf "$STATE2"
+
+# ── 2b. check: draining (0 doctor FAILs, but embedding backlog) -> exit 0 ───
+CAP2B="$(mktemp -u)"; : > "$CAP2B"
+STATE2B="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+GBRAIN_STUB_STATUS_SEQ="$(status_json "$FIXDIR/status-draining.json" 500)"
+export GBRAIN_STUB_STATUS_SEQ
+out2b="$(run "$CAP2B" "$STATE2B" --check --json 2>&1)"; rc2b=$?
+ok "check-draining-exit-code" "$rc2b" "0"
+contains "check-draining-state" "$out2b" '"state": "draining"'
+contains "check-draining-exit-ok-true" "$out2b" '"exit_ok": true'
+rm -rf "$STATE2B"
+
+# ── 2c. check --strict: the SAME draining fixture now exits 1 ──────────────
+CAP2C="$(mktemp -u)"; : > "$CAP2C"
+STATE2C="$(mktemp -d)"
+out2c="$(run "$CAP2C" "$STATE2C" --check --json --strict 2>&1)"; rc2c=$?
+ok "check-draining-strict-exit-code" "$rc2c" "1"
+contains "check-draining-strict-state-still-draining" "$out2c" '"state": "draining"'
+contains "check-draining-strict-exit-ok-false" "$out2c" '"exit_ok": false'
+contains "check-draining-strict-flag-recorded" "$out2c" '"strict": true'
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ
+rm -rf "$STATE2C"
+
+# ── 2d. check --strict: an in-flight migration marker also fails strict,
+#       even with missing==0 && stale==0 (server-health-audit.sh:97 parity) ─
+CAP2D="$(mktemp -u)"; : > "$CAP2D"
+STATE2D="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+GBRAIN_STUB_STATUS_SEQ="$(status_json "$FIXDIR/status-marker.json" 0 in_progress)"
+export GBRAIN_STUB_STATUS_SEQ
+run "$CAP2D" "$STATE2D" --check --json >/dev/null 2>&1; rc2d_nonstrict=$?
+ok "check-marker-nonstrict-still-healthy" "$rc2d_nonstrict" "0"
+CAP2D2="$(mktemp -u)"; : > "$CAP2D2"
+STATE2D2="$(mktemp -d)"
+out2d_strict="$(run "$CAP2D2" "$STATE2D2" --check --json --strict 2>&1)"; rc2d_strict=$?
+ok "check-marker-strict-exit-code" "$rc2d_strict" "1"
+contains "check-marker-strict-state-still-healthy" "$out2d_strict" '"state": "healthy"'
+contains "check-marker-strict-exit-ok-false" "$out2d_strict" '"exit_ok": false'
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ
+rm -rf "$STATE2D" "$STATE2D2"
 
 # ── 3. apply: dry-run executes nothing ──────────────────────────────────────
 CAP3="$(mktemp -u)"; : > "$CAP3"
@@ -201,8 +255,27 @@ cap5txt="$(cat "$CAP5")"
 contains "apply-env-preserves-preset-batch" "$cap5txt" "ENV_BATCH=9999"
 not_contains "apply-env-does-not-force-default-batch" "$cap5txt" "ENV_BATCH=4096"
 contains "apply-env-applies-default-timeout" "$cap5txt" "ENV_TIMEOUT=180000"
+contains "apply-env-applies-default-stall" "$cap5txt" "ENV_STALL=3600"
 unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_EMBED_MAX_BATCH_TOKENS
 rm -rf "$STATE5"
+
+# ── 5b. apply: pre-set GBRAIN_EMBED_STALL_ABORT_SECONDS is NOT overridden ───
+CAP5B="$(mktemp -u)"; : > "$CAP5B"
+STATE5B="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+GBRAIN_STUB_STATUS_SEQ="$(status_json "$FIXDIR/status-env-stall.json" 0)"
+export GBRAIN_STUB_STATUS_SEQ
+GBRAIN_STUB_SOURCES_SEQ="$(sources_empty)"
+export GBRAIN_STUB_SOURCES_SEQ
+export GBRAIN_EMBED_STALL_ABORT_SECONDS=120
+run "$CAP5B" "$STATE5B" --apply --embed-budget 30 >/dev/null 2>&1; rc5b=$?
+ok "apply-env-stall-preset-exit-code" "$rc5b" "0"
+cap5btxt="$(cat "$CAP5B")"
+contains "apply-env-stall-preserves-preset" "$cap5btxt" "ENV_STALL=120"
+not_contains "apply-env-stall-does-not-force-default" "$cap5btxt" "ENV_STALL=3600"
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_EMBED_STALL_ABORT_SECONDS
+rm -rf "$STATE5B"
 
 # ── 6. apply: lock held -> exit 0, no-op ────────────────────────────────────
 CAP6="$(mktemp -u)"; : > "$CAP6"
@@ -242,6 +315,65 @@ ok "stall-perturbation-exit-code" "$rc7b" "0"
 not_contains "stall-perturbation-no-stall-message" "$out7b" "STALLED"
 unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_STUB_EXIT_EMBED
 rm -rf "$STATE7" "$STATE7B"
+
+# ── 7c. apply: gbrain's OWN stall watchdog self-aborts (non-zero rc, NOT our
+#       `timeout`'s rc=124) with ZERO progress -> stalled, non-zero. This is
+#       the exact new-root-cause case: a stall-shaped exit that isn't rc=124
+#       must not be misread as an unconditional hard failure. ────────────────
+CAP7C="$(mktemp -u)"; : > "$CAP7C"
+STATE7C="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+status_json "$FIXDIR/status-wd-1.json" 200 >/dev/null
+status_json "$FIXDIR/status-wd-2.json" 200 >/dev/null
+export GBRAIN_STUB_STATUS_SEQ="$FIXDIR/status-wd-1.json:$FIXDIR/status-wd-2.json:$FIXDIR/status-wd-2.json"
+GBRAIN_STUB_SOURCES_SEQ="$(sources_empty)"
+export GBRAIN_STUB_SOURCES_SEQ
+export GBRAIN_STUB_EXIT_EMBED=1
+export GBRAIN_STUB_EMBED_STALL_MSG=1
+out7c="$(run "$CAP7C" "$STATE7C" --apply --embed-budget 30 2>&1)"; rc7c=$?
+ok "watchdog-stall-exit-code-nonzero" "$([ "$rc7c" -ne 0 ] && echo yes || echo no)" "yes"
+contains "watchdog-stall-message" "$out7c" "STALLED"
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_STUB_EXIT_EMBED GBRAIN_STUB_EMBED_STALL_MSG
+rm -rf "$STATE7C"
+
+# ── 7d. apply: gbrain's own stall watchdog self-aborts but DID make progress
+#       -> partial, exit 0 (not a failure) ──────────────────────────────────
+CAP7D="$(mktemp -u)"; : > "$CAP7D"
+STATE7D="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+status_json "$FIXDIR/status-wd-progress-1.json" 1000 >/dev/null
+status_json "$FIXDIR/status-wd-progress-2.json" 300 >/dev/null
+export GBRAIN_STUB_STATUS_SEQ="$FIXDIR/status-wd-progress-1.json:$FIXDIR/status-wd-progress-2.json:$FIXDIR/status-wd-progress-2.json"
+GBRAIN_STUB_SOURCES_SEQ="$(sources_empty)"
+export GBRAIN_STUB_SOURCES_SEQ
+export GBRAIN_STUB_EXIT_EMBED=1
+export GBRAIN_STUB_EMBED_STALL_MSG=1
+out7d="$(run "$CAP7D" "$STATE7D" --apply --embed-budget 30 --json 2>&1)"; rc7d=$?
+ok "watchdog-stall-progress-exit-code" "$rc7d" "0"
+not_contains "watchdog-stall-progress-no-stalled-message" "$out7d" "STALLED"
+contains "watchdog-stall-progress-status" "$out7d" '"embed": {"status": "timeout-partial"'
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_STUB_EXIT_EMBED GBRAIN_STUB_EMBED_STALL_MSG
+rm -rf "$STATE7D"
+
+# ── 7e. apply: a GENUINE embed hard failure (non-zero rc, no stall message)
+#       is still reported as a real failure, not silently downgraded ───────
+CAP7E="$(mktemp -u)"; : > "$CAP7E"
+STATE7E="$(mktemp -d)"
+GBRAIN_STUB_DOCTOR_SEQ="$(doctor_healthy)"
+export GBRAIN_STUB_DOCTOR_SEQ
+GBRAIN_STUB_STATUS_SEQ="$(status_json "$FIXDIR/status-hardfail.json" 50)"
+export GBRAIN_STUB_STATUS_SEQ
+GBRAIN_STUB_SOURCES_SEQ="$(sources_empty)"
+export GBRAIN_STUB_SOURCES_SEQ
+export GBRAIN_STUB_EXIT_EMBED=1
+out7e="$(run "$CAP7E" "$STATE7E" --apply --embed-budget 30 --json 2>&1)"; rc7e=$?
+ok "genuine-embed-failure-exit-code-nonzero" "$([ "$rc7e" -ne 0 ] && echo yes || echo no)" "yes"
+contains "genuine-embed-failure-status" "$out7e" '"embed": {"status": "failed(rc=1)"'
+not_contains "genuine-embed-failure-not-mislabeled-stalled" "$out7e" '"status": "stalled"'
+unset GBRAIN_STUB_DOCTOR_SEQ GBRAIN_STUB_STATUS_SEQ GBRAIN_STUB_SOURCES_SEQ GBRAIN_STUB_EXIT_EMBED
+rm -rf "$STATE7E"
 
 # ── 8. apply: embed timeout WITH progress -> 0 (not a failure) ──────────────
 CAP8="$(mktemp -u)"; : > "$CAP8"
