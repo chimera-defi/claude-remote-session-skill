@@ -1,0 +1,13 @@
+[Unit]
+Description=Run gbrain-heal --apply on a schedule (see gbrain-heal.service)
+
+[Timer]
+# Every 3 hours. The 04:45 slot deliberately follows the 04:30
+# gbrain-code-refresh.sh cron (which syncs portfolio-ssot-live --no-embed and
+# is the main source of new backlog), so the drain starts shortly after fresh
+# backlog lands instead of waiting up to another cycle.
+OnCalendar=*-*-* 01,04,07,10,13,16,19,22:45:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

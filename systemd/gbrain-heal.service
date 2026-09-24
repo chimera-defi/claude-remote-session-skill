@@ -1,0 +1,15 @@
+[Unit]
+Description=gbrain-heal: sync/embed/extract/cycle the gbrain brain, then re-check health
+Documentation=https://github.com/chimera-defi/claude-remote-session-skill/blob/main/docs/gbrain-heal.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+Environment=PATH=%h/.bun/bin:%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/gbrain-heal --apply
+# Generous ceiling over the embed phase's own --embed-budget (default 7200s):
+# sync(1800s budget) + embed(7200s budget) + extract(900s budget) + a
+# per-source cycle (300s per source) can sum past 3h on a many-source brain.
+TimeoutStartSec=18000
