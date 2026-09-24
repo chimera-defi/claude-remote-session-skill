@@ -14,9 +14,14 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 
 **Done** for a spawn means: `new-session` printed a `REMOTE_NAME`, the unit is active
 (`systemctl --user is-active <REMOTE_NAME>.service`), and — if you gave it a task —
-`--task` printed `verified landed` (on `UNVERIFIED`, check the pane and resend with
-`session-send` — it happens often on first send). Then tell the user the
-`ah-<alias>-<MMDD-HHMM>` name.
+`--task` printed `Task sent … and verified landed.` The kickoff itself settles (several
+consecutive ready polls before the first paste) and refuses rather than pasting blind:
+`trust dialog open (or another menu/dialog widget)` means answer it by hand first
+(`tmux send-keys -t <session> 1 Enter`); `claude not running in pane` means it isn't up
+yet — wait and resend. On plain `UNVERIFIED`, check the pane and resend with
+`session-send` — it happens often enough on first send that it isn't an edge case
+(one-line detail: [`references/troubleshooting.md`](references/troubleshooting.md)).
+Then tell the user the `ah-<alias>-<MMDD-HHMM>` name.
 
 ## Recipe
 
@@ -34,11 +39,10 @@ new-session <foldername> --task "..."        # spawn AND kick off, in one shot
 new-session <foldername> --task-file <path>  # same, task text read from a file
 ```
 
-**Prefer `--task`/`--task-file` over typing the kickoff by hand.** It polls until claude is
-ready in the pane, sends, then verifies the message landed — the manual type/verify/Enter
-dance drops the Enter often enough to matter, leaving the session idle with no error. The
-two flags are mutually exclusive; an unreadable `--task-file` fails *before* anything spawns.
-How to *write* that task is its own section below.
+**Prefer `--task`/`--task-file` over typing the kickoff by hand** — hand-typing drops the
+Enter often enough to leave the session idle with no error, where the flags poll/send/verify
+instead (see "Done for a spawn" above). Mutually exclusive; an unreadable `--task-file` fails
+*before* anything spawns. How to *write* that task is its own section below.
 
 Relaying into an already-running session, and tearing one down:
 
@@ -124,9 +128,9 @@ same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilit
   no longer rewrites the folder default. Add `--set-default-alias` only when the name
   describes the **folder**, not the task.
 - **Protected folders are never aliased**: a folder matching `openclaw|hermes` keeps its full
-  name, because `session-doctor` needs that token to protect it. (`ALIAS_PROTECT` is narrower
-  than `session-doctor`'s reap `PROTECT`, which also covers the `claude-remote` bridge
-  sessions — a folder that merely contains `claude-remote`, like this repo, shortens normally.)
+  name so `session-doctor` can protect it by that token. (Narrower than reap's own `PROTECT`
+  list, which also covers `claude-remote` bridge sessions — this repo's folder merely
+  contains that string and still shortens normally.)
 - **Alias values are validated (anti-poisoning)** on read, write, and store upsert, so a
   stored alias that looks like a full session name can't produce `ah-ah-…-MMDD-MMDD`. The
   rules live in `scripts/session-alias.sh`, pinned by `tests/test-session-alias.sh` — read
@@ -136,23 +140,14 @@ same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilit
 
 ## Git-aware run directory (RUNDIR)
 
-When the workdir is a git repo, the start script resolves where to run via
-`session-git-prep`:
+For a git workdir, the start script resolves where to actually run via `session-git-prep`:
+a free+clean canonical checkout gets used directly (on the default branch, never a stale
+feature branch); a dirty or already-owned one gets a fresh worktree instead. Full decision
+logic, locking, and worktree-reuse-on-restart: [`references/git-aware-rundir.md`](references/git-aware-rundir.md).
 
-- **canonical tree is free + clean** → check it out on the default branch
-  (`origin/HEAD` → `main` → `master`), pull latest when an `origin` exists, and claim it with
-  an owner-lock under `~/.claude/session-locks/`
-- **canonical tree is dirty or already owned by a live session** → create a fresh
-  per-session worktree under `~/.claude/worktrees/<remote_name>` on a new
-  `session/<remote_name>` branch cut from the default branch
-
-The helper never fails a spawn — on any error it falls back to `$WORKDIR` as-is. Non-git
-workdirs skip it entirely, **silently**.
-
-**So check the folder is the repo you mean before spawning** — a project's *name* is not
+**Check the folder is the repo you mean before spawning** — a project's *name* is not
 always its folder, and a same-named non-git stub can carry its own `CLAUDE.md`/`AGENTS.md`
-that make it look right (seen 2026-08-24: `workspace/portfolio-ssot` is a stub; the real
-checkout is `workspace/portfolio-single-source-of-truth`):
+that makes it look right:
 
 ```bash
 git -C /home/agents/workspace/<foldername> rev-parse --show-toplevel
@@ -176,16 +171,13 @@ Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu session
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
 registry expiry: [`references/session-lifecycle.md`](references/session-lifecycle.md).
 
-Two rules from those runbooks that bite hardest:
-
-- **Never use `git log @{u}..` to decide whether work is pushed** — it prints nothing when
-  there's no upstream. Use `git log HEAD --not --remotes` and check `git remote` separately.
-- **Deleting a branch is the dangerous operation, not reaping.** A reap is safe when HEAD is
-  reachable from a named local branch; leave `session/*` and research branches alone.
-
-A respawned session starts on a fresh worktree from the default branch, **not** the old
-session's branch — name the prior branch, transcript path, and where it was mid-way in the
-kickoff, or the replacement re-derives it all at full cost.
+Two rules from those runbooks bite hardest, detailed in `references/troubleshooting.md`'s
+["Preserve before reaping"](references/troubleshooting.md#preserve-before-reaping-recycling-a-bloated-session)
+section: never use `git log @{u}..` to judge whether work is pushed (silent on a branch with
+no upstream — use `git log HEAD --not --remotes`, check `git remote` separately), and
+deleting a branch is the dangerous operation, not reaping. A respawn also starts fresh, not
+on the old session's branch — name the prior branch/transcript/progress in the kickoff, or
+the replacement re-derives it all at full cost.
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
@@ -203,11 +195,7 @@ durability rests on the gbrain index, not on git.
 ## Sessions agent scope
 
 A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a
-**bounded scope**, enforced by its own `.claude/CLAUDE.md`:
-
-- **Allowed**: create sessions, write handoffs to `memory/` in target repos, relay context, monitor session status
-- **Not allowed**: run scripts, execute optimizers, make code changes, or do project work for another repo
-
-When project work lands in a sessions agent: write a handoff to that repo's `memory/`,
-spawn or connect to the project session (use the `handoff` skill), and tell the user which
-session has it — don't do the work yourself.
+**bounded scope** — session management only, no project work — enforced by its own
+`.claude/CLAUDE.md`, not restated here. When project work lands there anyway: write a
+handoff to that repo's `memory/`, spawn or connect to the project session (use the
+`handoff` skill), and tell the user which session has it — don't do the work yourself.
