@@ -27,12 +27,10 @@ you never land a task mid-summarization. Hand-rolling this (`session-send "/comp
 deployed yet. Same staleness signal as the bloat-before-routing check — a status line reading
 `new task? /clear to save NNNk tokens`, or a long idle gap.
 
-**Don't compact a session idle under ~60 minutes.** Claude Code opts into the **1-hour**
-prompt-cache TTL (not the API's 5-minute default), and that TTL is a *sliding window refreshed
-on every read* — so a session idle 30–60min still has a live cache, and compacting it destroys
-value the resumer would have hit at ~0.1× cost. That window is the most expensive moment to
-compact, not the cheapest. `session-compact` defaults to `--min-idle 60` for this reason. See
-[`docs/session-compaction.md`](../docs/session-compaction.md) for the measurements.
+**Don't compact a session idle under ~60 minutes** — its 1-hour prompt cache is still live,
+so that's the most expensive moment to compact, not the cheapest. `session-compact` defaults
+to `--min-idle 60` for this reason; the mechanism, measurements, and the managed-orchestrator
+exceptions are in [`docs/session-compaction.md`](../docs/session-compaction.md).
 
 **Auto-compact reality check** (verified against the actual Claude Code changelog, not
 guessed): auto-compaction is a real built-in feature and is on by default — it is **not** a
