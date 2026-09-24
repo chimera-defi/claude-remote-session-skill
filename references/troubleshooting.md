@@ -11,6 +11,11 @@ with `tmux capture-pane -p -t <session>` before acting:
 | repeated `UserPromptSubmit operation blocked by hook` | hook wedge | [Hook-wedged session](#detecting-a-hook-wedged-session-different-from-bloat) |
 | numbered options, `↑/↓ to navigate` | stuck on a menu | [Stuck-on-a-menu session](#detecting-a-stuck-on-a-menu-session-different-from-both-wedge-types-above) |
 
+A `--task`/`--task-file` kickoff that reports `trust dialog open` or `claude not running in
+pane` instead of landing is this same menu/not-ready detection firing during spawn, not a
+new failure shape — see SKILL.md's "Done for a spawn" note; pinned by
+`tests/test-new-session-settle-loop.sh` and `tests/test-session-handoff-paste-race.sh`.
+
 ## Compact before relaying into an idle/stale session
 
 Relaying a follow-up into a session that's been sitting a while pays to reprocess its whole
@@ -36,8 +41,9 @@ exceptions are in [`docs/session-compaction.md`](../docs/session-compaction.md).
 guessed): auto-compaction is a real built-in feature and is on by default — it is **not** a
 `settings.json` boolean like `autoCompactEnabled`/`autoCompactWindow`; those exact key names
 were fabricated once by a guide agent asked about this and do not exist in
-`~/.claude/settings.json` or the installed CLI's schema. The real controls are the in-session
-`/autocompact` dialog and `/config`, plus env var `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window
+`~/.claude/settings.json` or the installed CLI's schema. The real controls are the launch-time
+`--autocompact <auto|tokens>` flag (verified in `claude --help`, 2.1.280), the in-session
+`/autocompact` dialog and `/config`, and env var `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window
 scales with the model's context size (Sonnet 5 on its full 1M window auto-compacts around
 ~967K tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact
 is broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
@@ -68,12 +74,12 @@ new-session <foldername> workspace --alias <new-alias>
 
 **Never use `git log @{u}..` to decide whether work is pushed.** It returns
 *nothing* when a branch has no upstream configured, so unpushed work reads as
-clean. On 2026-08-17 that mistake reported 10,162 local-only commits as "0
-unpushed" and nearly authorised a reap sweep across them. Use
-`git log HEAD --not --remotes`, and check `git remote` separately — a repo with
-**no remote at all** (e.g. `portfolio-single-source-of-truth`, 155 local
-branches, zero remotes) cannot be pushed anywhere, so its branch refs are the
-only copy that exists.
+clean — silently enough to authorise a reap sweep across genuinely unpushed
+commits. Use `git log HEAD --not --remotes`, and check `git remote` separately
+— a repo with **no remote at all** cannot be pushed anywhere, so its branch
+refs are the only copy that exists. Pinned by `session-preserve.sh`'s own
+header comment and `tests/test-session-preserve.sh`'s "no-remote-flagged"
+case.
 
 What actually makes a reap safe is that **HEAD is reachable from a named local
 branch** — then killing the session and removing its worktree cannot orphan the
@@ -109,12 +115,11 @@ UserPromptSubmit operation blocked by hook:
 ```
 
 with no `✻`/`●` processing indicator after it — the agent process is alive and
-idle, but unreachable. This happened on 2026-08-17 to `ah-trs-fix-0816-2008`
-(ironically, a session tasked with hardening the very hook scripts that then
-wedged it): a `PreToolUse` hook spawn error blocked Bash/Read/Grep/Glob, the
-in-session `advisor()` call stalled 16 minutes and errored, and every prompt
-sent after that — from the user and from a live diagnostic retry — was
-rejected by the same broken `UserPromptSubmit` hook.
+idle, but unreachable, including to the session's own in-context tools (a
+`PreToolUse` wedge blocks Bash/Read/Grep/Glob too, so even an `advisor()` call
+made to diagnose it stalls and errors). No automated test covers this shape
+(it requires a genuinely broken hook script); diagnose from outside the
+session as below.
 
 **Diagnose:** `cat <rundir>/.claude/settings.json` and look at the failing
 hook's command. If it has no fail-open guard (compare to a sibling hook line
@@ -152,10 +157,8 @@ navigating it. The widget only understands arrow keys + Enter (and a
 dedicated "Type something" option for free text); a plain sentence sent into
 it is not a valid input, so it just sits there inert — the session looks
 unresponsive to normal chat, but the agent process is perfectly healthy the
-whole time. Confirmed on 2026-08-21 (`ah-frontend-refactor-0821-0657`): a
-plain-text reply ("all good?") to a "where should I point the next
-iterations" menu never registered; the widget was still waiting for a
-selection.
+whole time. Detection is pinned by `tests/test-session-handoff-ready.sh`
+(`_is_on_menu`'s true/false-positive cases).
 
 **Symptom in `tmux capture-pane -p`:** a numbered option list with checkboxes
 and the `↑/↓ to navigate` hint still on screen, with a plain-text line sitting
@@ -181,8 +184,8 @@ to lose: it was mid a *review* pause, not mid an edit.
 **A different widget classifies the same way but recovers differently:**
 Claude Code's first-launch workspace-trust dialog ("Do you trust the files in
 this folder? ... Enter to confirm · Esc to cancel") is also detected as
-`menu` (`_is_on_menu` / `_state_of` in `scripts/session-handoff.sh` — see its
-comment for the 2026-09-24 incident this covers), since blind text/Enter is
+`menu` (`_is_on_menu` / `_state_of` in `scripts/session-handoff.sh`, pinned by
+`tests/test-session-handoff-trust-dialog.sh`), since blind text/Enter is
 just as unsafe there as on the widget above — but it is a numbered
 Yes/No choice, not an arrow-key+checkbox+Submit-page flow: recover with
 `tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the
