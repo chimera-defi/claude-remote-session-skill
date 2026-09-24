@@ -8,6 +8,12 @@ Description=Run gbrain-heal --apply on a schedule (see gbrain-heal.service)
 # backlog lands instead of waiting up to another cycle.
 OnCalendar=*-*-* 01,04,07,10,13,16,19,22:45:00
 Persistent=true
+# If the service unit is still active (e.g. a long embed drain) when the next
+# OnCalendar fire lands, systemd's own oneshot semantics no-op that trigger --
+# starting an already-active unit doesn't queue a second run. Combined with
+# gbrain-heal's own flock (which would also just exit 0 in that case), the
+# worst case is one skipped tick, never a pile-up of overlapping runs. A run
+# finishing >3h late is fine; the 3h cadence is a target, not this unit's SLA.
 
 [Install]
 WantedBy=timers.target

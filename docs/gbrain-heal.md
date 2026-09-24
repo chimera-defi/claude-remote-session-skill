@@ -23,6 +23,12 @@ version:
   well past the watchdog's 900s default with zero visible progress, so it
   fires mid-page every run and nothing ever banks for that page. `gbrain-heal`
   also raises `GBRAIN_EMBED_STALL_ABORT_SECONDS` past the worst single-page time.
+- **Embed also has its own, independent soft wall-clock cap.**
+  `GBRAIN_EMBED_TIME_BUDGET_MS` (default 30 min, checked between pages) can
+  still fire on a single very large page even with the other knobs tuned,
+  exiting 0 with zero chunks banked. `gbrain-heal` sizes it off
+  `--embed-budget` so a page started just before the cap fires still has
+  margin before the outer `timeout` kills the whole phase.
 - **A daily `--no-embed` code-refresh cron is the backlog's source, by
   design.** It intentionally syncs without embedding, so a
   growing-then-draining backlog is normal, not a failure.
@@ -52,6 +58,45 @@ doesn't change, only whether `draining` (or a `none`-marker violation) counts
 as a passing exit. Tool errors (gbrain missing, unparsable JSON) always exit 2
 regardless of `--strict`. `--apply`'s own final re-check always runs
 non-strict — a draining backlog is an acceptable end state for `--apply`.
+
+The JSON summary also carries `gbrain_http`: `"ok"` or `"not_responding"`,
+a read-only probe of `gbrain-http.service`'s health endpoint. It's
+informational only — it never changes `state` or `exit_ok`. See "gbrain-http
+self-heal" below for what `--apply` does when it's not responding.
+
+## Non-fatal outcomes `--apply` tolerates
+
+Several conditions look like failures at a glance but are treated as
+non-fatal, benign, or resumable — each phase status is set exactly once, so
+`run_phase()` / `run_embed_phase()` / `cycle_sources()` in the script are the
+source of truth for the precise condition, not this list:
+
+- **Lock contention** (`sync --all` hitting `SyncLockBusyError`, or `embed`
+  hitting its own single-flight backfill lock): `skipped(lock-held)` —
+  another process already holds the source's lock; retried next run.
+- **`extract`'s budget exhausted** (`timeout-partial`, budget raised to 1800s):
+  it stamps progress per batch, so a mid-run kill only loses the current
+  small batch.
+- **`embed`'s chunk-level failures with real progress**
+  (`partial(chunk-failures=N)`): some chunks failed but `missing` still
+  decreased; the failure count is preserved in the phase status.
+- **A per-source `dream --source <id>` cycle hitting `cycle_already_running`**:
+  counted as skipped in the cycle phase's summary, not rolled into "ok".
+- **`embed`'s three stall-shaped exits** (our own `--embed-budget` timeout,
+  gbrain's stall watchdog, or its independent wall-clock cap): `timeout-partial`
+  if progress was made, `stalled` (the one case here that DOES fail `--apply`)
+  if the backlog didn't move at all.
+
+### gbrain-http self-heal
+
+`--apply` probes `gbrain-http.service`'s health endpoint before running any
+phase and, if it's not responding, attempts one `systemctl --user restart` +
+re-probe (2026-09-19 incident: this service can wedge — process alive per
+systemd, but its listener stops answering, so `Restart=on-failure` never
+fires). This never blocks or fails the run either way: sync/embed/extract/
+dream/doctor/migrate all talk to postgres directly, not this endpoint.
+`--check` only probes and reports (see `gbrain_http` above) — it never
+restarts anything.
 
 ## Running it
 
@@ -95,6 +140,8 @@ frequently from monitoring.
 | `GBRAIN_EMBED_MAX_BATCH_TOKENS` | 4096 (exported if unset) | Caps embed sub-batch size (verified fix for root cause #1). |
 | `GBRAIN_AI_EMBED_TIMEOUT_MS` | 180000 (exported if unset) | Raises the per-batch embed timeout to match. |
 | `GBRAIN_EMBED_STALL_ABORT_SECONDS` | 3600 (exported if unset) | Raises gbrain's own stall-watchdog threshold past the worst single-page drain time (verified fix for root cause #1b; gbrain's own default is 900s). |
+| `GBRAIN_EMBED_TIME_BUDGET_MS` | `(--embed-budget - 2400)s` in ms, floored at 600000 (exported if unset) | Raises embed's own independent soft wall-clock cap past `--embed-budget` minus a margin, so it doesn't fire mid-page and exit 0 with nothing banked (verified fix for root cause #1c; gbrain's own default is 1800000ms/30min). |
+| `GBRAIN_HEALTH_URL` | `http://127.0.0.1:3131/health` | `gbrain-http.service`'s health endpoint, probed by `--check` and self-healed by `--apply` (see "gbrain-http self-heal" above). |
 
 Never destructive: `gbrain-heal` only calls `sync`, `embed`, `extract`,
 `dream --source <id>`, `doctor`, and `migrate embeddings --status`. It never
