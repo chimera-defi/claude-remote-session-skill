@@ -66,12 +66,11 @@ The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per ro
 
 builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
 latest release for that tier, so spawns pick up a newer Sonnet/Haiku with no edit here.
-orchestrator is **pinned** to an exact id — `claude-opus-5-5` since 2026-09-24 (was
-`claude-opus-5` from 2026-08-27) — rather than left on the bare `opus` alias, which has been
-observed resolving to different releases across spawns. See `scripts/new-session.sh`'s
-Model selection comment for the checks to run before bumping it. Opus 5.x has no `advisor`
-tool (Sonnet does), which is why implementation subagents are pinned to Sonnet — see
-`agents/builder.md`.
+orchestrator is **pinned** to an exact id rather than left on the bare `opus` alias, which
+has been observed resolving to different releases across spawns. See
+`scripts/new-session.sh`'s Model selection comment for the current pin, its history, and the
+checks to run before bumping it. Opus 5.x has no `advisor` tool (Sonnet does), which is why
+implementation subagents are pinned to Sonnet — see `agents/builder.md`.
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -113,7 +112,7 @@ Once running: open Claude Code on any device → Remote sessions → look for `a
 | `CLAUDE.md` | agents working *on* this repo: finish line for a change, stop-vs-continue rule, anti-patterns, deploy table |
 | `SKILL.md` | spawning and operating sessions, incl. how to write a kickoff task |
 | `handoff/` | routing a task to another session; `handoff/references/massaging.md` is the handoff-prompt contract |
-| `references/` | runbooks: troubleshooting/recycling, session lifecycle, fallback recipe |
+| `references/` | runbooks and reference docs: troubleshooting/recycling, session lifecycle, fallback recipe |
 | `agents/builder.md` | the Sonnet-pinned `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
 
 ## License
