@@ -31,13 +31,16 @@ command -v python3 >/dev/null 2>&1 || { echo "session-handoff-paste-race: SKIP (
 WORK="$(mktemp -d)"
 trap 'tmux ls -F "#{session_name}" 2>/dev/null | grep "^hoff-race-$$-" | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
 
-# Pull the pre-fix session-handoff.sh straight from origin/main so "old
+# Pull the pre-fix session-handoff.sh straight from git history so "old
 # behavior" is proven against what actually merged, not a hand-copied guess
 # that could silently drift from it. Skip that one comparison (not the whole
 # file) if the ref isn't available in this checkout — everything else here
 # only needs the current tree.
+# Pinned to the last commit BEFORE the fix (#83), not origin/main: once the
+# fix merged, origin/main *is* the fixed script and the "old" checks failed.
+PRE_FIX_REF=6da1e1d1f071132534429b76f1f904e53acc39d8
 OLD_HANDOFF="$WORK/session-handoff-old.sh"
-if git -C "$HERE/.." show origin/main:scripts/session-handoff.sh > "$OLD_HANDOFF" 2>/dev/null; then
+if git -C "$HERE/.." show "$PRE_FIX_REF:scripts/session-handoff.sh" > "$OLD_HANDOFF" 2>/dev/null; then
   HAVE_OLD=yes
 else
   HAVE_OLD=no
@@ -76,7 +79,7 @@ MSG="handoff race probe"
 # Paste #1 is silently eaten (matches the observed bug); paste #2 (the fix's
 # one retry) is accepted and submitted normally.
 
-# 1a. Pre-fix session-handoff.sh (origin/main) against this pane must report
+# 1a. Pre-fix session-handoff.sh (PRE_FIX_REF) against this pane must report
 # UNVERIFIED — proves the fixture reproduces the actual bug, not a strawman.
 if [ "$HAVE_OLD" = yes ]; then
   S1A="$(spawn_tui drop-first)"
@@ -87,7 +90,7 @@ if [ "$HAVE_OLD" = yes ]; then
   ok "old-drop-first-one-paste" "$(grep -c '^PASTE ' "$WORK/$S1A.log")" "1"
   tmux kill-session -t "$S1A" 2>/dev/null || true
 else
-  echo "SKIP: old-drop-first-* (origin/main not reachable in this checkout)"
+  echo "SKIP: old-drop-first-* (pre-fix ref not reachable in this checkout)"
 fi
 
 # 1b. Fixed session-handoff.sh (this tree) must land, with the retry firing
