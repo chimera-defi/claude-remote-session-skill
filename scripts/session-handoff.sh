@@ -372,7 +372,11 @@ _state_of() {
     *) echo dead; return;;
   esac
   cap="$(_capture "$s")"
-  if _is_on_menu "$cap"; then echo menu; return; fi
+  # Footer only: `send` hard-refuses on `menu`, so matching the whole screen
+  # would refuse any session whose transcript merely quotes "Esc to cancel" /
+  # "Enter to confirm" (e.g. one discussing this very bug). A live menu or
+  # trust dialog always puts its hint line in the last few non-blank lines.
+  if _is_on_menu "$(printf '%s\n' "$cap" | grep -v '^[[:space:]]*$' | tail -n 4)"; then echo menu; return; fi
   _is_working "$cap" && echo busy || echo ready
 }
 

@@ -67,5 +67,28 @@ has "send-mentions-trust"   "$send_out" "folder-trust"
 ok  "send-exit2"            "$send_rc" "2"
 ok  "send-touched-nothing"  "$(wc -l < "$LOG" | tr -d ' ')" "0"
 
+# Negative case: a normal idle session whose TRANSCRIPT quotes the dialog's
+# hint text (e.g. one discussing this bug) must NOT read as `menu` — `send`
+# hard-refuses on menu, so a whole-screen match would block every relay into
+# it. Only the last few non-blank lines (where a live footer sits) count.
+S2="hoff-quote-$$"
+trap 'tmux kill-session -t "$S" 2>/dev/null || true; tmux kill-session -t "$S2" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+tmux new-session -d -s "$S2" -x 80 -y 24 2>/dev/null
+cat > "$WORK/quote.py" <<'PY'
+import time
+print("● the dialog said: Yes, I trust this folder / Enter to confirm · Esc to cancel")
+print()
+print("● done.")
+print()
+print("─" * 40)
+print("❯ ")
+print("─" * 40)
+print("  [Opus 5.5] x")
+time.sleep(60)
+PY
+tmux send-keys -t "$S2" "exec -a claude python3 '$WORK/quote.py'" Enter
+for _ in $(seq 1 20); do tmux capture-pane -p -t "$S2" | grep -q '\[Opus 5.5\]' && break; sleep 0.2; done
+has "quoted-hint-not-menu" "$(bash "$HANDOFF" check "$S2" 2>&1)" "state=ready"
+
 echo "session-handoff-trust-dialog: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
