@@ -20,9 +20,13 @@
 # into it would concatenate onto their draft and Enter would submit the
 # corrupted merge. `ready` also refuses when the pane is on an interactive
 # menu widget (arrow-key only; plain text sent into it is silently dropped —
-# see references/troubleshooting.md "Detecting a stuck-on-a-menu session") or has no visible
-# prompt at all. `send` does not consult `ready` yet — see the predicate's
-# comment for adoption notes.
+# see references/troubleshooting.md "Detecting a stuck-on-a-menu session") or
+# has no visible prompt at all. As of 2026-09-24 that menu check also covers
+# Claude Code's first-launch folder-trust dialog (see _is_on_menu's comment),
+# and `check`/`send` now refuse on it too via `_state_of`'s `menu` state —
+# `send` still does not consult the FULL `ready` predicate before its first
+# paste (a bare unsubmitted draft is not yet checked there), see
+# `_is_safe_to_inject`'s comment for what's left.
 set -uo pipefail
 
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
@@ -43,8 +47,24 @@ _is_working() {
 # "Detecting a stuck-on-a-menu session". Prefer the distinctive hint strings
 # over trying to parse the numbered option list / checkbox glyphs, which are
 # too generic to grep for reliably on their own.
+#
+# Also matches Claude Code's first-launch workspace-trust dialog ("Yes, I
+# trust this folder / No, exit · Enter to confirm · Esc to cancel") — same
+# hazard class as the menu widgets above (blind Enter answers it instead of
+# being dropped), and worse: it can pick the DEFAULT option, which is not
+# necessarily "trust". Confirmed live 2026-09-24 (9th dropped-first-send
+# incident, `new-session questrade-ui-adapter --task-file` on its very first
+# launch in that worktree): the kickoff paste's Enter landed on this dialog
+# and selected "No, exit", so Claude exited immediately and the supervisor
+# loop went into a 300s restart backoff — reported UNVERIFIED, which was
+# technically true but hid the real cause. The existing "Esc to cancel"
+# alternative below already happens to match this dialog's text, but
+# "trust this folder" / "Enter to confirm" are added explicitly so detection
+# does not depend on that being incidental — see the CLI help text (`claude
+# --help`, -p/--print note) confirming this dialog is a real, versioned
+# feature of Claude Code, not a one-off rendering.
 _is_on_menu() {
-  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit'
+  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Enter to confirm'
 }
 
 # _frag — a distinctive single-line fragment of a (possibly multi-line) message,
@@ -62,6 +82,23 @@ _transcript_region() { printf '%s\n' "$2" | awk '/❯/{last=NR} {a[NR]=$0} END{f
 _on_input_line() { _input_region "$1" "$2" | grep -qF "$1"; }
 # _in_transcript — did the fragment reach the conversation (submitted + echoed)?
 _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
+
+# _is_collapsed_paste_in_input — is the input box showing Claude Code's
+# collapsed-multiline-paste placeholder ("[Pasted text #1 +17 lines]",
+# "paste again to expand" beneath it) instead of the literal pasted text?
+# Claude Code collapses large/multi-line pastes to this placeholder rather
+# than echoing the content verbatim — exactly the shape a multi-line
+# --task-file kickoff takes — so _frag's literal-substring match against the
+# real message can never find it there. Without this, a landed-but-still-
+# buffered large paste reads (wrongly) as "gone from the input line", and
+# _verdict falls straight through "buffered" to "unverified" instead of
+# pressing Enter again. Confirmed live 2026-09-24 (ah_qt-gate-0924-0802,
+# `new-session questrade-ui-adapter --task-file`): send reported UNVERIFIED
+# while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
+# manual Enter submitted it, proving it was still just buffered.
+_is_collapsed_paste_in_input() {
+  _input_region "" "$1" | grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]'
+}
 
 # _has_prompt — is there a real ❯ input line visible anywhere in the capture?
 # Absent during startup (still in the supervisor loop / model not yet in a TUI
@@ -234,23 +271,27 @@ _safety_reason() {
 # message can be pasted + Enter-submitted without corrupting someone's draft,
 # vanishing into a menu widget, or racing active generation. The absence of
 # "busy" is NOT sufficient — see the top-of-file note. `send` does not gate on
-# this yet (see its comment above). Note the `case "$st"` below in `send` has
-# no `ready)` arm — a pane with a draft or a menu up is classified `ready` by
-# _state_of today (it only distinguishes busy from not-busy) and falls
-# straight through to the paste with zero warning; that fall-through is
-# exactly what this predicate would need to gate. `busy` already has its own
-# warn+proceed arm and should keep it: gating `_is_safe_to_inject` naively
-# over the whole case would also swallow `busy` into a hard refusal, breaking
-# the existing "message queues behind current work" contract.
+# the full predicate (draft-in-input-box is still not checked before the
+# INITIAL paste — only during the dropped-paste recovery path, see `send`'s
+# comment). `_state_of` DOES now short-circuit the menu/trust-dialog case
+# specifically (2026-09-24 — see _is_on_menu's comment): `menu` is its own
+# state with its own refusing arm in `send`'s `case "$st"`, no longer folded
+# into `ready`. A pane with an unsubmitted DRAFT sitting on the prompt is
+# still classified `ready` by `_state_of` (it has no visibility into input-
+# box contents) and falls straight through to the paste with zero warning —
+# that's the one gap `_is_safe_to_inject` would still need to close if `send`
+# adopted it fully.
 _is_safe_to_inject() { [ "$(_safety_reason "$1")" = safe ]; }
 
 # _verdict — combine the signals for one capture.
-#   buffered   : still on the input line -> press Enter again
+#   buffered   : still on the input line (literally, or as Claude Code's
+#                collapsed-multiline-paste placeholder — see
+#                _is_collapsed_paste_in_input) -> press Enter again
 #   landed     : echoed into the transcript OR the session is now working
 #   unverified : sent, but no confirmation (report honestly; caller re-checks)
 _verdict() {
   local frag="$1" cap="$2"
-  if _on_input_line "$frag" "$cap"; then echo buffered; return; fi
+  if _on_input_line "$frag" "$cap" || _is_collapsed_paste_in_input "$cap"; then echo buffered; return; fi
   if _in_transcript "$frag" "$cap" || _is_working "$cap"; then echo landed; return; fi
   echo unverified
 }
@@ -270,6 +311,30 @@ _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
 # from Claude Code's dim "suggested next action" ghost text (see _is_dim_span).
 _capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 
+# _paste_and_wait <session> <frag> <msg> — bracket-paste <msg> then run the
+# Enter-retry loop, echoing the resulting verdict (buffered|landed|
+# unverified). Factored out of the `send` dispatch so the dropped-paste
+# recovery path below (2026-09-24 incident — see its comment) can reuse the
+# EXACT same paste+verify mechanics for its one retry, rather than a second
+# hand-copy of this loop silently drifting from it over time.
+_paste_and_wait() {
+  local s="$1" frag="$2" msg="$3" verdict=unverified _try _j
+  # Bracketed paste so a multi-line prompt lands as one input, not N submits.
+  printf '%s' "$msg" | tmux load-buffer -b handoff -
+  tmux paste-buffer -t "$s" -b handoff -p -d
+  for _try in 1 2 3; do
+    tmux send-keys -t "$s" Enter
+    for _j in 1 2 3 4 5 6; do
+      verdict="$(_verdict "$frag" "$(_capture "$s")")"
+      [ "$verdict" = landed ] && break
+      sleep 0.5
+    done
+    [ "$verdict" = landed ] && break
+    [ "$verdict" = buffered ] || break     # unverified: one Enter should have done it; stop resending
+  done
+  echo "$verdict"
+}
+
 # _model_of — best-effort resolved model for a session (from its start script,
 # else the most recent session-starts.log line).
 _model_of() {
@@ -279,17 +344,40 @@ _model_of() {
   grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* model=\([^ ]*\) .*/\1/p' | tail -1
 }
 
-# _state_of — dead | starting | busy | ready, from pane command + capture.
+# _state_of — dead | starting | busy | menu | ready, from pane command +
+# capture. `menu` (added 2026-09-24, see _is_on_menu's comment for the
+# incident) covers both the AskUserQuestion-style widgets and the folder-
+# trust dialog — checked before busy/ready so `check` (which gates
+# new-session.sh's kickoff send on `state = ready`) refuses to call a pane
+# "ready" while it is sitting on either, instead of the previous busy-vs-not
+# split that had no way to represent "up, but not safe to type into" at all.
 _state_of() {
-  local s="$1" cmd; cmd="$(_pane_cmd "$s")"
+  local s="$1" cmd cap; cmd="$(_pane_cmd "$s")"
   case "$cmd" in
     ""|-) echo dead; return;;
     claude|node) : ;;
-    sleep) echo busy; return;;                 # supervisor backoff between restarts
-    bash|zsh|sh) echo starting; return;;       # supervisor loop not yet in claude
+    # `sleep` is the supervisor loop's between-restarts backoff (300s on a
+    # quick exit, 10s otherwise — see new-session.sh's generated start
+    # script), NOT claude "busy working" — there is no claude process in the
+    # pane at all. This used to report `busy`, and `send`'s busy arm only
+    # NOTES and proceeds to paste (the "queues behind current work"
+    # contract) — which pastes straight into a bare shell mid-`sleep`, where
+    # the text sits buffered for whatever next reads that pty's stdin (the
+    # next `claude` invocation once the loop restarts it, or the shell
+    # itself). Confirmed live 2026-09-24: a kickoff prompt containing
+    # backticks and $(...) was pasted into exactly this state and was headed
+    # for execution as shell input — caught and killed in time. Treat it
+    # like `starting`: no claude process to send into yet, refuse.
+    sleep|bash|zsh|sh) echo starting; return;;
     *) echo dead; return;;
   esac
-  _is_working "$(_capture "$s")" && echo busy || echo ready
+  cap="$(_capture "$s")"
+  # Footer only: `send` hard-refuses on `menu`, so matching the whole screen
+  # would refuse any session whose transcript merely quotes "Esc to cancel" /
+  # "Enter to confirm" (e.g. one discussing this very bug). A live menu or
+  # trust dialog always puts its hint line in the last few non-blank lines.
+  if _is_on_menu "$(printf '%s\n' "$cap" | grep -v '^[[:space:]]*$' | tail -n 4)"; then echo menu; return; fi
+  _is_working "$cap" && echo busy || echo ready
 }
 
 _live_ours() { tmux ls 2>/dev/null | cut -d: -f1 | grep -E '^(ah_|agenthost_)'; }
@@ -341,8 +429,22 @@ case "$MODE" in
     fi
     st="$(_state_of "$S")"
     case "$st" in
-      dead)     echo "send: '$S' is $st (supervisor loop not in claude) — refusing to send" >&2; exit 2;;
-      starting) echo "send: '$S' is still starting — refusing to send (retry after it reaches the prompt)" >&2; exit 2;;
+      # Both messages below name the ACTUAL pane_current_command (not just
+      # the coarse dead/starting label) so "claude not running in pane
+      # (<cmd>)" is always present verbatim — the exact signal to grep for
+      # (2026-09-24: this refusal is what stops a paste from landing on a
+      # bare supervisor shell instead of Claude Code — see `sleep`'s comment
+      # in _state_of).
+      dead)     echo "send: claude not running in pane ($(_pane_cmd "$S")) — '$S' looks dead — refusing to send" >&2; exit 2;;
+      starting) echo "send: claude not running in pane ($(_pane_cmd "$S")) — '$S' is still starting (or between supervisor restarts) — refusing to send (retry after it reaches the prompt)" >&2; exit 2;;
+      # Unlike `busy` (below), a menu/dialog widget is a HARD refusal, not a
+      # queue-behind-it note: plain text sent into it is either dropped
+      # (an AskUserQuestion widget) or answers it with whatever Enter
+      # submits, which is not necessarily the safe/intended choice (2026-09-24
+      # incident: a kickoff paste's Enter answered a first-launch folder-
+      # trust dialog with its default "No, exit" and killed the session — see
+      # _is_on_menu's comment). Answer it by hand first.
+      menu)     echo "send: '$S' is on a menu/dialog widget (e.g. a first-launch folder-trust prompt) — refusing to send; Enter could submit an unintended choice. Answer it by hand, e.g.: tmux send-keys -t $S 1 Enter" >&2; exit 2;;
       busy)     echo "send: note — '$S' is busy (working); message will queue behind current work" >&2;;
     esac
     frag="$(_frag "$MSG")"
@@ -352,20 +454,57 @@ case "$MODE" in
     # "landed" even though Enter worked fine. Refuse rather than loop to a
     # false "unverified".
     [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
-    # Bracketed paste so a multi-line prompt lands as one input, not N submits.
-    printf '%s' "$MSG" | tmux load-buffer -b handoff -
-    tmux paste-buffer -t "$S" -b handoff -p -d
-    verdict=unverified
-    for _try in 1 2 3; do
-      tmux send-keys -t "$S" Enter
-      for _j in 1 2 3 4 5 6; do
-        verdict="$(_verdict "$frag" "$(_capture "$S")")"
-        [ "$verdict" = landed ] && break
-        sleep 0.5
-      done
-      [ "$verdict" = landed ] && break
-      [ "$verdict" = buffered ] || break     # unverified: one Enter should have done it; stop resending
-    done
+    verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
+    # ── dropped-first-paste recovery (2026-09-24 incident, e.g.
+    # ah_pf-process-0924-0734 07:34) ────────────────────────────────────────
+    # On a freshly booted Claude Code, `check` (and new-session.sh's ready
+    # poll) can observe the ❯ prompt render and call the session "ready"
+    # before the TUI's own bracketed-paste handling has finished wiring
+    # itself up — the paste above then lands on a not-quite-live input
+    # handler and is silently dropped: the input box stays empty and the
+    # text never reaches the transcript. The Enter-retry loop inside
+    # _paste_and_wait cannot tell this apart from "nothing was sent yet" by
+    # design (it only re-presses Enter while the fragment is still BUFFERED
+    # on the input line — see _verdict), so it correctly gives up as
+    # `unverified` rather than guessing. Here we have one more signal it
+    # doesn't: _safety_reason. If the pane reads `safe` — truly idle, not
+    # busy, not a menu, no draft sitting on the prompt — AND the fragment is
+    # nowhere on screen (neither transcript nor input line), there is
+    # nothing to duplicate: the paste evidently never arrived, so it's safe
+    # to try exactly once more. Any other reading (busy/menu/draft, or the
+    # fragment IS somewhere) means either it landed via a path _verdict
+    # missed, or a real draft/other work is present — re-pasting into either
+    # would risk a double-send or corrupting someone's draft, so this path
+    # only ever fires when the retry loop already said "unverified" AND a
+    # fresh, independent read of the pane confirms "nothing here to lose".
+    #
+    # This cannot tell a genuine drop apart from a TUI that accepted the
+    # paste but stalled its own repaint before showing any trace of it — from
+    # a pane-capture vantage point the two are identical, and a stalled
+    # accept would then be double-delivered. That's a real, documented
+    # residual risk (see tests/test-session-handoff-paste-race.sh case 2),
+    # not a case this fix claims to solve — but the alternative, observed
+    # 8/8 on first sends, is losing the message outright every time.
+    if [ "$verdict" != landed ]; then
+      cap_now="$(_capture_ansi "$S")"
+      # Re-check the pane's foreground process fresh, not the `st` read at
+      # the top of this dispatch — claude can exit BETWEEN the initial paste
+      # attempt and this decision (it's a live TUI, not a fixed target), and
+      # pasting into whatever took its place (the supervisor's `sleep`
+      # backoff, or a crash-to-shell) is exactly the hazard the `dead`/
+      # `starting` refusals above exist to prevent. Same reasoning as those,
+      # applied at the point of the SECOND paste rather than only the first.
+      if [ "$(_safety_reason "$cap_now")" = safe ] \
+         && ! _in_transcript "$frag" "$cap_now" \
+         && ! _on_input_line "$frag" "$cap_now"; then
+        case "$(_pane_cmd "$S")" in
+          claude|node)
+            sleep 2
+            verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
+            ;;
+        esac
+      fi
+    fi
     if [ "$verdict" = landed ]; then
       echo "send: landed on $S"
       exit 0
