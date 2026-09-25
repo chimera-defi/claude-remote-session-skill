@@ -48,12 +48,15 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
-session-doctor reap <name> [--force] [--keep-registry]  # teardown (tmux + unit) + its registry entry
+session-doctor reap <name> [--force] [--keep-registry] [--keep-worktree]
+                                       # teardown (tmux + unit) + registry entry + worktree
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 ```
 
 `reap` refuses protected names outright, and refuses a session with unlanded/uncommitted
-work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`.
+work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`. It also
+removes that session's own `~/.claude/worktrees/<name>` git worktree by default (branch
+kept; `--keep-worktree` opts out) — see `references/session-lifecycle.md` for the guards.
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
@@ -167,6 +170,7 @@ a broken repo.
 | Recycle a bloated session | `session-preserve <s> --rescue --wip` → must print `SAFE-TO-REAP` | then stop the unit and respawn; **never reap before this** |
 | Session went silent | `tmux capture-pane -p -t <s>` | bloat vs. hook wedge vs. stuck menu — see runbooks |
 | Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes that session's own entry unless `--keep-registry` — see `references/session-lifecycle.md` |
+| Clean up a reaped session's leftover worktree | `session-doctor worktree-stale` | for one NOT already handled — `reap <name>` removes its own worktree automatically (`--keep-worktree` to skip); see `references/session-lifecycle.md` |
 | Is the gbrain brain healthy (draining, freshness-stamped)? | `gbrain-heal --check` (or `--apply` to fix) | read-only verdict from `gbrain doctor` + embed backlog; tolerates a draining backlog, only FAILs on a real doctor FAIL. See [`docs/gbrain-heal.md`](docs/gbrain-heal.md). |
 
 Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu sessions:

@@ -50,8 +50,8 @@ Every row is a **still-alive** proc, so `reap-local` deliberately won't touch it
 `idle-report` produces the candidate list; you act on it in two lanes:
 
 - **dead** sessions → `session-doctor reap-local [--force]`
-- **idle-but-alive** sessions → kill by hand:
-  `tmux kill-session -t <name>` + `systemctl --user disable --now <name>.service`
+- **idle-but-alive** sessions → `session-doctor reap <name> [--force]` (tmux + unit +
+  registry entry + worktree, after the session-preserve safety check)
 
 Do **not** wire `idle-report` into an auto-kill path — the report/act separation
 is the safety property. Rows flagged `[P]` are **protected**

@@ -10,12 +10,17 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   session-doctor.sh reap <name> [--force] [--keep-registry]
+#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree]
 #                                           # one-shot teardown of a named ALIVE session (tmux+unit);
 #                                           # refuses on unlanded work unless --force; also deletes
 #                                           # that session's registry entry (by title == base name)
 #                                           # unless --keep-registry — fails soft if the registry is
-#                                           # unreachable, never changes reap's own exit status
+#                                           # unreachable, never changes reap's own exit status; also
+#                                           # removes the session's ~/.claude/worktrees/<base> git
+#                                           # worktree (branch kept) unless --keep-worktree — see
+#                                           # _reap_remove_worktree's own header comment for the
+#                                           # guards (dirty refusal, in-use-by-another-unit, caller's
+#                                           # own cwd, primary checkout) that make this safe
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh registry-prune [--days N] [--apply]
 #                                           # same candidate set as registry-stale; DRY-RUN by default
@@ -51,8 +56,18 @@
 #     mechanism, targeted at exactly the one entry it just tore down; --keep-registry
 #     skips it. A registry lookup/delete failure there is soft — it never changes
 #     reap's own exit status.
-#   * Worktree removal is intentionally NOT automated (a dead session's worktree may
-#     hold unpushed/uncommitted work). worktree-stale prints candidates, each one's
+#   * `reap <name>` also removes that ONE session's own ~/.claude/worktrees/<base>
+#     worktree by default (--keep-worktree opts out) — never the branch. `git worktree
+#     remove` runs WITHOUT --force (a dirty worktree refuses and is left in place,
+#     reported, and never fails the rest of reap) except under reap's own --force,
+#     where --force is passed through. A worktree any OTHER systemd user unit
+#     references (WorkingDirectory or anywhere in ExecStart, drop-ins included) is
+#     never removed, nor is the caller's own cwd or a repo's primary checkout. See
+#     _reap_remove_worktree's header comment and
+#     tests/test-session-doctor-reap-worktree.sh.
+#   * Worktree removal for everything ELSE (a dead session that was reap-local'd, not
+#     reap'd by name; a worktree left behind by a session reaped before this existed)
+#     is intentionally NOT automated. worktree-stale prints candidates, each one's
 #     dirty/landed status, and the exact commands to run by hand after review.
 #   * idle-report, land-check, and history are REPORT-ONLY: idle-report's rows are
 #     still-alive procs reap-local won't touch; land-check never mutates anything;
@@ -73,6 +88,7 @@ FORCE=no
 TSV=no
 APPLY=no
 KEEP_REGISTRY=no
+KEEP_WORKTREE=no
 MINUTES=""
 DAYS_SET=no
 MINUTES_SET=no
@@ -89,6 +105,7 @@ while [ $# -gt 0 ]; do
     --force) FORCE=yes; shift;;
     --apply) APPLY=yes; shift;;
     --keep-registry) KEEP_REGISTRY=yes; shift;;
+    --keep-worktree) KEEP_WORKTREE=yes; shift;;
     *) ARGS+=("$1"); shift;;
   esac
 done
@@ -405,6 +422,159 @@ _wt_landed() {
     landed=no
   fi
   printf 'base=%s landed=%s\n' "$def" "$landed"
+}
+
+# ── reap worktree-removal helpers ───────────────────────────────────────────
+# Factored out of `reap` so each guard is independently unit-testable (see
+# tests/test-session-doctor-reap-worktree.sh), the same way _registry_delete_one
+# is tested directly rather than only through the full `reap` dispatch (which
+# would otherwise require going through session-preserve's own safety gate
+# just to exercise a worktree-removal edge case).
+
+# _is_caller_cwd <worktree> -> true if the CALLING process's own cwd is that
+# worktree or somewhere under it. Removing the worktree a `reap` invocation is
+# itself running from would pull the rug out from under the rest of the
+# script (and anything else still running there).
+_is_caller_cwd() {
+  local wt="$1" wt_real pwd_real
+  wt_real="$(cd "$wt" 2>/dev/null && pwd -P)" || return 1
+  pwd_real="$(pwd -P)"
+  case "$pwd_real" in
+    "$wt_real"|"$wt_real"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _wt_used_by_other_unit <worktree> <own_service> -> prints the blocking
+# unit's filename and returns 0 if any systemd --user unit OTHER than
+# <own_service> references <worktree>'s path — as WorkingDirectory, or
+# anywhere in ExecStart (a flag value like --state-dir=<path>, not just a
+# literal `ExecStart=<path>/...`) — including a drop-in override under
+# <unit>.service.d/*.conf. Real case this guards against: a live session's
+# worktree can go on being another unit's WorkingDirectory/--state-dir long
+# after the SESSION that first created it is reaped (e.g.
+# ah-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
+# bus timers). A plain substring match on the whole unit file is deliberately
+# used instead of parsing specific directive names — these generated unit
+# files only ever contain [Unit]/[Service]/[Install] directives, so a path
+# appearing anywhere in one is already a reference worth refusing over.
+# Checks both the given path and its resolved realpath (a unit may reference
+# either form). Returns 1 (nothing printed) if no other unit references it.
+_wt_used_by_other_unit() {
+  local wt="$1" own="$2" wt_real f unit
+  wt_real="$(cd "$wt" 2>/dev/null && pwd -P)" || wt_real="$wt"
+  for f in "$UD"/*.service; do
+    [ -f "$f" ] || continue
+    unit="$(basename "$f")"
+    [ "$unit" = "$own" ] && continue
+    if grep -qF "$wt" "$f" 2>/dev/null || { [ "$wt_real" != "$wt" ] && grep -qF "$wt_real" "$f" 2>/dev/null; }; then
+      printf '%s\n' "$unit"; return 0
+    fi
+  done
+  for f in "$UD"/*.service.d/*.conf; do
+    [ -f "$f" ] || continue
+    unit="$(basename "$(dirname "$f")")"; unit="${unit%.d}"
+    [ "$unit" = "$own" ] && continue
+    if grep -qF "$wt" "$f" 2>/dev/null || { [ "$wt_real" != "$wt" ] && grep -qF "$wt_real" "$f" 2>/dev/null; }; then
+      printf '%s\n' "$unit"; return 0
+    fi
+  done
+  return 1
+}
+
+# _wt_resolve_for_base <base> -> absolute path of the ~/.claude/worktrees/
+# dir owned by session <base>, or empty (return 1) if none. Prefers a BRANCH
+# match (session/<base>) over a bare directory-name match — the same
+# resolution order session-preserve.sh's worktree_of() and worktree-stale
+# already use, and for the same reason (see their own comments, duplicated
+# here rather than sourced, matching how every script in this repo is a
+# standalone deployable file): session-git-prep.sh suffixes the worktree
+# DIRECTORY with -$$ on a path collision while leaving the branch
+# (session/<base>) unsuffixed, so a plain "$HOME/.claude/worktrees/$base"
+# path join silently misses the real, suffixed worktree on a collision and
+# would leave it behind forever (reap runs unattended on a schedule, with no
+# other path back to it).
+_wt_resolve_for_base() {
+  local base="$1" dir="$HOME/.claude/worktrees" wt branch fallback=""
+  [ -d "$dir" ] || return 1
+  for wt in "$dir"/*/; do
+    [ -d "$wt" ] || continue
+    wt="${wt%/}"
+    branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" || true
+    if [ "$branch" = "session/$base" ]; then printf '%s\n' "$wt"; return 0; fi
+    [ -z "$fallback" ] && [ "$(basename "$wt")" = "$base" ] && fallback="$wt"
+  done
+  if [ -n "$fallback" ]; then printf '%s\n' "$fallback"; return 0; fi
+  return 1
+}
+
+# _reap_remove_worktree <base> <force:yes|no> — the worktree-removal step of
+# `reap`, called as `_reap_remove_worktree "$base" "$FORCE"` unless
+# --keep-worktree was given. Resolves the session's worktree via
+# _wt_resolve_for_base (branch-first, so a PID-suffixed collision directory
+# is still found — see its own comment). Finds the owning main repo via
+# `git -C <wt> rev-parse --git-common-dir` (_wt_mainrepo, same helper
+# worktree-stale/land-check use), then removes ONLY the worktree
+# registration + directory — the branch (session/<base>, or whatever it was
+# switched to) is NEVER deleted here.
+#
+# `git worktree remove` runs WITHOUT --force by default, so IT decides
+# dirtiness (untracked/modified files) the same way it always has — reap does
+# not re-derive that check. A refusal is reported and the worktree is left in
+# place; it never fails the rest of reap (always returns 0). --force is
+# passed through to `git worktree remove` ONLY when reap's own --force was
+# given (force already means "skip the safety net"; leaving a known-dirty
+# worktree half torn-down behind a force-reaped session would be a worse,
+# more confusing outcome than force-removing it too).
+#
+# Guards, checked before ever calling `git worktree remove`, each one a
+# refusal (worktree kept, nothing removed):
+#  - no worktree found at that path at all -> "(ok)", not an error
+#  - the resolved path IS the repo's primary checkout (defensive — should
+#    never happen since this only ever looks under ~/.claude/worktrees, but
+#    never risk running `worktree remove` against a non-worktree checkout)
+#  - the CALLER's own cwd is that worktree (see _is_caller_cwd)
+#  - any OTHER systemd user unit references it (see _wt_used_by_other_unit)
+#
+# `git worktree prune` runs on the main repo afterward regardless of outcome
+# (bookkeeping only — never removes a directory still present on disk).
+_reap_remove_worktree() {
+  local base="$1" force="$2" wt mainrepo wt_real mainrepo_real own_unit blocking
+  wt="$(_wt_resolve_for_base "$base")"
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then
+    echo "  worktree: none found for '$base' (ok)"
+    return 0
+  fi
+  mainrepo="$(_wt_mainrepo "$wt")"
+  if [ -z "$mainrepo" ]; then
+    echo "  worktree: $wt is not a git worktree (main repo unresolvable) — leaving in place" >&2
+    return 0
+  fi
+  wt_real="$(cd "$wt" 2>/dev/null && pwd -P)"
+  mainrepo_real="$(cd "$mainrepo" 2>/dev/null && pwd -P)"
+  if [ -n "$wt_real" ] && [ "$wt_real" = "$mainrepo_real" ]; then
+    echo "  worktree: $wt IS $mainrepo's primary checkout — refusing to remove"
+    return 0
+  fi
+  if _is_caller_cwd "$wt"; then
+    echo "  worktree: $wt is the caller's own working directory — refusing to remove"
+    return 0
+  fi
+  own_unit="${base}.service"
+  if blocking="$(_wt_used_by_other_unit "$wt" "$own_unit")"; then
+    echo "  worktree: kept (in use by unit $blocking): $wt"
+    return 0
+  fi
+  local -a rmargs=(worktree remove)
+  [ "$force" = yes ] && rmargs+=(--force)
+  rmargs+=("$wt")
+  if git -C "$mainrepo" "${rmargs[@]}" >/dev/null 2>&1; then
+    echo "  worktree removed (branch kept): $wt"
+  else
+    echo "  worktree: kept (git worktree remove refused — untracked/modified files?): $wt"
+  fi
+  git -C "$mainrepo" worktree prune >/dev/null 2>&1 || true
+  return 0
 }
 
 declare -A _TSV_STATUS_CACHE
@@ -1233,6 +1403,15 @@ for s in arr:
         echo "  registry: unreachable — leaving any registry entry for '$base' in place (reap still counts as done)" >&2
       fi
     fi
+    # Worktree cleanup: the session's own ~/.claude/worktrees/<base> git
+    # worktree (created by session-git-prep.sh for a dirty/busy repo) is
+    # removed too, unless --keep-worktree — see _reap_remove_worktree's own
+    # header comment for the full guard list (dirty refusal, in-use-by-
+    # another-unit, caller's own cwd, primary checkout). Never fails the rest
+    # of reap; the branch is never deleted.
+    if [ "$KEEP_WORKTREE" != yes ] && [ -n "$base" ]; then
+      _reap_remove_worktree "$base" "$FORCE"
+    fi
     ;;
 
   land-check)
@@ -1284,6 +1463,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
