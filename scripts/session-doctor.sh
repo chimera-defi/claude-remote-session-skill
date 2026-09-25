@@ -459,7 +459,23 @@ _is_caller_cwd() {
 # files only ever contain [Unit]/[Service]/[Install] directives, so a path
 # appearing anywhere in one is already a reference worth refusing over.
 # Checks both the given path and its resolved realpath (a unit may reference
-# either form). Returns 1 (nothing printed) if no other unit references it.
+# either form), and for each of those also the systemd %h-relative form —
+# %h expands to $HOME, and generated unit files may spell a home-relative
+# path as %h/... instead of the literal $HOME/... (real case:
+# bus-router-idle-reaper.service.d/state-dir.conf uses
+# %h/.claude/worktrees/<name>/...). Returns 1 (nothing printed) if no other
+# unit references it in any of these forms.
+_wt_ref_in_file() {
+  local f="$1" wt="$2" wt_real="$3" cand
+  for cand in "$wt" "$wt_real"; do
+    [ -n "$cand" ] || continue
+    grep -qF "$cand" "$f" 2>/dev/null && return 0
+    case "$cand" in
+      "$HOME"/*) grep -qF "%h/${cand#"$HOME"/}" "$f" 2>/dev/null && return 0 ;;
+    esac
+  done
+  return 1
+}
 _wt_used_by_other_unit() {
   local wt="$1" own="$2" wt_real f unit
   wt_real="$(cd "$wt" 2>/dev/null && pwd -P)" || wt_real="$wt"
@@ -467,7 +483,7 @@ _wt_used_by_other_unit() {
     [ -f "$f" ] || continue
     unit="$(basename "$f")"
     [ "$unit" = "$own" ] && continue
-    if grep -qF "$wt" "$f" 2>/dev/null || { [ "$wt_real" != "$wt" ] && grep -qF "$wt_real" "$f" 2>/dev/null; }; then
+    if _wt_ref_in_file "$f" "$wt" "$wt_real"; then
       printf '%s\n' "$unit"; return 0
     fi
   done
@@ -475,7 +491,7 @@ _wt_used_by_other_unit() {
     [ -f "$f" ] || continue
     unit="$(basename "$(dirname "$f")")"; unit="${unit%.d}"
     [ "$unit" = "$own" ] && continue
-    if grep -qF "$wt" "$f" 2>/dev/null || { [ "$wt_real" != "$wt" ] && grep -qF "$wt_real" "$f" 2>/dev/null; }; then
+    if _wt_ref_in_file "$f" "$wt" "$wt_real"; then
       printf '%s\n' "$unit"; return 0
     fi
   done
