@@ -100,6 +100,22 @@ out5="$(_reap_remove_worktree ah-rwdropin-0101-0900 no)"
 ok "dropin-guard-kept" "$([ -d "$WT_DROPIN" ] && echo yes || echo no)" "yes"
 has "dropin-guard-message" "$out5" "in use by unit another-bus-unit.service"
 
+# ── 5b. unit-reference guard: a drop-in referencing the worktree only via
+# systemd's %h specifier (= $HOME) must still be caught — real case:
+# bus-router-idle-reaper.service.d/state-dir.conf spells the path
+# %h/.claude/worktrees/<name>/... instead of $HOME/.claude/worktrees/... ────
+WT_PCTH="$TESTHOME/.claude/worktrees/ah-rwpcth-0101-0900"
+git -C "$REPO" worktree add -q -b session/ah-rwpcth-0101-0900 "$WT_PCTH" main >/dev/null 2>&1
+mkdir -p "$UDIR/pcth-bus-unit.service.d"
+cat > "$UDIR/pcth-bus-unit.service.d/state-dir.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=/usr/bin/python3 bus.py --state-dir=%h/.claude/worktrees/ah-rwpcth-0101-0900
+EOF
+out5b="$(_reap_remove_worktree ah-rwpcth-0101-0900 no)"
+ok "pcth-guard-kept" "$([ -d "$WT_PCTH" ] && echo yes || echo no)" "yes"
+has "pcth-guard-message" "$out5b" "in use by unit pcth-bus-unit.service"
+
 # ── 6. the guard excludes the session's OWN unit (own WorkingDirectory match
 # must not block removal of its own worktree) ─────────────────────────────
 out6="$(_reap_remove_worktree ah-rwownunit-0101-0900 no)"
