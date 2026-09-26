@@ -189,6 +189,66 @@ EOF
   # Footer counts the KEEPs ((a) + (b) = 2); nothing else in this run is kept.
   has "worktree-stale-footer-counts-keeps" "$wtout5" ", 2 KEEP (in use by a systemd unit"
   ok "worktree-stale-no-units-no-keep" "$(printf '%s' "$wtout4" | grep -c 'KEEP')" "0"
+
+  # Gitignored payload. `git worktree remove` deletes gitignored files (with or
+  # without --force) and status=clean never counts them, so a "clean" row can
+  # hold a whole campaign's results — the 2026-08-29 exp-lab loss, where a
+  # session pasted these `remove:` lines in bulk. A row whose worktree holds
+  # non-regenerable ignored files must carry a NOTE (count / bytes / example
+  # path / the archive command) AND have that archive chained ahead of the
+  # remove command, so pasting only the `remove:` line is safe. Rows with no
+  # payload (none, or only deny-listed node_modules/.venv/…) stay as before,
+  # and KEEP rows are left exactly as they were.
+  # (.git/info/exclude is shared by every worktree of $REPO; only the ones
+  # below ever get these directories.)
+  printf 'artifacts/\nnode_modules/\n.venv/\n' >> "$REPO/.git/info/exclude"
+  WT_PAY="$WTHOME/.claude/worktrees/ah-wtpay-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtpay-0101-0900 "$WT_PAY" main >/dev/null 2>&1
+  mkdir -p "$WT_PAY/artifacts"; printf 'raw\n' > "$WT_PAY/artifacts/results.tsv"; printf 'more\n' > "$WT_PAY/artifacts/keeper.log"
+  WT_NOPAY="$WTHOME/.claude/worktrees/ah-wtnopay-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtnopay-0101-0900 "$WT_NOPAY" main >/dev/null 2>&1
+  mkdir -p "$WT_NOPAY/node_modules/x" "$WT_NOPAY/.venv/lib"; echo a > "$WT_NOPAY/node_modules/x/i.js"; echo a > "$WT_NOPAY/.venv/lib/l.py"
+  WT_PAYDIRTY="$WTHOME/.claude/worktrees/ah-wtpaydirty-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtpaydirty-0101-0900 "$WT_PAYDIRTY" main >/dev/null 2>&1
+  mkdir -p "$WT_PAYDIRTY/artifacts"; echo x > "$WT_PAYDIRTY/artifacts/r.tsv"; echo work > "$WT_PAYDIRTY/scratch.txt"
+  WT_PAYKEEP="$WTHOME/.claude/worktrees/ah-wtpaykeep-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtpaykeep-0101-0900 "$WT_PAYKEEP" main >/dev/null 2>&1
+  mkdir -p "$WT_PAYKEEP/artifacts"; echo x > "$WT_PAYKEEP/artifacts/r.tsv"
+  cat > "$WTUD/wtstale-paykeep.service" <<EOF
+[Service]
+WorkingDirectory=$WT_PAYKEEP
+ExecStart=/bin/true
+EOF
+  wtout6="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  # one row = the path line + its indented (4-space) follow-on lines
+  rowblock(){ printf '%s\n' "$1" | awk -v p="$2" 'index($0,"  " p)==1{f=1;print;next} /^    /{if(f)print;next} {f=0}'; }
+  blk_pay="$(rowblock "$wtout6" "$WT_PAY")"
+  ok "worktree-stale-payload-row-status-clean" "$(printf '%s' "$blk_pay" | head -1 | grep -qF 'status=clean' && echo yes || echo no)" "yes"
+  has "worktree-stale-payload-note-count" "$blk_pay" "NOTE: 2 gitignored file(s)"
+  has "worktree-stale-payload-note-example" "$blk_pay" "artifacts/"
+  has "worktree-stale-payload-note-says-remove-deletes" "$blk_pay" "git worktree remove deletes them"
+  has "worktree-stale-payload-note-archive-cmd" "$blk_pay" "session-doctor archive-ignored $WT_PAY"
+  ok "worktree-stale-payload-remove-chains-archive" "$(printf '%s' "$blk_pay" | grep -F 'remove:' | grep -qF "session-doctor archive-ignored $WT_PAY && git -C" && echo yes || echo no)" "yes"
+  ok "worktree-stale-payload-remove-still-there" "$(printf '%s' "$blk_pay" | grep -F 'remove:' | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
+  blk_nopay="$(rowblock "$wtout6" "$WT_NOPAY")"
+  ok "worktree-stale-nopayload-row-listed" "$([ -n "$blk_nopay" ] && echo yes || echo no)" "yes"
+  ok "worktree-stale-nopayload-no-note" "$(printf '%s' "$blk_nopay" | grep -c 'gitignored')" "0"
+  ok "worktree-stale-nopayload-remove-not-chained" "$(printf '%s' "$blk_nopay" | grep -c 'archive-ignored')" "0"
+  blk_dead="$(rowblock "$wtout6" "$WT_DEAD")"
+  ok "worktree-stale-plain-row-no-note" "$(printf '%s' "$blk_dead" | grep -c 'gitignored\|archive-ignored')" "0"
+  # DIRTY + payload: both notes; the DIRTY rule (#97: no --force, no branch -D) is unchanged.
+  blk_pd="$(rowblock "$wtout6" "$WT_PAYDIRTY")"
+  has "worktree-stale-payload-dirty-keeps-dirty-note" "$blk_pd" "NOTE: worktree has uncommitted changes (status=DIRTY)"
+  has "worktree-stale-payload-dirty-has-payload-note" "$blk_pd" "NOTE: 1 gitignored file(s)"
+  ok "worktree-stale-payload-dirty-still-no-force" "$(printf '%s' "$blk_pd" | grep -F 'remove:' | grep -cF -- '--force')" "0"
+  # KEEP rows (in use by another unit) carry no NOTE and no remove/archive command.
+  blk_pk="$(rowblock "$wtout6" "$WT_PAYKEEP")"
+  has "worktree-stale-payload-keep-row-still-keep" "$blk_pk" "KEEP: in use by unit wtstale-paykeep.service — do not remove"
+  ok "worktree-stale-payload-keep-row-no-note" "$(printf '%s' "$blk_pk" | grep -c 'gitignored\|archive-ignored\|remove:')" "0"
+  # the printed archive command really is runnable (subcommand exists and works)
+  ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_PAY" ) >/dev/null 2>&1
+  ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"
+  ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/files/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
 fi
 
 # _default_branch: real default branch resolution, no gh dependency needed for
