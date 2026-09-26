@@ -264,6 +264,27 @@ EOF
   ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_PAY" ) >/dev/null 2>&1
   ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"
   ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/files/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+  # The whole chained line, pasted as a human (or a bulk executor — the 2026-08-29
+  # incident) would: eval'd with a `session-doctor` shim on PATH, against a repo
+  # whose path has a space. (1) archive fails (over the cap) -> `&&` stops the
+  # chain and the worktree survives; (2) archive succeeds -> archived, THEN removed.
+  SHIM="$WTTMP/shim"; mkdir -p "$SHIM"
+  printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$HERE/../scripts/session-doctor.sh" > "$SHIM/session-doctor"; chmod +x "$SHIM/session-doctor"
+  printf 'artifacts/\n' >> "$REPO_SP/.git/info/exclude"
+  WT_CH1="$WTHOME/.claude/worktrees/ah-wtchain1-0101-0900"; WT_CH2="$WTHOME/.claude/worktrees/ah-wtchain2-0101-0900"
+  for w in "$WT_CH1" "$WT_CH2"; do
+    git -C "$REPO_SP" worktree add -q -b "session/$(basename "$w")" "$w" main >/dev/null 2>&1
+    mkdir -p "$w/artifacts"; echo data > "$w/artifacts/results.tsv"
+  done
+  wtout8="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  cmd_ch1="$(printf '%s' "$wtout8" | grep -F 'remove:' | grep -F "$WT_CH1" | sed 's/^ *remove: //')"
+  cmd_ch2="$(printf '%s' "$wtout8" | grep -F 'remove:' | grep -F "$WT_CH2" | sed 's/^ *remove: //')"
+  ( export PATH="$SHIM:$PATH" HOME="$WTHOME" SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES=1; eval "$cmd_ch1" ) >/dev/null 2>&1
+  ok "worktree-stale-chain-failed-archive-keeps-worktree" "$([ -f "$WT_CH1/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  ( export PATH="$SHIM:$PATH" HOME="$WTHOME"; eval "$cmd_ch2" ) >/dev/null 2>&1
+  ok "worktree-stale-chain-removed-after-archive" "$([ -d "$WT_CH2" ] && echo yes || echo no)" "no"
+  ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/ah-wtchain2-0101-0900-*/files/artifacts/results.tsv 2>/dev/null)" "data"
 fi
 
 # _default_branch: real default branch resolution, no gh dependency needed for
