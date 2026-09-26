@@ -281,6 +281,36 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "wstale-reports-landed-yes"          "$(printf '%s' "$wsout" | grep -F "$WT_LANDED" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=yes"
   ok "wstale-reports-landed-no"           "$(printf '%s' "$wsout" | grep -F "$WT_UNLANDED" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=no"
 
+  # `branch -D` is only offered for a known-landed branch (landed=yes). The
+  # session/* ref is the only thing keeping a dead session's commits reachable
+  # once its worktree is gone, so landed=no AND landed=unknown get the worktree
+  # removal alone plus a NOTE (a squash-merged branch reads landed=no — the
+  # check is ancestry — which only costs the suggestion, never a wrong delete).
+  # landed=unknown fixture: a detached-HEAD main repo makes _default_branch
+  # answer the literal "HEAD", which is no ref, so there is nothing to compare to.
+  REPO_U="$LCTMP/repo-unknown"; mkdir -p "$REPO_U"
+  git -C "$REPO_U" init -q -b trunk
+  git -C "$REPO_U" config user.email t@t.com; git -C "$REPO_U" config user.name t
+  echo hi > "$REPO_U/a.txt"; git -C "$REPO_U" add a.txt; git -C "$REPO_U" commit -q -m init
+  git -C "$REPO_U" checkout -q --detach
+  WT_UNKNOWN="$LCHOME/.claude/worktrees/ah-lcunknown-0101-0900"
+  git -C "$REPO_U" worktree add -q -b session/ah-lcunknown-0101-0900 "$WT_UNKNOWN" HEAD >/dev/null 2>&1
+  wsout2="$(HOME="$LCHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  # One candidate's row plus its indented continuation lines (remove:/NOTE:/KEEP:).
+  _test_wsblock() { printf '%s\n' "$1" | awk -v p="$2" 'index($0,p){f=1;print;next} f&&/^    /{print;next} {f=0}'; }
+  blk_yes="$(_test_wsblock "$wsout2" "$WT_LANDED")"
+  blk_no="$(_test_wsblock "$wsout2" "$WT_UNLANDED")"
+  blk_unk="$(_test_wsblock "$wsout2" "$WT_UNKNOWN")"
+  ok "wstale-branchD-fixture-unknown" "$(printf '%s' "$blk_unk" | grep -oE 'landed=[a-z]+')" "landed=unknown"
+  ok "wstale-branchD-landed-yes-keeps-it"       "$(printf '%s' "$blk_yes" | grep -qF 'branch -D session/ah-lclanded-0101-0900' && echo yes || echo no)" "yes"
+  ok "wstale-branchD-landed-yes-no-keep-note"   "$(printf '%s' "$blk_yes" | grep -qF 'not known-landed' && echo yes || echo no)" "no"
+  ok "wstale-branchD-landed-no-still-removes-wt" "$(printf '%s' "$blk_no" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
+  ok "wstale-branchD-landed-no-dropped"         "$(printf '%s' "$blk_no" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-branchD-landed-no-note" "$blk_no" "NOTE: branch session/ah-lcunlanded-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
+  ok "wstale-branchD-unknown-still-removes-wt"  "$(printf '%s' "$blk_unk" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
+  ok "wstale-branchD-unknown-dropped"           "$(printf '%s' "$blk_unk" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-branchD-unknown-note" "$blk_unk" "NOTE: branch session/ah-lcunknown-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
+
   # land-check: report-only (no mutation — both worktrees still exist after),
   # and unlike worktree-stale it must NOT filter by liveness — add a LIVE
   # worktree and confirm it's still reported (worktree-stale would skip it).
