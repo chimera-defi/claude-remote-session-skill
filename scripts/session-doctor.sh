@@ -452,30 +452,37 @@ _wt_landed() {
 # that is where results live; only its scaffolding children are listed. Adding
 # one would recreate the incident. A false positive here costs a small archive,
 # a false negative costs data, so keep it to paths that regenerate themselves.
-_WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|build|target|\.cache|\.pytest_cache|\.mypy_cache|\.gstack|\.superpowers|\.claude/(skills|token-reduce-state|tmp-briefs|settings\.local\.json|CLAUDE\.md)|artifacts/token-reduction)(/|$)|(^|/)artifacts/qmd-repo-[^/]*\.stamp$|^\.sessions-init-[^/]*$'
+_WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|build|target|coverage|\.cache|\.pytest_cache|\.mypy_cache|\.gstack|\.superpowers|\.claude/(skills|token-reduce-state|tmp-briefs|settings\.local\.json|CLAUDE\.md)|artifacts/token-reduction)(/|$)|(^|/)(artifacts/qmd-repo-[^/]*\.stamp|next-env\.d\.ts|[^/]*\.tsbuildinfo)$|^\.sessions-init-[^/]*$'
 
 # _wt_ignored_payload <worktree> <listfile> -> writes the worktree-relative
 # path of every gitignored regular file / symlink that is NOT deny-listed to
 # <listfile>, NUL-separated; sets _WTI_COUNT, _WTI_BYTES and _WTI_EXAMPLES (up
-# to 3 paths, shell-quoted, comma-separated). Returns 0 iff the payload is
-# non-empty. Sets globals rather than printing (see _tsv_git_status) — call it
+# to 3 paths, shell-quoted, comma-separated). Returns 0 if the payload is
+# non-empty, 1 if it is empty, 2 if it could not be listed (git failed, or a
+# directory was unreadable) — callers must treat 2 as "unknown", never as
+# "empty". Sets globals rather than printing (see _tsv_git_status) — call it
 # directly, not through $(...). `--directory` is only a cheap first pass so an
 # ignored node_modules/ is never walked; any other collapsed directory is
 # expanded to files with find, so count/bytes/archive are all file-level.
 _wt_ignored_payload() {
-  local wt="$1" out="$2" ent rel n=0
+  local wt="$1" out="$2" raw="$2.raw" found="$2.find" ent rel n=0 bad=0
   _WTI_COUNT=0; _WTI_BYTES=0; _WTI_EXAMPLES=""
+  git -C "$wt" ls-files -z --others --ignored --exclude-standard --directory > "$raw" 2>/dev/null \
+    || { rm -f "$raw"; : > "$out"; return 2; }
   while IFS= read -r -d '' ent; do
     if [ "${ent: -1}" = / ]; then
       [[ $ent =~ $_WT_IGNORED_DENY_RE ]] && continue
+      (cd "$wt" 2>/dev/null && find "./${ent%/}" \( -type f -o -type l \) -print0) > "$found" 2>/dev/null || bad=1
       while IFS= read -r -d '' rel; do
         rel="${rel#./}"
         [[ $rel =~ $_WT_IGNORED_DENY_RE ]] || printf '%s\0' "$rel"
-      done < <(cd "$wt" 2>/dev/null && find "./${ent%/}" \( -type f -o -type l \) -print0 2>/dev/null)
+      done < "$found"
     else
       [[ $ent =~ $_WT_IGNORED_DENY_RE ]] || printf '%s\0' "$ent"
     fi
-  done < <(git -C "$wt" ls-files -z --others --ignored --exclude-standard --directory 2>/dev/null) > "$out"
+  done < "$raw" > "$out"
+  rm -f "$raw" "$found"
+  [ "$bad" -eq 0 ] || return 2
   _WTI_COUNT="$(tr -cd '\0' < "$out" | wc -c | tr -d ' ')"
   [ "$_WTI_COUNT" -gt 0 ] || return 1
   _WTI_BYTES="$(cd "$wt" && xargs -0 -a "$out" stat -c %s -- 2>/dev/null | awk '{s+=$1} END{print s+0}')"
@@ -499,10 +506,15 @@ _wt_ignored_payload() {
 # contents, only paths and sizes. Used by `reap` (via _reap_remove_worktree)
 # and by `session-doctor archive-ignored <worktree>`.
 _wt_archive_ignored() {
-  local wt="$1" list root dest cap py_out mb
+  local wt="$1" list root dest cap py_out mb prc
   _WTI_ERR=""; _WTI_ARCHIVE=""
   list="$(mktemp)" || { _WTI_ERR="mktemp failed"; return 1; }
-  if ! _wt_ignored_payload "$wt" "$list"; then rm -f "$list"; return 0; fi
+  _wt_ignored_payload "$wt" "$list"; prc=$?
+  if [ "$prc" -eq 1 ]; then rm -f "$list"; return 0; fi
+  if [ "$prc" -ne 0 ]; then
+    _WTI_ERR="could not list the gitignored files (git error or an unreadable directory)"
+    rm -f "$list"; return 1
+  fi
   cap="${SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES:-2147483648}"
   case "$cap" in ''|*[!0-9]*) cap=2147483648 ;; esac
   if [ "$_WTI_BYTES" -gt "$cap" ]; then
@@ -558,6 +570,7 @@ PY
   fi
   rm -f "$list"
   _WTI_ARCHIVE="$dest"
+  py_out="${py_out##*$'\n'}"
   mb="$(awk -v b="${py_out#* }" 'BEGIN{printf "%.1f", b/1048576}')"
   echo "  archived ${py_out%% *} ignored file(s), $mb MB → $dest"
   return 0
@@ -1262,9 +1275,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # archives first, and a failed/over-cap archive stops the removal) and a
         # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
         arch_pre=""
-        if _wt_ignored_payload "$wt" "$wti_list"; then
-          arch_pre="session-doctor archive-ignored $q_wt && "
-        fi
+        _wt_ignored_payload "$wt" "$wti_list"; prc=$?
+        [ "$prc" -ne 1 ] && arch_pre="session-doctor archive-ignored $q_wt && "
         if [ "$owned" = yes ]; then
           # `branch -D` only for a known-landed branch (landed=yes; unknown counts
           # as not known). The session/* ref is what keeps a dead session's commits
@@ -1291,8 +1303,10 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         if [ "$dirty" = DIRTY ]; then
           printf '    NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C %s status --ignored); add --force only if they are not needed\n' "$q_wt"
         fi
-        if [ -n "$arch_pre" ]; then
+        if [ "$prc" -eq 0 ]; then
           printf '    NOTE: %s gitignored file(s), %s bytes, e.g. %s — invisible to status; git worktree remove deletes them. Archive first: session-doctor archive-ignored %s (already chained ahead of the remove command above)\n' "$_WTI_COUNT" "$_WTI_BYTES" "$_WTI_EXAMPLES" "$q_wt"
+        elif [ "$prc" -ne 1 ]; then
+          printf '    NOTE: could not list this worktree'"'"'s gitignored files (unreadable directory?) — git worktree remove would delete them unseen; the archive-ignored step chained ahead of the remove command above will refuse until that is fixed\n'
         fi
       fi
     done

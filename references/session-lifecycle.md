@@ -44,6 +44,7 @@ session-doctor.sh registry-stale --days 30   # list registry entries disconnecte
 session-doctor.sh registry-prune --days 30   # DRY-RUN: same candidates, would-delete/skip/report
 session-doctor.sh registry-prune --apply     # actually delete the non-protected candidates
 session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
+session-doctor.sh archive-ignored <worktree> # verified copy of its gitignored results → ~/backups/reaped-worktree-ignored/
 session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) ≥2d — report only
 session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold (list all)
 ```
@@ -68,7 +69,11 @@ Safety guarantees:
   `.service.d/*.conf` drop-ins), the caller's own cwd, or a repo's primary checkout is
   never removed either way. The branch is never deleted. See `_reap_remove_worktree`'s
   header comment in `scripts/session-doctor.sh` and
-  `tests/test-session-doctor-reap-worktree.sh`.
+  `tests/test-session-doctor-reap-worktree.sh`. Before removing, reap archives the
+  worktree's non-regenerable *gitignored* files (which `git worktree remove` deletes
+  and a `clean` status never shows) to `~/backups/reaped-worktree-ignored/`, and keeps
+  the worktree if it can't — see `_wt_archive_ignored` in the same script and case 13
+  of that test.
 - **Worktree removal for everything else is never automated.** `worktree-stale` prints
   each remaining candidate's dirty/unpushed status and the exact `git worktree remove`
   to run by hand (a `git branch -D` is appended only for a `landed=yes` row; otherwise a
@@ -77,8 +82,10 @@ Safety guarantees:
   worktree may hold unpushed work, so this stays a review step. A worktree another
   systemd unit still runs from gets a `KEEP:` line and no removal command, and a
   `status=DIRTY` row gets the removal without `--force` or `branch -D` plus a `NOTE:`.
-  These rules are in the `worktree-stale)` case of `scripts/session-doctor.sh`, pinned by
-  `tests/test-session-doctor.sh`.
+  A row whose worktree holds non-regenerable gitignored files (a `clean` row can) gets a
+  `NOTE:` and `session-doctor archive-ignored <worktree> &&` chained ahead of its
+  `remove:` line. These rules are in the `worktree-stale)` case of
+  `scripts/session-doctor.sh`, pinned by `tests/test-session-doctor.sh`.
 - **`idle-report` is report-only** (like `registry-stale`): every row is a still-*alive*
   proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
   then kill an idle-but-alive one by hand. It never kills anything itself.
