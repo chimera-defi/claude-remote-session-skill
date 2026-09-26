@@ -129,6 +129,64 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ( eval "$cmd" ) >/dev/null 2>&1
   ok "worktree-stale-quoted-cmd-evals-cleanly" "$?" "0"
   ok "worktree-stale-quoted-cmd-removed-it" "$([ -d "$WT_SP" ] && echo yes || echo no)" "no"
+
+  # A dead worktree that ANOTHER systemd --user unit still runs from must get a
+  # KEEP line and NO removal command — the printed `remove:` line is what gets
+  # pasted. Regression (live, 2026-09-26): ah-bus-follower-v2-0919-0108 was
+  # offered for `worktree remove --force && branch -D` while being the
+  # WorkingDirectory of four live bus units. Same guard `reap` uses
+  # (_wt_used_by_other_unit; see also tests/test-session-doctor-reap-worktree.sh).
+  # XDG_CONFIG_HOME is pinned so the unit dir is the fixture, not the real host's.
+  WTUD="$WTHOME/.config/systemd/user"; mkdir -p "$WTUD"
+
+  # (a) referenced by another unit's WorkingDirectory
+  WT_UNIT="$WTHOME/.claude/worktrees/ah-wtunit-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtunit-0101-0900 "$WT_UNIT" main >/dev/null 2>&1
+  cat > "$WTUD/wtstale-bus.service" <<EOF
+[Service]
+WorkingDirectory=$WT_UNIT
+ExecStart=/bin/true
+EOF
+
+  # (b) referenced only via a .service.d/*.conf drop-in, in systemd's %h form
+  # (real case: bus-router-idle-reaper.service.d/state-dir.conf)
+  WT_DROP="$WTHOME/.claude/worktrees/ah-wtdrop-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtdrop-0101-0900 "$WT_DROP" main >/dev/null 2>&1
+  mkdir -p "$WTUD/wtstale-reaper.service.d"
+  cat > "$WTUD/wtstale-reaper.service.d/state-dir.conf" <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/python3 bus.py --state-dir=%h/.claude/worktrees/ah-wtdrop-0101-0900
+EOF
+
+  # (d) referenced only by the dead session's OWN unit (${remote}.service, as
+  # reap derives it) — that unit goes away with the session, so it must not
+  # count as "another unit".
+  WT_OWN="$WTHOME/.claude/worktrees/ah-wtown-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-wtown-0101-0900 "$WT_OWN" main >/dev/null 2>&1
+  cat > "$WTUD/ah-wtown-0101-0900.service" <<EOF
+[Service]
+WorkingDirectory=$WT_OWN
+ExecStart=/bin/true
+EOF
+
+  wtout5="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  ok "worktree-stale-unit-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_UNIT" && echo yes || echo no)" "yes"
+  ok "worktree-stale-unit-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_UNIT" && echo yes || echo no)" "no"
+  ok "worktree-stale-unit-ref-no-branch-D"     "$(printf '%s' "$wtout5" | grep -F 'branch -D' | grep -qF 'ah-wtunit-0101-0900' && echo yes || echo no)" "no"
+  ok "worktree-stale-unit-ref-keep-names-unit" "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_UNIT" | grep -qF 'KEEP: in use by unit wtstale-bus.service — do not remove' && echo yes || echo no)" "yes"
+  ok "worktree-stale-dropin-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_DROP" && echo yes || echo no)" "yes"
+  ok "worktree-stale-dropin-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_DROP" && echo yes || echo no)" "no"
+  ok "worktree-stale-dropin-ref-keep-names-unit" "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_DROP" | grep -qF 'KEEP: in use by unit wtstale-reaper.service — do not remove' && echo yes || echo no)" "yes"
+  # (c) the guard must not over-block: unreferenced dead worktrees (WT_DEAD, from
+  # above) still get their removal command and no KEEP, and so does (d).
+  ok "worktree-stale-unreferenced-still-has-remove" "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_DEAD" && echo yes || echo no)" "yes"
+  ok "worktree-stale-unreferenced-no-keep"          "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_DEAD" | grep -qF 'KEEP:' && echo yes || echo no)" "no"
+  ok "worktree-stale-own-unit-not-blocking-remove"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_OWN" && echo yes || echo no)" "yes"
+  ok "worktree-stale-own-unit-not-blocking-keep"    "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_OWN" | grep -qF 'KEEP:' && echo yes || echo no)" "no"
+  # Footer counts the KEEPs ((a) + (b) = 2); nothing else in this run is kept.
+  has "worktree-stale-footer-counts-keeps" "$wtout5" ", 2 KEEP (in use by a systemd unit"
+  ok "worktree-stale-no-units-no-keep" "$(printf '%s' "$wtout4" | grep -c 'KEEP')" "0"
 fi
 
 # _default_branch: real default branch resolution, no gh dependency needed for
