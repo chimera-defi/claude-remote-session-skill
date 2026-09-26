@@ -86,6 +86,14 @@ silently loses the `advisor` tool.
 names, or diff the change yourself. If it gave no evidence, treat the item as unverified.
 Consolidate the verified results in one table at the end.
 
+**The Opus orchestrator's own second opinion is Fable, not a Sonnet builder.** (Operator
+directive, 2026-09-26.) Opus 5.x has no `advisor` tool; spawning a Sonnet builder for a
+second opinion is Sonnet re-checking its own reasoning, not an independent perspective.
+Spawn Fable directly instead — `Agent({description, prompt, model: "fable"})` — at the
+forks `advisor` would otherwise cover: before a risky or destructive action, before
+committing to a design under real ambiguity, before declaring a multi-step task done. A
+Sonnet orchestrator keeps using `advisor` natively; this is specifically the Opus path.
+
 ## Long runs: keep a task file
 
 If the work will outlive one context window (multi-PR, multi-hour, anything likely to be
