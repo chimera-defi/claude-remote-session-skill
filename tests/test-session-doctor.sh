@@ -117,6 +117,8 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   wtout3="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   ok "worktree-stale-lists-switched-branch" "$(printf '%s' "$wtout3" | grep -qF "$WT_SWITCHED" && echo yes || echo no)" "yes"
   ok "worktree-stale-no-branch-D-on-switched" "$(printf '%s' "$wtout3" | grep -A1 -F "$WT_SWITCHED" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  # A CLEAN switched-branch row keeps --force (clean rows are unchanged).
+  ok "worktree-stale-clean-switched-keeps-force" "$(printf '%s' "$wtout3" | grep -A1 -F "$WT_SWITCHED" | grep -F 'remove:' | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
 
   # Removal command must be safe to copy-paste even when a path contains a space
   # (and generally shell-quoted) — regression: found via review (unquoted %s
@@ -295,6 +297,22 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$REPO_U" checkout -q --detach
   WT_UNKNOWN="$LCHOME/.claude/worktrees/ah-lcunknown-0101-0900"
   git -C "$REPO_U" worktree add -q -b session/ah-lcunknown-0101-0900 "$WT_UNKNOWN" HEAD >/dev/null 2>&1
+
+  # DIRTY rows (real uncommitted work — not the spawner baseline _wt_dirty ignores):
+  # an untracked file plus a modified tracked file. Three code paths: owned +
+  # landed=yes, owned + landed=no, and a session that switched off session/*.
+  WT_DIRTYY="$LCHOME/.claude/worktrees/ah-lcdirtyyes-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtyyes-0101-0900 "$WT_DIRTYY" main >/dev/null 2>&1
+  echo scratch > "$WT_DIRTYY/scratch.txt"; echo edit >> "$WT_DIRTYY/a.txt"
+  WT_DIRTYN="$LCHOME/.claude/worktrees/ah-lcdirtyno-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtyno-0101-0900 "$WT_DIRTYN" main >/dev/null 2>&1
+  echo new > "$WT_DIRTYN/new.txt"; git -C "$WT_DIRTYN" add new.txt; git -C "$WT_DIRTYN" commit -q -m "unlanded work"
+  echo scratch > "$WT_DIRTYN/scratch.txt"
+  WT_DIRTYSW="$LCHOME/.claude/worktrees/ah-lcdirtysw-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtysw-0101-0900 "$WT_DIRTYSW" main >/dev/null 2>&1
+  git -C "$WT_DIRTYSW" checkout -q -b feature/dirty-switched >/dev/null 2>&1
+  echo scratch > "$WT_DIRTYSW/scratch.txt"
+
   wsout2="$(HOME="$LCHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   # One candidate's row plus its indented continuation lines (remove:/NOTE:/KEEP:).
   _test_wsblock() { printf '%s\n' "$1" | awk -v p="$2" 'index($0,p){f=1;print;next} f&&/^    /{print;next} {f=0}'; }
@@ -310,6 +328,52 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "wstale-branchD-unknown-still-removes-wt"  "$(printf '%s' "$blk_unk" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
   ok "wstale-branchD-unknown-dropped"           "$(printf '%s' "$blk_unk" | grep -qF 'branch -D' && echo yes || echo no)" "no"
   has "wstale-branchD-unknown-note" "$blk_unk" "NOTE: branch session/ah-lcunknown-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
+
+  # A status=DIRTY row must not get a copy-paste line that discards its
+  # uncommitted files: `--force` is exactly what makes git remove modified/
+  # untracked files, and `branch -D` is withheld until the row is clean. Plain
+  # `worktree remove` refuses on a dirty tree by itself, so pasting it is safe.
+  # Regression (live): ah-pf-process-0924-0734 was status=DIRTY landed=yes and
+  # still got `worktree remove --force … && branch -D …`. Clean rows keep --force
+  # (git counts the spawner's untracked .claude/skills baseline as untracked, which
+  # _wt_dirty deliberately ignores — see the WT_LANDED fixture above).
+  blk_dy="$(_test_wsblock "$wsout2" "$WT_DIRTYY")"
+  blk_dn="$(_test_wsblock "$wsout2" "$WT_DIRTYN")"
+  blk_dsw="$(_test_wsblock "$wsout2" "$WT_DIRTYSW")"
+  _test_rmline() { printf '%s\n' "$1" | grep -F 'remove:'; }
+  DIRTY_NOTE_YES="NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYY status); add --force only if they are not needed"
+  ok "wstale-dirty-fixture-yes-row"   "$(printf '%s' "$blk_dy"  | grep -oE 'status=[a-zA-Z]+ +base=[a-z]+ landed=[a-z]+' | tr -s ' ')" "status=DIRTY base=main landed=yes"
+  ok "wstale-dirty-fixture-no-row"    "$(printf '%s' "$blk_dn"  | grep -oE 'status=[a-zA-Z]+ +base=[a-z]+ landed=[a-z]+' | tr -s ' ')" "status=DIRTY base=main landed=no"
+  ok "wstale-dirty-fixture-sw-row"    "$(printf '%s' "$blk_dsw" | head -1 | grep -oE 'status=[a-zA-Z]+')" "status=DIRTY"
+  # owned + landed=yes + DIRTY: plain remove only — no --force, no branch -D — plus the NOTE.
+  ok "wstale-dirty-yes-still-offers-remove" "$(_test_rmline "$blk_dy" | grep -qF "worktree remove $WT_DIRTYY" && echo yes || echo no)" "yes"
+  ok "wstale-dirty-yes-no-force"      "$(_test_rmline "$blk_dy" | grep -qF -- '--force' && echo yes || echo no)" "no"
+  ok "wstale-dirty-yes-no-branch-D"   "$(printf '%s' "$blk_dy" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-dirty-yes-note" "$blk_dy" "$DIRTY_NOTE_YES"
+  ok "wstale-dirty-yes-no-branch-note" "$(printf '%s' "$blk_dy" | grep -qF 'not known-landed' && echo yes || echo no)" "no"
+  # The printed line, actually pasted, must refuse and leave everything intact.
+  cmd_dy="$(_test_rmline "$blk_dy" | sed 's/^ *remove: //')"
+  ( export HOME="$LCHOME"; eval "$cmd_dy" ) >/dev/null 2>&1; dy_rc=$?
+  ok "wstale-dirty-pasted-cmd-refuses"        "$([ "$dy_rc" -ne 0 ] && echo refused || echo removed)" "refused"
+  ok "wstale-dirty-pasted-cmd-kept-worktree"  "$([ -d "$WT_DIRTYY" ] && echo yes || echo no)" "yes"
+  ok "wstale-dirty-pasted-cmd-kept-untracked" "$([ -f "$WT_DIRTYY/scratch.txt" ] && echo yes || echo no)" "yes"
+  ok "wstale-dirty-pasted-cmd-kept-modified"  "$(grep -qx edit "$WT_DIRTYY/a.txt" 2>/dev/null && echo yes || echo no)" "yes"
+  ok "wstale-dirty-pasted-cmd-kept-branch"    "$(git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/ah-lcdirtyyes-0101-0900 && echo yes || echo no)" "yes"
+  # owned + landed=no + DIRTY: both NOTEs, no --force, no branch -D.
+  ok "wstale-dirty-no-no-force"       "$(_test_rmline "$blk_dn" | grep -qF -- '--force' && echo yes || echo no)" "no"
+  ok "wstale-dirty-no-no-branch-D"    "$(printf '%s' "$blk_dn" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-dirty-no-dirty-note"  "$blk_dn" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYN status)"
+  has "wstale-dirty-no-branch-note" "$blk_dn" "NOTE: branch session/ah-lcdirtyno-0101-0900 is not known-landed"
+  # switched off session/* + DIRTY: no --force, dirty NOTE, and the existing branch NOTE.
+  ok "wstale-dirty-sw-no-force"       "$(_test_rmline "$blk_dsw" | grep -qF -- '--force' && echo yes || echo no)" "no"
+  has "wstale-dirty-sw-dirty-note"  "$blk_dsw" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYSW status)"
+  has "wstale-dirty-sw-branch-note" "$blk_dsw" "NOTE: current branch feature/dirty-switched is not a session/* name"
+  # Clean rows are unchanged: still --force, still branch -D (landed=yes), no dirty NOTE.
+  ok "wstale-clean-yes-keeps-force"   "$(_test_rmline "$blk_yes" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
+  ok "wstale-clean-yes-keeps-branch-D" "$(_test_rmline "$blk_yes" | grep -qF 'branch -D session/ah-lclanded-0101-0900' && echo yes || echo no)" "yes"
+  ok "wstale-clean-yes-no-dirty-note" "$(printf '%s' "$blk_yes" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
+  ok "wstale-clean-no-keeps-force"    "$(_test_rmline "$blk_no" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
+  ok "wstale-clean-no-no-dirty-note"  "$(printf '%s' "$blk_no" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
 
   # land-check: report-only (no mutation — both worktrees still exist after),
   # and unlike worktree-stale it must NOT filter by liveness — add a LIVE

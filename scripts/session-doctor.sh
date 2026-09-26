@@ -1095,26 +1095,38 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # %q shell-quotes each value so the printed command is safe to copy-paste
         # even if a path or branch name contains whitespace or shell metacharacters.
         q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
+        # `--force` is what makes git discard modified/untracked files, so a DIRTY
+        # row gets plain `worktree remove` (git itself refuses while such files
+        # exist — pasting it can't discard anything) and no `branch -D`. Clean rows
+        # keep `--force`: _wt_dirty deliberately ignores the spawner's untracked
+        # .claude/* + .sessions-init-* baseline, which git still counts as
+        # untracked and plain remove would refuse over.
+        rmforce=" --force"; [ "$dirty" = DIRTY ] && rmforce=""
         if [ "$owned" = yes ]; then
           # `branch -D` only for a known-landed branch (landed=yes; unknown counts
           # as not known). The session/* ref is what keeps a dead session's commits
           # reachable once the worktree is gone — `reap` never deletes it either.
           # A squash-merged branch reads landed=no (ancestry check): that costs a
           # suggestion, never a wrong delete.
-          if [ "${landedinfo#*landed=}" = yes ]; then
+          if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$q_main" "$q_wt" "$q_main" "$q_branch"
           else
-            printf '    remove: git -C %s worktree remove --force %s\n' "$q_main" "$q_wt"
-            printf '    NOTE: branch %s is not known-landed — keep the ref; it is the only thing keeping its commits reachable\n' "$branch"
+            printf '    remove: git -C %s worktree remove%s %s\n' "$q_main" "$rmforce" "$q_wt"
+            if [ "${landedinfo#*landed=}" != yes ]; then
+              printf '    NOTE: branch %s is not known-landed — keep the ref; it is the only thing keeping its commits reachable\n' "$branch"
+            fi
           fi
         else
           # Current branch isn't the session-owned session/<remote> name (the
           # session switched branches) — only suggest removing the worktree
           # itself; force-deleting an arbitrary, possibly-unmerged branch here
           # would risk destroying work unrelated to session cleanup.
-          printf '    remove: git -C %s worktree remove --force %s\n' "$q_main" "$q_wt"
+          printf '    remove: git -C %s worktree remove%s %s\n' "$q_main" "$rmforce" "$q_wt"
           printf '    NOTE: current branch %s is not a session/* name — leaving branch cleanup for manual review\n' "$branch"
+        fi
+        if [ "$dirty" = DIRTY ]; then
+          printf '    NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C %s status); add --force only if they are not needed\n' "$q_wt"
         fi
       fi
     done

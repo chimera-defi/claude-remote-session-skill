@@ -75,8 +75,9 @@ Safety guarantees:
   `NOTE:` says to keep the ref) — for a worktree left by a session that was
   `reap-local`'d (not `reap <name>`'d) or reaped before this existed, a dead session's
   worktree may hold unpushed work, so this stays a review step. A worktree another
-  systemd unit still runs from gets a `KEEP:` line and no removal command. Both rules
-  are in the `worktree-stale)` case of `scripts/session-doctor.sh`, pinned by
+  systemd unit still runs from gets a `KEEP:` line and no removal command, and a
+  `status=DIRTY` row gets the removal without `--force` or `branch -D` plus a `NOTE:`.
+  These rules are in the `worktree-stale)` case of `scripts/session-doctor.sh`, pinned by
   `tests/test-session-doctor.sh`.
 - **`idle-report` is report-only** (like `registry-stale`): every row is a still-*alive*
   proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
