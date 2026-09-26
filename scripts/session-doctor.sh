@@ -31,6 +31,11 @@
 #                                           # are still skipped, just flagged for operator review).
 #                                           # Exits non-zero if any delete failed.
 #   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
+#   session-doctor.sh archive-ignored <worktree>
+#                                           # copy a worktree's non-regenerable gitignored files (results
+#                                           # under artifacts/ …) to ~/backups/reaped-worktree-ignored/,
+#                                           # verified; `git worktree remove` deletes them, status=clean
+#                                           # never shows them. Runs automatically inside `reap`.
 #   session-doctor.sh land-check           # per-worktree unlanded-vs-real-default-branch + real-dirty; report only
 #   session-doctor.sh idle-report [--days N | --minutes N] [--tsv]
 #                                           # list LIVE local sessions with no GENUINE user turn
@@ -65,6 +70,11 @@
 #     never removed, nor is the caller's own cwd or a repo's primary checkout. See
 #     _reap_remove_worktree's header comment and
 #     tests/test-session-doctor-reap-worktree.sh.
+#   * Before removing a worktree, `reap` archives its non-regenerable GITIGNORED files
+#     (`git worktree remove` deletes them and neither _wt_dirty nor session-preserve counts
+#     them) to ~/backups/reaped-worktree-ignored/ and keeps the worktree if that fails or
+#     the payload is over the cap; --force does not skip it. worktree-stale flags such rows
+#     and chains `archive-ignored` ahead of their `remove:` line. See _wt_archive_ignored.
 #   * Worktree removal for everything ELSE (a dead session that was reap-local'd, not
 #     reap'd by name; a worktree left behind by a session reaped before this existed)
 #     is intentionally NOT automated. worktree-stale prints candidates, each one's
@@ -424,6 +434,148 @@ _wt_landed() {
   printf 'base=%s landed=%s\n' "$def" "$landed"
 }
 
+# ── gitignored-payload guard ────────────────────────────────────────────────
+# `git worktree remove` — with or without --force — silently deletes gitignored
+# files, and neither _wt_dirty (`git status` without --ignored) nor
+# session-preserve (`ls-files --exclude-standard`) counts them, so a worktree
+# whose results live under a gitignored dir (`artifacts/`) reads "clean" /
+# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: eth2-quickstart
+# exp-lab, `status=clean ahead=0`, removed via worktree-stale's printed
+# `remove:` line; its never-committed artifacts/ held a research campaign.
+# So `reap` archives that payload before removing (_wt_archive_ignored) and
+# worktree-stale flags it. tests/test-session-doctor-reap-worktree.sh pins this.
+
+# Regenerable / spawn-scaffold paths, NOT counted as payload: a path component
+# match at any depth (same style as session-preserve's JUNK_RE), plus the
+# spawner's root-level .sessions-init-* sentinel. Mirrors the scaffolding
+# section of ~/.config/git/ignore. Deliberately has NO bare `artifacts` entry —
+# that is where results live; only its scaffolding children are listed. Adding
+# one would recreate the incident. A false positive here costs a small archive,
+# a false negative costs data, so keep it to paths that regenerate themselves.
+_WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|build|target|coverage|\.cache|\.pytest_cache|\.mypy_cache|\.gstack|\.superpowers|\.claude/(skills|token-reduce-state|tmp-briefs|settings\.local\.json|CLAUDE\.md)|artifacts/token-reduction)(/|$)|(^|/)(artifacts/qmd-repo-[^/]*\.stamp|next-env\.d\.ts|[^/]*\.tsbuildinfo)$|^\.sessions-init-[^/]*$'
+
+# _wt_ignored_payload <worktree> <listfile> -> writes the worktree-relative
+# path of every gitignored regular file / symlink that is NOT deny-listed to
+# <listfile>, NUL-separated; sets _WTI_COUNT, _WTI_BYTES and _WTI_EXAMPLES (up
+# to 3 paths, shell-quoted, comma-separated). Returns 0 if the payload is
+# non-empty, 1 if it is empty, 2 if it could not be listed (git failed, or a
+# directory was unreadable) — callers must treat 2 as "unknown", never as
+# "empty". Sets globals rather than printing (see _tsv_git_status) — call it
+# directly, not through $(...). `--directory` is only a cheap first pass so an
+# ignored node_modules/ is never walked; any other collapsed directory is
+# expanded to files with find, so count/bytes/archive are all file-level.
+_wt_ignored_payload() {
+  local wt="$1" out="$2" raw="$2.raw" found="$2.find" ent rel n=0 bad=0
+  _WTI_COUNT=0; _WTI_BYTES=0; _WTI_EXAMPLES=""
+  git -C "$wt" ls-files -z --others --ignored --exclude-standard --directory > "$raw" 2>/dev/null \
+    || { rm -f "$raw"; : > "$out"; return 2; }
+  while IFS= read -r -d '' ent; do
+    if [ "${ent: -1}" = / ]; then
+      [[ $ent =~ $_WT_IGNORED_DENY_RE ]] && continue
+      (cd "$wt" 2>/dev/null && find "./${ent%/}" \( -type f -o -type l \) -print0) > "$found" 2>/dev/null || bad=1
+      while IFS= read -r -d '' rel; do
+        rel="${rel#./}"
+        [[ $rel =~ $_WT_IGNORED_DENY_RE ]] || printf '%s\0' "$rel"
+      done < "$found"
+    else
+      [[ $ent =~ $_WT_IGNORED_DENY_RE ]] || printf '%s\0' "$ent"
+    fi
+  done < "$raw" > "$out"
+  rm -f "$raw" "$found"
+  [ "$bad" -eq 0 ] || return 2
+  _WTI_COUNT="$(tr -cd '\0' < "$out" | wc -c | tr -d ' ')"
+  [ "$_WTI_COUNT" -gt 0 ] || return 1
+  _WTI_BYTES="$(cd "$wt" && xargs -0 -a "$out" stat -c %s -- 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+  while IFS= read -r -d '' rel; do
+    _WTI_EXAMPLES="${_WTI_EXAMPLES:+$_WTI_EXAMPLES, }$(printf '%q' "$rel")"
+    n=$((n+1)); [ "$n" -ge 3 ] && break
+  done < "$out"
+  return 0
+}
+
+# _wt_archive_ignored <worktree> -> 0 if there was nothing to archive OR the
+# payload was archived and verified (prints one "archived N ignored file(s), X
+# MB → <dir>" line); 1 if it was NOT archived — payload over the cap
+# (SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES, default 2 GB) or any copy /
+# verify failure — with the reason in _WTI_ERR. A failed attempt removes its
+# own partial archive. The caller must keep the worktree on 1. Archive:
+# ~/backups/reaped-worktree-ignored/<worktree-name>-<UTC stamp>/{MANIFEST,files/<relpath>},
+# mode 0700 (ignored dirs often hold .env files); MANIFEST is
+# sha256<TAB>bytes<TAB>path, and every file is re-hashed from the COPY and
+# compared with the source's hash before this returns 0. Never prints file
+# contents, only paths and sizes. Used by `reap` (via _reap_remove_worktree)
+# and by `session-doctor archive-ignored <worktree>`.
+_wt_archive_ignored() {
+  local wt="$1" list root dest cap py_out mb prc
+  _WTI_ERR=""; _WTI_ARCHIVE=""
+  list="$(mktemp)" || { _WTI_ERR="mktemp failed"; return 1; }
+  _wt_ignored_payload "$wt" "$list"; prc=$?
+  if [ "$prc" -eq 1 ]; then rm -f "$list"; return 0; fi
+  if [ "$prc" -ne 0 ]; then
+    _WTI_ERR="could not list the gitignored files (git error or an unreadable directory)"
+    rm -f "$list"; return 1
+  fi
+  cap="${SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES:-2147483648}"
+  case "$cap" in ''|*[!0-9]*) cap=2147483648 ;; esac
+  if [ "$_WTI_BYTES" -gt "$cap" ]; then
+    _WTI_ERR="$_WTI_COUNT gitignored file(s), $_WTI_BYTES bytes, exceed the $cap-byte archive cap (SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES)"
+    rm -f "$list"; return 1
+  fi
+  root="$HOME/backups/reaped-worktree-ignored"
+  dest="$root/$(basename "$wt")-$(date -u +%Y%m%dT%H%M%SZ)"
+  if ! py_out="$( { umask 077; mkdir -p "$root" && mkdir "$dest" && python3 - "$wt" "$dest" "$list" <<'PY'
+import hashlib, os, shutil, sys
+wt, dest, listfile = (os.fsencode(a) for a in sys.argv[1:4])
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        for c in iter(lambda: f.read(1 << 20), b''):
+            h.update(c)
+    return h.hexdigest()
+def main():
+    n = total = 0
+    os.mkdir(dest + b'/files')
+    with open(dest + b'/MANIFEST', 'wb') as m:
+        for rel in open(listfile, 'rb').read().split(b'\0'):
+            if not rel:
+                continue
+            src, dst = wt + b'/' + rel, dest + b'/files/' + rel
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.islink(src):
+                tgt = os.readlink(src)
+                os.symlink(tgt, dst)
+                if os.readlink(dst) != tgt:
+                    sys.exit('verify failed: ' + os.fsdecode(rel))
+                m.write(b'symlink\t0\t' + rel + b'\t-> ' + tgt + b'\n')
+                n += 1
+                continue
+            want = sha(src)
+            shutil.copy2(src, dst)
+            if sha(dst) != want or os.path.getsize(dst) != os.path.getsize(src):
+                sys.exit('verify failed: ' + os.fsdecode(rel))
+            size = os.path.getsize(dst)
+            m.write(want.encode() + b'\t' + str(size).encode() + b'\t' + rel + b'\n')
+            n += 1
+            total += size
+    print(n, total)
+try:
+    main()
+except Exception as e:
+    sys.exit(type(e).__name__ + ': ' + str(e))
+PY
+  } 2>&1 )"; then
+    _WTI_ERR="archive to $dest failed${py_out:+ ($py_out)}"
+    case "$dest" in "$root"/?*) rm -rf "$dest" ;; esac
+    rm -f "$list"; return 1
+  fi
+  rm -f "$list"
+  _WTI_ARCHIVE="$dest"
+  py_out="${py_out##*$'\n'}"
+  mb="$(awk -v b="${py_out#* }" 'BEGIN{printf "%.1f", b/1048576}')"
+  echo "  archived ${py_out%% *} ignored file(s), $mb MB → $dest"
+  return 0
+}
+
 # ── reap worktree-removal helpers ───────────────────────────────────────────
 # Factored out of `reap` so each guard is independently unit-testable (see
 # tests/test-session-doctor-reap-worktree.sh), the same way _registry_delete_one
@@ -551,6 +703,8 @@ _wt_resolve_for_base() {
 #    never risk running `worktree remove` against a non-worktree checkout)
 #  - the CALLER's own cwd is that worktree (see _is_caller_cwd)
 #  - any OTHER systemd user unit references it (see _wt_used_by_other_unit)
+#  - its non-regenerable gitignored files could not be archived first, or are
+#    over the archive cap (see _wt_archive_ignored)
 #
 # `git worktree prune` runs on the main repo afterward regardless of outcome
 # (bookkeeping only — never removes a directory still present on disk).
@@ -579,6 +733,15 @@ _reap_remove_worktree() {
   own_unit="${base}.service"
   if blocking="$(_wt_used_by_other_unit "$wt" "$own_unit")"; then
     echo "  worktree: kept (in use by unit $blocking): $wt"
+    return 0
+  fi
+  # Last guard, checked after every refusal above so nothing is archived for a
+  # worktree that was never going to be removed: `git worktree remove` deletes
+  # gitignored files and nothing above counts them — archive the non-regenerable
+  # ones first (see _wt_archive_ignored), and keep the worktree if that fails
+  # or the payload is over the cap. reap's --force does NOT skip this.
+  if ! _wt_archive_ignored "$wt"; then
+    echo "  worktree: kept (gitignored files not archived: $_WTI_ERR): $wt"
     return 0
   fi
   local -a rmargs=(worktree remove)
@@ -1054,6 +1217,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     echo "=== ~/.claude/worktrees/ dirs with no live owning session (NOT auto-removed) ==="
     WT_BASE="$HOME/.claude/worktrees"
     cand=0; kept=0
+    wti_list="$(mktemp)"
     for wt in "$WT_BASE"/*/; do
       [ -d "$wt" ] || continue
       wt="${wt%/}"
@@ -1104,6 +1268,15 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # .claude/* + .sessions-init-* baseline, which git still counts as
         # untracked and plain remove would refuse over.
         rmforce=" --force"; [ "$dirty" = DIRTY ] && rmforce=""
+        # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
+        # deletes it and status=clean never shows it. When there is some, the
+        # archive step is chained AHEAD of the printed remove command (so pasting
+        # just the `remove:` line — how the 2026-08-29 exp-lab loss happened —
+        # archives first, and a failed/over-cap archive stops the removal) and a
+        # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
+        arch_pre=""
+        _wt_ignored_payload "$wt" "$wti_list"; prc=$?
+        [ "$prc" -ne 1 ] && arch_pre="session-doctor archive-ignored $q_wt && "
         if [ "$owned" = yes ]; then
           # `branch -D` only for a known-landed branch (landed=yes; unknown counts
           # as not known). The session/* ref is what keeps a dead session's commits
@@ -1112,9 +1285,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # suggestion, never a wrong delete.
           if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
             q_branch="$(printf '%q' "$branch")"
-            printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$q_main" "$q_wt" "$q_main" "$q_branch"
+            printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
           else
-            printf '    remove: git -C %s worktree remove%s %s\n' "$q_main" "$rmforce" "$q_wt"
+            printf '    remove: %sgit -C %s worktree remove%s %s\n' "$arch_pre" "$q_main" "$rmforce" "$q_wt"
             if [ "${landedinfo#*landed=}" != yes ]; then
               printf '    NOTE: branch %s is not known-landed — keep the ref; it is the only thing keeping its commits reachable\n' "$branch"
             fi
@@ -1124,14 +1297,20 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # session switched branches) — only suggest removing the worktree
           # itself; force-deleting an arbitrary, possibly-unmerged branch here
           # would risk destroying work unrelated to session cleanup.
-          printf '    remove: git -C %s worktree remove%s %s\n' "$q_main" "$rmforce" "$q_wt"
+          printf '    remove: %sgit -C %s worktree remove%s %s\n' "$arch_pre" "$q_main" "$rmforce" "$q_wt"
           printf '    NOTE: current branch %s is not a session/* name — leaving branch cleanup for manual review\n' "$branch"
         fi
         if [ "$dirty" = DIRTY ]; then
           printf '    NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C %s status --ignored); add --force only if they are not needed\n' "$q_wt"
         fi
+        if [ "$prc" -eq 0 ]; then
+          printf '    NOTE: %s gitignored file(s), %s bytes, e.g. %s — invisible to status; git worktree remove deletes them. Archive first: session-doctor archive-ignored %s (already chained ahead of the remove command above)\n' "$_WTI_COUNT" "$_WTI_BYTES" "$_WTI_EXAMPLES" "$q_wt"
+        elif [ "$prc" -ne 1 ]; then
+          printf '    NOTE: could not list this worktree'"'"'s gitignored files (unreadable directory?) — git worktree remove would delete them unseen; the archive-ignored step chained ahead of the remove command above will refuse until that is fixed\n'
+        fi
       fi
     done
+    rm -f "$wti_list"
     keepnote=""
     [ "$kept" -gt 0 ] && keepnote=", $kept KEEP (in use by a systemd unit — no removal command printed)"
     echo "  --- $cand candidate(s)$keepnote. VERIFY dirty/unpushed work is not needed before removing. ---"
@@ -1464,6 +1643,26 @@ for s in arr:
     fi
     ;;
 
+  archive-ignored)
+    # Explicit form of the archive step `reap` runs before removing a worktree
+    # (_wt_archive_ignored): copies the worktree's non-regenerable gitignored
+    # files to ~/backups/reaped-worktree-ignored/ and verifies the copy. Never
+    # touches the worktree. This is the command worktree-stale chains ahead of
+    # each `remove:` line whose worktree has such files. Exit 0 = archived or
+    # nothing to archive; 1 = NOT archived (over the cap / copy failed) — the
+    # `&&` in that chained line then keeps the worktree.
+    AWT="${1:?usage: session-doctor.sh archive-ignored <worktree>}"
+    if [ ! -d "$AWT" ] || [ "$(git -C "$AWT" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$AWT" && pwd -P)" ]; then
+      echo "session-doctor: '$AWT' is not the top of a git worktree" >&2
+      exit 2
+    fi
+    if ! _wt_archive_ignored "$AWT"; then
+      echo "session-doctor: NOT archived — $_WTI_ERR" >&2
+      exit 1
+    fi
+    [ -n "$_WTI_ARCHIVE" ] || echo "  no gitignored payload to archive (only regenerable/scaffold paths, if any): $AWT"
+    ;;
+
   land-check)
     # Per session-worktree, report-only: unlanded-vs-correct-base + real-dirty,
     # reusing worktree-stale's two fixes (baseline-aware dirty, real default
@@ -1513,6 +1712,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
