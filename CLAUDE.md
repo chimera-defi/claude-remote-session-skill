@@ -69,6 +69,10 @@ Each of these has happened here. Don't repeat them.
   Check the installed CLI (`claude --help`, its schema) before documenting a knob.
 - **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
   Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
+- **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
+  can hold gitignored results, and `git worktree remove` deletes them (2026-08-29
+  exp-lab loss: a research campaign's `artifacts/`). `reap` now archives them first
+  (`_wt_archive_ignored`); a hand-run `git worktree remove` does not.
 - **Bare `git stash` / `git stash pop`.** The stash stack is shared across every worktree
   and session. Use a WIP commit instead.
 - **`git worktree remove` without disabling the session's systemd unit** — leaves an orphan

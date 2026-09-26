@@ -245,6 +245,21 @@ EOF
   blk_pk="$(rowblock "$wtout6" "$WT_PAYKEEP")"
   has "worktree-stale-payload-keep-row-still-keep" "$blk_pk" "KEEP: in use by unit wtstale-paykeep.service — do not remove"
   ok "worktree-stale-payload-keep-row-no-note" "$(printf '%s' "$blk_pk" | grep -c 'gitignored\|archive-ignored\|remove:')" "0"
+  # An enumeration failure (unreadable dir inside the payload) must not read as
+  # "no payload": the row keeps the archive chained ahead of remove (which then
+  # refuses) and says why (skipped as root, which ignores modes).
+  if [ "$(id -u)" -ne 0 ]; then
+    WT_LK="$WTHOME/.claude/worktrees/ah-wtlocked-0101-0900"
+    git -C "$REPO" worktree add -q -b session/ah-wtlocked-0101-0900 "$WT_LK" main >/dev/null 2>&1
+    mkdir -p "$WT_LK/artifacts/locked"; echo x > "$WT_LK/artifacts/locked/f"; chmod 000 "$WT_LK/artifacts/locked"
+    wtout7="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+    ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_LK" ) >/dev/null 2>&1; rc_lk=$?
+    chmod 755 "$WT_LK/artifacts/locked"
+    blk_lk="$(rowblock "$wtout7" "$WT_LK")"
+    has "worktree-stale-unlistable-note" "$blk_lk" "NOTE: could not list this worktree's gitignored files"
+    ok "worktree-stale-unlistable-still-chained" "$(printf '%s' "$blk_lk" | grep -F 'remove:' | grep -cF "session-doctor archive-ignored $WT_LK && git -C")" "1"
+    ok "worktree-stale-unlistable-archive-refuses" "$rc_lk" "1"
+  fi
   # the printed archive command really is runnable (subcommand exists and works)
   ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_PAY" ) >/dev/null 2>&1
   ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"

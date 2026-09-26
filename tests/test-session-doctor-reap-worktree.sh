@@ -233,6 +233,9 @@ __pycache__/
 .superpowers/
 .gstack/
 .sessions-init-*
+coverage/
+*.tsbuildinfo
+next-env.d.ts
 EOF
 echo hi > "$IGNREPO/a.txt"; git -C "$IGNREPO" add -A; git -C "$IGNREPO" commit -q -m init
 ARCHROOT="$TESTHOME/backups/reaped-worktree-ignored"
@@ -276,6 +279,8 @@ echo a > "$WT_DENY/__pycache__/m.pyc"; echo a > "$WT_DENY/.claude/token-reduce-s
 echo a > "$WT_DENY/.superpowers/p"; echo a > "$WT_DENY/.gstack/g"; echo a > "$WT_DENY/artifacts/token-reduction/events.jsonl"
 echo a > "$WT_DENY/artifacts/qmd-repo-0123456789ab.stamp"; echo a > "$WT_DENY/.claude/settings.local.json"; echo a > "$WT_DENY/.claude/CLAUDE.md"
 ln -s /nonexistent "$WT_DENY/.claude/skills"; echo a > "$WT_DENY/.sessions-init-ah-rwdeny-0101-0900"
+mkdir -p "$WT_DENY/frontend/coverage/lcov-report"; echo a > "$WT_DENY/frontend/coverage/lcov-report/base.css"
+echo a > "$WT_DENY/frontend/tsconfig.tsbuildinfo"; echo a > "$WT_DENY/frontend/next-env.d.ts"
 out13b="$(_reap_remove_worktree ah-rwdeny-0101-0900 no)"
 ok "denylist-worktree-removed" "$([ -d "$WT_DENY" ] && echo yes || echo no)" "no"
 ok "denylist-no-archive" "$(archives_of ah-rwdeny-0101-0900 | wc -l | tr -d ' ')" "0"
@@ -386,6 +391,22 @@ if [ "$(id -u)" -ne 0 ]; then
   ok "unreadable-worktree-kept" "$([ -f "$WT_UR/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
   has "unreadable-kept-message" "$out13j" "gitignored files not archived"
   ok "unreadable-partial-archive-removed" "$(archives_of ah-rwunread-0101-0900 | wc -l | tr -d ' ')" "0"
+fi
+
+# 13k. enumeration failure fails CLOSED: an unreadable directory inside the
+# payload means the list is incomplete, so the helper returns 2 (never "empty"),
+# reap keeps the worktree, and nothing is archived (skipped as root).
+if [ "$(id -u)" -ne 0 ]; then
+  mkwt ah-rwlocked-0101-0900
+  WT_LK="$TESTHOME/.claude/worktrees/ah-rwlocked-0101-0900"
+  mkdir -p "$WT_LK/artifacts/locked"; echo data > "$WT_LK/artifacts/results.tsv"; echo more > "$WT_LK/artifacts/locked/f"; chmod 000 "$WT_LK/artifacts/locked"
+  _wt_ignored_payload "$WT_LK" "$plist"; rc13k=$?
+  ok "helper-unreadable-dir-rc2" "$rc13k" "2"
+  out13k="$(_reap_remove_worktree ah-rwlocked-0101-0900 yes)"
+  chmod 755 "$WT_LK/artifacts/locked"
+  ok "unreadable-dir-worktree-kept" "$([ -f "$WT_LK/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  has "unreadable-dir-kept-message" "$out13k" "could not list the gitignored files"
+  ok "unreadable-dir-no-archive" "$(archives_of ah-rwlocked-0101-0900 | wc -l | tr -d ' ')" "0"
 fi
 
 # 13g. full `reap` dispatch: cap / unwritable / --keep-worktree, end-to-end.
