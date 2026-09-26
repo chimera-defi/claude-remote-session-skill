@@ -1097,7 +1097,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
         # `--force` is what makes git discard modified/untracked files, so a DIRTY
         # row gets plain `worktree remove` (git itself refuses while such files
-        # exist — pasting it can't discard anything) and no `branch -D`. Clean rows
+        # exist, so pasting it can't discard uncommitted changes — git-IGNORED
+        # files are still deleted, as the old --force line also did, which is why
+        # the NOTE says `status --ignored`) and no `branch -D`. Clean rows
         # keep `--force`: _wt_dirty deliberately ignores the spawner's untracked
         # .claude/* + .sessions-init-* baseline, which git still counts as
         # untracked and plain remove would refuse over.
@@ -1126,7 +1128,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           printf '    NOTE: current branch %s is not a session/* name — leaving branch cleanup for manual review\n' "$branch"
         fi
         if [ "$dirty" = DIRTY ]; then
-          printf '    NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C %s status); add --force only if they are not needed\n' "$q_wt"
+          printf '    NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C %s status --ignored); add --force only if they are not needed\n' "$q_wt"
         fi
       fi
     done
