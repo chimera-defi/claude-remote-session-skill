@@ -1053,7 +1053,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
   worktree-stale)
     echo "=== ~/.claude/worktrees/ dirs with no live owning session (NOT auto-removed) ==="
     WT_BASE="$HOME/.claude/worktrees"
-    cand=0
+    cand=0; kept=0
     for wt in "$WT_BASE"/*/; do
       [ -d "$wt" ] || continue
       wt="${wt%/}"
@@ -1083,7 +1083,15 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       landedinfo="base=? landed=unknown"
       [ -n "$mainrepo" ] && landedinfo="$(_wt_landed "$wt" "$mainrepo")"
       printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$landedinfo"
-      if [ -n "$mainrepo" ]; then
+      # Same guard `reap` applies (_reap_remove_worktree): a worktree any OTHER
+      # systemd --user unit still references is never offered for removal — the
+      # printed `remove:` line is what gets pasted. The dead session's own unit
+      # (${remote}.service, derived exactly as reap derives own_unit from <base>)
+      # doesn't count: it goes away with the session.
+      if blocking="$(_wt_used_by_other_unit "$wt" "${remote}.service")"; then
+        printf '    KEEP: in use by unit %s — do not remove\n' "$blocking"
+        kept=$((kept+1))
+      elif [ -n "$mainrepo" ]; then
         # %q shell-quotes each value so the printed command is safe to copy-paste
         # even if a path or branch name contains whitespace or shell metacharacters.
         q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
@@ -1100,7 +1108,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         fi
       fi
     done
-    echo "  --- $cand candidate(s). VERIFY dirty/unpushed work is not needed before removing. ---"
+    keepnote=""
+    [ "$kept" -gt 0 ] && keepnote=", $kept KEEP (in use by a systemd unit — no removal command printed)"
+    echo "  --- $cand candidate(s)$keepnote. VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;
   idle-report)
     # Report-only (mirrors registry-stale): LIVE local claude sessions with no
