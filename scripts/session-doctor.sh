@@ -1096,8 +1096,18 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # even if a path or branch name contains whitespace or shell metacharacters.
         q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
         if [ "$owned" = yes ]; then
-          q_branch="$(printf '%q' "$branch")"
-          printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$q_main" "$q_wt" "$q_main" "$q_branch"
+          # `branch -D` only for a known-landed branch (landed=yes; unknown counts
+          # as not known). The session/* ref is what keeps a dead session's commits
+          # reachable once the worktree is gone — `reap` never deletes it either.
+          # A squash-merged branch reads landed=no (ancestry check): that costs a
+          # suggestion, never a wrong delete.
+          if [ "${landedinfo#*landed=}" = yes ]; then
+            q_branch="$(printf '%q' "$branch")"
+            printf '    remove: git -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$q_main" "$q_wt" "$q_main" "$q_branch"
+          else
+            printf '    remove: git -C %s worktree remove --force %s\n' "$q_main" "$q_wt"
+            printf '    NOTE: branch %s is not known-landed — keep the ref; it is the only thing keeping its commits reachable\n' "$branch"
+          fi
         else
           # Current branch isn't the session-owned session/<remote> name (the
           # session switched branches) — only suggest removing the worktree

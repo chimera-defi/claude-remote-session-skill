@@ -71,11 +71,13 @@ Safety guarantees:
   `tests/test-session-doctor-reap-worktree.sh`.
 - **Worktree removal for everything else is never automated.** `worktree-stale` prints
   each remaining candidate's dirty/unpushed status and the exact `git worktree remove`
-  + `git branch -D` to run by hand — for a worktree left by a session that was
+  to run by hand (a `git branch -D` is appended only for a `landed=yes` row; otherwise a
+  `NOTE:` says to keep the ref) — for a worktree left by a session that was
   `reap-local`'d (not `reap <name>`'d) or reaped before this existed, a dead session's
   worktree may hold unpushed work, so this stays a review step. A worktree another
-  systemd unit still runs from gets a `KEEP:` line and no removal command — the
-  `worktree-stale)` case in `scripts/session-doctor.sh`, pinned by `tests/test-session-doctor.sh`.
+  systemd unit still runs from gets a `KEEP:` line and no removal command. Both rules
+  are in the `worktree-stale)` case of `scripts/session-doctor.sh`, pinned by
+  `tests/test-session-doctor.sh`.
 - **`idle-report` is report-only** (like `registry-stale`): every row is a still-*alive*
   proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
   then kill an idle-but-alive one by hand. It never kills anything itself.
