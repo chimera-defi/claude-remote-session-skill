@@ -80,6 +80,10 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
   Fable subagent directly — `Agent({description, prompt, model: "fable"})` — not a Sonnet
   builder, which would just be Sonnet checking its own reasoning. (Operator directive,
   2026-09-26.)
+- ChatGPT (GPT-5.5) is reached through the `gpt-relay` Sonnet subagent — not a standalone
+  session. It is defined in the portfolio-single-source-of-truth repo: `.claude/agents/gpt-relay.md`
+  and the `gpt-relay` row of the roles table in that repo's `AGENTS.md`. How it calls GPT
+  lives in that agent file; don't copy it here.
 
 ## Writing the kickoff task
 
