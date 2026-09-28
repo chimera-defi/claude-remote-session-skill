@@ -18,6 +18,10 @@ reading the task.
 - `{project_rules_path}` — path to this project's guardrail file (e.g.
   `$CRSS_HOME/projects/<name>.md`), referenced so the kickoff can say "read this; it's
   binding" instead of pasting the guardrail block. Omit the line if none exists.
+  If the project's guardrails already live in its own `CLAUDE.md`, the child loads them
+  automatically in its worktree, so don't paste or reference them. Until they land
+  there, keep referencing (or, failing a file, pasting) the block: a child that never
+  sees a project's execution gate is worse than a long kickoff.
 
 Before filling any of these in, read `$CRSS_HOME/local.md` if it exists — it holds this
 host's actual escalation channel, project index, and delegate routing. Absent overlay:
