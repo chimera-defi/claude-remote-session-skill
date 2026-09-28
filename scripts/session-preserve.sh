@@ -5,7 +5,7 @@
 #   session-preserve <tmux-session>            # audit only (default). exit 0 = safe to reap
 #   session-preserve <tmux-session> --rescue   # + copy non-junk untracked files to a rescue dir
 #   session-preserve <tmux-session> --wip      # + commit uncommitted TRACKED changes as a WIP commit
-#   session-preserve --all                     # audit every live ah_/agenthost_ session
+#   session-preserve --all                     # audit every live session (recognised prefix)
 #
 # WHY THIS EXISTS (2026-08-17): a reap sweep was nearly run against a fleet
 # audited with `git log @{u}..`, which returns NOTHING when a branch has no
@@ -54,6 +54,52 @@ _crss_load_config() {
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
+
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
+# for "claude session" — lowercase, short, memorable, and distinct from any
+# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
+# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
+# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
+# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# validated alternation, _crss_prefix_re, that every parse/generate site below
+# uses instead of a hardcoded prefix. Each element must match
+# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
+# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
+# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
+# WHOLE legacy list (not just that element) rather than guessing which of
+# several bad values was meant — never to an empty pattern, which would make
+# the alternation match everything (the dangerous direction in a reap path).
+# Copied verbatim in every script that needs it — see
+# tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
 
 RESCUE_ROOT="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
 # Junk that every session regenerates — never worth rescuing or blocking a reap.
@@ -108,12 +154,18 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
 
 # tmux_to_base <tmux-session> -> worktree/systemd-unit base name, or "" if
 # not one of ours. Mirrors session-doctor.sh's tmux_to_base exactly (same
-# name, same case arms — kept as a local copy rather than sourced, matching
-# how every script in this repo is a standalone deployable file): the first
-# "_" after the ah/agenthost prefix becomes "-". ah_hh-0717-0224 ->
-# ah-hh-0717-0224; agenthost_foo -> agenthost-foo. Any later "_" in the slug
-# is left alone.
-tmux_to_base() { case "$1" in agenthost_*) echo "agenthost-${1#agenthost_}";; ah_*) echo "ah-${1#ah_}";; *) echo "";; esac; }
+# name, same logic — kept as a local copy rather than sourced, matching how
+# every script in this repo is a standalone deployable file): the first "_"
+# after the recognised prefix ($_crss_prefix_re) becomes "-". ah_hh-0717-0224
+# -> ah-hh-0717-0224; agenthost_foo -> agenthost-foo. Any later "_" in the
+# slug is left alone.
+tmux_to_base() {
+  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  else
+    echo ""
+  fi
+}
 
 # worktree_of <tmux-session> -> best-guess worktree dir on disk, used when
 # rundir_of() can't find a live process to ask. Scans every dir under the
@@ -272,7 +324,7 @@ audit_one() {
 
 if [ "$ALL" = yes ]; then
   rc=0
-  for s in $(tmux ls -F '#{session_name}' 2>/dev/null | grep -E '^(ah_|agenthost_)' | sort); do
+  for s in $(tmux ls -F '#{session_name}' 2>/dev/null | grep -E "^(${_crss_prefix_re})_" | sort); do
     audit_one "$s" || rc=1; echo
   done
   exit $rc

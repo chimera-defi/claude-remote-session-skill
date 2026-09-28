@@ -53,6 +53,32 @@
 # string "claude" if neither is found, so the pane's own PATH decides).
 #CRSS_CLAUDE_BIN=/usr/local/bin/claude
 
+# CRSS_SESSION_PREFIX — the prefix NEW sessions get. tmux uses `<prefix>_`,
+# systemd/remote-control uses `<prefix>-` (e.g. prefix "cs" -> tmux `cs_foo-
+# 0715-0630`, remote-control `cs-foo-0715-0630`). Every crss script that
+# parses an existing session name (session-doctor's tmux_to_base/svc_to_tmux/
+# reap-local, session-alias's poisoned-alias guard, session-handoff/
+# session-preserve/session-registry's session enumeration) recognises this
+# prefix, so generation and parsing always agree. Must match
+# ^[a-z][a-z0-9]{0,15}$ (lowercase letters/digits, starts with a letter,
+# <=16 chars) — an invalid value is rejected with a warning and the script
+# falls back to the generic default below, never to an empty pattern.
+# Default: cs
+#CRSS_SESSION_PREFIX=cs
+
+# CRSS_LEGACY_PREFIXES — a `|`-separated list of EXTRA prefixes still
+# RECOGNISED when PARSING an existing session name but never used to
+# generate a new one. Use this when you're changing CRSS_SESSION_PREFIX on a
+# host that already has live/parked sessions under the old prefix, so they
+# stay visible to session-doctor/session-handoff/etc. instead of going
+# invisible to reap and health checks. Each element validates the same way
+# as CRSS_SESSION_PREFIX (^[a-z][a-z0-9]{0,15}$); if ANY element is invalid,
+# the WHOLE list is dropped (not just the bad element) and a warning is
+# printed — the safe direction, since a bad element could otherwise widen
+# the alternation into a catch-all pattern in a reap path.
+# Default: (empty — no extra prefixes recognised)
+#CRSS_LEGACY_PREFIXES=agenthost|oldprefix
+
 # CRSS_PROTECT_NAMES — a `grep -E` alternation of session-name substrings
 # that session-doctor.sh's `reap`/`reap-local`/`registry-prune` NEVER touch,
 # no matter what. Matched case-insensitively against the tmux/systemd/
