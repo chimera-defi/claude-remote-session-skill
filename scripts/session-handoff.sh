@@ -29,6 +29,80 @@
 # `_is_safe_to_inject`'s comment for what's left.
 set -uo pipefail
 
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
+  done < "$_crss_cfg"
+  return 0
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
+# for "claude session" — lowercase, short, memorable, and distinct from any
+# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
+# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
+# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
+# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# validated alternation, _crss_prefix_re, that every parse/generate site below
+# uses instead of a hardcoded prefix. Each element must match
+# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
+# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
+# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
+# WHOLE legacy list (not just that element) rather than guessing which of
+# several bad values was meant — never to an empty pattern, which would make
+# the alternation match everything (the dangerous direction in a reap path).
+# Copied verbatim in every script that needs it — see
+# tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
+
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
 
 # _is_working — does the captured pane show Claude actively generating? "esc to
@@ -298,11 +372,18 @@ _verdict() {
 
 # ── live helpers ──────────────────────────────────────────────────────────────
 
-# tmux session name -> remote-control name (ah_/agenthost_ are ours).
-# Mirrors session-doctor.sh's / session-preserve.sh's tmux_to_base exactly —
-# same name on purpose so a fix to one copy greps up the others (scripts
-# deploy standalone to ~/.local/bin, so it stays a local copy, not sourced).
-tmux_to_base() { case "$1" in ah_*) echo "ah-${1#ah_}";; agenthost_*) echo "agenthost-${1#agenthost_}";; *) echo "";; esac; }
+# tmux session name -> remote-control name (recognised prefixes,
+# $_crss_prefix_re, are ours). Mirrors session-doctor.sh's / session-preserve.sh's
+# tmux_to_base exactly — same name on purpose so a fix to one copy greps up
+# the others (scripts deploy standalone to ~/.local/bin, so it stays a local
+# copy, not sourced).
+tmux_to_base() {
+  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  else
+    echo ""
+  fi
+}
 
 _pane_cmd() { tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null; }
 _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
@@ -380,7 +461,7 @@ _state_of() {
   _is_working "$cap" && echo busy || echo ready
 }
 
-_live_ours() { tmux ls 2>/dev/null | cut -d: -f1 | grep -E '^(ah_|agenthost_)'; }
+_live_ours() { tmux ls 2>/dev/null | cut -d: -f1 | grep -E "^(${_crss_prefix_re})_"; }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 MODE="${1:-}"; shift || true

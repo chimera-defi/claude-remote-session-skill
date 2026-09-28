@@ -11,6 +11,11 @@ STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 # default is empty (see session-alias.sh), so a real $CRSS_HOME/config.sh
 # would change which folders are protected out from under this test.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
+# than converting every "ah_"/"ah-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=ah
+export CRSS_LEGACY_PREFIXES=agenthost
 
 # short folder (<=18) passes through unchanged
 ok "short-passthrough" "$(bash "$ALIAS" eth2-quickstart)" "eth2-quickstart"
