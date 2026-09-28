@@ -296,10 +296,11 @@ WHY: the operator wants standing coverage of the bus so nothing genuinely operat
 goes unanswered, and wants the reaper's dead-session backlog fixed durably rather than
 cleaned up by hand again.
 
-Read `$CRSS_HOME/local.md` and `$CRSS_HOME/projects/lane-a.md` first; the guardrails
-below summarize them but the files are binding.
+Read `$CRSS_HOME/local.md` first — it holds this host's escalation channel and delegate
+routing. Your worktree sits inside `<repo>`, so its own `AGENTS.md` "Guardrails" section
+loads automatically; the bullets below restate it, each with the reason it exists.
 
-GUARDRAILS (read first — each with the reason it exists):
+GUARDRAILS (already binding via `<repo>`'s AGENTS.md — restated here with reasons):
 - WATCH-only: never place, stage, or execute an order. Execution needs an explicit
   `EXECUTION_APPROVED_HUMAN=1` from the operator in this session, never inferred — this
   session watches and reports, it doesn't trade. Never loosen the broker execution gate.

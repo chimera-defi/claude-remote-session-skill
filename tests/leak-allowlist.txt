@@ -23,15 +23,17 @@ tests/test-no-host-leaks.sh
 # the "fakeorg" test-fixture owner, rather than allowlisting the whole file
 # and losing coverage on its other checks.)
 
-# CRSS_ALIAS_PROTECT_NAMES / CRSS_PROTECT_NAMES fixtures use two arbitrary
-# regex example words (real other-agent names on the host this check was
-# written against) to exercise the config-driven protect path end to end —
-# the values themselves are incidental test data, not real host state (see
-# research-leaks.md's own F/fixture disposition for this exact pattern).
-# Allowlisted wholesale rather than rewriting the fixture values, since the
-# actual behavior under test is "does CRSS_*_NAMES protect a matching name",
-# not anything specific to those two words.
-tests/test-session-alias.sh
-tests/test-session-doctor.sh
-tests/test-session-doctor-registry-prune.sh
-tests/test-session-prefix.sh
+# (CRSS_ALIAS_PROTECT_NAMES / CRSS_PROTECT_NAMES fixtures in
+# tests/test-session-alias.sh, tests/test-session-doctor.sh,
+# tests/test-session-doctor-registry-prune.sh, and tests/test-session-prefix.sh
+# use two real other-agent names from the host this check was written against
+# as arbitrary regex example words, to exercise the config-driven protect path
+# end to end. This repo does not name those words — that would just be a
+# second copy of the leak, checked in (see this file's own header). The
+# GENERIC checks above don't match plain words like these at all, so no
+# allowlist entry is needed for them here; an operator who wants their own
+# host-specific vocabulary flagged adds it to their own $CRSS_LEAK_DENYLIST
+# (see examples/crss-overlay/README.md and test-no-host-leaks.sh's own header
+# for the exact per-term-exclusion syntax), with an exclusion covering these
+# four files for each such term — not a whole-file allowlist entry here,
+# since that would also exempt these files from every other generic check.)

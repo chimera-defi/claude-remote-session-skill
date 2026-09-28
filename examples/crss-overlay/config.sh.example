@@ -3,7 +3,8 @@
 # Copy this directory to $CRSS_HOME (default: $XDG_CONFIG_HOME/crss, or
 # ~/.config/crss if XDG_CONFIG_HOME is unset) and edit config.sh for your
 # host. See ../../examples/crss-overlay/README.md for the full picture
-# (this file, local.md, the ~/.claude/rules/crss-host.md pointer).
+# (this file, local.md, the ~/.claude/rules/crss-host.md pointer, and the
+# optional leak-denylist.txt for tests/test-no-host-leaks.sh).
 #
 # THIS FILE IS PARSED, NEVER SOURCED. Each crss script reads it line by
 # line and only accepts lines matching ^CRSS_[A-Z0-9_]+=<value> — anything

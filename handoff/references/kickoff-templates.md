@@ -15,13 +15,19 @@ reading the task.
 - `{escalation_channel}` — where operator-owned questions go. Fill from
   `$CRSS_HOME/local.md` if it exists; otherwise the generic default is "the session that
   spawned you, via `session-send`".
-- `{project_rules_path}` — path to this project's guardrail file (e.g.
-  `$CRSS_HOME/projects/<name>.md`), referenced so the kickoff can say "read this; it's
-  binding" instead of pasting the guardrail block. Omit the line if none exists.
-  If the project's guardrails already live in its own `CLAUDE.md`, the child loads them
-  automatically in its worktree, so don't paste or reference them. Until they land
-  there, keep referencing (or, failing a file, pasting) the block: a child that never
-  sees a project's execution gate is worse than a long kickoff.
+- `{project_guardrails}` — how this project's guardrails reach the target. They live in
+  the project's own `CLAUDE.md`/`AGENTS.md`, never in the `$CRSS_HOME` overlay. Two
+  cases:
+  - **Claude child, workdir inside this project's repo** — that file loads
+    automatically, so don't paste the guardrails or give a path. Name the section
+    instead: "the 'Guardrails' section of the repo's `CLAUDE.md` is binding."
+  - **Anything else** — a non-Claude agent (e.g. Codex, unless its own `AGENTS.md`
+    already points at the section), or a Claude child whose workdir sits *outside* the
+    repo — won't auto-load it. Paste the guardrail block, or give an explicit path it
+    can read (e.g. `<repo>/CLAUDE.md`, section named).
+  Either way, a child that never sees a project's execution gate is worse than a long
+  kickoff — that's the failure this slot exists to prevent, whichever form it takes.
+  Omit the line only if this project genuinely has no guardrails to carry forward.
 
 Before filling any of these in, read `$CRSS_HOME/local.md` if it exists — it holds this
 host's actual escalation channel, project index, and delegate routing. Absent overlay:
@@ -35,7 +41,7 @@ You are {role}. {why}
 GOAL: {goal}
 FINISH LINE: {finish_line}
 
-Read {project_rules_path} first; it is binding. [Omit if no project rules file exists.]
+{project_guardrails} [Omit if this project has none to carry forward.]
 
 ROLES: you orchestrate. Delegate every independent slice — research, per-file edits,
 verification — to a subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
@@ -133,8 +139,8 @@ KNOWN STATE (verify, don't assume): {facts you hold, each tagged with how to con
 
 DELIVERABLE: {exact destination — file path, PR against which branch, report back}
 
-GUARDRAILS: read {project_rules_path} first; it is binding. [Omit if none exists, or add
-any execution/safety gate this domain's peers already enforce.]
+GUARDRAILS: {project_guardrails} [Omit if none exists, or add any execution/safety gate
+this domain's peers already enforce.]
 
 SCOPE: {what NOT to touch — other sessions, other repos — as concrete anti-patterns, not
 "be careful"}
@@ -153,8 +159,10 @@ without being asked.
 - [ ] `{why}` is a real reason, not just provenance ("X asked for this").
 - [ ] `{escalation_channel}` is a concrete command the operator actually sees (e.g.
       `session-send <parent> --file <f>`), not just "the operator".
-- [ ] `{project_rules_path}` is referenced (or its absence is a deliberate call), not
-      silently dropped.
+- [ ] `{project_guardrails}` is set the right way for the target (name the repo's
+      `CLAUDE.md`/`AGENTS.md` section for a Claude child inside the repo; paste or give
+      an explicit path otherwise) — or its absence is a deliberate call, not silently
+      dropped.
 - [ ] Every relayed fact that could be stale is marked "verify, don't assume".
 - [ ] Scope names concrete anti-patterns for this domain, not "be careful".
 - [ ] Stop rule states both when to keep going and when to stop and ask.
