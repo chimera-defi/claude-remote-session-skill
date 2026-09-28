@@ -443,9 +443,10 @@ if command -v tmux >/dev/null 2>&1; then
   mkwt ah-rwdkeep-0101-0900; WT_DK="$TESTHOME/.claude/worktrees/ah-rwdkeep-0101-0900"
   mkdir -p "$WT_DK/artifacts"; echo data > "$WT_DK/artifacts/results.tsv"
   d_keep="$(reapd ah_rwdkeep-0101-0900 --force --keep-worktree)"
+  ARCH_DK="$(archives_of ah-rwdkeep-0101-0900 | head -1)"
   ok "dispatch-keep-worktree-present" "$([ -f "$WT_DK/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
-  ok "dispatch-keep-worktree-no-archive" "$(archives_of ah-rwdkeep-0101-0900 | wc -l | tr -d ' ')" "0"
-  ok "dispatch-keep-worktree-no-archive-line" "$(printf '%s' "$d_keep" | grep -c 'archived\|worktree removed\|worktree: kept')" "0"
+  ok "dispatch-keep-worktree-unit-archive-dir" "$([ -n "$ARCH_DK" ] && [ -d "$ARCH_DK" ] && echo yes || echo no)" "yes"
+  ok "dispatch-keep-worktree-no-ignored-archive-line" "$(printf '%s' "$d_keep" | grep -c 'ignored file(s)\|worktree removed\|worktree: kept')" "0"
 
   mkwt ah-rwdok-0101-0900; WT_DO="$TESTHOME/.claude/worktrees/ah-rwdok-0101-0900"
   mkdir -p "$WT_DO/artifacts"; echo data > "$WT_DO/artifacts/results.tsv"
