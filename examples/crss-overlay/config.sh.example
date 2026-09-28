@@ -54,6 +54,26 @@
 # string "claude" if neither is found, so the pane's own PATH decides).
 #CRSS_CLAUDE_BIN=/usr/local/bin/claude
 
+# CRSS_SESSION_BACKEND — generic default backend for new sessions. `claude`
+# keeps the traditional Claude Code remote-control path; `codex` launches
+# the Codex CLI in the same tmux/systemd/supervisor/kickoff flow. You can
+# still override per spawn with `new-session --backend claude|codex`.
+# Default: claude
+#CRSS_SESSION_BACKEND=claude
+
+# CRSS_CODEX_BIN — path to the `codex` binary new-session launches for
+# `--backend codex`.
+# Default: whatever `command -v codex` resolves to at spawn time (falls back
+# to the bare string "codex" if not found, so the pane's PATH decides).
+#CRSS_CODEX_BIN=/usr/local/bin/codex
+
+# CRSS_CODEX_ARGS — extra Codex CLI args for `--backend codex`. This is
+# intentionally host-owned: put model, sandbox, and approval policy here after
+# checking your installed `codex --help`.
+# Default: empty
+# Example only:
+#CRSS_CODEX_ARGS=-m gpt-5.5 -s read-only -a never
+
 # CRSS_SESSION_PREFIX — the prefix NEW sessions get. tmux uses `<prefix>_`,
 # systemd/remote-control uses `<prefix>-` (e.g. prefix "cs" -> tmux `cs_foo-
 # 0715-0630`, remote-control `cs-foo-0715-0630`). Every crss script that

@@ -16,7 +16,8 @@
 # from the real file the next time it's edited — the exact failure mode this
 # repo's CLAUDE.md warns about), this EXTRACTS the literal lines from the
 # CURRENT scripts/new-session.sh between the unique anchors `    ready=no`
-# and `    fi` (verified unique — see the grep below) and sources that
+# and the first post-loop `if [ "$trust_dialog" = yes ]` (verified unique —
+# see the grep below) and sources that
 # extract directly, so what's under test is always byte-identical to what
 # ships. A fake `session-handoff.sh` (fake-handoff-sequence.sh, same
 # directory) answers `check` calls from a pre-set sequence of states so each
@@ -33,19 +34,19 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 START="$(grep -n '^    ready=no$' "$NS" | head -1 | cut -d: -f1)"
-END="$(grep -n '^    fi$' "$NS" | head -1 | cut -d: -f1)"
+END="$(grep -n '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS" | head -1 | cut -d: -f1)"
 # Both anchors must be unique in the file — a future edit that introduces a
-# second bare `    ready=no` or `    fi` at this exact indentation would
+# second bare `    ready=no` or post-loop trust-dialog branch would
 # silently extract the wrong span rather than fail loudly, so check that
 # explicitly instead of trusting `head -1`.
 START_COUNT="$(grep -c '^    ready=no$' "$NS")"
-END_COUNT="$(grep -c '^    fi$' "$NS")"
+END_COUNT="$(grep -c '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS")"
 if [ -z "$START" ] || [ -z "$END" ] || [ "$START_COUNT" != 1 ] || [ "$END_COUNT" != 1 ]; then
   echo "session-handoff-settle-loop: SKIP (extraction anchors not uniquely found in $NS — has the loop been restructured? update this test's anchors)"
   exit 0
 fi
 EXTRACTED="$WORK/settle-loop.sh"
-sed -n "${START},${END}p" "$NS" > "$EXTRACTED"
+sed -n "${START},$((END-1))p" "$NS" > "$EXTRACTED"
 bash -n "$EXTRACTED" || { echo "FAIL: extracted settle-loop is not valid bash on its own"; exit 1; }
 
 # run_settle <comma-separated-states> <settle> <tries> -> sets $RESULT to
