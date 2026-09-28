@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
+# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run report (source-guard)
 pass=0; fail=0
@@ -88,7 +91,11 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$REPO" worktree add -q -b session/ah-hermes-0101-0900 "$WT_PROT" main >/dev/null 2>&1
   tmux new-session -d -s ah_wtlive-0101-0900 -c "$WT_LIVE" 'sleep 60'
 
-  wtout="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
+  # this host's overlay adds hermes via CRSS_PROTECT_NAMES — set it explicitly
+  # here to exercise that config-driven protection, matching the fixture's
+  # "ah-hermes-..." worktree name below.
+  wtout="$(HOME="$WTHOME" CRSS_PROTECT_NAMES='claude-remote|hermes' bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   tmux kill-session -t ah_wtlive-0101-0900 2>/dev/null || true
 
   ok "worktree-stale-lists-dead"     "$(printf '%s' "$wtout" | grep -qF "$WT_DEAD" && echo yes || echo no)" "yes"
@@ -516,8 +523,10 @@ STUB_EOF
 
   # 1. Protected name -> refused outright, regardless of --force, and nothing
   # is touched (there's no real resource here, so this only checks message +
-  # exit code).
-  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
+  # exit code). PROTECT's generic default is just "claude-remote" (see
+  # session-doctor.sh); this host's overlay adds hermes via
+  # CRSS_PROTECT_NAMES — set it explicitly to exercise that config-driven path.
+  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" CRSS_PROTECT_NAMES='claude-remote|hermes' bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
   has "reap-protected-refused" "$protout" "PROTECTED"
   ok  "reap-protected-exit2"   "$protrc" "2"
 

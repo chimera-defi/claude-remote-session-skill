@@ -46,9 +46,17 @@
 #                                           # separated columns, no header/summary) for actuator
 #                                           # scripts; report only
 #   session-doctor.sh history <foldername>        # NOW (live sessions) + PAST (transcript history) + status for a worktree; bare name, absolute path, or repo-name substring; report only
+#   session-doctor.sh overlay              # host-local overlay ($CRSS_HOME) health check:
+#                                           # dir/config.sh/rules/local.md present, config.sh
+#                                           # lines that won't be loaded (warn); never fails
+#                                           # hard on a broken overlay; also folded into the
+#                                           # default `report` output. Report only.
 #
 # Safety:
-#   * Protected names (claude-remote*, *openclaw*, *hermes*) are NEVER reaped.
+#   * Protected names default to the skill's own name ("claude-remote"); this
+#     host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
+#     $CRSS_HOME/config.sh (see examples/crss-overlay/). Protected names are
+#     NEVER reaped.
 #   * A tmux/systemd entry is only reaped when its claude process is genuinely gone
 #     (reap-local) or the operator named it explicitly (reap).
 #   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
@@ -85,9 +93,43 @@
 #     manual pass.
 set -uo pipefail
 
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+  done < "$_crss_cfg"
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
-PROTECT='claude-remote|openclaw|hermes'
+# Protected names (default: the skill's own name, "claude-remote") are NEVER
+# reaped. This host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
+# $CRSS_HOME/config.sh (see examples/crss-overlay/). An empty override would
+# make every `grep -qiE "$PROTECT"` below match EVERYTHING (an empty ERE
+# matches any line), which is the opposite of "protect nothing" — so an
+# empty CRSS_PROTECT_NAMES falls back to a pattern that matches nothing.
+: "${CRSS_PROTECT_NAMES:=claude-remote}"
+PROTECT="$CRSS_PROTECT_NAMES"
+[ -n "$PROTECT" ] || PROTECT='^$'
 MODE="${1:-report}"; shift || true
 # Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
@@ -453,6 +495,13 @@ _wt_landed() {
 # one would recreate the incident. A false positive here costs a small archive,
 # a false negative costs data, so keep it to paths that regenerate themselves.
 _WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|build|target|coverage|\.cache|\.pytest_cache|\.mypy_cache|\.gstack|\.superpowers|\.claude/(skills|token-reduce-state|tmp-briefs|settings\.local\.json|CLAUDE\.md)|artifacts/token-reduction)(/|$)|(^|/)(artifacts/qmd-repo-[^/]*\.stamp|next-env\.d\.ts|[^/]*\.tsbuildinfo)$|^\.sessions-init-[^/]*$'
+# CRSS_JUNK_RE_EXTRA (default empty — today's behaviour is unchanged) appends
+# host-specific extra scaffolding patterns without touching the base list
+# above. session-preserve.sh's JUNK_RE takes the SAME env var, appended the
+# same way — but the two BASE lists are not identical (pre-existing drift,
+# see CLAUDE.md's "cruft pass" note); this only keeps the ADDITIVE suffix in
+# sync, it does not reconcile the bases.
+[ -n "${CRSS_JUNK_RE_EXTRA:-}" ] && _WT_IGNORED_DENY_RE="${_WT_IGNORED_DENY_RE}|${CRSS_JUNK_RE_EXTRA}"
 
 # _wt_ignored_payload <worktree> <listfile> -> writes the worktree-relative
 # path of every gitignored regular file / symlink that is NOT deny-listed to
@@ -1064,8 +1113,50 @@ _history_footer() {
   fi
 }
 
+# _crss_overlay_report — read-only health check for the host-local overlay
+# ($CRSS_HOME, see examples/crss-overlay/README.md). Reports: dir exists;
+# config.sh present; any config.sh line that LOOKS like an assignment but
+# won't be loaded (doesn't match ^CRSS_[A-Z0-9_]+=, see _crss_load_config
+# above) as a warning; the always-on rules pointer
+# ($CRSS_CLAUDE_HOME/rules/crss-host.md) present and containing an @import of
+# local.md; local.md present. Must NEVER fail hard on a broken/missing
+# overlay — every check below is a plain conditional, no asserts, and the
+# function always returns 0.
+_crss_overlay_report() {
+  local home cfg rules localmd line
+  home="$CRSS_HOME"
+  echo "=== OVERLAY: $home ==="
+  if [ -d "$home" ]; then echo "  dir: found"; else echo "  dir: absent"; fi
+  cfg="$home/config.sh"
+  if [ -f "$cfg" ]; then
+    echo "  config.sh: found"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [[ "$line" =~ ^CRSS_[A-Z0-9_]+= ]] && continue
+      [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && echo "  warn: config.sh line looks like an assignment but will be ignored (must match ^CRSS_[A-Z0-9_]+=): $line"
+    done < "$cfg" 2>/dev/null
+  else
+    echo "  config.sh: absent"
+  fi
+  rules="${CRSS_CLAUDE_HOME:-$HOME/.claude}/rules/crss-host.md"
+  if [ -f "$rules" ]; then
+    if grep -Eq '@[^[:space:]]*local\.md' "$rules" 2>/dev/null; then
+      echo "  rules: found ($rules, imports local.md)"
+    else
+      echo "  rules: found ($rules) — warn: no @import of local.md found"
+    fi
+  else
+    echo "  rules: absent ($rules)"
+  fi
+  localmd="$home/local.md"
+  if [ -f "$localmd" ]; then echo "  local.md: found"; else echo "  local.md: absent"; fi
+  return 0
+}
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
+  overlay)
+    _crss_overlay_report
+    ;;
   report)
     echo "=== LOCAL: tmux sessions ==="
     for s in $(live_tmux); do
@@ -1097,6 +1188,7 @@ print('  disconnected >%dd (reapable): %d' % (30, sum(1 for s in disc if agedays
 print('  \"connected\" but >7d (likely zombies): %d' % len(zomb))
 print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
 "
+    _crss_overlay_report
     ;;
 
   reap-local)
