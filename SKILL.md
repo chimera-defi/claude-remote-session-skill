@@ -2,7 +2,7 @@
 name: gstack-session-spawn
 slug: gstack-session-spawn
 version: "1.9.1"
-tagline: "Create a persistent Claude remote session on agenthost"
+tagline: "Create a persistent Claude remote session via tmux + systemd"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
 allowed-tools:
   - Bash
@@ -21,7 +21,8 @@ consecutive ready polls before the first paste) and refuses rather than pasting 
 yet — wait and resend. On plain `UNVERIFIED`, check the pane and resend with
 `session-send` — it happens often enough on first send that it isn't an edge case
 (one-line detail: [`references/troubleshooting.md`](references/troubleshooting.md)).
-Then tell the user the `ah-<alias>-<MMDD-HHMM>` name.
+Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `cs`,
+configurable via `CRSS_SESSION_PREFIX`).
 
 ## Recipe
 
@@ -83,10 +84,10 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
   reasoning. `model: fable` in an agent definition's frontmatter is a live-verified value
   on this CLI (2.1.280): a probe agent with that frontmatter ran as `claude-fable-5-1`
   when spawned. (Operator directive, 2026-09-26.)
-- ChatGPT (GPT-5.5) is reached through the `gpt-relay` Sonnet subagent — not a standalone
-  session. It is defined in the portfolio-single-source-of-truth repo: `.claude/agents/gpt-relay.md`
-  and the `gpt-relay` row of the roles table in that repo's `AGENTS.md`. How it calls GPT
-  lives in that agent file; don't copy it here.
+- ChatGPT is reached, if at all, through a project-specific relay subagent (not a standalone
+  session) — if your project has one, it's defined in that project's own `.claude/agents/`
+  and roles table. How it calls out lives in that agent file; don't copy it here. See your
+  host's `$CRSS_HOME/local.md` for which projects have one.
 
 ## Writing the kickoff task
 
@@ -138,16 +139,17 @@ that, then read the rest of its summary.
 ## Naming
 
 ```
-tmux session:    ah_<alias>-<MMDD-HHMM>
-remote-control:  ah-<alias>-<MMDD-HHMM>
-workdir (repo):  /home/agents/workspace/<foldername>
-workdir (util):  /home/agents/.sessions/<foldername>
+tmux session:    <prefix>_<alias>-<MMDD-HHMM>
+remote-control:  <prefix>-<alias>-<MMDD-HHMM>
+workdir (repo):  $CRSS_WORKSPACE/<foldername>     (default $HOME/workspace)
+workdir (util):  $CRSS_SESSIONS_DIR/<foldername>  (default $HOME/.sessions)
 ```
 
 Name-first, date last; every spawn gets a unique name, so it never collides with a
 same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilities
-(managers, monitors, etc.). Legacy `agenthost_`/`agenthost-` sessions keep working;
-`session-doctor` matches both prefixes.
+(managers, monitors, etc.). `<prefix>` defaults to `cs`, configurable via
+`CRSS_SESSION_PREFIX`; a host that changes prefix can list the old one(s) in
+`CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising older sessions too.
 
 `<alias>` comes from the `session-alias` helper, persisted in `~/.claude/session-aliases`
 (`folder<TAB>alias` per line):
@@ -157,12 +159,14 @@ same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilit
 - **`--alias` is per-spawn.** Sessions habitually pass the *task* (`--alias crss-prs`), so it
   no longer rewrites the folder default. Add `--set-default-alias` only when the name
   describes the **folder**, not the task.
-- **Protected folders are never aliased**: a folder matching `openclaw|hermes` keeps its full
-  name so `session-doctor` can protect it by that token. (Narrower than reap's own `PROTECT`
-  list, which also covers `claude-remote` bridge sessions — this repo's folder merely
-  contains that string and still shortens normally.)
+- **Protected folders are never aliased**: a folder matching your host's
+  `CRSS_ALIAS_PROTECT_NAMES` (e.g. `my-other-bridge` — see
+  `examples/crss-overlay/config.sh.example`) keeps its full name so `session-doctor` can
+  protect it by that token. (Narrower than reap's own `CRSS_PROTECT_NAMES`, which also
+  covers `claude-remote` bridge sessions — this repo's folder merely contains that string
+  and still shortens normally.)
 - **Alias values are validated (anti-poisoning)** on read, write, and store upsert, so a
-  stored alias that looks like a full session name can't produce `ah-ah-…-MMDD-MMDD`. The
+  stored alias that looks like a full session name can't produce `<prefix>-<prefix>-…-MMDD-MMDD`. The
   rules live in `scripts/session-alias.sh`, pinned by `tests/test-session-alias.sh` — read
   those rather than restating them here.
 - `session-alias --audit-store` read-only-reports stored entries that fresh inference now
@@ -180,7 +184,7 @@ always its folder, and a same-named non-git stub can carry its own `CLAUDE.md`/`
 that makes it look right:
 
 ```bash
-git -C /home/agents/workspace/<foldername> rev-parse --show-toplevel
+git -C $CRSS_WORKSPACE/<foldername> rev-parse --show-toplevel
 ```
 
 `fatal: not a git repository` on a folder you expected to be a repo means wrong folder, not
@@ -215,24 +219,19 @@ the replacement re-derives it all at full cost.
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
-For durable facts other sessions should inherit, write a markdown note to
-`/home/agents/agent-memory/agents/claude/public/` (cross-agent: `shared/public/`), then run
-`gbrain-sync-memory` — an unsynced note is invisible to every other session. Read back via
-gbrain search/recall and cite source ids (`brain:agent-claude-public:<slug>`); don't dump
-folders into context. The per-namespace `MEMORY.md` index is stale — not a table of contents.
-And `agents/claude/public/` is a nested git repo whose tracking has silently stopped, so
-durability rests on the gbrain index, not on git.
+For durable facts other sessions should inherit, most hosts wire up a shared memory
+convention (a memory-store repo, a knowledge tool) through the user-level
+`~/.claude/CLAUDE.md` every session already loads — this skill doesn't restate that
+convention here. If your host has one, its details (root, namespace, sync command,
+citation format) are there or in your host's `$CRSS_HOME/local.md`.
 
 "Who else is working here right now" is a different question — use
 `session-doctor history`, which derives presence from live processes.
 
-Keeping the brain itself healthy (drained, freshness-stamped) is a separate concern, handled
-by host-specific ops tooling that lives outside this repo.
-
 ## Sessions agent scope
 
-A sessions management agent (workdir `/home/agents/.sessions/agenthost-sessions`) has a
-**bounded scope** — session management only, no project work — enforced by its own
-`.claude/CLAUDE.md`, not restated here. When project work lands there anyway: write a
-handoff to that repo's `memory/`, spawn or connect to the project session (use the
-`handoff` skill), and tell the user which session has it — don't do the work yourself.
+Some hosts run a bounded sessions-management agent (session ops only, no project work),
+enforced by its own `.claude/CLAUDE.md`. If yours does — see your host's
+`$CRSS_HOME/local.md` — and project work lands there anyway: write a handoff to that
+project's `memory/`, spawn or connect to the project session (use the `handoff` skill),
+and tell the user which session has it — don't do the work yourself.

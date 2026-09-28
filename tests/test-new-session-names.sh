@@ -28,7 +28,8 @@ has "service-name"    "$out" 'SERVICE=.*/ah-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service
 out2="$(bash "$NS" --dry-run some-proj --alias myproj 2>/dev/null)"
 has "explicit-alias"  "$out2" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
 # this repo's folder contains "claude-remote" but is NOT alias-protected (only
-# openclaw|hermes are); it shortens to its acronym like any long dev folder.
+# names matching a host's CRSS_ALIAS_PROTECT_NAMES are); it shortens to its
+# acronym like any long dev folder.
 out3="$(bash "$NS" --dry-run claude-remote-session-skill 2>/dev/null)"
 has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=ah-crss-[0-9]\{4\}-[0-9]\{4\}'
 # regression: a folder literally named `sessions`/`workspace`/`auto` must be

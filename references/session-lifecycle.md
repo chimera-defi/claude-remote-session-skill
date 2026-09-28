@@ -7,14 +7,14 @@ count is still high" confusion.
 | Layer | Where | Lives until | Cleaned by |
 |-------|-------|-------------|------------|
 | **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
-| **systemd --user unit** | `~/.config/systemd/user/agenthost-*.service` / `ah-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
+| **systemd --user unit** | `~/.config/systemd/user/<prefix>-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
 | **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | `session-doctor registry-prune --apply` (or `reap <name>`, which prunes its own entry) |
 | **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos — see `session-git-prep`) | `git worktree remove` (never expires on its own) | `session-doctor reap <name>` (prunes its own worktree; branch kept) — or manual removal via `worktree-stale` for a worktree left by an already-reaped session |
 
-Sessions created before the 2026-07-15 naming change use the `agenthost-`/`agenthost_`
-prefix; sessions created after use the shorter `ah-`/`ah_` prefix. `session-doctor`
-matches both prefixes for the whole transition — old and new sessions are reaped
-identically.
+`<prefix>` is the configured `CRSS_SESSION_PREFIX` (generic default `cs`). A host that
+changed its prefix can list the old one(s) in `CRSS_LEGACY_PREFIXES` — `session-doctor`
+matches the configured prefix plus every legacy prefix, so old and new sessions are
+reaped identically. See `examples/crss-overlay/config.sh.example`.
 
 **Key fact:** the registry is org-wide and effectively permanent. It accumulates:
 - **disconnected** entries (session ended, registration lingers), and
@@ -50,7 +50,8 @@ session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no t
 ```
 
 Safety guarantees:
-- Never touches protected plumbing: `claude-remote*`, `*openclaw*`, `*hermes*`.
+- Never touches protected plumbing: the built-in `claude-remote*` pattern, plus anything
+  matched by your host's `CRSS_PROTECT_NAMES` (see `examples/crss-overlay/config.sh.example`).
 - Only reaps local items whose `claude` process is genuinely gone.
 - `reap-local` is dry-run unless `--force` — so a control session merely inside a
   supervisor restart window is never reaped by accident.

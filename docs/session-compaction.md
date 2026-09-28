@@ -74,7 +74,7 @@ good proxy for the answer.
 
 ## Measured, not asserted
 
-Harness: spawned a disposable session (`ah_compact-probe-0911-0556`), gave it real
+Harness: spawned a disposable session (`<prefix>_compact-probe-0911-0556`), gave it real
 work until its context was non-trivial, drove `/context` and `/compact` through
 `session-handoff.sh send`, captured the pane and diffed the transcript.
 Claude Code **v2.1.206**.
@@ -197,7 +197,7 @@ only captures panes and is safe against live sessions.
 | `_is_safe_to_inject` | never paste onto someone's draft or into a menu |
 | not already compacted this idle window | `compact_boundary` after the last genuine turn |
 | not (`landed=yes` **and** git-clean) | finished + delivered: nothing will resume it |
-| not protected (`claude-remote\|openclaw\|hermes`) | conservative default |
+| not protected (`claude-remote` built-in, plus your host's `CRSS_PROTECT_NAMES`) | conservative default |
 
 Note the protection list guards against *deletion* and is a poor fit for injection
 risk — it is reused here only as a conservative default, not as the real guard.

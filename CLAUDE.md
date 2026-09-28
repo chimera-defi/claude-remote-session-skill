@@ -15,6 +15,14 @@ A change is done when **all** of these are true — not before:
    for t in tests/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
    shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh
    ```
+   `tests/test-no-host-leaks.sh` is in that loop — this is a public repo, so it fails the
+   build on an absolute home path, a real email, or a github.com URL naming another owner.
+   That generic check is what CI runs. On this host, also run it with the host-specific
+   denylist (your own project/handle vocabulary — never checked into this repo) for a
+   stricter local pass:
+   ```bash
+   CRSS_LEAK_DENYLIST=~/.config/crss/leak-denylist.txt bash tests/test-no-host-leaks.sh
+   ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
    PR, `shell-tests` is green, and it's merged. Never push to `main`; never self-approve.
 3. Every changed deployable is redeployed and verified (see "Deploying" below). A fix that
@@ -44,10 +52,11 @@ for a reason you *can't* explain is.
 
 Each of these has happened here. Don't repeat them.
 
-- **Branching from or committing to local `main`** in the canonical checkout
-  (`/home/agents/workspace/claude-remote-session-skill`). Other agents leave in-flight work
-  there; it has diverged from `origin/main` before. Cut branches from `origin/main`, and
-  check `gh pr list` + `git branch -r` for active work you'd collide with.
+- **Branching from or committing to local `main`** in the canonical checkout (the target of
+  the `~/.claude/skills/<skill>` symlink — see your host's `$CRSS_HOME/local.md` for its
+  path). Other agents leave in-flight work there; it has diverged from `origin/main` before.
+  Cut branches from `origin/main`, and check `gh pr list` + `git branch -r` for active work
+  you'd collide with.
 - **`cp`/`install` over `~/.local/bin/<x>` without diffing first.** Deployed copies drift in
   *both* directions; a blind overwrite silently reverted a deployed-only hand-patch (that's
   how `advisor` fell out of `BUILDER_TOOLS`).
@@ -75,9 +84,9 @@ Each of these has happened here. Don't repeat them.
 - **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
   Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
 - **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
-  can hold gitignored results, and `git worktree remove` deletes them (2026-08-29
-  exp-lab loss: a research campaign's `artifacts/`). `reap` now archives them first
-  (`_wt_archive_ignored`); a hand-run `git worktree remove` does not.
+  can hold gitignored results, and `git worktree remove` deletes them (2026-08-29 loss: a
+  research worktree's `artifacts/`). `reap` now archives them first (`_wt_archive_ignored`);
+  a hand-run `git worktree remove` does not.
 - **Bare `git stash` / `git stash pop`.** The stash stack is shared across every worktree
   and session. Use a WIP commit instead.
 - **`git worktree remove` without disabling the session's systemd unit** — leaves an orphan

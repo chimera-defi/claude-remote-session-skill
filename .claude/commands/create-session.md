@@ -4,7 +4,7 @@ If the user provided a project name or folder, use that. Otherwise ask: "Which p
 
 Follow the full recipe in `~/.claude/skills/gstack-session-spawn/SKILL.md` (or this repo's `SKILL.md`):
 
-1. Set FOLDERNAME to the project name (use the folder name exactly as it appears in `/home/agents/workspace/` or `/home/agents/.sessions/`).
+1. Set FOLDERNAME to the project name (use the folder name exactly as it appears in `$CRSS_WORKSPACE` or `$CRSS_SESSIONS_DIR` — default `~/workspace` / `~/.sessions`).
 2. Run the `new-session` script for the whole recipe in one Bash call:
    ```bash
    new-session "$FOLDERNAME"              # auto-detects workspace/ vs .sessions/

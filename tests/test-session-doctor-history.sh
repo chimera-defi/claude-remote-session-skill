@@ -18,7 +18,7 @@ ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FA
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # ── _encode_cwd: pure string transform, order matters ('.' before '/') ───────
-ok "encode-basic" "$(_encode_cwd "/home/agents/.claude/worktrees/ah-x-1")" "-home-agents--claude-worktrees-ah-x-1"
+ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/ah-x-1")" "-home-youruser--claude-worktrees-ah-x-1"
 ok "encode-no-path-required" "$(_encode_cwd "/does/not/exist.d/here")" "-does-not-exist-d-here"
 
 # ── _history_matches: pure logic over synthetic wt_base/proj_base dirs ───────

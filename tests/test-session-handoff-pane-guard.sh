@@ -3,8 +3,8 @@
 # session-handoff.sh correctly reading what's ACTUALLY in the pane before
 # acting on it, rather than trusting a stale or oversimplified signal:
 #
-# 1. BUFFERED NOT DETECTED (ah_qt-gate-0924-0802, `new-session
-#    questrade-ui-adapter --task-file`): Claude Code collapses a large/multi-
+# 1. BUFFERED NOT DETECTED (cs_qt-gate-0924-0802, `new-session
+#    my-project --task-file`): Claude Code collapses a large/multi-
 #    line paste to a placeholder ("[Pasted text #1 +17 lines]") instead of
 #    echoing it verbatim. `send` reported UNVERIFIED while the pane showed
 #    exactly that placeholder sitting on the input line — a single manual
