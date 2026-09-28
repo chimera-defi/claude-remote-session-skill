@@ -147,6 +147,13 @@ the generic defaults in those two files. The parts that matter most for a fresh 
 - **Subagents with evidence checks for large audits/migrations.** *"Give each slice its own
   subagent (`subagent_type: builder`), have it write large output to files, and return a
   short summary; check each one's evidence before accepting its report."*
+- **Eval/hillclimb campaigns need a budget gate.** For prompt/model/grader/harness loops,
+  use the compact add-on in
+  [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
+  and the canonical protocol in
+  [`handoff/references/eval-hillclimb-protocol.md`](handoff/references/eval-hillclimb-protocol.md).
+  It keeps eval splits, novelty reserve, budget, stop/revert, and
+  `scripts/eval-hillclimb-decision.py` decisions out of prose-only territory.
 - **Leave out "think carefully / step by step / ultrathink".** Current Claude models decide
   how much to think on their own; those lines add length, not quality. Same for ALL-CAPS or
   "MUST" — a reason attached to a rule holds up better than a rule shouted louder.
