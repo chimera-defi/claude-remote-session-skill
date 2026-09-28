@@ -6,7 +6,7 @@
 # ~/.claude/commands/create-session.md was a stale physical copy from 2026-06-08
 # that still told the model to derive SESSION=agenthost_<folder>-<YYYYMMDD>, to
 # hand-write the start script and systemd unit inline, and to commit them to
-# Etc-mono-repo/scripts/agenthost/. Every one of those is wrong now: the naming
+# `<mono-repo>/scripts/agenthost/`. Every one of those is wrong now: the naming
 # scheme is ah_<alias>-<MMDD-HHMM>, new-session.sh generates the unit, and the
 # generated scripts are explicitly local-only. Invoking /create-session outside
 # this repo therefore produced a session named on the legacy scheme with none of

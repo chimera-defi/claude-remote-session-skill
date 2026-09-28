@@ -74,7 +74,7 @@ Usage: fake-claude-tui.py <mode>
                    Proves send's retry loop must classify the placeholder as
                    "still buffered" (re-press Enter) rather than "unverified"
                    (give up after only one try). See the 2026-09-24
-                   ah_qt-gate-0924-0802 incident in _is_collapsed_paste_in_input's
+                   ah_svc-gate-0924-0802 incident in _is_collapsed_paste_in_input's
                    comment (session-handoff.sh).
 """
 import os

@@ -304,7 +304,7 @@ fi
 #
 # It used to persist unconditionally, and that was the dominant source of alias
 # drift in practice. `--alias` names the *task* far more often than the *folder*
-# (`--alias crss-prs`, `trs-fix`, `eth2-resurrect`, `pssot-indep`), so one spawn
+# (`--alias crss-prs`, `trs-fix`, `db-migrate`, `api-cleanup`), so one spawn
 # permanently renamed the folder and every later bare `new-session <folder>`
 # inherited a name describing work that finished weeks ago. Two audits found
 # 11-of-37 and 11-of-42 entries drifted, and every single one was this shape --

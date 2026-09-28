@@ -24,6 +24,29 @@ So by default it's `~/.config/crss`. Inside it:
   spawning a session or writing a kickoff (operator handle, escalation
   channel, project index, delegate routing, whatever is useful). Not read by
   any script in this repo — it's for the always-on rules pointer below.
+- `leak-denylist.txt` — optional, host-private terms that must never appear
+  in this public repo (an operator handle, a private project or session
+  name, a sibling agent's name — anything specific to this host that isn't
+  a structurally-detectable leak like a home path or email). Not read by any
+  crss script at runtime; only `tests/test-no-host-leaks.sh` reads it, and
+  only when told to. One extended regex (ERE) per line, `#`-comments and
+  blank lines ignored. A line may add a per-term exclusion — a real path
+  legitimately contains the term (e.g. a test fixture that pins it on
+  purpose) — with a second column: `<ERE><TAB><globs>`, where `<globs>` is a
+  comma-separated list of path globs (matched against the path exactly as
+  `git ls-files` prints it); the term is then simply not checked against any
+  path matching one of those globs. See `tests/test-no-host-leaks.sh`'s own
+  header comment for the authoritative syntax and worked examples — this
+  paragraph summarizes it, that file defines it. Run it with:
+
+  ```sh
+  CRSS_LEAK_DENYLIST=~/.config/crss/leak-denylist.txt bash tests/test-no-host-leaks.sh
+  ```
+
+  CI never sets `$CRSS_LEAK_DENYLIST`, so it only ever runs the generic,
+  host-agnostic checks (absolute home paths, emails, github owners, …); this
+  file adds host-specific coverage locally, and — being outside the repo —
+  never itself becomes a second copy of the leak it's checking for.
 - anything else you want to keep here (per-project notes, etc.) — crss
   itself only looks for `config.sh` and `local.md`.
 
