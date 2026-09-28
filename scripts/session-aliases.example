@@ -1,5 +1,6 @@
 # folder<TAB>alias — session name aliases (managed by session-alias; edit freely).
 # One "folder<TAB>alias" per line. Lines starting with # and blank lines are ignored.
-# Protected folders (claude-remote|openclaw|hermes) are never aliased; don't add them.
+# Protected folders (claude-remote, plus anything in your host's
+# CRSS_ALIAS_PROTECT_NAMES) are never aliased; don't add them.
 # some-very-long-project-name	svlpn
 # another-long-workspace-name	awn

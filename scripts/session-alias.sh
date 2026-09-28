@@ -91,10 +91,11 @@ fi
 # *contains* "claude-remote" (e.g. this repo, claude-remote-session-skill) is a
 # normal dev session that SHOULD alias and SHOULD be reapable when dead. Do
 # not fold this into CRSS_PROTECT_NAMES. Generic default is empty (no folders
-# alias-protected); this host's overlay sets CRSS_ALIAS_PROTECT_NAMES to
-# openclaw|hermes via $CRSS_HOME/config.sh (see examples/crss-overlay/) to
-# reproduce that today. An empty ALIAS_PROTECT would make the `grep -qiE`
-# below match EVERY folder (an empty ERE matches any line) — the opposite of
+# alias-protected); a host that runs other always-on bridge sessions can set
+# CRSS_ALIAS_PROTECT_NAMES to e.g. my-other-bridge via $CRSS_HOME/config.sh
+# (see examples/crss-overlay/) to protect those too. An empty ALIAS_PROTECT
+# would make the `grep -qiE` below match EVERY folder (an empty ERE matches
+# any line) — the opposite of
 # the intended "protect nothing" default — so empty falls back to a pattern
 # that matches nothing.
 : "${CRSS_ALIAS_PROTECT_NAMES:=}"

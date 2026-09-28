@@ -27,7 +27,7 @@ BUSY_PANE='● Working on the survey…
 ────────────────────────────────────────────────────────
 ❯
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot'
+  [Opus 4.8] my-project'
 
 # headline case: unsubmitted, multi-word draft sitting in the input box ->
 # not safe, reason=draft-in-input-box
@@ -48,7 +48,7 @@ MENU_PANE='● Where should I point the next iteration?
 ────────────────────────────────────────────────────────
 ❯
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot'
+  [Opus 4.8] my-project'
 
 # no ❯ prompt at all (e.g. still starting up) -> not safe, reason=no-prompt
 STARTING_PANE='Starting Claude Code…
@@ -110,7 +110,7 @@ DIM_PLACEHOLDER_PLUS_MENU_PANE="● Where should I point the next iteration?
 ────────────────────────────────────────────────────────
 ${ESC}[39m❯ ${ESC}[2mall good?${ESC}[0m
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot"
+  [Opus 4.8] my-project"
 
 # a real draft that happens to contain the literal characters "[2m" as text,
 # with no actual ESC byte in front of it -> must still be NOT safe. Proves
