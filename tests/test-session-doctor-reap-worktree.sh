@@ -220,7 +220,7 @@ fi
 # ── 13. gitignored payload: `git worktree remove` (with or without --force)
 # silently deletes gitignored files, and _wt_dirty / session-preserve both
 # ignore them, so a "clean" worktree can hold a whole campaign's results
-# (2026-08-29 exp-lab loss). reap must ARCHIVE the non-regenerable ones before
+# (2026-08-29 loss). reap must ARCHIVE the non-regenerable ones before
 # removing, and keep the worktree if it cannot. The fixture repo ignores the
 # same scaffolding paths the host's global git ignore does, so the deny-list
 # (not git) is what has to keep those out of the payload.

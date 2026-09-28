@@ -21,19 +21,33 @@ every profile (a prompt-cache-reuse win) — both kept in sync with
 `new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
 
 ```bash
+# Host-local overlay: same CRSS_* vars and defaults as new-session.sh (see
+# examples/crss-overlay/README.md). This recipe reads them from the environment
+# only — it does NOT parse $CRSS_HOME/config.sh itself (another documented
+# reduction vs. the installed script).
+: "${CRSS_WORKSPACE:=$HOME/workspace}"
+: "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
+: "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
+: "${CRSS_CLAUDE_BIN:=/usr/bin/claude}"
+: "${CRSS_SESSION_PREFIX:=cs}"
+# This recipe does NOT recognise CRSS_LEGACY_PREFIXES (another documented
+# reduction) — it only ever GENERATES under CRSS_SESSION_PREFIX, same as
+# new-session.sh; legacy-prefix parsing only matters to session-doctor/etc.,
+# not to spawning a new session.
+
 FOLDERNAME="<foldername>"
-WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${FOLDERNAME}
+WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"   # or ${CRSS_SESSIONS_DIR}/${FOLDERNAME}
 # Emergency path: store lookup only (no acronym/inference); may differ from
 # new-session for an un-stored long folder.
 ID=$(date +%m%d-%H%M)
-ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
-# Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD date, or a long numeric
-# run PAIRED with a real MMDD date fragment) — same DATE-VALIDATED guard as
-# session-alias.sh's read path. Using it as-is would double into
-# ah-ah-...-MMDD-MMDD. The digits must validate as a real date/time (month
-# 01-12, day 01-31, hour 00-23, minute 00-59): a naive "any 4 digits" match
-# previously misfired on legitimate stored aliases like sprint-2024,
+ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' "${CRSS_CLAUDE_HOME}/session-aliases" 2>/dev/null)
+# Reject a poisoned stored alias (looks like a session name itself: the
+# configured prefix, a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD
+# date, or a long numeric run PAIRED with a real MMDD date fragment) — same
+# DATE-VALIDATED guard as session-alias.sh's read path. Using it as-is would
+# double into <prefix>-<prefix>-...-MMDD-MMDD. The digits must validate as a
+# real date/time (month 01-12, day 01-31, hour 00-23, minute 00-59): a naive
+# "any 4 digits" match previously misfired on legitimate stored aliases like sprint-2024,
 # chain-8453, port-8080 or sprint-2024-2025, wrongly discarding them. The
 # long-numeric-run check is further gated on an actual calendar-plausible
 # MMDD elsewhere in the string so a legitimately stored alias that merely
@@ -53,14 +67,14 @@ _fr_has_mmdd_group() {
 }
 _fr_poisoned() {
   # Case-fold before the prefix check: a stored alias can carry any case (hand
-  # edit, external writer), and a mixed-case `AH-foo-bar` (no embedded date, so
-  # none of the digit checks below would catch it either) must not bypass this
-  # guard and get embedded as `ah-AH-foo-bar-...` — same fix as
-  # session-alias.sh's looks_like_session_name (found via review, chatgpt-codex-
-  # connector, PR #34).
+  # edit, external writer), and a mixed-case prefix (e.g. `<PREFIX>-foo-bar`,
+  # no embedded date, so none of the digit checks below would catch it either)
+  # must not bypass this guard and get embedded as
+  # `<prefix>-<PREFIX>-foo-bar-...` — same fix as session-alias.sh's
+  # looks_like_session_name (found via review, chatgpt-codex-connector, PR #34).
   local v="$1" pair mm dd hh mi tail d
   v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
-  case "$v" in ah-*|ah_*) return 0 ;; esac
+  case "$v" in "${CRSS_SESSION_PREFIX}"-*|"${CRSS_SESSION_PREFIX}"_*) return 0 ;; esac
   printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
@@ -81,8 +95,8 @@ _fr_poisoned() {
 }
 _fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
-SESSION="ah_${ALIAS}-${ID}"
-REMOTE_NAME="ah-${ALIAS}-${ID}"
+SESSION="${CRSS_SESSION_PREFIX}_${ALIAS}-${ID}"
+REMOTE_NAME="${CRSS_SESSION_PREFIX}-${ALIAS}-${ID}"
 # Default mirrors new-session.sh's default (no CLAUDE_SESSION_PROFILE, no
 # CLAUDE_SESSION_MODEL): the orchestrator profile pinned to claude-opus-5-5 —
 # NOT the bare "sonnet" this fallback used before the per-role profile
@@ -101,8 +115,8 @@ SESSION="${SESSION}"
 WORKDIR="${WORKDIR}"
 REMOTE_NAME="${REMOTE_NAME}"
 MODEL="${MODEL}"
-export PATH="/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export HOME="/home/agents"
+export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="${HOME}"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
 log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL event=\$1" | tee -a "\$LOG_FILE"; }
@@ -122,13 +136,13 @@ mkdir -p "\$RUNDIR/.claude"
 # A real directory there is the project's own project-scoped skills: leave it.
 if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
   rm -f "\$RUNDIR/.claude/skills"
-  ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+  ln -sf ${CRSS_CLAUDE_HOME}/skills "\$RUNDIR/.claude/skills"
 else
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
 fi
 # Remote-control bridge requires a first-party ANTHROPIC_BASE_URL (CLI >= 2026-07-07);
 # a proxy base URL (e.g. headroom 127.0.0.1) silently disables session registration.
-python3 -c "import json;json.load(open('/home/agents/.claude/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > /home/agents/.claude/rc-firstparty.settings.json
+python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
@@ -151,9 +165,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
@@ -198,8 +212,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${SCRIPT}
 ExecStop=/usr/bin/tmux kill-session -t ${SESSION}
-Environment=HOME=/home/agents
-Environment=PATH=/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=${HOME}
+Environment=PATH=${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=TMUX_TMPDIR=/tmp
 [Install]
 WantedBy=default.target

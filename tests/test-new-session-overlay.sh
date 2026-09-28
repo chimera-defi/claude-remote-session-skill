@@ -19,6 +19,11 @@ export PATH="$BIN:$PATH"
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 
 # ── absent overlay ───────────────────────────────────────────────────────
+# Isolation: also override CRSS_CLAUDE_HOME (not just CRSS_HOME) — otherwise
+# the "rules: absent" expectation below is only true on a host with no real
+# ~/.claude/rules/crss-host.md, and silently reads the operator's real overlay
+# rules pointer on a host that has one set up (see the same isolation note in
+# test-session-alias.sh).
 ABSENT="/tmp/crss-newsession-overlay-absent-$$-nonexistent"
 out="$(CRSS_HOME="$ABSENT" CRSS_CLAUDE_HOME="$ABSENT" bash "$NS" --dry-run overlay-test-absent 2>&1)"
 has "absent-overlay-line" "$out" "overlay: $ABSENT \(config: absent, rules: absent\)"

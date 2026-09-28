@@ -18,7 +18,7 @@ export CRSS_SESSION_PREFIX=ah
 export CRSS_LEGACY_PREFIXES=agenthost
 
 # short folder (<=18) passes through unchanged
-ok "short-passthrough" "$(bash "$ALIAS" eth2-quickstart)" "eth2-quickstart"
+ok "short-passthrough" "$(bash "$ALIAS" widget-tracker)" "widget-tracker"
 # long folder -> initials acronym
 ok "long-acronym" "$(bash "$ALIAS" some-very-long-project-name)" "svlpn"
 # ALIAS_PROTECT is narrower than session-doctor's reap PROTECT: a folder that
@@ -45,7 +45,7 @@ ok "protected-ignores-alias" "$(CRSS_ALIAS_PROTECT_NAMES='openclaw|hermes' bash 
 # — it aliases normally like any other folder.
 ok "unprotected-by-default" "$(bash "$ALIAS" openclaw-autoresearch --alias oa2)" "oa2"
 # a folder name that normalizes to nothing (symbols-only, > CAP chars) must
-# never produce an empty alias — found via independent review (devin-delegate):
+# never produce an empty alias — found via independent review:
 # an empty alias would flow into a malformed tmux/systemd name like
 # "ah-0715-0630-" (dangling separator).
 long_symbolic='@@@@@@@@@@@@@@@@@@@@'
@@ -66,10 +66,10 @@ notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0
 # READ-PATH guard: a poisoned stored value (from an external writer / manual edit /
 # legacy) is discarded on resolution, re-inferred, and self-healed in the store.
 PZ="$(mktemp)"
-printf 'portfolio-single-source-of-truth\ttranche1-ready-0728\n' > "$PZ"
+printf 'my-example-long-project-name\ttranche1-ready-0728\n' > "$PZ"
 printf 'discovery-0718\tdiscovery-0718-153051-4107171\n' >> "$PZ"
 printf 'ah-universe-expand-0722\tah-universe-expand-0722-194533-425253\n' >> "$PZ"
-r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" portfolio-single-source-of-truth)"
+r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" my-example-long-project-name)"
 r2="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" discovery-0718)"
 r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" ah-universe-expand-0722)"
 ok "readguard-1-clean" "$(notsess "$r1")" "clean"
@@ -242,7 +242,7 @@ ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$
 
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
-for x in crss portfolio-ssot opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
+for x in crss widgets opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
   ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
 done
 

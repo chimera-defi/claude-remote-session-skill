@@ -73,14 +73,38 @@ ok "fallback-model-default-not-stale-sonnet" \
 # for every CLAUDE_SESSION_PROFILE, including the orchestrator default that the
 # fallback recipe's non-PROFILE-aware invocation matches). Found in review: the
 # flag landed in new-session.sh's CLAUDE_EXTRA_FLAGS but was never ported to the
-# fallback recipe's two `/usr/bin/claude ...` lines, so the documented emergency
+# fallback recipe's two claude-invocation lines, so the documented emergency
 # path silently lost the cache-reuse win new-session.sh already has.
 has "new-session-has-cache-flag" 'CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"' "$NS"
 # The fallback recipe's invocation has no CLAUDE_EXTRA_FLAGS variable (it isn't
 # PROFILE-aware), so check the flag is baked directly into BOTH claude
 # invocation lines (fresh-start and --continue), not just mentioned in prose.
+# Both scripts invoke via the host-overridable ${CRSS_CLAUDE_BIN} (genericize
+# pass, PR docs/genericize-host-specifics): a literal /usr/bin/claude here would
+# both hardcode a host path and silently drop out of sync with new-session.sh,
+# which resolves CRSS_CLAUDE_BIN from the overlay. Match the resolved-variable
+# form, not a literal binary path.
 ok "fallback-cache-flag-on-both-invocations" \
-  "$(grep -cE -- '^\s*/usr/bin/claude .*--exclude-dynamic-system-prompt-sections' "$FB")" "2"
+  "$(grep -cE -- '^\s*\$\{CRSS_CLAUDE_BIN\} .*--exclude-dynamic-system-prompt-sections' "$FB")" "2"
+
+# Both scripts source their host-local paths from the same CRSS_* overlay
+# variables (examples/crss-overlay/README.md) rather than a hardcoded host
+# path — this is the actual guard the docs/genericize-host-specifics PR relies
+# on to keep the two in sync going forward: if new-session.sh's variable names
+# ever change, this test starts failing on the NS side, which is the signal to
+# update fallback-recipe.md too.
+has "new-session-uses-crss-workspace"   '${CRSS_WORKSPACE}'   "$NS"
+has "fallback-uses-crss-workspace"      '${CRSS_WORKSPACE}'   "$FB"
+has "new-session-uses-crss-claude-home" '${CRSS_CLAUDE_HOME}' "$NS"
+has "fallback-uses-crss-claude-home"    '${CRSS_CLAUDE_HOME}' "$FB"
+has "new-session-uses-crss-claude-bin"  '${CRSS_CLAUDE_BIN}'  "$NS"
+has "fallback-uses-crss-claude-bin"     '${CRSS_CLAUDE_BIN}'  "$FB"
+
+# Neither script should carry the old hardcoded host path this pass removed —
+# a regression here means someone pasted a literal path back in instead of
+# using the CRSS_* var.
+ok "new-session-no-hardcoded-home-agents" "$(grep -cF '/home/agents' "$NS")" "0"
+ok "fallback-no-hardcoded-home-agents"    "$(grep -cF '/home/agents' "$FB")" "0"
 
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

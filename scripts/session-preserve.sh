@@ -60,8 +60,9 @@ _crss_load_config
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -156,8 +157,9 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
 # not one of ours. Mirrors session-doctor.sh's tmux_to_base exactly (same
 # name, same logic — kept as a local copy rather than sourced, matching how
 # every script in this repo is a standalone deployable file): the first "_"
-# after the recognised prefix ($_crss_prefix_re) becomes "-". ah_hh-0717-0224
-# -> ah-hh-0717-0224; agenthost_foo -> agenthost-foo. Any later "_" in the
+# after the recognised prefix ($_crss_prefix_re — the configured
+# CRSS_SESSION_PREFIX or a CRSS_LEGACY_PREFIXES entry) becomes "-".
+# <prefix>_hh-0717-0224 -> <prefix>-hh-0717-0224. Any later "_" in the
 # slug is left alone.
 tmux_to_base() {
   if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then

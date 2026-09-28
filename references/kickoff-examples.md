@@ -22,7 +22,7 @@ or execute an order; execution needs an explicit EXECUTION_APPROVED_HUMAN=1 from
 operator in THIS session, and you must never infer it. Never loosen the broker execution
 gate. Preregistration discipline: new work gets a named prereg, hash-pinned, and a
 blinded two-family cold review (Fable via .claude/agents/reviewer.md or model "fable",
-plus GPT via .claude/agents/gpt-relay.md) must pass BEFORE any scoring or claim. Do not
+plus GPT via your project's GPT-relay subagent, if it has one) must pass BEFORE any scoring or claim. Do not
 edit frozen or preregistered ledgers or data except by the documented amendment process.
 Never delete session/* or research branches. No bare git stash. Never print tokens. Do
 not touch the bus systemd units, the worktree <follower-worktree>, or the <hub-label>
@@ -105,7 +105,7 @@ dropped: RESEARCH ONLY (execution_allowed=false) — an order needs an explicit
 EXECUTION_APPROVED_HUMAN=1 from the operator in this session, never inferred; never
 loosen the broker execution gate; new work gets a named, hash-pinned prereg with a
 blinded two-family cold review (Fable via `subagent_type: reviewer` or model "fable",
-plus GPT via `.claude/agents/gpt-relay.md`) before any scoring or claim; don't edit
+plus GPT via your project's GPT-relay subagent, if it has one) before any scoring or claim; don't edit
 frozen or preregistered ledgers except by the documented amendment process; don't delete
 `session/*` or research branches; no bare `git stash`; never print tokens; don't touch
 the bus systemd units, the worktree `<follower-worktree>`, or the `<hub-label>` prefix.
@@ -220,9 +220,10 @@ ROLES (per repo AGENTS.md): you (Opus 5.5) orchestrate, and you don't write mult
 code yourself. Builders run as `subagent_type: builder` or `model: "sonnet"`. The Fable
 advisor/reviewer is `.claude/agents/reviewer.md`, or an Agent call with `model: "fable"`.
 It is mandatory, blinded, and paired with a GPT red-team on anything that changes a book
-or allocation, a policy or charter, or confirms or retracts alpha. ChatGPT is reached via
-`.claude/agents/gpt-relay.md`. A delegate tool's rate limit reset at 2026-09-26 16:13
-CEST. On failure, record the exact error, don't retry-loop.
+or allocation, a policy or charter, or confirms or retracts alpha. ChatGPT is reached, if
+this project has one, via its own GPT-relay subagent (see your host's
+`$CRSS_HOME/local.md`). A delegate tool's rate limit reset once mid-run. On failure,
+record the exact error, don't retry-loop.
 
 TASKS
 1. Read the bus. Run `<repo>/bin/coordination_bus_cli.py status`, then read the unacked
@@ -327,7 +328,7 @@ completely, since only the prompt string crosses over, and have it write large r
 to a file and return a short summary. For a second opinion of your own, spawn the
 reviewer directly (`subagent_type: reviewer` or `model: "fable"`) rather than a Sonnet
 builder checking its own reasoning — mandatory, blinded, paired with a GPT red-team (via
-`.claude/agents/gpt-relay.md`) on anything that changes a book or allocation, a policy or
+the project's own GPT-relay subagent, if it has one) on anything that changes a book or allocation, a policy or
 charter, or confirms or retracts alpha. On a delegate-tool rate limit, record the exact
 error and don't retry-loop.
 

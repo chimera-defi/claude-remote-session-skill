@@ -53,10 +53,10 @@
 #                                           # default `report` output. Report only.
 #
 # Safety:
-#   * Protected names default to the skill's own name ("claude-remote"); this
-#     host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
-#     $CRSS_HOME/config.sh (see examples/crss-overlay/). Protected names are
-#     NEVER reaped.
+#   * Protected names default to the skill's own name ("claude-remote"); a host
+#     running other always-on bridge sessions can add them (e.g.
+#     my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
+#     examples/crss-overlay/). Protected names are NEVER reaped.
 #   * A tmux/systemd entry is only reaped when its claude process is genuinely gone
 #     (reap-local) or the operator named it explicitly (reap).
 #   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
@@ -124,8 +124,9 @@ _crss_load_config
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
 # Protected names (default: the skill's own name, "claude-remote") are NEVER
-# reaped. This host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
-# $CRSS_HOME/config.sh (see examples/crss-overlay/). An empty override would
+# reaped. A host running other always-on bridge sessions can add them (e.g.
+# my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
+# examples/crss-overlay/). An empty override would
 # make every `grep -qiE "$PROTECT"` below match EVERYTHING (an empty ERE
 # matches any line), which is the opposite of "protect nothing" — so an
 # empty CRSS_PROTECT_NAMES falls back to a pattern that matches nothing.
@@ -144,8 +145,9 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -391,9 +393,10 @@ _registry_delete_one() {
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
 # Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
-# name from the tmux session name (they often differ, e.g. tmux agenthost_chimera-control
-# vs remote-control chimera-server-control). claude/node = running; sleep = supervisor
-# backoff (still alive); a bare shell = supervisor loop exited = genuinely dead.
+# name from the tmux session name (they often differ, e.g. a hand-named tmux session
+# my_server_control vs remote-control name my-server-control-bridge). claude/node =
+# running; sleep = supervisor backoff (still alive); a bare shell = supervisor loop
+# exited = genuinely dead.
 proc_alive() {  # $1 = tmux session name
   case "$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" in
     claude|node|sleep) return 0 ;;
@@ -549,8 +552,8 @@ _wt_landed() {
 # files, and neither _wt_dirty (`git status` without --ignored) nor
 # session-preserve (`ls-files --exclude-standard`) counts them, so a worktree
 # whose results live under a gitignored dir (`artifacts/`) reads "clean" /
-# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: eth2-quickstart
-# exp-lab, `status=clean ahead=0`, removed via worktree-stale's printed
+# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: a research
+# worktree, `status=clean ahead=0`, removed via worktree-stale's printed
 # `remove:` line; its never-committed artifacts/ held a research campaign.
 # So `reap` archives that payload before removing (_wt_archive_ignored) and
 # worktree-stale flags it. tests/test-session-doctor-reap-worktree.sh pins this.
@@ -730,7 +733,7 @@ _is_caller_cwd() {
 # <unit>.service.d/*.conf. Real case this guards against: a live session's
 # worktree can go on being another unit's WorkingDirectory/--state-dir long
 # after the SESSION that first created it is reaped (e.g.
-# ah-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
+# cs-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
 # bus timers). A plain substring match on the whole unit file is deliberately
 # used instead of parsing specific directive names — these generated unit
 # files only ever contain [Unit]/[Service]/[Install] directives, so a path
@@ -960,12 +963,13 @@ _history_matches() {
   # matching entirely. Without this short-circuit, an absolute path whose
   # basename happens to be a substring of some unrelated worktree name (e.g.
   # a main-repo checkout that lives OUTSIDE ~/.claude/worktrees/, whose
-  # basename is also a substring of a stale worktree dir like
-  # "agenthost-<same-name>-<date>") gets silently hijacked by the substring
-  # fallback below instead of matching the literal folder the caller named.
-  # CONFIRMED: `history /home/agents/workspace/claude-remote-session-skill`
+  # basename is also a substring of a stale worktree dir carrying a legacy
+  # prefix (CRSS_LEGACY_PREFIXES), e.g. "oldhost-<same-name>-<date>") gets
+  # silently hijacked by the substring fallback below instead of matching the
+  # literal folder the caller named.
+  # CONFIRMED: `history /home/youruser/workspace/claude-remote-session-skill`
   # (a real, existing directory, NOT under wt_base) matched a long-deleted
-  # `agenthost-claude-remote-session-skill-20260715-0630` worktree instead —
+  # `oldhost-claude-remote-session-skill-20260715-0630` worktree instead —
   # the basename-based substring search never even looked at whether the
   # literal path existed. A query that does NOT resolve to a real directory
   # (folder already deleted from disk, or a bare name/substring with no
@@ -1439,7 +1443,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
         # deletes it and status=clean never shows it. When there is some, the
         # archive step is chained AHEAD of the printed remove command (so pasting
-        # just the `remove:` line — how the 2026-08-29 exp-lab loss happened —
+        # just the `remove:` line — how the 2026-08-29 loss above happened —
         # archives first, and a failed/over-cap archive stops the removal) and a
         # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
         arch_pre=""
@@ -1771,9 +1775,10 @@ else:
     fi
     echo "reaped '$NAME'"
     # Registry cleanup: this session's registry entry (matched by title ==
-    # base name — the hyphenated "ah-..."/"agenthost-..." form the registry
-    # uses for a remote-control session's title, confirmed against a live
-    # pull) is deleted too, unless --keep-registry. Fails soft: an
+    # base name — the hyphenated form (configured prefix or a
+    # CRSS_LEGACY_PREFIXES entry) the registry uses for a remote-control
+    # session's title, confirmed against a live pull) is deleted too, unless
+    # --keep-registry. Fails soft: an
     # unreachable or unparsable registry only prints a note here and never
     # changes reap's own exit status — the teardown above already succeeded,
     # and that's what reap promises regardless of registry hygiene.

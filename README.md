@@ -52,7 +52,7 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `ah-<alias>-<MMDD-HHMM>` (e.g. `ah-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
+The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, configurable via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
 
@@ -89,21 +89,22 @@ default (that drift is the point for builder/copywriter).
 
 | What | Format |
 |------|--------|
-| tmux session | `ah_<alias>-<MMDD-HHMM>` (underscore prefix) |
-| remote-control name | `ah-<alias>-<MMDD-HHMM>` (shown in Claude Code app) |
-| start script | `~/.local/bin/ah-<alias>-<MMDD-HHMM>-start.sh` |
-| systemd service | `~/.config/systemd/user/ah-<alias>-<MMDD-HHMM>.service` |
+| tmux session | `<prefix>_<alias>-<MMDD-HHMM>` (underscore prefix) |
+| remote-control name | `<prefix>-<alias>-<MMDD-HHMM>` (shown in Claude Code app) |
+| start script | `~/.local/bin/<prefix>-<alias>-<MMDD-HHMM>-start.sh` |
+| systemd service | `~/.config/systemd/user/<prefix>-<alias>-<MMDD-HHMM>.service` |
 
 Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside the
 mobile-list window while reading naturally and grouping by project. `<alias>`
 is the folder name as-is when short, otherwise a short inferred/persisted acronym (or
-an explicit `--alias`) — see `SKILL.md` for the resolution rules. Legacy
-`agenthost_`/`agenthost-` sessions created before this change keep working;
-`session-doctor` matches both prefixes during the transition.
+an explicit `--alias`) — see `SKILL.md` for the resolution rules. `<prefix>` defaults to
+`cs`, configurable per host via `CRSS_SESSION_PREFIX`; a host that changes its prefix
+can list the old one(s) in `CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising
+sessions from before the change — see `examples/crss-overlay/config.sh.example`.
 
 ## How to connect
 
-Once running: open Claude Code on any device → Remote sessions → look for `ah-<alias>-<MMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
+Once running: open Claude Code on any device → Remote sessions → look for `<prefix>-<alias>-<MMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
 
 ## Agent instructions in this repo
 

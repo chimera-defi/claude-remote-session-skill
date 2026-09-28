@@ -62,8 +62,9 @@ _crss_load_config
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -127,7 +128,7 @@ _is_working() {
 # hazard class as the menu widgets above (blind Enter answers it instead of
 # being dropped), and worse: it can pick the DEFAULT option, which is not
 # necessarily "trust". Confirmed live 2026-09-24 (9th dropped-first-send
-# incident, `new-session questrade-ui-adapter --task-file` on its very first
+# incident, `new-session my-project --task-file` on its very first
 # launch in that worktree): the kickoff paste's Enter landed on this dialog
 # and selected "No, exit", so Claude exited immediately and the supervisor
 # loop went into a 300s restart backoff — reported UNVERIFIED, which was
@@ -166,8 +167,8 @@ _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
 # real message can never find it there. Without this, a landed-but-still-
 # buffered large paste reads (wrongly) as "gone from the input line", and
 # _verdict falls straight through "buffered" to "unverified" instead of
-# pressing Enter again. Confirmed live 2026-09-24 (ah_qt-gate-0924-0802,
-# `new-session questrade-ui-adapter --task-file`): send reported UNVERIFIED
+# pressing Enter again. Confirmed live 2026-09-24 (cs_qt-gate-0924-0802,
+# `new-session my-project --task-file`): send reported UNVERIFIED
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
 _is_collapsed_paste_in_input() {
@@ -208,7 +209,7 @@ _strip_ansi() {
 #
 # The load-bearing assumption here — that a genuine user-typed draft renders
 # WITHOUT the dim attribute — was VERIFIED empirically on 2026-09-11 against a
-# disposable session (`ah-draft-probe-0911-0630`, CC v2.1.206), not assumed.
+# disposable session (`cs-draft-probe-0911-0630`, CC v2.1.206), not assumed.
 # A real unsubmitted draft captures as `ESC[39m❯ <NBSP>this is a real
 # unsubmitted draft` — no `ESC[2m` anywhere — while that same pane's organic
 # ghost text captures as `ESC[39m❯ <NBSP>ESC[2mmark the rest complete tooESC[0m`.
@@ -537,7 +538,7 @@ case "$MODE" in
     [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
     verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
     # ── dropped-first-paste recovery (2026-09-24 incident, e.g.
-    # ah_pf-process-0924-0734 07:34) ────────────────────────────────────────
+    # cs_pf-process-0924-0734 07:34) ────────────────────────────────────────
     # On a freshly booted Claude Code, `check` (and new-session.sh's ready
     # poll) can observe the ❯ prompt render and call the session "ready"
     # before the TUI's own bracketed-paste handling has finished wiring
