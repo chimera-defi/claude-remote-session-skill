@@ -50,7 +50,8 @@ session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no t
 ```
 
 Safety guarantees:
-- Never touches protected plumbing: `claude-remote*`, `*openclaw*`, `*hermes*`.
+- Never touches protected plumbing: the built-in `claude-remote*` pattern, plus anything
+  matched by your host's `CRSS_PROTECT_NAMES` (see `examples/crss-overlay/config.sh.example`).
 - Only reaps local items whose `claude` process is genuinely gone.
 - `reap-local` is dry-run unless `--force` — so a control session merely inside a
   supervisor restart window is never reaped by accident.

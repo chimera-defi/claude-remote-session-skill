@@ -127,7 +127,7 @@ _is_working() {
 # hazard class as the menu widgets above (blind Enter answers it instead of
 # being dropped), and worse: it can pick the DEFAULT option, which is not
 # necessarily "trust". Confirmed live 2026-09-24 (9th dropped-first-send
-# incident, `new-session questrade-ui-adapter --task-file` on its very first
+# incident, `new-session my-project --task-file` on its very first
 # launch in that worktree): the kickoff paste's Enter landed on this dialog
 # and selected "No, exit", so Claude exited immediately and the supervisor
 # loop went into a 300s restart backoff — reported UNVERIFIED, which was
@@ -167,7 +167,7 @@ _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
 # buffered large paste reads (wrongly) as "gone from the input line", and
 # _verdict falls straight through "buffered" to "unverified" instead of
 # pressing Enter again. Confirmed live 2026-09-24 (ah_qt-gate-0924-0802,
-# `new-session questrade-ui-adapter --task-file`): send reported UNVERIFIED
+# `new-session my-project --task-file`): send reported UNVERIFIED
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
 _is_collapsed_paste_in_input() {

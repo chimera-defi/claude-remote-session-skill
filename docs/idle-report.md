@@ -54,8 +54,9 @@ Every row is a **still-alive** proc, so `reap-local` deliberately won't touch it
   registry entry + worktree, after the session-preserve safety check)
 
 Do **not** wire `idle-report` into an auto-kill path — the report/act separation
-is the safety property. Rows flagged `[P]` are **protected**
-(`claude-remote|openclaw|hermes`) and must never be reaped.
+is the safety property. Rows flagged `[P]` are **protected** (the built-in
+`claude-remote` pattern, plus anything in your host's `CRSS_PROTECT_NAMES` — see
+`examples/crss-overlay/config.sh.example`) and must never be reaped.
 
 ## How it works (the non-obvious bits, verified empirically — don't re-derive)
 
@@ -70,7 +71,7 @@ is the safety property. Rows flagged `[P]` are **protected**
    is fine, they're flagged `[P]` anyway).
 4. **cwd → transcript dir** `~/.claude/projects/<encoded>`, where
    `encoded = cwd.replace('.', '-').replace('/', '-')`. Confirmed to hold even for
-   dotted paths (`/home/agents/.openclaw` → `-home-agents--openclaw`). Not
+   dotted paths (`/home/youruser/.claude-remote` → `-home-youruser--claude-remote`). Not
    documented anywhere in Claude Code — verified by checking the dirs exist.
 5. **Idle signal** = max `timestamp` over all `*.jsonl` entries with `type ==
    "user"`, **excluding all FIVE artifacts one `/compact` invocation writes**, not
@@ -122,11 +123,11 @@ is the safety property. Rows flagged `[P]` are **protected**
 ```
 === LOCAL: live sessions with NO type:user message in the last 30 day(s) — REPORT ONLY, kills nothing ===
   LAST type:user         PROT  TMUX SESSION                                   CWD
-  never: no transcript   [P]   chimera-server                                 /home/agents/.openclaw
-  never: no user msgs          ah_compute-nums-0808-2337                      /home/agents/.claude/worktrees/ah-compute-nums-0808-2337
-  2026-07-10T05:58:00Z         chimera-server-control-20260710-0757           /home/agents/.sessions/agenthost-sessions
+  never: no transcript   [P]   claude-remote                                  /home/youruser/.claude-remote
+  never: no user msgs          <prefix>_my-project-0808-2337                  /home/youruser/.claude/worktrees/<prefix>-my-project-0808-2337
+  2026-07-10T05:58:00Z         my-server-control-20260710-0757                /home/youruser/.sessions/sessions-mgmt
   ...
-  --- 6 idle session(s), incl. 1 PROTECTED (never reap). All are ALIVE -> reap-local will NOT touch them.
+  --- 3 idle session(s), incl. 1 PROTECTED (never reap). All are ALIVE -> reap-local will NOT touch them.
   Report only. Reap an idle-but-alive one by hand:
     tmux kill-session -t <name> ; systemctl --user disable --now <name>.service
 ```

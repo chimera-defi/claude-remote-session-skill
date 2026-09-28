@@ -21,12 +21,21 @@ every profile (a prompt-cache-reuse win) — both kept in sync with
 `new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
 
 ```bash
+# Host-local overlay: same CRSS_* vars and defaults as new-session.sh (see
+# examples/crss-overlay/README.md). This recipe reads them from the environment
+# only — it does NOT parse $CRSS_HOME/config.sh itself (another documented
+# reduction vs. the installed script).
+: "${CRSS_WORKSPACE:=$HOME/workspace}"
+: "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
+: "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
+: "${CRSS_CLAUDE_BIN:=/usr/bin/claude}"
+
 FOLDERNAME="<foldername>"
-WORKDIR="/home/agents/workspace/${FOLDERNAME}"   # or /home/agents/.sessions/${FOLDERNAME}
+WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"   # or ${CRSS_SESSIONS_DIR}/${FOLDERNAME}
 # Emergency path: store lookup only (no acronym/inference); may differ from
 # new-session for an un-stored long folder.
 ID=$(date +%m%d-%H%M)
-ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' /home/agents/.claude/session-aliases 2>/dev/null)
+ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' "${CRSS_CLAUDE_HOME}/session-aliases" 2>/dev/null)
 # Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
 # a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD date, or a long numeric
 # run PAIRED with a real MMDD date fragment) — same DATE-VALIDATED guard as
@@ -101,8 +110,8 @@ SESSION="${SESSION}"
 WORKDIR="${WORKDIR}"
 REMOTE_NAME="${REMOTE_NAME}"
 MODEL="${MODEL}"
-export PATH="/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export HOME="/home/agents"
+export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="${HOME}"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
 log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL event=\$1" | tee -a "\$LOG_FILE"; }
@@ -122,13 +131,13 @@ mkdir -p "\$RUNDIR/.claude"
 # A real directory there is the project's own project-scoped skills: leave it.
 if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
   rm -f "\$RUNDIR/.claude/skills"
-  ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+  ln -sf ${CRSS_CLAUDE_HOME}/skills "\$RUNDIR/.claude/skills"
 else
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
 fi
 # Remote-control bridge requires a first-party ANTHROPIC_BASE_URL (CLI >= 2026-07-07);
 # a proxy base URL (e.g. headroom 127.0.0.1) silently disables session registration.
-python3 -c "import json;json.load(open('/home/agents/.claude/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > /home/agents/.claude/rc-firstparty.settings.json
+python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
@@ -151,9 +160,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
@@ -198,8 +207,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${SCRIPT}
 ExecStop=/usr/bin/tmux kill-session -t ${SESSION}
-Environment=HOME=/home/agents
-Environment=PATH=/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=${HOME}
+Environment=PATH=${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=TMUX_TMPDIR=/tmp
 [Install]
 WantedBy=default.target

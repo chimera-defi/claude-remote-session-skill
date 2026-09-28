@@ -53,10 +53,10 @@
 #                                           # default `report` output. Report only.
 #
 # Safety:
-#   * Protected names default to the skill's own name ("claude-remote"); this
-#     host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
-#     $CRSS_HOME/config.sh (see examples/crss-overlay/). Protected names are
-#     NEVER reaped.
+#   * Protected names default to the skill's own name ("claude-remote"); a host
+#     running other always-on bridge sessions can add them (e.g.
+#     my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
+#     examples/crss-overlay/). Protected names are NEVER reaped.
 #   * A tmux/systemd entry is only reaped when its claude process is genuinely gone
 #     (reap-local) or the operator named it explicitly (reap).
 #   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
@@ -124,8 +124,9 @@ _crss_load_config
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
 # Protected names (default: the skill's own name, "claude-remote") are NEVER
-# reaped. This host's overlay adds openclaw|hermes via CRSS_PROTECT_NAMES in
-# $CRSS_HOME/config.sh (see examples/crss-overlay/). An empty override would
+# reaped. A host running other always-on bridge sessions can add them (e.g.
+# my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
+# examples/crss-overlay/). An empty override would
 # make every `grep -qiE "$PROTECT"` below match EVERYTHING (an empty ERE
 # matches any line), which is the opposite of "protect nothing" — so an
 # empty CRSS_PROTECT_NAMES falls back to a pattern that matches nothing.
@@ -391,9 +392,10 @@ _registry_delete_one() {
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
 # Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
-# name from the tmux session name (they often differ, e.g. tmux agenthost_chimera-control
-# vs remote-control chimera-server-control). claude/node = running; sleep = supervisor
-# backoff (still alive); a bare shell = supervisor loop exited = genuinely dead.
+# name from the tmux session name (they often differ, e.g. a hand-named tmux session
+# my_server_control vs remote-control name my-server-control-bridge). claude/node =
+# running; sleep = supervisor backoff (still alive); a bare shell = supervisor loop
+# exited = genuinely dead.
 proc_alive() {  # $1 = tmux session name
   case "$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" in
     claude|node|sleep) return 0 ;;
@@ -549,8 +551,8 @@ _wt_landed() {
 # files, and neither _wt_dirty (`git status` without --ignored) nor
 # session-preserve (`ls-files --exclude-standard`) counts them, so a worktree
 # whose results live under a gitignored dir (`artifacts/`) reads "clean" /
-# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: eth2-quickstart
-# exp-lab, `status=clean ahead=0`, removed via worktree-stale's printed
+# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: a research
+# worktree, `status=clean ahead=0`, removed via worktree-stale's printed
 # `remove:` line; its never-committed artifacts/ held a research campaign.
 # So `reap` archives that payload before removing (_wt_archive_ignored) and
 # worktree-stale flags it. tests/test-session-doctor-reap-worktree.sh pins this.
@@ -963,7 +965,7 @@ _history_matches() {
   # basename is also a substring of a stale worktree dir like
   # "agenthost-<same-name>-<date>") gets silently hijacked by the substring
   # fallback below instead of matching the literal folder the caller named.
-  # CONFIRMED: `history /home/agents/workspace/claude-remote-session-skill`
+  # CONFIRMED: `history /home/youruser/workspace/claude-remote-session-skill`
   # (a real, existing directory, NOT under wt_base) matched a long-deleted
   # `agenthost-claude-remote-session-skill-20260715-0630` worktree instead —
   # the basename-based substring search never even looked at whether the
@@ -1439,7 +1441,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
         # deletes it and status=clean never shows it. When there is some, the
         # archive step is chained AHEAD of the printed remove command (so pasting
-        # just the `remove:` line — how the 2026-08-29 exp-lab loss happened —
+        # just the `remove:` line — how the 2026-08-29 loss above happened —
         # archives first, and a failed/over-cap archive stops the removal) and a
         # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
         arch_pre=""

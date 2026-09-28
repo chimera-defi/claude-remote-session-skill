@@ -22,14 +22,14 @@ BUSY_PANE='● Working on the survey…
 ────────────────────────────────────────────────────────
 ❯
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot'
+  [Opus 4.8] my-project'
 
 # message typed but Enter not yet submitted — it sits ON the input line
 BUFFERED_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ Goal: survey the $25k tranche candidates
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot'
+  [Opus 4.8] my-project'
 
 # message submitted — it now appears in the transcript ABOVE an empty input line,
 # and the session is working
@@ -38,7 +38,7 @@ SUBMITTED_PANE='● Goal: survey the $25k tranche candidates
 ────────────────────────────────────────────────────────
 ❯
 ────────────────────────────────────────────────────────
-  [Opus 4.8] portfolio-ssot'
+  [Opus 4.8] my-project'
 
 # --- _is_working: working indicator present? ---------------------------------
 ok "working-busy"      "$(_is_working "$BUSY_PANE"      && echo yes || echo no)" "yes"

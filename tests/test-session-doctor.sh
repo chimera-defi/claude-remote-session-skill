@@ -204,7 +204,7 @@ EOF
 
   # Gitignored payload. `git worktree remove` deletes gitignored files (with or
   # without --force) and status=clean never counts them, so a "clean" row can
-  # hold a whole campaign's results — the 2026-08-29 exp-lab loss, where a
+  # hold a whole campaign's results — the 2026-08-29 loss, where a
   # session pasted these `remove:` lines in bulk. A row whose worktree holds
   # non-regenerable ignored files must carry a NOTE (count / bytes / example
   # path / the archive command) AND have that archive chained ahead of the

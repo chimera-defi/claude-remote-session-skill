@@ -42,8 +42,8 @@ the generic defaults given here and in `kickoff-templates.md`.
    peers already enforce in this domain?* Restate it explicitly in the prompt — a relay must
    never silently drop it. If unsure whether a guardrail applies, **include it and flag it to
    the human** rather than omitting it.
-   > (portfolio domain) "This is **WATCH-only**. Do NOT place or execute any order. Execution
-   > requires an explicit `EXECUTION_APPROVED_HUMAN=1` from chimera_defi **in this session**."
+   > (a trading domain) "This is **WATCH-only**. Do NOT place or execute any order. Execution
+   > requires an explicit `EXECUTION_APPROVED_HUMAN=1` from the operator **in this session**."
 
 6. **Scope boundaries** — what NOT to touch (other sessions, other repos) and any bounded-scope
    rule for the target's role. Name the concrete anti-patterns for this domain ("don't
@@ -95,7 +95,7 @@ Summaries of a compacted transcript drop detail; a file on disk doesn't.
 
 ## Genericized examples (shape only — fill with real context)
 
-**Research/survey (portfolio-ssot tranche):**
+**Research/survey (candidate-tranche audit):**
 ```
 Goal: a go/no-go shortlist of tranche-1 candidates -> memory/tranche1-survey.md.
 Steps: 1) pull the current candidate set from <source>; 2) score each on <criteria>;
@@ -110,7 +110,7 @@ Stop rule: keep going through the survey; stop and ask only if <source> is unrea
        Genuinely my call goes to me via `session-send <parent> --file <f>`.
 ```
 
-**Build (eth2-quickstart GEO/AEO):**
+**Build (a docs-metadata feature):**
 ```
 Goal: <one-sentence outcome, e.g. "GEO/AEO metadata landed for the quickstart docs:
        PR merged, CI green">.

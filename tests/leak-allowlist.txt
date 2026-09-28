@@ -1,0 +1,30 @@
+# tests/leak-allowlist.txt — files exempt from ALL of tests/test-no-host-leaks.sh's
+# checks (generic and, when CRSS_LEAK_DENYLIST is set, host-specific). One path
+# glob per line, matched against the path exactly as `git ls-files` prints it.
+# Every entry needs a reason. Keep this minimal — prefer fixing the file's
+# content over adding a line here (see the PR that added this file for the
+# genericization pass that preceded it).
+
+# Nightly-review automation state, written via PRs by an external process, not
+# authored content. Its own repo's PR link (github.com/<this-repo's-owner>/...)
+# is not a leak — it's already excluded by the github-owner check's own-origin
+# match — but the file is allowlisted wholesale anyway since it's a machine-
+# written log, not something this PR's genericization pass should be editing.
+.routine-state/review-state.md
+
+# (README.md's one non-own github.com reference — garrytan/gstack, the real
+# upstream project this skill is compatible with — is handled as a named
+# exception directly in test-no-host-leaks.sh's github-owner check, same as
+# the "fakeorg" test-fixture owner, rather than allowlisting the whole file
+# and losing coverage on its other checks.)
+
+# CRSS_ALIAS_PROTECT_NAMES / CRSS_PROTECT_NAMES fixtures use arbitrary regex
+# values (openclaw|hermes) to exercise the config-driven protect path end to
+# end — the values themselves are incidental test data, not real host state
+# (see research-leaks.md's own F/fixture disposition for this exact pattern).
+# Allowlisted wholesale rather than rewriting the fixture values, since the
+# actual behavior under test is "does CRSS_*_NAMES protect a matching name",
+# not anything specific to these two words.
+tests/test-session-alias.sh
+tests/test-session-doctor.sh
+tests/test-session-doctor-registry-prune.sh
