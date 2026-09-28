@@ -66,9 +66,10 @@ is the safety property. Rows flagged `[P]` are **protected** (the built-in
    supervisor loop**, because both carry `claude … --remote-control` in their args.
 2. **cwd** per PID from `readlink /proc/<pid>/cwd`.
 3. **remote-control name → tmux name** via the script's existing `svc_to_tmux`
-   (`ah-X`→`ah_X`, `agenthost-X`→`agenthost_X`; anything else unchanged — so the
-   handful of non-`ah`/`agenthost` protected rows show an approximate name, which
-   is fine, they're flagged `[P]` anyway).
+   (`<prefix>-X`→`<prefix>_X` for the configured `CRSS_SESSION_PREFIX` and any
+   `CRSS_LEGACY_PREFIXES` entry; anything else unchanged — so the handful of
+   rows outside those recognised prefixes show an approximate name, which is
+   fine, they're flagged `[P]` anyway).
 4. **cwd → transcript dir** `~/.claude/projects/<encoded>`, where
    `encoded = cwd.replace('.', '-').replace('/', '-')`. Confirmed to hold even for
    dotted paths (`/home/youruser/.claude-remote` → `-home-youruser--claude-remote`). Not

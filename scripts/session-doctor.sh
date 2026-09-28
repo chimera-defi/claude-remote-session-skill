@@ -145,8 +145,9 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -732,7 +733,7 @@ _is_caller_cwd() {
 # <unit>.service.d/*.conf. Real case this guards against: a live session's
 # worktree can go on being another unit's WorkingDirectory/--state-dir long
 # after the SESSION that first created it is reaped (e.g.
-# ah-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
+# cs-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
 # bus timers). A plain substring match on the whole unit file is deliberately
 # used instead of parsing specific directive names — these generated unit
 # files only ever contain [Unit]/[Service]/[Install] directives, so a path
@@ -962,12 +963,13 @@ _history_matches() {
   # matching entirely. Without this short-circuit, an absolute path whose
   # basename happens to be a substring of some unrelated worktree name (e.g.
   # a main-repo checkout that lives OUTSIDE ~/.claude/worktrees/, whose
-  # basename is also a substring of a stale worktree dir like
-  # "agenthost-<same-name>-<date>") gets silently hijacked by the substring
-  # fallback below instead of matching the literal folder the caller named.
+  # basename is also a substring of a stale worktree dir carrying a legacy
+  # prefix (CRSS_LEGACY_PREFIXES), e.g. "oldhost-<same-name>-<date>") gets
+  # silently hijacked by the substring fallback below instead of matching the
+  # literal folder the caller named.
   # CONFIRMED: `history /home/youruser/workspace/claude-remote-session-skill`
   # (a real, existing directory, NOT under wt_base) matched a long-deleted
-  # `agenthost-claude-remote-session-skill-20260715-0630` worktree instead —
+  # `oldhost-claude-remote-session-skill-20260715-0630` worktree instead —
   # the basename-based substring search never even looked at whether the
   # literal path existed. A query that does NOT resolve to a real directory
   # (folder already deleted from disk, or a bare name/substring with no
@@ -1773,9 +1775,10 @@ else:
     fi
     echo "reaped '$NAME'"
     # Registry cleanup: this session's registry entry (matched by title ==
-    # base name — the hyphenated "ah-..."/"agenthost-..." form the registry
-    # uses for a remote-control session's title, confirmed against a live
-    # pull) is deleted too, unless --keep-registry. Fails soft: an
+    # base name — the hyphenated form (configured prefix or a
+    # CRSS_LEGACY_PREFIXES entry) the registry uses for a remote-control
+    # session's title, confirmed against a live pull) is deleted too, unless
+    # --keep-registry. Fails soft: an
     # unreachable or unparsable registry only prints a note here and never
     # changes reap's own exit status — the teardown above already succeeded,
     # and that's what reap promises regardless of registry hygiene.

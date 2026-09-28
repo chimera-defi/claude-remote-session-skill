@@ -41,8 +41,9 @@ _crss_load_config
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -146,8 +147,9 @@ has_mmdd_group() {
 
 # looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
 # a generated session name. Such a value must never be used or STORED as an alias:
-# doing so yields doubled `ah-ah-...-MMDD-MMDD` names and re-poisons the store.
-# Matches: ah-/ah_ prefix; a long numeric run (timestamp/random suffix, e.g.
+# doing so yields doubled `<prefix>-<prefix>-...-MMDD-MMDD` names and re-poisons
+# the store. Matches: the configured prefix ($_crss_prefix_re, see the
+# CRSS-PREFIX-RE block above) with a -/_ separator; a long numeric run (timestamp/random suffix, e.g.
 # -153051 / -4107171) PAIRED WITH a real MMDD date fragment elsewhere in the
 # string (see has_mmdd_group); an MMDD-HHMM timestamp pair; or a trailing -MMDD
 # date — the latter two only when the digits validate as a real date/time
@@ -162,10 +164,11 @@ has_mmdd_group() {
 #
 # Case-fold to lowercase before the prefix check: the store is documented as
 # user-editable (session-aliases.example: "edit freely") and this is also the
-# read-path guard for values from an external writer, so a hand-typed `AH-foo-bar`
-# (no embedded date, so none of the digit checks below would catch it either)
-# must not slip past a case-sensitive `ah-*` match — found via targeted probing
-# of the read path with a mixed-case stored value.
+# read-path guard for values from an external writer, so a hand-typed value with
+# the prefix upper-cased (e.g. `<PREFIX>-foo-bar`, no embedded date, so none of
+# the digit checks below would catch it either) must not slip past a
+# case-sensitive prefix match — found via targeted probing of the read path
+# with a mixed-case stored value.
 looks_like_session_name() {
   local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   [[ "$v" =~ ^(${_crss_prefix_re})[-_] ]] && return 0
@@ -205,10 +208,11 @@ desessionify() { printf '%s' "$1" | sed -E "s/^(${_crss_prefix_re})[-_]//I; s/(-
 infer() { # $1 = folder ; echo alias
   local f="$1" acr="" w a prev=""
   # De-sessionify to a fixed point, not just once: a folder that is poisoned
-  # MORE than one layer deep (e.g. `ah-ah-x-0722-0725`, itself the doubled
-  # name a prior poisoning incident produces) would otherwise survive a single
-  # pass still wearing an `ah-` prefix and re-trigger the exact doubling this
-  # guard exists to stop. Loop until desessionify stops changing the string.
+  # MORE than one layer deep (e.g. `<prefix>-<prefix>-x-0722-0725`, itself the
+  # doubled name a prior poisoning incident produces) would otherwise survive a
+  # single pass still wearing the configured prefix and re-trigger the exact
+  # doubling this guard exists to stop. Loop until desessionify stops changing
+  # the string.
   while looks_like_session_name "$f" && [ "$f" != "$prev" ]; do
     prev="$f"; f="$(desessionify "$f")"
   done

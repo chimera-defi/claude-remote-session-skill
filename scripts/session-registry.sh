@@ -55,8 +55,9 @@ _crss_load_config
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so

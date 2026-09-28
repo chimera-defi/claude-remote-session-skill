@@ -29,6 +29,11 @@ every profile (a prompt-cache-reuse win) — both kept in sync with
 : "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
 : "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
 : "${CRSS_CLAUDE_BIN:=/usr/bin/claude}"
+: "${CRSS_SESSION_PREFIX:=cs}"
+# This recipe does NOT recognise CRSS_LEGACY_PREFIXES (another documented
+# reduction) — it only ever GENERATES under CRSS_SESSION_PREFIX, same as
+# new-session.sh; legacy-prefix parsing only matters to session-doctor/etc.,
+# not to spawning a new session.
 
 FOLDERNAME="<foldername>"
 WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"   # or ${CRSS_SESSIONS_DIR}/${FOLDERNAME}
@@ -36,13 +41,13 @@ WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"   # or ${CRSS_SESSIONS_DIR}/${FOLDERNA
 # new-session for an un-stored long folder.
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' "${CRSS_CLAUDE_HOME}/session-aliases" 2>/dev/null)
-# Reject a poisoned stored alias (looks like a session name itself: ah- prefix,
-# a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD date, or a long numeric
-# run PAIRED with a real MMDD date fragment) — same DATE-VALIDATED guard as
-# session-alias.sh's read path. Using it as-is would double into
-# ah-ah-...-MMDD-MMDD. The digits must validate as a real date/time (month
-# 01-12, day 01-31, hour 00-23, minute 00-59): a naive "any 4 digits" match
-# previously misfired on legitimate stored aliases like sprint-2024,
+# Reject a poisoned stored alias (looks like a session name itself: the
+# configured prefix, a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD
+# date, or a long numeric run PAIRED with a real MMDD date fragment) — same
+# DATE-VALIDATED guard as session-alias.sh's read path. Using it as-is would
+# double into <prefix>-<prefix>-...-MMDD-MMDD. The digits must validate as a
+# real date/time (month 01-12, day 01-31, hour 00-23, minute 00-59): a naive
+# "any 4 digits" match previously misfired on legitimate stored aliases like sprint-2024,
 # chain-8453, port-8080 or sprint-2024-2025, wrongly discarding them. The
 # long-numeric-run check is further gated on an actual calendar-plausible
 # MMDD elsewhere in the string so a legitimately stored alias that merely
@@ -62,14 +67,14 @@ _fr_has_mmdd_group() {
 }
 _fr_poisoned() {
   # Case-fold before the prefix check: a stored alias can carry any case (hand
-  # edit, external writer), and a mixed-case `AH-foo-bar` (no embedded date, so
-  # none of the digit checks below would catch it either) must not bypass this
-  # guard and get embedded as `ah-AH-foo-bar-...` — same fix as
-  # session-alias.sh's looks_like_session_name (found via review, chatgpt-codex-
-  # connector, PR #34).
+  # edit, external writer), and a mixed-case prefix (e.g. `<PREFIX>-foo-bar`,
+  # no embedded date, so none of the digit checks below would catch it either)
+  # must not bypass this guard and get embedded as
+  # `<prefix>-<PREFIX>-foo-bar-...` — same fix as session-alias.sh's
+  # looks_like_session_name (found via review, chatgpt-codex-connector, PR #34).
   local v="$1" pair mm dd hh mi tail d
   v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
-  case "$v" in ah-*|ah_*) return 0 ;; esac
+  case "$v" in "${CRSS_SESSION_PREFIX}"-*|"${CRSS_SESSION_PREFIX}"_*) return 0 ;; esac
   printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
@@ -90,8 +95,8 @@ _fr_poisoned() {
 }
 _fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
-SESSION="ah_${ALIAS}-${ID}"
-REMOTE_NAME="ah-${ALIAS}-${ID}"
+SESSION="${CRSS_SESSION_PREFIX}_${ALIAS}-${ID}"
+REMOTE_NAME="${CRSS_SESSION_PREFIX}-${ALIAS}-${ID}"
 # Default mirrors new-session.sh's default (no CLAUDE_SESSION_PROFILE, no
 # CLAUDE_SESSION_MODEL): the orchestrator profile pinned to claude-opus-5-5 —
 # NOT the bare "sonnet" this fallback used before the per-role profile
