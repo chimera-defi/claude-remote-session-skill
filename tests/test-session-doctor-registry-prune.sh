@@ -10,6 +10,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
+# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
+# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
 pass=0; fail=0
@@ -103,7 +106,11 @@ json.dump(rows, open(sys.argv[1], "w"))
 PYEOF
 
 RUN() {  # RUN <mode-and-args...> — common env for every registry-prune call below
+  # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
+  # this host's overlay adds hermes via CRSS_PROTECT_NAMES — set it explicitly
+  # to exercise that config-driven path, matching the "sess_old_hermes" fixture.
   FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REG" FAKE_DELETE_CODES="${DELETE_CODES:-}" \
+    CRSS_PROTECT_NAMES='claude-remote|hermes' \
     PATH="$STUBBIN:$PATH" HOME="$FIXHOME" bash "$DOCTOR" "$@"
 }
 

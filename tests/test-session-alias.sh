@@ -7,6 +7,10 @@ pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
+# Isolation: never read the operator's real overlay — ALIAS_PROTECT's generic
+# default is empty (see session-alias.sh), so a real $CRSS_HOME/config.sh
+# would change which folders are protected out from under this test.
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 
 # short folder (<=18) passes through unchanged
 ok "short-passthrough" "$(bash "$ALIAS" eth2-quickstart)" "eth2-quickstart"
@@ -24,11 +28,17 @@ ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
 # does NOT persist any more (see the per-spawn block at the end of this file).
 bash "$ALIAS" a-very-long-folder-name-here --alias keep --set-default >/dev/null
 ok "store-hit" "$(bash "$ALIAS" a-very-long-folder-name-here)" "keep"
-# protected folder is never aliased (token must survive), and not stored
-ok "protected-passthrough" "$(bash "$ALIAS" openclaw-autoresearch)" "openclaw-autoresearch"
+# protected folder is never aliased (token must survive), and not stored.
+# ALIAS_PROTECT's generic default is empty (see session-alias.sh) — this host's
+# overlay is what adds openclaw|hermes via CRSS_ALIAS_PROTECT_NAMES, so these
+# assertions set it explicitly to exercise that config-driven path.
+ok "protected-passthrough" "$(CRSS_ALIAS_PROTECT_NAMES='openclaw|hermes' bash "$ALIAS" openclaw-autoresearch)" "openclaw-autoresearch"
 ok "protected-not-stored" "$(awk -F'\t' '$1=="openclaw-autoresearch"' "$STORE" | wc -l | tr -d ' ')" "0"
 # --alias on a protected folder is ignored (still keeps identity token)
-ok "protected-ignores-alias" "$(bash "$ALIAS" openclaw-autoresearch --alias oa)" "openclaw-autoresearch"
+ok "protected-ignores-alias" "$(CRSS_ALIAS_PROTECT_NAMES='openclaw|hermes' bash "$ALIAS" openclaw-autoresearch --alias oa)" "openclaw-autoresearch"
+# with no overlay at all (generic default), the same folder is NOT protected
+# — it aliases normally like any other folder.
+ok "unprotected-by-default" "$(bash "$ALIAS" openclaw-autoresearch --alias oa2)" "oa2"
 # a folder name that normalizes to nothing (symbols-only, > CAP chars) must
 # never produce an empty alias — found via independent review (devin-delegate):
 # an empty alias would flow into a malformed tmux/systemd name like

@@ -13,6 +13,35 @@
 #   fleet-status.sh --host       # host/gbrain section only
 set -uo pipefail
 
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
+  done < "$_crss_cfg"
+  return 0
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+: "${CRSS_HEALTH_SNAPSHOT_DIR:=}"  # unset = no host health snapshot section
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # Resolve session-doctor co-located first (repo/dev layout), then on PATH
@@ -44,7 +73,11 @@ print_host() {
   # 15min — read the latest one instead of re-running `gbrain doctor` and a
   # full df/free/systemctl sweep live on every call (the slow part of the old
   # hand-rolled routine). Falls back to a note if the audit has never run.
-  local runs_dir="$HOME/.gbrain/server-health/runs"
+  local runs_dir="$CRSS_HEALTH_SNAPSHOT_DIR"
+  if [ -z "$runs_dir" ]; then
+    echo "  (no health snapshot configured — set CRSS_HEALTH_SNAPSHOT_DIR in \$CRSS_HOME/config.sh)"
+    return 0
+  fi
   local -a dirs
   local d latest=""
   # Directory names are UTC timestamps (YYYYMMDDTHHMMSSZ), so lexical sort
