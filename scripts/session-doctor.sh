@@ -391,19 +391,6 @@ _registry_delete_one() {
   esac
 }
 
-live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
-# Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
-# name from the tmux session name (they often differ, e.g. a hand-named tmux session
-# my_server_control vs remote-control name my-server-control-bridge). claude/node =
-# running; sleep = supervisor backoff (still alive); a bare shell = supervisor loop
-# exited = genuinely dead.
-proc_alive() {  # $1 = tmux session name
-  case "$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)" in
-    claude|node|sleep) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 # Prefix mapping. Only the configured/recognised prefixes ($_crss_prefix_re —
 # CRSS_SESSION_PREFIX + CRSS_LEGACY_PREFIXES) are ours; anything else (e.g.
 # codexhost_) is NOT ours and must be left alone. PROTECT (line ~22) stays
@@ -414,6 +401,36 @@ tmux_to_base() {
   else
     echo ""
   fi
+}
+
+backend_of() {
+  local rem sc backend
+  rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo claude; return; }
+  sc="$BIN/${rem}-start.sh"
+  if [ -f "$sc" ]; then
+    backend="$(sed -n 's/^BACKEND="\(.*\)"$/\1/p' "$sc" | head -1)"
+    [ -n "$backend" ] && { echo "$backend"; return; }
+  fi
+  backend="$(grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* backend=\([^ ]*\) .*/\1/p' | tail -1)"
+  [ -n "$backend" ] && echo "$backend" || echo claude
+}
+
+live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
+# Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
+# name from the tmux session name. Claude sessions are alive with claude/node
+# foregrounds; Codex sessions are alive with codex/node. sleep is the shared
+# supervisor backoff (still alive); a bare shell means the supervisor loop exited.
+proc_alive() {  # $1 = tmux session name
+  local cmd backend
+  cmd="$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)"
+  backend="$(backend_of "$1")"
+  case "$cmd" in
+    sleep) return 0 ;;
+    node) return 0 ;;
+    claude) [ "$backend" = claude ] && return 0 ;;
+    codex) [ "$backend" = codex ] && return 0 ;;
+  esac
+  return 1
 }
 svc_to_tmux() {
   if [[ "$1" =~ ^(${_crss_prefix_re})-(.*)$ ]]; then

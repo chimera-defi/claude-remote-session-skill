@@ -27,7 +27,7 @@ has "fallback-waits-for-shell"    'bash|zsh|sh) break ;;' "$FB"
 
 # Both scripts send the kickoff Enter in a verified retry loop (not a single
 # blind `Enter` appended to the send-keys payload).
-has "new-session-verifies-kickoff" 'claude|node|sleep) kicked=yes; break ;;' "$NS"
+has "new-session-verifies-kickoff" 'KICKED_CMDS="claude|node|sleep"' "$NS"
 has "fallback-verifies-kickoff"    'claude|node|sleep) kicked=yes; break ;;' "$FB"
 
 # Both scripts distinguish a verified start from an unverified one in the log.

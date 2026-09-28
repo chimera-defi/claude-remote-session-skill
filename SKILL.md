@@ -34,6 +34,7 @@ new-session <foldername> --alias x    # explicit short alias (THIS spawn only)
 new-session <foldername> --alias x --set-default-alias   # ...and make it the folder default
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session <foldername> --force      # spawn despite the low-RAM preflight refusal (the gate is advisory otherwise)
+new-session <foldername> --backend codex  # launch Codex CLI instead of Claude Code
 new-session --help                    # print usage and exit (no session spawned)
 
 new-session <foldername> --task "..."        # spawn AND kick off, in one shot
@@ -58,6 +59,25 @@ session-doctor land-check             # report-only: per-worktree real-dirty + u
 work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`. It also
 removes that session's own `~/.claude/worktrees/<name>` git worktree by default (branch
 kept; `--keep-worktree` opts out) — see `references/session-lifecycle.md` for the guards.
+
+### Codex Backend
+
+`new-session --backend codex` uses the same session envelope as Claude: tmux session,
+systemd user unit, generated start script, alias/name parsing, telemetry, `--task`/
+`--task-file` kickoff, `session-send`/`session-handoff` landing verification, and
+`session-doctor reap` cleanup. The backend switch and Codex CLI command are in
+`scripts/new-session.sh`; pane-state detection is in `scripts/session-handoff.sh`.
+
+Host defaults live in `$CRSS_HOME/config.sh`: `CRSS_SESSION_BACKEND=codex` changes the
+default, `CRSS_CODEX_BIN` selects the binary, and `CRSS_CODEX_ARGS` supplies model,
+sandbox, and approval flags. The generic default is still Claude. Check the installed
+`codex --help` before setting those args.
+
+Claude-only features do not apply to Codex sessions: Claude model/profile pinning,
+`BUILDER_TOOLS`, `advisor` availability, `--settings`, remote-control registration, and
+the global `.claude/skills` symlink/bootstrap are skipped. `session-doctor` local
+tmux/systemd/worktree/reap handling covers Codex sessions; Claude registry and transcript
+history remain Claude-specific.
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
