@@ -20,7 +20,7 @@ STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 
 # ── absent overlay ───────────────────────────────────────────────────────
 ABSENT="/tmp/crss-newsession-overlay-absent-$$-nonexistent"
-out="$(CRSS_HOME="$ABSENT" bash "$NS" --dry-run overlay-test-absent 2>&1)"
+out="$(CRSS_HOME="$ABSENT" CRSS_CLAUDE_HOME="$ABSENT" bash "$NS" --dry-run overlay-test-absent 2>&1)"
 has "absent-overlay-line" "$out" "overlay: $ABSENT \(config: absent, rules: absent\)"
 
 # ── overlay present: config.sh found, rules pointer found ───────────────
