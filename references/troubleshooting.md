@@ -50,11 +50,17 @@ checked, and it was wrong. Evidence:
   equivalent `--autocompact N` CLI flag — for two distinct values on a 200k-context model
   (`N=105000` → `effectiveWindow=85000` both ways; `N=500000` → `effectiveWindow=180000`
   both ways, clamped to the model's window either way it was set).
-- `autoCompactEnabled` is confirmed as a real schema field (`.describe("Automatically
-  compact conversation when context fills")`), read through the same settings-merge
-  pattern as other documented keys, and backs the interactive `/config` "Auto-compact"
-  toggle — but this wasn't independently behavior-tested (its debug line didn't fire
-  reliably in a single-turn `-p` run, unlike `autoCompactWindow`'s).
+- `autoCompactEnabled` sits in the *identical* schema object as `autoCompactWindow`, not a
+  separate one — both field definitions were located on the same ~118KB minified schema
+  line, ~12.4KB apart, with no object-closing boundary between them, so this isn't the
+  global `~/.claude.json` interactive-preferences schema (which has its own separate
+  defaults blob elsewhere in the bundle, alongside keys like `theme`/`editorMode`) — it's
+  the same schema `autoCompactWindow` was causally confirmed in. Its own `.describe()`:
+  "Automatically compact conversation when context fills"; it also backs the interactive
+  `/config` "Auto-compact" toggle. Unlike `autoCompactWindow`, its read-from-`--settings`
+  behavior wasn't independently reproduced — the debug line for it didn't fire reliably in
+  a single-turn `-p` run, so treat this one as strong (same-object) but not causally
+  confirmed evidence.
 
 Everything else here still holds: the launch-time `--autocompact <auto|tokens>` flag
 (verified in `claude --help`, 2.1.280), the in-session `/autocompact` dialog and `/config`,
