@@ -37,18 +37,34 @@ so that's the most expensive moment to compact, not the cheapest. `session-compa
 to `--min-idle 60` for this reason; the mechanism, measurements, and the managed-orchestrator
 exceptions are in [`docs/session-compaction.md`](../docs/session-compaction.md).
 
-**Auto-compact reality check** (verified against the actual Claude Code changelog, not
-guessed): auto-compaction is a real built-in feature and is on by default — it is **not** a
-`settings.json` boolean like `autoCompactEnabled`/`autoCompactWindow`; those exact key names
-were fabricated once by a guide agent asked about this and do not exist in
-`~/.claude/settings.json` or the installed CLI's schema. The real controls are the launch-time
-`--autocompact <auto|tokens>` flag (verified in `claude --help`, 2.1.280), the in-session
-`/autocompact` dialog and `/config`, and env var `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window
-scales with the model's context size (Sonnet 5 on its full 1M window auto-compacts around
-~967K tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact
-is broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
+**Auto-compact reality check** (re-verified against the installed CLI, 2026-09-28, 2.1.280
+— this corrects an earlier version of this note): auto-compaction is a real built-in
+feature and is on by default. `autoCompactEnabled` and `autoCompactWindow` **are** real
+`settings.json`-schema fields — an earlier version of this doc claimed a guide agent had
+fabricated those exact key names and that they don't exist; that claim was itself never
+checked, and it was wrong. Evidence:
+
+- `autoCompactWindow` is causally confirmed, not just present in the schema: a throwaway
+  `claude -p ... --settings '{"autoCompactWindow": N}'` run produced the identical
+  `effectiveWindow` value in `-d config,settings,compact --debug-file <f>` output as the
+  equivalent `--autocompact N` CLI flag — for two distinct values on a 200k-context model
+  (`N=105000` → `effectiveWindow=85000` both ways; `N=500000` → `effectiveWindow=180000`
+  both ways, clamped to the model's window either way it was set).
+- `autoCompactEnabled` is confirmed as a real schema field (`.describe("Automatically
+  compact conversation when context fills")`), read through the same settings-merge
+  pattern as other documented keys, and backs the interactive `/config` "Auto-compact"
+  toggle — but this wasn't independently behavior-tested (its debug line didn't fire
+  reliably in a single-turn `-p` run, unlike `autoCompactWindow`'s).
+
+Everything else here still holds: the launch-time `--autocompact <auto|tokens>` flag
+(verified in `claude --help`, 2.1.280), the in-session `/autocompact` dialog and `/config`,
+and env var `CLAUDE_CODE_DISABLE_1M_CONTEXT` are all real controls too. The window scales
+with the model's context size (Sonnet 5 on its full 1M window auto-compacts around ~967K
+tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact is
+broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
 this more aggressive; the pre-compact-before-relay habit above is the actual lever for
-proactive cost control, not a spawn-time config toggle.
+proactive cost control, not a spawn-time config toggle. Moral for next time: verify a
+specific claim yourself before repeating it, in either direction.
 
 ## Preserve before reaping (recycling a bloated session)
 

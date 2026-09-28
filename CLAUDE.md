@@ -64,9 +64,14 @@ Each of these has happened here. Don't repeat them.
 - **Treating green fixture tests as proof a sensor/actuator tool works.** 619 passing
   assertions once hid a self-observation feedback loop. Run tools that read or act on live
   sessions against a live session before automating them.
-- **Writing config keys or CLI flags from memory or from another agent's summary.**
-  `autoCompactEnabled`/`autoCompactWindow` were fabricated by a guide agent and don't exist.
-  Check the installed CLI (`claude --help`, its schema) before documenting a knob.
+- **Writing config keys or CLI flags from memory or from another agent's summary — and
+  trusting an unverified "that's fabricated" the same way.** A guide agent once claimed
+  `autoCompactEnabled`/`autoCompactWindow` don't exist as `settings.json` keys; this was
+  repeated in this doc without being checked. A 2026-09-28 pass against the installed CLI
+  (2.1.280) found both ARE real settings-schema fields — see
+  `references/troubleshooting.md`'s compaction section for the evidence. Check the
+  installed CLI yourself before documenting a knob, in either direction: "it doesn't
+  exist" needs the same verification as "it does".
 - **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
   Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
 - **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
