@@ -44,6 +44,10 @@ if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
     CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
   fi
 fi
+if [ -z "${CRSS_CODEX_BIN:-}" ]; then
+  CRSS_CODEX_BIN="$(command -v codex 2>/dev/null || echo codex)"
+fi
+: "${CRSS_CODEX_ARGS:=}"
 
 # ── Session-name prefix recognition ─────────────────────────────────────────
 # CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
@@ -101,7 +105,7 @@ OVERLAY_LINE="overlay: ${CRSS_HOME} (config: ${_crss_overlay_cfg_state}, rules: 
 # ── Help ─────────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<HELP_EOF
-Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run]
+Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--backend claude|codex] [--dry-run]
 
   foldername          Name for the session. Used in (prefix "$CRSS_SESSION_PREFIX" —
                       override with \$CRSS_SESSION_PREFIX in \$CRSS_HOME/config.sh):
@@ -126,6 +130,8 @@ Options:
                       Use only when the name describes the FOLDER, not the task:
                       a task name here becomes the folder's name forever.
   --dry-run           Print the resolved names and exit without spawning.
+  --backend <b>       Session backend for this spawn: claude or codex.
+                      Default: \$CRSS_SESSION_BACKEND, then claude.
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
@@ -139,7 +145,14 @@ Options:
                       anything is spawned.
 
 Environment:
-  CLAUDE_SESSION_MODEL=<model>  Model for the session. Unset → the PROFILE's
+  CRSS_SESSION_BACKEND=<b>      Generic default backend for new sessions
+                                (claude|codex; default: claude).
+  CRSS_CODEX_BIN=<path>         Codex CLI path for --backend codex.
+                                Default: command -v codex.
+  CRSS_CODEX_ARGS=<args>        Extra Codex CLI args for --backend codex.
+                                Default: empty. Host overlays commonly set
+                                model/sandbox/approval flags here.
+  CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/haiku for
                                 builder/copywriter — bare aliases that
@@ -175,10 +188,11 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
+    --backend)   BACKEND_ARG="${2:?--backend needs a value}"; shift 2 ;;
     --set-default-alias) SETDEFAULT_ALIAS=yes; shift ;;
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
@@ -192,6 +206,28 @@ while [ $# -gt 0 ]; do
   esac
 done
 : "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
+
+# ── Backend selection ────────────────────────────────────────────────────────
+BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-claude}}"
+case "$BACKEND" in
+  claude|codex) ;;
+  *) echo "new-session: unknown backend '$BACKEND' (valid: claude|codex)" >&2; exit 2 ;;
+esac
+
+_codex_model_from_args() {
+  local prev="" tok
+  for tok in ${CRSS_CODEX_ARGS:-}; do
+    if [ "$prev" = "-m" ] || [ "$prev" = "--model" ]; then
+      printf '%s\n' "$tok"
+      return
+    fi
+    case "$tok" in
+      -m?*) printf '%s\n' "${tok#-m}"; return ;;
+      --model=*) printf '%s\n' "${tok#--model=}"; return ;;
+    esac
+    prev="$tok"
+  done
+}
 
 # --task/--task-file: validate up front so a bad kickoff argument fails loudly
 # BEFORE anything spawns, not after (a spawned-but-unkicked session is a worse
@@ -250,63 +286,42 @@ preflight_capacity() {
 }
 preflight_capacity || exit 1
 
-# ── Profile selection (resolved BEFORE the model, so a profile supplies the
-#    role-appropriate default model) ───────────────────────────────────────────
-# CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND the
-# default model for the spawned session:
-#   orchestrator (default) — full built-in tool set; needed for multi-agent
-#                            fan-out (Workflow, Agent…). Default:
-#                            claude-opus-5-5 (pinned, see Model selection below).
-#   builder                — trimmed --tools allowlist; drops the orchestration/
-#                            reporting-only schemas to reclaim ~11k of the ~19.5k
-#                            "System tools" context (19.5k→8.2k). Default: sonnet.
-#   copywriter             — same trimmed allowlist; lightweight doc/copy work
-#                            that doesn't fan out. Default: haiku (cheapest tier).
-# Unknown values fall back to orchestrator with a warning — fail SAFE, never
-# silently ship a session with fewer tools than the operator expected.
-PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
-case "$PROFILE" in
-  orchestrator|builder|copywriter) ;;
-  *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder|copywriter" >&2
-     PROFILE="orchestrator" ;;
-esac
-
-# ── Model selection ─────────────────────────────────────────────────────────
-# Precedence: an explicit CLAUDE_SESSION_MODEL always wins. Otherwise the model
-# defaults PER ROLE from the profile above. builder/copywriter use a BARE alias
-# ON PURPOSE so those role defaults keep tracking Anthropic's latest release for
-# that tier with no edit here. orchestrator is PINNED to an exact id (operator
-# request, 2026-08-27) so it doesn't ride the observed opus/opus-4-8/opus-5 alias
-# drift below. Pin history: claude-opus-5 (2026-08-27) → claude-opus-5-5
-# (2026-09-24, after verifying on /usr/bin/claude 2.1.280 that
-# `claude -p ... --model claude-opus-5-5` responds and that bare `opus` now
-# resolves to it). Like opus-5, it has NO `advisor` tool (verified interactively:
-# opus-5-5 and opus-5 answer ADVISOR=NO, sonnet ADVISOR=YES) — fine for an
-# orchestrator, which spawns sonnet builders for a second opinion. Bump the pin
-# only after the same two checks on the next release.
-#   orchestrator → claude-opus-5-5 (pinned)   builder → sonnet     copywriter → haiku
-if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
-  MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
-else
+# ── Profile/model selection ─────────────────────────────────────────────────
+if [ "$BACKEND" = claude ]; then
+  # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
+  # the default model for the spawned Claude session.
+  PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
   case "$PROFILE" in
-    orchestrator) MODEL=claude-opus-5-5 ;;
-    builder)      MODEL=sonnet ;;
-    copywriter)   MODEL=haiku ;;
+    orchestrator|builder|copywriter) ;;
+    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder|copywriter" >&2
+       PROFILE="orchestrator" ;;
   esac
-  MODEL_SRC=profile-default
-fi
-# A bare alias tracks "the latest release" and can silently resolve to DIFFERENT
-# models over time (observed: `opus` → claude-opus-5 one week, Opus 4.8 the next,
-# with byte-identical flags). That drift is the INTENDED behaviour for a role
-# default (auto-upgrade), so we only warn when the operator EXPLICITLY passed a
-# bare alias for a one-off spawn — there they may instead want to pin an exact id
-# for reproducibility (the CLI exposes no resolved-model readout). MODEL is logged
-# either way.
-if [ "$MODEL_SRC" = explicit ]; then
-  case "$MODEL" in
-    opus|sonnet|haiku|fable|default|opusplan)
-      echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
-  esac
+
+  if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
+    MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
+  else
+    case "$PROFILE" in
+      orchestrator) MODEL=claude-opus-5-5 ;;
+      builder)      MODEL=sonnet ;;
+      copywriter)   MODEL=haiku ;;
+    esac
+    MODEL_SRC=profile-default
+  fi
+  if [ "$MODEL_SRC" = explicit ]; then
+    case "$MODEL" in
+      opus|sonnet|haiku|fable|default|opusplan)
+        echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
+    esac
+  fi
+else
+  PROFILE=codex
+  MODEL="$(_codex_model_from_args)"
+  if [ -n "$MODEL" ]; then
+    MODEL_SRC=codex-args
+  else
+    MODEL=codex
+    MODEL_SRC=backend-default
+  fi
 fi
 
 # Builder keep-list: the built-ins a hands-on-implementation session needs.
@@ -344,9 +359,13 @@ BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSe
 # user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
-case "$PROFILE" in
-  builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
-esac
+if [ "$BACKEND" = claude ]; then
+  case "$PROFILE" in
+    builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
+  esac
+else
+  CLAUDE_EXTRA_FLAGS=""
+fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
 # Validate the TYPE positional the same way PROFILE is validated above (fail
@@ -477,8 +496,8 @@ SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\n%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$OVERLAY_LINE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nCODEX_ARGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
 
@@ -493,19 +512,15 @@ cat > "$SCRIPT" << SCRIPT_EOF
 SESSION="${SESSION}"
 WORKDIR="${WORKDIR}"
 REMOTE_NAME="${REMOTE_NAME}"
+BACKEND="${BACKEND}"
 MODEL="${MODEL}"
 PROFILE="${PROFILE}"
-# NB: the per-profile claude flags (CLAUDE_EXTRA_FLAGS) are NOT kept as a runtime
-# variable here — the claude command runs inside the single-quoted supervisor
-# loop typed into the tmux pane (send-keys), whose shell does NOT inherit this
-# script's variables. They are baked as a literal into that command instead
-# (see the CRSS_CLAUDE_BIN lines below), which also surfaces the real flags in
-# \`ps\`. Value for this spawn: ${CLAUDE_EXTRA_FLAGS:-<none>}
+CODEX_ARGS="${CRSS_CODEX_ARGS}"
 export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="${HOME}"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
-log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE event=\$1" | tee -a "\$LOG_FILE"; }
+log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME backend=\$BACKEND workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE event=\$1" | tee -a "\$LOG_FILE"; }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
 # Resolve the run directory: canonical tree (clean+free) or a fresh worktree.
@@ -515,6 +530,10 @@ if command -v session-git-prep >/dev/null 2>&1; then
   [ -n "\$PREP" ] && RUNDIR="\$PREP"
 fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+SCRIPT_EOF
+
+if [ "$BACKEND" = claude ]; then
+  cat >> "$SCRIPT" << SCRIPT_EOF
 mkdir -p "\$RUNDIR/.claude"
 # Make the global skill catalog available at \$RUNDIR/.claude/skills WITHOUT
 # clobbering a repo that ships its OWN committed project skills. Only (re)point
@@ -540,6 +559,10 @@ python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settin
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
+SCRIPT_EOF
+fi
+
+cat >> "$SCRIPT" << SCRIPT_EOF
 tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
 # Wait for the pane's interactive shell to be ready before typing into it, so
 # the kickoff keystrokes are not swallowed by a still-initializing pane.
@@ -553,6 +576,10 @@ done
 # separately: a raced final Enter can be dropped, leaving the loop buffered in
 # readline but never executed (the session then churns idle). Resend Enter until
 # pane_current_command shows the loop actually launched.
+SCRIPT_EOF
+
+if [ "$BACKEND" = claude ]; then
+  cat >> "$SCRIPT" << SCRIPT_EOF
 tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
@@ -576,12 +603,38 @@ while true; do
     sleep 10
   fi
 done'
+SCRIPT_EOF
+  KICKED_CMDS="claude|node|sleep"
+else
+  cat >> "$SCRIPT" << SCRIPT_EOF
+tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
+SESSION="${SESSION}"
+while true; do
+  START=\$(date +%s)
+  ${CRSS_CODEX_BIN} ${CRSS_CODEX_ARGS}
+  RUNTIME=\$(( \$(date +%s) - START ))
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
+  if [ "\$RUNTIME" -lt 30 ]; then
+    echo "[${SESSION}] quick exit \${RUNTIME}s — backoff 300s" | tee -a "\$LOG_FILE"
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=backoff wait=300s" | tee -a "\$LOG_FILE"
+    sleep 300
+  else
+    echo "[${SESSION}] exit \${RUNTIME}s — restart 10s" | tee -a "\$LOG_FILE"
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=restart wait=10s" | tee -a "\$LOG_FILE"
+    sleep 10
+  fi
+done'
+SCRIPT_EOF
+  KICKED_CMDS="codex|node|sleep"
+fi
+
+cat >> "$SCRIPT" << SCRIPT_EOF
 kicked=no
 for _try in 1 2 3; do
   tmux send-keys -t "${SESSION}" Enter
   for _j in \$(seq 1 12); do
     case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
-      claude|node|sleep) kicked=yes; break ;;
+      ${KICKED_CMDS}) kicked=yes; break ;;
     esac
     sleep 0.5
   done
@@ -599,7 +652,7 @@ chmod +x "$SCRIPT"
 # ── Generate systemd unit ────────────────────────────────────────────────────
 cat > "$SERVICE" << UNIT_EOF
 [Unit]
-Description=Claude Code Remote - ${REMOTE_NAME}
+Description=CRSS ${BACKEND} Session - ${REMOTE_NAME}
 After=network-online.target
 Wants=network-online.target
 [Service]
