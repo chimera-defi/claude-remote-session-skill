@@ -6,6 +6,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
+# than converting every "ah_"/"ah-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=ah
+export CRSS_LEGACY_PREFIXES=agenthost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
 pass=0; fail=0

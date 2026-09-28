@@ -44,6 +44,53 @@ if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
     CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
   fi
 fi
+
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
+# for "claude session" — lowercase, short, memorable, and distinct from any
+# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
+# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
+# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
+# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# validated alternation, _crss_prefix_re, that every parse/generate site below
+# uses instead of a hardcoded prefix. Each element must match
+# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
+# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
+# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
+# WHOLE legacy list (not just that element) rather than guessing which of
+# several bad values was meant — never to an empty pattern, which would make
+# the alternation match everything (the dangerous direction in a reap path).
+# Copied verbatim in every script that needs it — see
+# tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
+
 # Overlay visibility line, printed in --dry-run output and in the final
 # spawn confirmation below — a missing overlay should be visible, not silent.
 _crss_overlay_cfg_state=absent; [ -f "$CRSS_HOME/config.sh" ] && _crss_overlay_cfg_state=found
@@ -55,11 +102,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<HELP_EOF
 Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run]
 
-  foldername          Name for the session. Used in:
-                        tmux session:    ah_<alias>-<MMDD-HHMM>
-                        remote-control:  ah-<alias>-<MMDD-HHMM>
-                        start script:    ~/.local/bin/ah-<alias>-<MMDD-HHMM>-start.sh
-                        systemd service: ~/.config/systemd/user/ah-<alias>-<MMDD-HHMM>.service
+  foldername          Name for the session. Used in (prefix "$CRSS_SESSION_PREFIX" —
+                      override with \$CRSS_SESSION_PREFIX in \$CRSS_HOME/config.sh):
+                        tmux session:    ${CRSS_SESSION_PREFIX}_<alias>-<MMDD-HHMM>
+                        remote-control:  ${CRSS_SESSION_PREFIX}-<alias>-<MMDD-HHMM>
+                        start script:    ~/.local/bin/${CRSS_SESSION_PREFIX}-<alias>-<MMDD-HHMM>-start.sh
+                        systemd service: ~/.config/systemd/user/${CRSS_SESSION_PREFIX}-<alias>-<MMDD-HHMM>.service
 
   workspace           Force workdir to \$CRSS_WORKSPACE/<foldername>
                       (repo sessions; CRSS_WORKSPACE default: \$HOME/workspace)
@@ -184,12 +232,12 @@ preflight_capacity() {
   avail_mb=$(awk '/^MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 99999)
   load1=$(awk '{printf "%.0f", $1}' /proc/loadavg 2>/dev/null || echo 0)
   cpus=$(nproc 2>/dev/null || echo 1)
-  sess=$(tmux ls -F '#{session_name}' 2>/dev/null | grep -cE '^(ah_|agenthost_)' || true)
+  sess=$(tmux ls -F '#{session_name}' 2>/dev/null | grep -cE "^(${_crss_prefix_re})_" || true)
   : "${sess:=0}"
 
   [ "$avail_mb" -lt "${NEW_SESSION_MIN_AVAIL_MB:-4096}" ] && { echo "warn: only ${avail_mb}MB RAM available — a new session needs ~400-600MB and will push the box into swap" >&2; hard=yes; }
   [ "$load1" -gt $(( cpus * 2 )) ] && echo "warn: load ${load1} on ${cpus} cpus — existing sessions are already CPU-starved" >&2
-  [ "$sess" -ge 25 ] && echo "warn: ${sess} agenthost sessions already live — run 'session-doctor idle-report' and reap before adding more" >&2
+  [ "$sess" -ge 25 ] && echo "warn: ${sess} sessions (prefix: ${_crss_prefix_re}) already live — run 'session-doctor idle-report' and reap before adding more" >&2
 
   if [ "$hard" = yes ] && [ "$FORCE" != yes ]; then
     echo "" >&2
@@ -321,10 +369,13 @@ else
 fi
 
 # ── Naming ──────────────────────────────────────────────────────────────────
-# Name-first, date last: `ah-<alias>-<MMDD-HHMM>`. Aliases are short (capped /
-# acronym'd), so the whole name fits the mobile window while reading naturally
-# and grouping by project. Prefix `ah` (was `agenthost`); session-doctor
-# understands both prefixes and does not parse the date, so order is opaque to it.
+# Name-first, date last: `<prefix>-<alias>-<MMDD-HHMM>`. Aliases are short
+# (capped / acronym'd), so the whole name fits the mobile window while reading
+# naturally and grouping by project. Prefix is $CRSS_SESSION_PREFIX (generic
+# default "cs"; this host's overlay sets it to "ah", the legacy value every
+# script used to hardcode — see the CRSS-PREFIX-RE block above); session-doctor
+# understands the configured prefix plus $CRSS_LEGACY_PREFIXES and does not
+# parse the date, so order is opaque to it.
 ID=$(date +%m%d-%H%M)
 # In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.
 DRYFLAG=""; [ "$DRYRUN" = yes ] && DRYFLAG="--no-save"
@@ -336,8 +387,8 @@ fi
 # Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 BODY="${ALIAS}-${ID}"
-SESSION="ah_${BODY}"
-REMOTE_NAME="ah-${BODY}"
+SESSION="${CRSS_SESSION_PREFIX}_${BODY}"
+REMOTE_NAME="${CRSS_SESSION_PREFIX}-${BODY}"
 # MMDD-HHMM is minute-granularity, so spawning the same folder twice inside one
 # clock-minute would otherwise collide on SESSION. That's not just a cosmetic
 # dupe: the generated script's own already-running guard (line ~130) would then
@@ -378,7 +429,7 @@ if command -v tmux >/dev/null 2>&1; then
   if [ "$DRYRUN" = yes ]; then
     n=2
     while name_taken "$SESSION" "$REMOTE_NAME"; do
-      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"; n=$((n+1))
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="${CRSS_SESSION_PREFIX}_${BODY}"; REMOTE_NAME="${CRSS_SESSION_PREFIX}-${BODY}"; n=$((n+1))
     done
   else
     LOCKROOT="$HOME/.claude/session-spawn-locks"
@@ -412,7 +463,7 @@ if command -v tmux >/dev/null 2>&1; then
       # the dry-run branch above and the collision-suffix numbering the tests
       # assert), not "-3" (found by Codex review on this PR: incrementing
       # first skipped "-2" on every real, non-dry-run collision).
-      BODY="${ALIAS}-${ID}-${n}"; SESSION="ah_${BODY}"; REMOTE_NAME="ah-${BODY}"
+      BODY="${ALIAS}-${ID}-${n}"; SESSION="${CRSS_SESSION_PREFIX}_${BODY}"; REMOTE_NAME="${CRSS_SESSION_PREFIX}-${BODY}"
       n=$((n+1))
       if [ "$n" -gt 1000 ]; then
         echo "new-session: could not claim a session-name lock under '$LOCKROOT' after 1000 attempts — likely a persistent filesystem problem (read-only/full), not a race. Check '$LOCKROOT' by hand." >&2

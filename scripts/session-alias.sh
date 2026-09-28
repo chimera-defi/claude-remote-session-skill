@@ -36,6 +36,52 @@ _crss_load_config() {
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
+# for "claude session" — lowercase, short, memorable, and distinct from any
+# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
+# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
+# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
+# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# validated alternation, _crss_prefix_re, that every parse/generate site below
+# uses instead of a hardcoded prefix. Each element must match
+# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
+# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
+# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
+# WHOLE legacy list (not just that element) rather than guessing which of
+# several bad values was meant — never to an empty pattern, which would make
+# the alternation match everything (the dangerous direction in a reap path).
+# Copied verbatim in every script that needs it — see
+# tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
+
 # ALIAS_PROTECT — folders never aliased, so their identifying token survives in
 # the session name (session-doctor protects sessions by substring-matching the
 # name; stripping the token via an acronym would silently drop that protection).
@@ -121,7 +167,7 @@ has_mmdd_group() {
 # of the read path with a mixed-case stored value.
 looks_like_session_name() {
   local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-  case "$v" in ah-*|ah_*) return 0 ;; esac
+  [[ "$v" =~ ^(${_crss_prefix_re})[-_] ]] && return 0
   printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
@@ -144,15 +190,16 @@ looks_like_session_name() {
   [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
 }
 
-# desessionify — strip session-name decoration (ah- prefix, trailing date/timestamp
-# runs) so a folder that is itself a session name yields a clean alias from the
-# meaningful part instead of doubling the decoration. Prefix match is
-# case-insensitive to match looks_like_session_name's case-folding: without it,
-# a mixed-case folder like `AH-project-0810-1234` keeps its `AH-` prefix after
-# the date is stripped, the fixed-point loop in infer() can't make progress past
-# `AH-project`, and infer() falls back to an opaque checksum alias via its final
-# safety net instead of the clean `project` a same-cased folder would get.
-desessionify() { printf '%s' "$1" | sed -E 's/^[Aa][Hh][-_]//; s/(-[0-9]{4,})+$//'; }
+# desessionify — strip session-name decoration (recognised prefix, trailing
+# date/timestamp runs) so a folder that is itself a session name yields a
+# clean alias from the meaningful part instead of doubling the decoration.
+# Prefix match is case-insensitive (sed's `I` flag) to match
+# looks_like_session_name's case-folding: without it, a mixed-case folder
+# like `AH-project-0810-1234` keeps its `AH-` prefix after the date is
+# stripped, the fixed-point loop in infer() can't make progress past
+# `AH-project`, and infer() falls back to an opaque checksum alias via its
+# final safety net instead of the clean `project` a same-cased folder would get.
+desessionify() { printf '%s' "$1" | sed -E "s/^(${_crss_prefix_re})[-_]//I; s/(-[0-9]{4,})+\$//"; }
 
 infer() { # $1 = folder ; echo alias
   local f="$1" acr="" w a prev=""

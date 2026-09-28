@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# session-doctor.sh — audit and clean up agenthost remote-control sessions across
+# session-doctor.sh — audit and clean up crss remote-control sessions across
 # the layers they live in: tmux windows, systemd --user units, the Anthropic
 # session registry (GET /v1/sessions), and per-session git worktrees
 # (~/.claude/worktrees/, created by session-git-prep.sh for dirty/busy repos).
@@ -138,6 +138,53 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
   echo "session-doctor: CRSS_PROTECT_NAMES is not a valid regex ('$PROTECT'); treating EVERY session as protected until it's fixed" >&2
   PROTECT='.'
 }
+
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
+# for "claude session" — lowercase, short, memorable, and distinct from any
+# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
+# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
+# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
+# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# validated alternation, _crss_prefix_re, that every parse/generate site below
+# uses instead of a hardcoded prefix. Each element must match
+# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
+# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
+# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
+# WHOLE legacy list (not just that element) rather than guessing which of
+# several bad values was meant — never to an empty pattern, which would make
+# the alternation match everything (the dangerous direction in a reap path).
+# Copied verbatim in every script that needs it — see
+# tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
+
 MODE="${1:-report}"; shift || true
 # Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
@@ -354,11 +401,24 @@ proc_alive() {  # $1 = tmux session name
   esac
 }
 
-# Prefix mapping. `agenthost`/`ah` are the only prefixes we own; anything else
-# (e.g. codexhost_) is NOT ours and must be left alone. PROTECT (line ~22) stays
+# Prefix mapping. Only the configured/recognised prefixes ($_crss_prefix_re —
+# CRSS_SESSION_PREFIX + CRSS_LEGACY_PREFIXES) are ours; anything else (e.g.
+# codexhost_) is NOT ours and must be left alone. PROTECT (line ~22) stays
 # in sync with session-alias.sh.
-tmux_to_base() { case "$1" in agenthost_*) echo "agenthost-${1#agenthost_}";; ah_*) echo "ah-${1#ah_}";; *) echo "";; esac; }
-svc_to_tmux()  { case "$1" in agenthost-*) echo "agenthost_${1#agenthost-}";; ah-*) echo "ah_${1#ah-}";; *) echo "$1";; esac; }
+tmux_to_base() {
+  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  else
+    echo ""
+  fi
+}
+svc_to_tmux() {
+  if [[ "$1" =~ ^(${_crss_prefix_re})-(.*)$ ]]; then
+    echo "${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+  else
+    echo "$1"
+  fi
+}
 
 # _find_helper <basename> — resolve a sibling script co-located first (repo/dev
 # layout: <basename>.sh next to this script), then on PATH (deployed layout:
@@ -1181,7 +1241,7 @@ case "$MODE" in
       printf "  %-52s proc=%s%s\n" "$s" "$alive" "$prot"
     done
     echo "=== LOCAL: systemd units without a live tmux (orphans) ==="
-    for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
+    for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" || echo "  ORPHAN unit: $u"
     done
@@ -1235,7 +1295,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     # check here would almost never be false and would skip real orphans
     # (the exact case this loop exists to reap). Same liveness definition as
     # `report`'s ORPHAN listing above: no live tmux match.
-    for u in $(ls "$UD" 2>/dev/null | grep -E '^(agenthost|ah)-.*\.service$'); do
+    for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       echo "$u" | grep -qiE "$PROTECT" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       live_tmux | grep -qx "$tm" && continue
@@ -1707,7 +1767,7 @@ else:
         && echo "  unit disabled: ${base}.service" || echo "  unit '${base}.service' not active/installed (ok)"
       systemctl --user reset-failed "${base}.service" >/dev/null 2>&1 || true
     else
-      echo "  '$NAME' is not an ah_/agenthost_ session — no systemd unit to tear down" >&2
+      echo "  '$NAME' does not match a recognised session prefix (${_crss_prefix_re}) — no systemd unit to tear down" >&2
     fi
     echo "reaped '$NAME'"
     # Registry cleanup: this session's registry entry (matched by title ==
