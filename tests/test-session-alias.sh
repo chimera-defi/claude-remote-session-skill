@@ -68,13 +68,13 @@ notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0
 PZ="$(mktemp)"
 printf 'my-example-long-project-name\ttranche1-ready-0728\n' > "$PZ"
 printf 'discovery-0718\tdiscovery-0718-153051-4107171\n' >> "$PZ"
-printf 'ah-universe-expand-0722\tah-universe-expand-0722-194533-425253\n' >> "$PZ"
+printf 'ah-demo-project-0722\tah-demo-project-0722-194533-425253\n' >> "$PZ"
 r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" my-example-long-project-name)"
 r2="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" discovery-0718)"
-r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" ah-universe-expand-0722)"
+r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" ah-demo-project-0722)"
 ok "readguard-1-clean" "$(notsess "$r1")" "clean"
 ok "readguard-2-value" "$r2" "discovery"
-ok "readguard-3-value" "$r3" "universe-expand"
+ok "readguard-3-value" "$r3" "demo-project"
 ok "readguard-selfheal" "$(awk -F'\t' '{print $2}' "$PZ" | while read -r v; do notsess "$v"; done | grep -c POISONED | tr -d ' ')" "0"
 
 # WRITE guard: an explicit --alias that looks like a session name is refused and a
@@ -84,24 +84,24 @@ ok "readguard-selfheal" "$(awk -F'\t' '{print $2}' "$PZ" | while read -r v; do n
 # assertion below would trivially read as "clean" off a nonexistent file
 # instead of actually exercising store_upsert's guard.
 W="$(mktemp)"; rm -f "$W"
-ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-rotation-finalize-0725 --set-default)")" "clean"
+ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-batch-cleanup-0725 --set-default)")" "clean"
 ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")" "clean"
 
 # INFER de-sessionify: a folder that is itself a session name yields a clean alias
 # from the meaningful part (no ah-ah- / MMDD-MMDD doubling).
-ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-agent-torque-0721)" "agent-torque"
+ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-widget-build-0721)" "widget-build"
 
 # INFER de-sessionify is a FIXED POINT, not a single pass: a folder poisoned more
 # than one layer deep (e.g. `ah-ah-x-0722-0725` — literally the doubled name a
 # prior poisoning incident produces) must still yield a clean, non-`ah-`-prefixed
-# alias. A single-pass strip would leave `ah-universe-expand` (still session-name-
+# alias. A single-pass strip would leave `ah-demo-project` (still session-name-
 # shaped), which store_upsert then refuses to persist — so the poisoned value is
 # never self-healed and keeps re-doubling on every future spawn.
 DP="$(mktemp -u)"
-dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" ah-ah-universe-expand-0722-0725)"
-ok "layered-poison-value" "$dp_out" "universe-expand"
+dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" ah-ah-demo-project-0722-0725)"
+ok "layered-poison-value" "$dp_out" "demo-project"
 ok "layered-poison-clean" "$(notsess "$dp_out")" "clean"
-ok "layered-poison-stored" "$(awk -F'\t' '$1=="ah-ah-universe-expand-0722-0725"{print $2}' "$DP")" "universe-expand"
+ok "layered-poison-stored" "$(awk -F'\t' '$1=="ah-ah-demo-project-0722-0725"{print $2}' "$DP")" "demo-project"
 
 # Trailing-4-digit false positives (regression: a folder ending in a plain
 # 4-digit number that is NOT a calendar date must alias as-is, not get treated
@@ -235,7 +235,7 @@ ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI"
 
 # CASE-INSENSITIVITY, infer(): a folder whose own name carries an uppercase
 # `AH-` prefix + a real embedded date must still desessionify down to the
-# meaningful part (like the lowercase `ah-agent-torque-0721` case above),
+# meaningful part (like the lowercase `ah-widget-build-0721` case above),
 # not fall back to an opaque checksum alias because desessionify's prefix
 # strip couldn't match the uppercase prefix.
 ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "AH-project-0810-1234")" "project"
