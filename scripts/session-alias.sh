@@ -24,12 +24,14 @@ _crss_load_config() {
     [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
     _crss_key="${BASH_REMATCH[1]}"
     _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
     case "$_crss_val" in
       \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
       \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
     esac
-    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
   done < "$_crss_cfg"
+  return 0
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
@@ -52,6 +54,11 @@ _crss_load_config
 : "${CRSS_ALIAS_PROTECT_NAMES:=}"
 ALIAS_PROTECT="$CRSS_ALIAS_PROTECT_NAMES"
 [ -n "$ALIAS_PROTECT" ] || ALIAS_PROTECT='^$'
+# Invalid ERE -> grep exits 2 -> read as "not protected". Fail closed: alias nothing.
+_crss_rc=0; grep -qiE -- "$ALIAS_PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_crss_rc" -le 1 ] || {
+  echo "session-alias: CRSS_ALIAS_PROTECT_NAMES is not a valid regex ('$ALIAS_PROTECT'); refusing to alias any folder until it's fixed" >&2
+  ALIAS_PROTECT='.'
+}
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 

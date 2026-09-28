@@ -29,12 +29,14 @@ _crss_load_config() {
     [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
     _crss_key="${BASH_REMATCH[1]}"
     _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
     case "$_crss_val" in
       \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
       \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
     esac
-    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
   done < "$_crss_cfg"
+  return 0
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END

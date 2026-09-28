@@ -109,12 +109,14 @@ _crss_load_config() {
     [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
     _crss_key="${BASH_REMATCH[1]}"
     _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
     case "$_crss_val" in
       \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
       \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
     esac
-    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
   done < "$_crss_cfg"
+  return 0
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
@@ -130,6 +132,12 @@ BIN="$HOME/.local/bin"
 : "${CRSS_PROTECT_NAMES:=claude-remote}"
 PROTECT="$CRSS_PROTECT_NAMES"
 [ -n "$PROTECT" ] || PROTECT='^$'
+# An invalid ERE makes `grep -qiE "$PROTECT"` exit 2, which every caller reads as
+# "not protected". Fail closed instead: protect everything (no reaps) and say so.
+_crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_crss_rc" -le 1 ] || {
+  echo "session-doctor: CRSS_PROTECT_NAMES is not a valid regex ('$PROTECT'); treating EVERY session as protected until it's fixed" >&2
+  PROTECT='.'
+}
 MODE="${1:-report}"; shift || true
 # Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
@@ -501,7 +509,15 @@ _WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|buil
 # same way — but the two BASE lists are not identical (pre-existing drift,
 # see CLAUDE.md's "cruft pass" note); this only keeps the ADDITIVE suffix in
 # sync, it does not reconcile the bases.
-[ -n "${CRSS_JUNK_RE_EXTRA:-}" ] && _WT_IGNORED_DENY_RE="${_WT_IGNORED_DENY_RE}|${CRSS_JUNK_RE_EXTRA}"
+if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
+  # An invalid extra pattern would break the whole combined regex; drop it (built-in list still applies).
+  _crss_rc=0; grep -qE -- "$CRSS_JUNK_RE_EXTRA" </dev/null 2>/dev/null || _crss_rc=$?
+  if [ "$_crss_rc" -le 1 ]; then
+    _WT_IGNORED_DENY_RE="${_WT_IGNORED_DENY_RE}|${CRSS_JUNK_RE_EXTRA}"
+  else
+    echo "$(basename "$0"): ignoring invalid CRSS_JUNK_RE_EXTRA regex ('$CRSS_JUNK_RE_EXTRA')" >&2
+  fi
+fi
 
 # _wt_ignored_payload <worktree> <listfile> -> writes the worktree-relative
 # path of every gitignored regular file / symlink that is NOT deny-listed to

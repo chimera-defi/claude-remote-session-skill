@@ -62,10 +62,21 @@ garbage line no equals
 
 CRSS_GOOD=yes
 EOF
-out="$(CRSS_HOME="$CFG" bash -c "set -uo pipefail; source '$LOADER_FILE'; echo \"GOOD=\$CRSS_GOOD\"; echo \"LOWER=\${CRSS_lowercase-UNSET}\"; echo \"RC=\$?\"")"
+out="$(CRSS_HOME="$CFG" bash -c "set -uo pipefail; source '$LOADER_FILE'; rc=\$?; echo \"GOOD=\$CRSS_GOOD\"; echo \"LOWER=\${CRSS_lowercase-UNSET}\"; echo \"RC=\$rc\"")"
 has "garbage-lines-ignored-good-still-loads" "$out" "GOOD=yes"
 has "garbage-lines-ignored-lowercase-not-loaded" "$out" "LOWER=UNSET"
 has "garbage-lines-loader-still-succeeds" "$out" "RC=0"
+
+# The last CRSS_ line names a var already set in the env: the loader must still
+# return 0, or `set -e` callers (new-session) die silently before doing anything.
+printf 'CRSS_A=1\nCRSS_LAST=file\n' > "$CFG/config.sh"
+out="$(CRSS_HOME="$CFG" CRSS_LAST=env bash -c "set -euo pipefail; source '$LOADER_FILE'; echo \"ALIVE LAST=\$CRSS_LAST A=\$CRSS_A\"" 2>&1)"
+has "set-e-last-line-preset-survives" "$out" "ALIVE LAST=env A=1"
+
+# CRLF line endings: the trailing CR is stripped from the value.
+printf 'CRSS_CR=val\r\n' > "$CFG/config.sh"
+out="$(CRSS_HOME="$CFG" bash -c "source '$LOADER_FILE'; printf 'CR=[%s]' \"\$CRSS_CR\"")"
+has "crlf-value-stripped" "$out" "CR=[val]"
 
 # hostile line: a command-substitution value stays LITERAL text, never
 # eval'd/expanded — must create no file.
