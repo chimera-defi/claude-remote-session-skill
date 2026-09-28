@@ -167,7 +167,7 @@ _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
 # real message can never find it there. Without this, a landed-but-still-
 # buffered large paste reads (wrongly) as "gone from the input line", and
 # _verdict falls straight through "buffered" to "unverified" instead of
-# pressing Enter again. Confirmed live 2026-09-24 (cs_qt-gate-0924-0802,
+# pressing Enter again. Confirmed live 2026-09-24 (cs_svc-gate-0924-0802,
 # `new-session my-project --task-file`): send reported UNVERIFIED
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
