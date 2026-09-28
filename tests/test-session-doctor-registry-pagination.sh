@@ -19,6 +19,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
+# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
+# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
 pass=0; fail=0

@@ -7,6 +7,8 @@
 # for the TSV landed/dirty columns. No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)

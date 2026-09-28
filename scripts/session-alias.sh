@@ -8,19 +8,50 @@
 # --set-default alongside it to actually persist the new default.
 set -uo pipefail
 
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+  done < "$_crss_cfg"
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+
 # ALIAS_PROTECT — folders never aliased, so their identifying token survives in
 # the session name (session-doctor protects sessions by substring-matching the
 # name; stripping the token via an acronym would silently drop that protection).
 #
-# INTENTIONALLY NARROWER than session-doctor.sh's reap PROTECT
-# (claude-remote|openclaw|hermes): only openclaw/hermes are ever spawned as
-# new-session *folders* that must stay protected. The bare claude-remote /
-# claude-remote-b RC bridge sessions are NOT created via new-session, so a folder
-# that merely *contains* "claude-remote" (e.g. this repo, claude-remote-session-
-# skill) is a normal dev session that SHOULD alias and SHOULD be reapable when
-# dead. Do not add claude-remote here. session-doctor's PROTECT is unchanged and
-# still shields the real bridge sessions by their literal names.
-ALIAS_PROTECT='openclaw|hermes'
+# INTENTIONALLY NARROWER than session-doctor.sh's reap PROTECT (which defaults
+# to the skill's own name, "claude-remote"): a folder whose name merely
+# *contains* "claude-remote" (e.g. this repo, claude-remote-session-skill) is a
+# normal dev session that SHOULD alias and SHOULD be reapable when dead. Do
+# not fold this into CRSS_PROTECT_NAMES. Generic default is empty (no folders
+# alias-protected); this host's overlay sets CRSS_ALIAS_PROTECT_NAMES to
+# openclaw|hermes via $CRSS_HOME/config.sh (see examples/crss-overlay/) to
+# reproduce that today. An empty ALIAS_PROTECT would make the `grep -qiE`
+# below match EVERY folder (an empty ERE matches any line) — the opposite of
+# the intended "protect nothing" default — so empty falls back to a pattern
+# that matches nothing.
+: "${CRSS_ALIAS_PROTECT_NAMES:=}"
+ALIAS_PROTECT="$CRSS_ALIAS_PROTECT_NAMES"
+[ -n "$ALIAS_PROTECT" ] || ALIAS_PROTECT='^$'
 CAP=18
 STORE="${SESSION_ALIAS_STORE:-$HOME/.claude/session-aliases}"
 

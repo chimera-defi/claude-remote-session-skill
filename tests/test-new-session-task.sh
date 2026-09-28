@@ -7,6 +7,8 @@
 # cannot be exercised without a real claude spawn.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 NS="$HERE/../scripts/new-session.sh"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 NS="$HERE/../scripts/new-session.sh"
 # Expose the helper as `session-alias` (no .sh) via a throwaway bin dir on PATH,
 # so new-session's `command -v session-alias` resolves it — WITHOUT polluting the
