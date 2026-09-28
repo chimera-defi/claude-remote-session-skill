@@ -72,6 +72,14 @@ has "protect-from-config-file" "$protect_out" "PROTECT=[claude-remote|goodtest]"
 report_case="$(sed -n '/^  report)/,/^  reap-local)/p' "$DOCTOR")"
 has "report-mode-calls-overlay-report" "$report_case" "_crss_overlay_report"
 
+# An invalid CRSS_PROTECT_NAMES regex must fail CLOSED (everything protected),
+# not open: grep exits 2 on a bad ERE, which callers would read as "not protected".
+BADRE="$(mktemp -d)"; printf 'CRSS_PROTECT_NAMES=claude-remote|(hermes\n' > "$BADRE/config.sh"
+out="$(CRSS_HOME="$BADRE" bash "$DOCTOR" overlay 2>&1)"
+has "bad-protect-regex-warns"       "$out" "is not a valid regex"
+has "bad-protect-regex-fails-closed" "$out" "treating EVERY session as protected"
+rm -rf "$BADRE"
+
 rm -rf "$GOOD" "$BROKEN"
 
 echo "test-session-doctor-overlay: pass=$pass fail=$fail"

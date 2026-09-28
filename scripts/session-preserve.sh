@@ -43,12 +43,14 @@ _crss_load_config() {
     [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
     _crss_key="${BASH_REMATCH[1]}"
     _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
     case "$_crss_val" in
       \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
       \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
     esac
-    [ -z "${!_crss_key+x}" ] && export "${_crss_key}=${_crss_val}"
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
   done < "$_crss_cfg"
+  return 0
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
@@ -62,7 +64,15 @@ JUNK_RE='(^|/)(\.claude/skills|\.claude/token-reduce-state|\.claude/tmp-briefs|\
 # appended the same way — but the two BASE lists are not identical
 # (pre-existing drift, see CLAUDE.md's "cruft pass" note); this only keeps
 # the ADDITIVE suffix in sync, it does not reconcile the bases.
-[ -n "${CRSS_JUNK_RE_EXTRA:-}" ] && JUNK_RE="${JUNK_RE}|${CRSS_JUNK_RE_EXTRA}"
+if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
+  # An invalid extra pattern would break the whole combined regex; drop it (built-in list still applies).
+  _crss_rc=0; grep -qE -- "$CRSS_JUNK_RE_EXTRA" </dev/null 2>/dev/null || _crss_rc=$?
+  if [ "$_crss_rc" -le 1 ]; then
+    JUNK_RE="${JUNK_RE}|${CRSS_JUNK_RE_EXTRA}"
+  else
+    echo "$(basename "$0"): ignoring invalid CRSS_JUNK_RE_EXTRA regex ('$CRSS_JUNK_RE_EXTRA')" >&2
+  fi
+fi
 # The spawner's own untracked .sessions-init-<remote> sentinel (see
 # new-session.sh), which sits at the worktree ROOT for the life of every
 # session — session-git-prep.sh and session-doctor.sh's _wt_dirty already
