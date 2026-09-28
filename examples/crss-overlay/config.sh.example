@@ -91,5 +91,5 @@
 # dirs, each containing summary.json). fleet-status degrades gracefully
 # with a "no snapshot found" note if this doesn't exist or nothing has ever
 # written to it — it is not a hard dependency.
-# Default: $HOME/.gbrain/server-health/runs
-#CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.gbrain/server-health/runs
+# Default: empty (the section prints a one-line note and is skipped)
+#CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.local/state/server-health/runs

@@ -38,7 +38,7 @@ _crss_load_config() {
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
-: "${CRSS_HEALTH_SNAPSHOT_DIR:=$HOME/.gbrain/server-health/runs}"
+: "${CRSS_HEALTH_SNAPSHOT_DIR:=}"  # unset = no host health snapshot section
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -72,6 +72,10 @@ print_host() {
   # full df/free/systemctl sweep live on every call (the slow part of the old
   # hand-rolled routine). Falls back to a note if the audit has never run.
   local runs_dir="$CRSS_HEALTH_SNAPSHOT_DIR"
+  if [ -z "$runs_dir" ]; then
+    echo "  (no health snapshot configured — set CRSS_HEALTH_SNAPSHOT_DIR in \$CRSS_HOME/config.sh)"
+    return 0
+  fi
   local -a dirs
   local d latest=""
   # Directory names are UTC timestamps (YYYYMMDDTHHMMSSZ), so lexical sort
