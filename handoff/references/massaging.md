@@ -7,6 +7,13 @@ It IS the seven parts below, in order. This is a **contract of ingredients, not 
 template**: every part is present, but how you weight and phrase each is judgment for the
 specific task and its domain. A rigid template would strip the context-awareness that
 makes a good handoff good; the point of listing the parts is that none silently go missing.
+For a ready-to-fill starting shape per prompt type (spawned orchestrator, Sonnet builder,
+Fable reviewer, or this file's own one-shot handoff), start from
+[`kickoff-templates.md`](kickoff-templates.md) and apply the judgment below.
+
+Before writing any kickoff, read `$CRSS_HOME/local.md` if it exists — it holds this host's
+actual escalation channel, project guardrail index, and delegate routing. No overlay: use
+the generic defaults given here and in `kickoff-templates.md`.
 
 ## The parts
 
@@ -43,13 +50,17 @@ makes a good handoff good; the point of listing the parts is that none silently 
    branch from local `main`", "don't reap sessions you didn't spawn") — a named habit gets
    avoided; "be careful" does not.
 
-7. **Stop rule** — when to keep going and when to stop and ask. Without one, the target
-   either stalls asking permission for routine steps or barrels through a destructive one.
-   Default wording, adjust per task:
+7. **Stop rule** — when to keep going and when to stop and ask, *and through what channel*.
+   Without one, the target either stalls asking permission for routine steps or barrels
+   through a destructive one; without a named channel, an operator-owned question sits in
+   the target's own pane where nobody sees it, which is a stall dressed up as an escalation.
+   Name a real command, not just "ask the operator": default wording, adjust per task:
    > "When a step doesn't need me, keep going — put status in the same message as your next
    > action. Stop and ask only if you can't continue without a decision from me, or before
    > anything destructive: deleting data, force-pushing, or changing anything outside this
-   > repo."
+   > repo. Anything genuinely my call goes to me via `session-send <parent-session> --file
+   > <f>` — a numbered list with your recommended option. Decide defaults yourself when
+   > there's a normal recommended answer; report them afterwards."
 
 Don't add "think carefully", "think step by step", or "ultrathink". Current Claude models
 decide how much to think on their own; those lines add length, not quality. Spend the words
@@ -67,8 +78,10 @@ on the finish line and the anti-patterns instead.
   with file and line, why it's wrong, and how to show it fails.
 - **Large audit / migration** (many files, services, or sessions) → tell it to give each
   slice its own subagent (`subagent_type: builder` or `model: "sonnet"`, so it keeps
-  `advisor`) and to **check each subagent's evidence before accepting its report** —
-  re-run the cited command, open the cited line. Results consolidated in one table.
+  `advisor`), and to have each subagent write large intermediate output (research, logs,
+  diffs) to a file and return a short summary rather than dumping it inline. **Check each
+  subagent's evidence before accepting its report** — re-run the cited command, open the
+  cited line. Results consolidated in one table.
 
 ## Long runs
 
@@ -94,6 +107,7 @@ Deliverable: memory/tranche1-survey.md + a one-paragraph summary back to me. Mar
 Guardrail: WATCH-only. No orders. Execution needs EXECUTION_APPROVED_HUMAN=1 in this session.
 Scope: this repo only; do not touch other portfolio sessions.
 Stop rule: keep going through the survey; stop and ask only if <source> is unreachable.
+       Genuinely my call goes to me via `session-send <parent> --file <f>`.
 ```
 
 **Build (eth2-quickstart GEO/AEO):**
@@ -106,7 +120,8 @@ Known state (VERIFY): <current-state notes, each marked confirm-before-use>.
 Deliverable: a PR against main (never push to main directly).
 Scope: this repo; don't touch sibling sessions. Don't branch from local main.
 Stop rule: keep going; stop and ask only if a test fails for a reason you can't explain,
-       or before force-pushing or deleting anything.
+       or before force-pushing or deleting anything. My-call items go to
+       `session-send <parent> --file <f>`.
 ```
 
 ## Self-check before you send
@@ -116,6 +131,8 @@ Stop rule: keep going; stop and ask only if a test fails for a reason you can't 
 - [ ] Deliverable names an exact destination.
 - [ ] Every domain guardrail the target's peers enforce is restated (or flagged if uncertain).
 - [ ] Scope names what NOT to touch, as concrete anti-patterns rather than "be careful".
-- [ ] Stop rule says when to keep going and when to ask.
-- [ ] Long run? It asks for a TASKS.md. Audit/migration? It asks for subagents + evidence checks.
+- [ ] Stop rule says when to keep going, when to ask, and names the actual channel to ask
+      through (e.g. `session-send <parent> --file <f>`) — not just "ask the operator".
+- [ ] Long run? It asks for a TASKS.md, re-read after any compaction. Audit/migration? It
+      asks for subagents that write large output to files, plus evidence checks.
 - [ ] No "think carefully / step by step" filler.
