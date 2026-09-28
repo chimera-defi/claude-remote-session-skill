@@ -77,9 +77,12 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
 - Git-aware run dir: a git workdir starts on the **default branch** (or a fresh worktree off it), never a stale feature branch — see below
 - Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
 - The Opus orchestrator has no `advisor` (Sonnet-only). For a second opinion it spawns a
-  Fable subagent directly — `Agent({description, prompt, model: "fable"})` — not a Sonnet
-  builder, which would just be Sonnet checking its own reasoning. (Operator directive,
-  2026-09-26.)
+  Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
+  deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
+  "fable"})` — not a Sonnet builder, which would just be Sonnet checking its own
+  reasoning. `model: fable` in an agent definition's frontmatter is a live-verified value
+  on this CLI (2.1.280): a probe agent with that frontmatter ran as `claude-fable-5-1`
+  when spawned. (Operator directive, 2026-09-26.)
 - ChatGPT (GPT-5.5) is reached through the `gpt-relay` Sonnet subagent — not a standalone
   session. It is defined in the portfolio-single-source-of-truth repo: `.claude/agents/gpt-relay.md`
   and the `gpt-relay` row of the roles table in that repo's `AGENTS.md`. How it calls GPT
@@ -90,26 +93,42 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
 A spawned session starts with none of your context, and it will work unattended for a long
 time. What makes it succeed is the shape of the first message, not how hard you tell it to
 try. The full contract lives in [`handoff/references/massaging.md`](handoff/references/massaging.md);
-the parts that matter most for a fresh spawn:
+a ready fill-in starting shape is [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md)
+template (a). Before writing, read `$CRSS_HOME/local.md` if it exists — it has this host's
+real escalation channel, project guardrail index, and delegate routing; absent overlay, use
+the generic defaults in those two files. The parts that matter most for a fresh spawn:
 
 - **A finish line, not an activity.** "PR merged with `shell-tests` green and the script
   redeployed" — not "look into the compaction bug". Current models sustain long multi-step
   work well *when they know what done looks like*; an open-ended ask is where they drift.
-- **A stop rule.** Say when to keep going and when to stop and ask. Default wording:
-  *"When a step doesn't need me, keep going and put status in the same message as your next
-  action. Stop and ask only if you can't continue without a decision from me, or before
-  anything destructive (deleting data, force-pushing, touching anything outside this repo)."*
+- **A stop rule that names the channel.** Say when to keep going, when to stop and ask, and
+  *through what*: a question left only in the child's own pane is a stall, not an
+  escalation. Default wording: *"When a step doesn't need me, keep going and put status in
+  the same message as your next action. Stop and ask only if you can't continue without a
+  decision from me, or before anything destructive (deleting data, force-pushing, touching
+  anything outside this repo). Anything genuinely my call goes to me via `session-send
+  <parent-session> --file <f>` — a numbered list with your recommended option. Decide
+  defaults yourself when there's a normal recommended answer; report them afterwards."*
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no orders without `EXECUTION_APPROVED_HUMAN=1`").
   A named habit gets avoided; a general caution gets ignored.
+- **Delegate every independent slice.** Research, per-file edits, and verification each go
+  to their own subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
+  `advisor`); don't delegate a builder's own verification back to itself, and brief each one
+  completely — only the prompt string crosses over, nothing else. For a second opinion on
+  the orchestrator's own work, spawn Fable directly (`model: "fable"`), not a Sonnet
+  builder checking its own reasoning.
+- **Context hygiene.** Have subagents write large research, logs, or diffs to files and
+  return a short summary plus the file path, instead of dumping it inline.
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md
   checklist with the finish line at the top; update it as you go; re-read it after any
-  compaction."* Context gets summarized; the file doesn't.
+  compaction, before acting."* Context gets summarized; the file doesn't.
 - **Subagents with evidence checks for large audits/migrations.** *"Give each slice its own
-  subagent (`subagent_type: builder`); check each one's evidence before accepting its
-  report."*
+  subagent (`subagent_type: builder`), have it write large output to files, and return a
+  short summary; check each one's evidence before accepting its report."*
 - **Leave out "think carefully / step by step / ultrathink".** Current Claude models decide
-  how much to think on their own; those lines add length, not quality.
+  how much to think on their own; those lines add length, not quality. Same for ALL-CAPS or
+  "MUST" — a reason attached to a rule holds up better than a rule shouted louder.
 
 While it runs, **add context with `session-send`** rather than killing and respawning — the
 session picks up a mid-run message without losing its work. When it reports done, **first

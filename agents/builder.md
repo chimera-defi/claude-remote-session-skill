@@ -51,6 +51,10 @@ Stop and return early — saying why — only when:
   tool (`--help`, its source, its schema) first.
 - If the task is long enough that you may lose track, keep a short checklist file
   in your scratchpad and update it as you go.
+- If a step produces large output (a wide search, a long log, a full file dump),
+  write it to a scratchpad file and keep only what you need to reason about in
+  context — your own context is not the place to accumulate it, and neither is
+  your final report.
 
 ## What to return
 
