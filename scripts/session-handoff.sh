@@ -113,7 +113,7 @@ fi
 # followed by a word ending in the "…" ellipsis (e.g. "✽ Crafting…"). This
 # matters for a collapsed multi-line paste that doesn't echo into the transcript.
 _is_working() {
-  printf '%s' "$1" | grep -qE 'esc to interrupt|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
+  printf '%s' "$1" | grep -qE 'esc to interrupt|[•][[:space:]]*Working|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
 }
 
 # _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
@@ -139,7 +139,7 @@ _is_working() {
 # --help`, -p/--print note) confirming this dialog is a real, versioned
 # feature of Claude Code, not a one-off rendering.
 _is_on_menu() {
-  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Enter to confirm'
+  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Yes, proceed|Press enter to confirm|Back to Agent Command Center'
 }
 
 # _frag — a distinctive single-line fragment of a (possibly multi-line) message,
@@ -149,8 +149,8 @@ _frag() { printf '%s' "$1" | sed -n '/[^[:space:]]/{p;q}' | cut -c1-48; }
 # _input_region / _transcript_region — split a capture at the LAST prompt line
 # (the `❯` input box). Content on/after it is the pending input; content before
 # it is the conversation transcript.
-_input_region()      { printf '%s\n' "$2" | awk '/❯/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
-_transcript_region() { printf '%s\n' "$2" | awk '/❯/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
+_input_region()      { printf '%s\n' "$2" | awk '/[❯›]/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
+_transcript_region() { printf '%s\n' "$2" | awk '/[❯›]/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
 
 # _on_input_line — is the fragment still sitting in the input box (typed but not
 # submitted)? Then another Enter is needed.
@@ -178,7 +178,7 @@ _is_collapsed_paste_in_input() {
 # _has_prompt — is there a real ❯ input line visible anywhere in the capture?
 # Absent during startup (still in the supervisor loop / model not yet in a TUI
 # frame) or if the capture is empty/garbled.
-_has_prompt() { printf '%s' "$1" | grep -qF '❯'; }
+_has_prompt() { printf '%s' "$1" | grep -qE '[❯›]'; }
 
 # _strip_ansi — drop ANSI CSI sequences (ESC '[' params letter), e.g. color /
 # bold / dim SGR codes from `tmux capture-pane -e`. Used to make the busy /
@@ -283,6 +283,11 @@ _input_box_empty() {
       nbound=$((nbound_n - 1))
       break
     fi
+    if [ "$nbound_n" -gt 1 ] && printf '%s' "$stripped" | head -1 | grep -q '›' \
+       && [ -z "$(printf '%s' "$nbound_ln" | tr -d '[:space:]')" ]; then
+      nbound=$((nbound_n - 1))
+      break
+    fi
   done <<<"$stripped"
   [ "$nbound" -gt 0 ] || nbound="$nbound_n"
   [ -n "$nbound" ] && [ "$nbound" -gt 0 ] || nbound=1
@@ -295,7 +300,7 @@ _input_box_empty() {
   # reproduction against this function. Strip the ❯ prefix off line 1 only
   # (line 2+ carries no such prefix) and look at the WHOLE box, not just its
   # first line.
-  rest="$(printf '%s\n' "$box" | sed '1s/^[^❯]*❯//')"
+  rest="$(printf '%s\n' "$box" | sed '1s/^[^❯›]*[❯›]//')"
   visible="$(_strip_ansi "$rest" | tr -d '\n' | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
   [ -z "$visible" ] && return 0
   # Claude Code's dim "suggested next action" ghost text is always exactly
@@ -426,6 +431,18 @@ _model_of() {
   grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* model=\([^ ]*\) .*/\1/p' | tail -1
 }
 
+_backend_of() {
+  local rem sc backend
+  rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo claude; return; }
+  sc="$HOME/.local/bin/${rem}-start.sh"
+  if [ -f "$sc" ]; then
+    backend="$(sed -n 's/^BACKEND="\(.*\)"$/\1/p' "$sc" | head -1)"
+    [ -n "$backend" ] && { echo "$backend"; return; }
+  fi
+  backend="$(grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* backend=\([^ ]*\) .*/\1/p' | tail -1)"
+  [ -n "$backend" ] && echo "$backend" || echo claude
+}
+
 # _state_of — dead | starting | busy | menu | ready, from pane command +
 # capture. `menu` (added 2026-09-24, see _is_on_menu's comment for the
 # incident) covers both the AskUserQuestion-style widgets and the folder-
@@ -434,10 +451,11 @@ _model_of() {
 # "ready" while it is sitting on either, instead of the previous busy-vs-not
 # split that had no way to represent "up, but not safe to type into" at all.
 _state_of() {
-  local s="$1" cmd cap; cmd="$(_pane_cmd "$s")"
+  local s="$1" cmd cap backend; cmd="$(_pane_cmd "$s")"; backend="$(_backend_of "$s")"
   case "$cmd" in
     ""|-) echo dead; return;;
     claude|node) : ;;
+    codex) [ "$backend" = codex ] || { echo dead; return; } ;;
     # `sleep` is the supervisor loop's between-restarts backoff (300s on a
     # quick exit, 10s otherwise — see new-session.sh's generated start
     # script), NOT claude "busy working" — there is no claude process in the
@@ -580,7 +598,7 @@ case "$MODE" in
          && ! _in_transcript "$frag" "$cap_now" \
          && ! _on_input_line "$frag" "$cap_now"; then
         case "$(_pane_cmd "$S")" in
-          claude|node)
+      claude|node|codex)
             sleep 2
             verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
             ;;
