@@ -650,8 +650,74 @@ _wt_ignored_payload() {
 # compared with the source's hash before this returns 0. Never prints file
 # contents, only paths and sizes. Used by `reap` (via _reap_remove_worktree)
 # and by `session-doctor archive-ignored <worktree>`.
+_reap_archive_prepare() {
+  local base="$1" root dest
+  _REAP_ARCHIVE_ERR=""
+  [ -n "${_REAP_ARCHIVE_DIR:-}" ] && return 0
+  root="$HOME/backups/reaped-worktree-ignored"
+  dest="$root/${base}-$(date -u +%Y%m%dT%H%M%SZ)"
+  if ! ( umask 077; mkdir -p "$root" && mkdir "$dest" && : > "$dest/MANIFEST" ); then
+    _REAP_ARCHIVE_ERR="could not create archive directory $dest"
+    return 1
+  fi
+  _REAP_ARCHIVE_DIR="$dest"
+  return 0
+}
+
+_reap_archive_home_paths() {
+  local base="$1" dest rel src dst dir hash got size archived
+  shift
+  if ! _reap_archive_prepare "$base"; then
+    return 1
+  fi
+  dest="$_REAP_ARCHIVE_DIR"
+  mkdir -p "$dest/files" || { _REAP_ARCHIVE_ERR="could not create $dest/files"; return 1; }
+  archived=0
+  for rel in "$@"; do
+    src="$HOME/$rel"
+    [ -e "$src" ] || [ -L "$src" ] || continue
+    dst="$dest/files/$rel"
+    dir="$(dirname "$dst")"
+    mkdir -p "$dir" || { _REAP_ARCHIVE_ERR="could not create $dir"; return 1; }
+    if [ -L "$src" ]; then
+      local tgt
+      tgt="$(readlink "$src")" || { _REAP_ARCHIVE_ERR="could not read symlink $rel"; return 1; }
+      ln -s "$tgt" "$dst" || { _REAP_ARCHIVE_ERR="could not archive symlink $rel"; return 1; }
+      [ "$(readlink "$dst")" = "$tgt" ] || { _REAP_ARCHIVE_ERR="could not verify symlink $rel"; return 1; }
+      printf 'symlink\t0\t%s\t-> %s\n' "$rel" "$tgt" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
+      echo "    archived: $rel"
+      archived=$((archived+1))
+      continue
+    fi
+    hash="$(sha256sum "$src" | awk '{print $1}')" || { _REAP_ARCHIVE_ERR="could not hash $rel"; return 1; }
+    cp -p "$src" "$dst" || { _REAP_ARCHIVE_ERR="could not copy $rel"; return 1; }
+    got="$(sha256sum "$dst" | awk '{print $1}')" || { _REAP_ARCHIVE_ERR="could not hash archived $rel"; return 1; }
+    [ "$got" = "$hash" ] || { _REAP_ARCHIVE_ERR="could not verify archived $rel"; return 1; }
+    size="$(wc -c < "$src" | tr -d ' ')" || { _REAP_ARCHIVE_ERR="could not size $rel"; return 1; }
+    printf '%s\t%s\t%s\n' "$hash" "$size" "$rel" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
+    echo "    archived: $rel"
+    archived=$((archived+1))
+  done
+  echo "  archived $archived unit/start file(s) → $dest"
+  return 0
+}
+
+_reap_archive_unit_files() {
+  local base="$1" service_rel script_rel
+  service_rel=".config/systemd/user/${base}.service"
+  script_rel=".local/bin/${base}-start.sh"
+  if _reap_archive_home_paths "$base" "$service_rel" "$script_rel"; then
+    [ -e "$HOME/$service_rel" ] || [ -L "$HOME/$service_rel" ] || [ -e "$HOME/$script_rel" ] || [ -L "$HOME/$script_rel" ] \
+      || echo "  unit/start archive: no unit file or start script found (ok)"
+    rm -f -- "$HOME/$service_rel" "$HOME/$script_rel"
+  else
+    echo "  WARNING: unit/start-script archive failed for '$base' ($_REAP_ARCHIVE_ERR); leaving originals in place" >&2
+  fi
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+}
+
 _wt_archive_ignored() {
-  local wt="$1" list root dest cap py_out mb prc
+  local wt="$1" list root dest cap py_out mb prc own_dest
   _WTI_ERR=""; _WTI_ARCHIVE=""
   list="$(mktemp)" || { _WTI_ERR="mktemp failed"; return 1; }
   _wt_ignored_payload "$wt" "$list"; prc=$?
@@ -667,8 +733,13 @@ _wt_archive_ignored() {
     rm -f "$list"; return 1
   fi
   root="$HOME/backups/reaped-worktree-ignored"
-  dest="$root/$(basename "$wt")-$(date -u +%Y%m%dT%H%M%SZ)"
-  if ! py_out="$( { umask 077; mkdir -p "$root" && mkdir "$dest" && python3 - "$wt" "$dest" "$list" <<'PY'
+  dest="${_REAP_ARCHIVE_DIR:-}"
+  own_dest=no
+  if [ -z "$dest" ]; then
+    dest="$root/$(basename "$wt")-$(date -u +%Y%m%dT%H%M%SZ)"
+    own_dest=yes
+  fi
+  if ! py_out="$( { umask 077; mkdir -p "$root" && mkdir -p "$dest" && python3 - "$wt" "$dest" "$list" <<'PY'
 import hashlib, os, shutil, sys
 wt, dest, listfile = (os.fsencode(a) for a in sys.argv[1:4])
 def sha(p):
@@ -679,8 +750,8 @@ def sha(p):
     return h.hexdigest()
 def main():
     n = total = 0
-    os.mkdir(dest + b'/files')
-    with open(dest + b'/MANIFEST', 'wb') as m:
+    os.makedirs(dest + b'/files', exist_ok=True)
+    with open(dest + b'/MANIFEST', 'ab') as m:
         for rel in open(listfile, 'rb').read().split(b'\0'):
             if not rel:
                 continue
@@ -710,7 +781,9 @@ except Exception as e:
 PY
   } 2>&1 )"; then
     _WTI_ERR="archive to $dest failed${py_out:+ ($py_out)}"
-    case "$dest" in "$root"/?*) rm -rf "$dest" ;; esac
+    if [ "$own_dest" = yes ]; then
+      case "$dest" in "$root"/?*) rm -rf "$dest" ;; esac
+    fi
     rm -f "$list"; return 1
   fi
   rm -f "$list"
@@ -1784,9 +1857,11 @@ else:
     tmux kill-session -t "$NAME" 2>/dev/null \
       && echo "  tmux session killed: $NAME" || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
+      _REAP_ARCHIVE_DIR=""
       systemctl --user disable --now "${base}.service" >/dev/null 2>&1 \
         && echo "  unit disabled: ${base}.service" || echo "  unit '${base}.service' not active/installed (ok)"
       systemctl --user reset-failed "${base}.service" >/dev/null 2>&1 || true
+      _reap_archive_unit_files "$base"
     else
       echo "  '$NAME' does not match a recognised session prefix (${_crss_prefix_re}) — no systemd unit to tear down" >&2
     fi

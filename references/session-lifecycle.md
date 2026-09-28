@@ -63,18 +63,12 @@ Safety guarantees:
   rows) and its per-row deleted/skipped/failed outcome. `reap <name>` also prunes
   that one session's own registry entry on success, unless `--keep-registry`.
 - **`reap <name>` also removes that one session's own worktree**, unless
-  `--keep-worktree`. `git worktree remove` runs without `--force` on its own (a dirty
-  worktree refuses and is left in place, reported, never fails the rest of reap) except
-  under reap's own `--force`, which is passed through. A worktree still referenced by
-  any OTHER systemd unit (`WorkingDirectory` or anywhere in `ExecStart`, including
-  `.service.d/*.conf` drop-ins), the caller's own cwd, or a repo's primary checkout is
-  never removed either way. The branch is never deleted. See `_reap_remove_worktree`'s
-  header comment in `scripts/session-doctor.sh` and
-  `tests/test-session-doctor-reap-worktree.sh`. Before removing, reap archives the
-  worktree's non-regenerable *gitignored* files (which `git worktree remove` deletes
-  and a `clean` status never shows) to `~/backups/reaped-worktree-ignored/`, and keeps
-  the worktree if it can't — see `_wt_archive_ignored` in the same script and case 13
-  of that test.
+  `--keep-worktree`, and archives the session's local unit/start artifacts before
+  deleting them. The branch is never deleted. See the `reap` case,
+  `_reap_archive_unit_files`, `_reap_remove_worktree`, and `_wt_archive_ignored` in
+  `scripts/session-doctor.sh`, pinned by `tests/test-session-doctor.sh` and
+  `tests/test-session-doctor-reap-worktree.sh`, for the exact cleanup guards and
+  fail-safe behavior.
 - **Worktree removal for everything else is never automated.** `worktree-stale` prints
   each remaining candidate's dirty/unpushed status and the exact `git worktree remove`
   to run by hand (a `git branch -D` is appended only for a `landed=yes` row; otherwise a
