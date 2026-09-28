@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Tests for the CRSS host-local overlay config loader (_crss_load_config).
-# The loader is copied VERBATIM into every script that reads overlay config
-# (no shared lib — scripts are deployed as flat standalone copies to
-# ~/.local/bin), so this file has two jobs:
+# Tests for the CRSS host-local overlay config loader (_crss_load_config) AND
+# the session-name prefix-recognition block (_crss_prefix_re) that sits right
+# after it in every script that needs the configured prefix. Both are copied
+# VERBATIM into every script that needs them (no shared lib — scripts are
+# deployed as flat standalone copies to ~/.local/bin), so this file has two
+# jobs per block:
 #
-#   1. Prove every copy is byte-identical (extracted between the
-#      "# CRSS-CONFIG-LOADER-START" / "# CRSS-CONFIG-LOADER-END" marker
-#      comments) — a single source of truth for the parsing logic.
-#   2. Exercise that logic directly (garbage lines ignored, quotes stripped,
-#      a hostile command-substitution value stays inert literal text, env
-#      wins over file, a missing file is fine).
+#   1. Prove every copy is byte-identical (extracted between each block's
+#      own START/END marker comments) — a single source of truth for the
+#      parsing logic.
+#   2. Exercise that logic directly. For the config loader: garbage lines
+#      ignored, quotes stripped, a hostile command-substitution value stays
+#      inert literal text, env wins over file, a missing file is fine. For
+#      the prefix block: an invalid CRSS_SESSION_PREFIX falls back to the
+#      generic default, an invalid CRSS_LEGACY_PREFIXES element drops the
+#      WHOLE legacy list, and a valid config builds the expected alternation.
+#      Fixture-level "does an old/new-prefixed name actually parse" coverage
+#      lives in tests/test-session-prefix.sh — this file only pins the
+#      shared block's own logic.
 #
 # No external test framework.
 set -uo pipefail
@@ -21,11 +29,21 @@ has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((
 
 # Every script that reads overlay config — keep this list in sync with
 # CLAUDE.md's overlay-config instructions if a new script gains the loader.
-LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh)
+LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh)
 
-extract_loader() {  # $1 = script path -> loader block (markers inclusive) on stdout
-  sed -n '/# CRSS-CONFIG-LOADER-START/,/# CRSS-CONFIG-LOADER-END/p' "$1"
+# Every script that reads CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES — keep in
+# sync with CLAUDE.md's prefix-plumbing instructions if a new script gains
+# the block. Deliberately a SUBSET of LOADER_FILES: fleet-status.sh,
+# telemetry-report.sh and record-spawn-telemetry.sh have the config loader
+# but never parse/generate a session name themselves (fleet-status delegates
+# to session-doctor), so they don't need this block.
+PREFIX_RE_FILES=(new-session.sh session-doctor.sh session-alias.sh session-preserve.sh session-handoff.sh session-registry.sh)
+
+extract_block() {  # $1 = script path, $2 = START marker, $3 = END marker -> block (markers inclusive) on stdout
+  sed -n "/# $2/,/# $3/p" "$1"
 }
+extract_loader() { extract_block "$1" "CRSS-CONFIG-LOADER-START" "CRSS-CONFIG-LOADER-END"; }
+extract_prefix_re() { extract_block "$1" "CRSS-PREFIX-RE-START" "CRSS-PREFIX-RE-END"; }
 
 # ── 1. Byte-identical across every copy ─────────────────────────────────────
 ref="$(extract_loader "$REPO/scripts/${LOADER_FILES[0]}")"
@@ -38,6 +56,18 @@ fi
 for f in "${LOADER_FILES[@]}"; do
   got="$(extract_loader "$REPO/scripts/$f")"
   ok "loader-identical-$f" "$got" "$ref"
+done
+
+pref_ref="$(extract_prefix_re "$REPO/scripts/${PREFIX_RE_FILES[0]}")"
+if [ -z "$pref_ref" ]; then
+  echo "FAIL: no CRSS-PREFIX-RE block found in ${PREFIX_RE_FILES[0]} — cannot compare copies"
+  fail=$((fail+1))
+else
+  pass=$((pass+1))
+fi
+for f in "${PREFIX_RE_FILES[@]}"; do
+  got="$(extract_prefix_re "$REPO/scripts/$f")"
+  ok "prefix-re-identical-$f" "$got" "$pref_ref"
 done
 
 # ── 2. Functional behavior — source the extracted (canonical) block into a
@@ -118,6 +148,53 @@ out="$(CRSS_HOME="$CFG" bash -c "set -uo pipefail; source '$LOADER_FILE'; echo \
 has "file-value-loaded-when-env-unset" "$out" "WS=/from/file"
 
 rm -rf "$CFG"
+
+# ── 3. Prefix-recognition block (_crss_prefix_re) — functional behavior ─────
+# Source the extracted (canonical) block into a fresh bash process per
+# scenario, same isolation approach as the loader tests above.
+PREFIX_FILE="$(mktemp)"; trap 'rm -f "$PREFIX_FILE"' EXIT
+extract_prefix_re "$REPO/scripts/${PREFIX_RE_FILES[0]}" > "$PREFIX_FILE"
+
+# unset -> generic default "cs", no warning.
+out="$(bash -c "set -uo pipefail; unset CRSS_SESSION_PREFIX CRSS_LEGACY_PREFIXES; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "unset-defaults-to-cs" "$out" "RE=cs"
+
+# valid CRSS_SESSION_PREFIX + valid CRSS_LEGACY_PREFIXES (this host's shape).
+out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "valid-host-shape" "$out" "RE=ah|agenthost"
+
+# multiple valid legacy prefixes.
+out="$(CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='agenthost|oldprefix' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "multiple-legacy-prefixes" "$out" "RE=cs|agenthost|oldprefix"
+
+# invalid CRSS_SESSION_PREFIX ('a|', not ^[a-z][a-z0-9]{0,15}$) falls back to
+# the generic default with a warning on stderr — never to an empty pattern.
+out="$(CRSS_SESSION_PREFIX='a|' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "invalid-session-prefix-falls-back" "$out" "RE=cs"
+has "invalid-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX 'a|' is invalid"
+
+# a regex-metacharacter value ('.*') must not survive into the alternation —
+# this is the exact "matches everything" danger the validation exists for.
+out="$(CRSS_SESSION_PREFIX='.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "metachar-session-prefix-falls-back" "$out" "RE=cs"
+
+# empty CRSS_SESSION_PREFIX (explicitly set, not unset) also falls back with
+# a warning, not silently.
+out="$(CRSS_SESSION_PREFIX='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "empty-session-prefix-falls-back" "$out" "RE=cs"
+has "empty-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX '' is invalid"
+
+# ANY invalid element in CRSS_LEGACY_PREFIXES drops the WHOLE legacy list
+# (not just the bad element) — a valid CRSS_SESSION_PREFIX survives on its own.
+out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='agenthost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "invalid-legacy-element-drops-whole-list" "$out" "RE=ah"
+has "invalid-legacy-element-not-agenthost" "$(printf '%s' "$out" | grep -qF 'RE=ah|agenthost' && echo yes || echo no)" "no"
+has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'agenthost|.*' has an invalid element"
+
+# unset/empty CRSS_LEGACY_PREFIXES is the documented default (no legacy
+# prefixes) — no warning, prefix_re is just CRSS_SESSION_PREFIX.
+out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+ok "empty-legacy-no-warning" "$out" "RE=ah"
 
 echo "test-crss-overlay-config: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
