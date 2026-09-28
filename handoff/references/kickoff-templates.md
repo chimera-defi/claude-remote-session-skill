@@ -28,6 +28,9 @@ reading the task.
   Either way, a child that never sees a project's execution gate is worse than a long
   kickoff — that's the failure this slot exists to prevent, whichever form it takes.
   Omit the line only if this project genuinely has no guardrails to carry forward.
+- `{eval_hillclimb_contract}` — for eval/prompt/model/harness improvement campaigns, link
+  [`eval-hillclimb-protocol.md`](eval-hillclimb-protocol.md) and fill only the concrete
+  budgets, split names, noise/min-effect/parity values, and final-holdout owner.
 
 Before filling any of these in, read `$CRSS_HOME/local.md` if it exists — it holds this
 host's actual escalation channel, project index, and delegate routing. Absent overlay:
@@ -153,6 +156,25 @@ If this is an assessment-only ask ("what do you think of X", "is this safe") rat
 a go-do-it task, say so explicitly — the deliverable is the assessment, not a fix applied
 without being asked.
 
+## (e) Eval/hillclimb campaign kickoff add-on
+
+Append this compact block to (a), (b), or (d) when the task improves a model, prompt,
+harness, grader, or agent loop. Keep the detailed rules in
+[`eval-hillclimb-protocol.md`](eval-hillclimb-protocol.md); fill only campaign-specific
+numbers here.
+
+```
+EVAL/HILLCLIMB: follow handoff/references/eval-hillclimb-protocol.md.
+Objective: {quality/cost/latency Pareto objective, including parity tolerance if cost-focused}.
+Splits: SEARCH/TRAIN={name}; GATE/VALIDATION={name, aggregate scores only}; FINAL HOLDOUT={name, owner, untouched until end}.
+Budgets: campaign={tokens/calls}; per round={tokens/calls}; novelty reserve={default 20% unless changed}.
+Preflight: prove grader stability, plumbing, noise, headroom; if baseline quality is saturated (~95%+), pivot to cost/latency-at-parity.
+Round rule: one attributable normal change; novelty rounds may be non-local but still get only cheap smoke before larger spend.
+Decision gate: run scripts/eval-hillclimb-decision.py on explicit metrics/budgets; KEEP/REVERT/REFLECT/STOP_BUDGET/COST_PIVOT is binding unless you report why the inputs are invalid.
+Leakage: inspect TRAIN failures only; never paste validation/holdout examples or answers into prompts, harnesses, or reports.
+Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeatedly poll or nudge without state change.
+```
+
 ## Pre-send checklist
 
 - [ ] `{goal}` is a finish line you can check, not an activity.
@@ -166,6 +188,8 @@ without being asked.
 - [ ] Every relayed fact that could be stale is marked "verify, don't assume".
 - [ ] Scope names concrete anti-patterns for this domain, not "be careful".
 - [ ] Stop rule states both when to keep going and when to stop and ask.
+- [ ] Eval/hillclimb campaign? Add template (e), fill budgets/splits/noise/parity, and
+      point at `eval-hillclimb-protocol.md` instead of copying the full protocol.
 - [ ] Long-running (a)/(b)? TASKS.md instruction included, with "re-read after any
       compaction, before acting".
 - [ ] (a) only: delegation instruction present — delegate independent slices, don't

@@ -82,6 +82,11 @@ on the finish line and the anti-patterns instead.
   diffs) to a file and return a short summary rather than dumping it inline. **Check each
   subagent's evidence before accepting its report** — re-run the cited command, open the
   cited line. Results consolidated in one table.
+- **Eval / hillclimb** (model, prompt, harness, grader, or agent-loop improvement) → carry
+  the compact add-on from [`kickoff-templates.md`](kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
+  and make [`eval-hillclimb-protocol.md`](eval-hillclimb-protocol.md) the canonical
+  reference. Do not paste hidden failures into the prompt; declare budgets, splits, noise,
+  minimum effect, parity tolerance, novelty reserve, and the machine decision gate up front.
 
 ## Long runs
 
@@ -133,6 +138,8 @@ Stop rule: keep going; stop and ask only if a test fails for a reason you can't 
 - [ ] Scope names what NOT to touch, as concrete anti-patterns rather than "be careful".
 - [ ] Stop rule says when to keep going, when to ask, and names the actual channel to ask
       through (e.g. `session-send <parent> --file <f>`) — not just "ask the operator".
+- [ ] Eval/hillclimb? The prompt names the canonical protocol, explicit budgets/splits, and
+      `scripts/eval-hillclimb-decision.py` gate rather than prose-only accept/revert rules.
 - [ ] Long run? It asks for a TASKS.md, re-read after any compaction. Audit/migration? It
       asks for subagents that write large output to files, plus evidence checks.
 - [ ] No "think carefully / step by step" filler.
