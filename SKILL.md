@@ -21,7 +21,8 @@ consecutive ready polls before the first paste) and refuses rather than pasting 
 yet — wait and resend. On plain `UNVERIFIED`, check the pane and resend with
 `session-send` — it happens often enough on first send that it isn't an edge case
 (one-line detail: [`references/troubleshooting.md`](references/troubleshooting.md)).
-Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `ah`).
+Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `cs`,
+configurable via `CRSS_SESSION_PREFIX`).
 
 ## Recipe
 
@@ -146,8 +147,9 @@ workdir (util):  $CRSS_SESSIONS_DIR/<foldername>  (default $HOME/.sessions)
 
 Name-first, date last; every spawn gets a unique name, so it never collides with a
 same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilities
-(managers, monitors, etc.). `<prefix>` defaults to `ah`; a prior legacy prefix (from
-before a naming change) keeps working too — `session-doctor` matches both.
+(managers, monitors, etc.). `<prefix>` defaults to `cs`, configurable via
+`CRSS_SESSION_PREFIX`; a host that changes prefix can list the old one(s) in
+`CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising older sessions too.
 
 `<alias>` comes from the `session-alias` helper, persisted in `~/.claude/session-aliases`
 (`folder<TAB>alias` per line):

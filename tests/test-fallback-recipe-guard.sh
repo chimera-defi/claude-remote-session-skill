@@ -8,26 +8,54 @@
 # "Two-group false positives" cases). Extract the guard straight out of the
 # doc and run the SAME fixtures against it, so any future drift back to a
 # naive regex fails CI instead of silently reappearing in production.
+#
+# Since #104 (configurable CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES), the
+# guard's prefix check reads $CRSS_SESSION_PREFIX instead of a hardcoded
+# "ah-"/"ah_" — so this test also pulls the doc's own default-resolution line
+# (pinning it stays "cs", matching new-session.sh's generic default) and adds
+# cases proving the guard actually tracks a reconfigured prefix rather than
+# still being hardcoded under the hood.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DOC="$HERE/../references/fallback-recipe.md"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
-# Pull the _fr_has_mmdd_group() and _fr_poisoned() function bodies out of the
-# fenced bash block (_fr_poisoned calls _fr_has_mmdd_group, so both are needed).
-FUNC="$(sed -n '/^_fr_has_mmdd_group() {$/,/^}$/p; /^_fr_poisoned() {$/,/^}$/p' "$DOC")"
-[ -n "$FUNC" ] || { echo "FAIL: could not locate _fr_poisoned()/_fr_has_mmdd_group() in $DOC"; exit 1; }
+# Pull the CRSS_SESSION_PREFIX default-resolution line and the
+# _fr_has_mmdd_group()/_fr_poisoned() function bodies out of the fenced bash
+# block (_fr_poisoned reads $CRSS_SESSION_PREFIX and calls
+# _fr_has_mmdd_group(), so all three are needed).
+unset CRSS_SESSION_PREFIX   # isolation: test the doc's own default, not an inherited value
+FUNC="$(sed -n '/^: "\${CRSS_SESSION_PREFIX:=cs}"$/p; /^_fr_has_mmdd_group() {$/,/^}$/p; /^_fr_poisoned() {$/,/^}$/p' "$DOC")"
+[ -n "$FUNC" ] || { echo "FAIL: could not locate CRSS_SESSION_PREFIX default / _fr_poisoned()/_fr_has_mmdd_group() in $DOC"; exit 1; }
 eval "$FUNC"
 
 poisoned(){ _fr_poisoned "$1" && echo POISONED || echo clean; }
 
-# Genuine poisoned shapes (must still be caught).
-ok "ah-prefix"            "$(poisoned ah-universe-expand-0722)"            "POISONED"
-ok "ah-underscore-prefix" "$(poisoned ah_universe_expand)"                 "POISONED"
+# The doc's own default must match new-session.sh's generic default — this
+# IS what "kept in sync" means for a prefix that's now configurable.
+ok "prefix-default-matches-new-session" "$CRSS_SESSION_PREFIX" "cs"
+
+# Genuine poisoned shapes under the default prefix (must still be caught).
+ok "prefix-match"            "$(poisoned cs-universe-expand-0722)"          "POISONED"
+ok "prefix-underscore-match" "$(poisoned cs_universe_expand)"               "POISONED"
 # Case-insensitivity (found via review, chatgpt-codex-connector, PR #34): a
 # mixed-case stored alias must not bypass the prefix check either.
-ok "ah-prefix-mixed-case"    "$(poisoned AH-foo-bar)"                      "POISONED"
+ok "prefix-match-mixed-case" "$(poisoned CS-foo-bar)"                       "POISONED"
+
+# The guard must track a RECONFIGURED CRSS_SESSION_PREFIX, not a value
+# hardcoded at doc-authoring time — this is the actual behavior #104 added.
+# Fixtures here carry NO digits at all (unlike the -0722-shaped ones above,
+# which a trailing-MMDD real-date match would also catch regardless of
+# prefix) — isolating the prefix check specifically. A value shaped like the
+# OLD default must be clean once the prefix no longer matches it, and the
+# newly configured prefix must be caught instead.
+ok "old-default-not-caught-once-unconfigured" "$(poisoned ah-foo-bar)" "clean"
+CRSS_SESSION_PREFIX=ah
+ok "reconfigured-prefix-caught"                 "$(poisoned ah-foo-bar)" "POISONED"
+ok "prior-default-not-caught-once-reconfigured" "$(poisoned cs-foo-bar)" "clean"
+CRSS_SESSION_PREFIX=cs   # restore for the remaining default-prefix fixtures below
+
 ok "long-numeric-run"     "$(poisoned discovery-0718-153051-4107171)"      "POISONED"
 ok "real-mmdd-hhmm"       "$(poisoned foo-0715-0630)"                      "POISONED"
 ok "real-trailing-mmdd"   "$(poisoned tranche1-ready-0728)"                "POISONED"

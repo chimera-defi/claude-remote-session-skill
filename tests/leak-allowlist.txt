@@ -34,3 +34,4 @@ tests/test-no-host-leaks.sh
 tests/test-session-alias.sh
 tests/test-session-doctor.sh
 tests/test-session-doctor-registry-prune.sh
+tests/test-session-prefix.sh

@@ -77,7 +77,7 @@
 # printed — the safe direction, since a bad element could otherwise widen
 # the alternation into a catch-all pattern in a reap path.
 # Default: (empty — no extra prefixes recognised)
-#CRSS_LEGACY_PREFIXES=agenthost|oldprefix
+#CRSS_LEGACY_PREFIXES=oldhost|oldprefix
 
 # CRSS_PROTECT_NAMES — a `grep -E` alternation of session-name substrings
 # that session-doctor.sh's `reap`/`reap-local`/`registry-prune` NEVER touch,

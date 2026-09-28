@@ -22,6 +22,16 @@
 #      (a per-host file living OUTSIDE this repo, e.g. under $CRSS_HOME — see
 #      examples/crss-overlay/README.md — never committed here).
 #
+#      A denylist line may carry a per-term exclusion: "<ERE><TAB><globs>",
+#      where <globs> is a comma-separated list of path globs (matched against
+#      the path as `git ls-files` prints it). The term is then simply not
+#      checked against any path matching one of those globs — e.g.
+#      `\bah[_-][a-z]<TAB>tests/*` means "don't check this term under
+#      tests/". Use this (not the allowlist below) for a term that some
+#      files legitimately need to contain — e.g. tests that pin a host-shaped
+#      session-name-prefix fixture — without also exempting those files from
+#      every OTHER term. A line with no TAB has no exclusion.
+#
 # Allowlist: tests/leak-allowlist.txt lists path GLOBS (matched against the
 # path exactly as `git ls-files` prints it) that are exempt from ALL checks
 # below — fixtures, the nightly-review state file, this test's own known-good
@@ -158,16 +168,36 @@ if [ -n "${CRSS_LEAK_DENYLIST:-}" ]; then
   else
     echo "=== Host-specific denylist: $CRSS_LEAK_DENYLIST ==="
     terms=()
+    term_excl=()
     while IFS= read -r _dl_line || [ -n "$_dl_line" ]; do
       _dl_line="${_dl_line%%#*}"
       _dl_line="${_dl_line#"${_dl_line%%[![:space:]]*}"}"
       _dl_line="${_dl_line%"${_dl_line##*[![:space:]]}"}"
       [ -n "$_dl_line" ] || continue
-      terms+=("$_dl_line")
+      if [[ "$_dl_line" == *$'\t'* ]]; then
+        terms+=("${_dl_line%%$'\t'*}")
+        term_excl+=("${_dl_line#*$'\t'}")
+      else
+        terms+=("$_dl_line")
+        term_excl+=("")
+      fi
     done < "$CRSS_LEAK_DENYLIST"
+    _term_excluded() {  # $1 = path, $2 = comma-separated globs (may be empty)
+      local p="$1" globs="$2" g
+      [ -n "$globs" ] || return 1
+      local -a _tg_arr
+      IFS=',' read -ra _tg_arr <<< "$globs"
+      for g in "${_tg_arr[@]}"; do
+        # shellcheck disable=SC2053
+        [[ "$p" == $g ]] && return 0
+      done
+      return 1
+    }
     for f in "${files[@]}"; do
       [ -f "$f" ] || continue
-      for term in "${terms[@]+"${terms[@]}"}"; do
+      for i in "${!terms[@]}"; do
+        term="${terms[$i]}"
+        _term_excluded "$f" "${term_excl[$i]}" && continue
         report "$f" "$(grep -noE -- "$term" "$f" 2>/dev/null)" "denylist term: $term"
       done
     done

@@ -52,7 +52,7 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `ah`, e.g. `ah-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
+The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, configurable via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
 
@@ -98,8 +98,9 @@ Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside th
 mobile-list window while reading naturally and grouping by project. `<alias>`
 is the folder name as-is when short, otherwise a short inferred/persisted acronym (or
 an explicit `--alias`) — see `SKILL.md` for the resolution rules. `<prefix>` defaults to
-`ah`; a prior legacy prefix (from before a naming change) keeps working too —
-`session-doctor` matches both during the transition.
+`cs`, configurable per host via `CRSS_SESSION_PREFIX`; a host that changes its prefix
+can list the old one(s) in `CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising
+sessions from before the change — see `examples/crss-overlay/config.sh.example`.
 
 ## How to connect
 

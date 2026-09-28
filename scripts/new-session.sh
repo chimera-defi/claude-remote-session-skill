@@ -50,8 +50,9 @@ fi
 # for "claude session" — lowercase, short, memorable, and distinct from any
 # prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
 # list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (this host's overlay sets CRSS_SESSION_PREFIX=ah,
-# CRSS_LEGACY_PREFIXES=agenthost — see examples/crss-overlay/). Both feed one
+# NEVER used to generate one (a host migrating off an old prefix sets
+# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
+# examples/crss-overlay/). Both feed one
 # validated alternation, _crss_prefix_re, that every parse/generate site below
 # uses instead of a hardcoded prefix. Each element must match
 # ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
@@ -372,8 +373,8 @@ fi
 # Name-first, date last: `<prefix>-<alias>-<MMDD-HHMM>`. Aliases are short
 # (capped / acronym'd), so the whole name fits the mobile window while reading
 # naturally and grouping by project. Prefix is $CRSS_SESSION_PREFIX (generic
-# default "cs"; this host's overlay sets it to "ah", the legacy value every
-# script used to hardcode — see the CRSS-PREFIX-RE block above); session-doctor
+# default "cs"; a host migrating off an old hardcoded prefix sets it to that
+# value instead — see the CRSS-PREFIX-RE block above); session-doctor
 # understands the configured prefix plus $CRSS_LEGACY_PREFIXES and does not
 # parse the date, so order is opaque to it.
 ID=$(date +%m%d-%H%M)
@@ -669,7 +670,7 @@ if [ -n "$TASK" ]; then
     # the heels of "ready" then lands on a not-quite-live input handler and
     # is silently dropped (input box stays empty, text never reaches the
     # transcript). Observed 8/8 on first sends via --task-file, most recently
-    # ah_pf-process-0924-0734, 2026-09-24 07:34; a manual retry seconds later
+    # cs_pf-process-0924-0734, 2026-09-24 07:34; a manual retry seconds later
     # always landed, pointing at the paste racing readiness rather than
     # anything wrong with the target session. A few consecutive ready polls
     # give that handler time to settle before the first paste is ever
