@@ -1,0 +1,95 @@
+# crss host-local overlay config — example
+#
+# Copy this directory to $CRSS_HOME (default: $XDG_CONFIG_HOME/crss, or
+# ~/.config/crss if XDG_CONFIG_HOME is unset) and edit config.sh for your
+# host. See ../../examples/crss-overlay/README.md for the full picture
+# (this file, local.md, the ~/.claude/rules/crss-host.md pointer).
+#
+# THIS FILE IS PARSED, NEVER SOURCED. Each crss script reads it line by
+# line and only accepts lines matching ^CRSS_[A-Z0-9_]+=<value> — anything
+# else (comments, blank lines, shell logic, a typo'd/lowercase name) is
+# silently ignored. The value is taken LITERALLY: whitespace is significant,
+# one optional layer of matching single or double quotes is stripped, and
+# nothing is ever eval'd, expanded ($VAR, ~), or command-substituted
+# ($(...) / `...` are kept as inert text). So:
+#
+#   CRSS_WORKSPACE=/srv/code          # -> /srv/code
+#   CRSS_WORKSPACE="/srv/code"        # -> /srv/code (quotes stripped)
+#   CRSS_WORKSPACE=$HOME/code         # -> the literal string "$HOME/code",
+#                                     #    NOT your home directory expanded
+#   CRSS_WORKSPACE=~/code             # -> the literal string "~/code"
+#
+# Use absolute paths, not $HOME or ~. An env var of the same name, already
+# set before a script runs, always wins over whatever is written here. This
+# file being missing or unreadable is fine — every var below has a built-in
+# generic default and the scripts run normally without any overlay at all.
+#
+# Only variables actually used by the crss scripts are listed below, each
+# with its default (the value you get if you leave the line out or comment
+# it out).
+
+# CRSS_WORKSPACE — root of repo-backed sessions. new-session's `workspace`
+# type (and its `auto` type-inference) looks for $CRSS_WORKSPACE/<foldername>.
+# Default: $HOME/workspace
+#CRSS_WORKSPACE=/home/youruser/workspace
+
+# CRSS_SESSIONS_DIR — root of utility (non-repo) sessions: monitors,
+# managers, one-off tooling. new-session's `sessions` type uses
+# $CRSS_SESSIONS_DIR/<foldername>.
+# Default: $HOME/.sessions
+#CRSS_SESSIONS_DIR=/home/youruser/.sessions
+
+# CRSS_CLAUDE_HOME — where ~/.claude lives: the global skills catalog
+# (symlinked into every spawned session), the remote-control first-party
+# settings file, and the rules/ dir new-session/session-doctor look for
+# crss-host.md under.
+# Default: $HOME/.claude
+#CRSS_CLAUDE_HOME=/home/youruser/.claude
+
+# CRSS_CLAUDE_BIN — path to the `claude` binary new-session launches inside
+# the spawned tmux pane's supervisor loop.
+# Default: /usr/bin/claude if it exists and is executable, else whatever
+# `command -v claude` resolves to at spawn time (falls back to the bare
+# string "claude" if neither is found, so the pane's own PATH decides).
+#CRSS_CLAUDE_BIN=/usr/local/bin/claude
+
+# CRSS_PROTECT_NAMES — a `grep -E` alternation of session-name substrings
+# that session-doctor.sh's `reap`/`reap-local`/`registry-prune` NEVER touch,
+# no matter what. Matched case-insensitively against the tmux/systemd/
+# registry name. Generic default is only the skill's own name, so a bare
+# install protects its own remote-control bridge session and nothing else.
+# If you run other always-on bridge/gateway sessions on this host, list
+# their name fragments here too (pipe-separated, no spaces). An explicitly
+# EMPTY value here still protects nothing (never turns into "protect
+# everything").
+# Default: claude-remote
+#CRSS_PROTECT_NAMES=claude-remote|my-other-bridge
+
+# CRSS_ALIAS_PROTECT_NAMES — the session-alias.sh equivalent of
+# CRSS_PROTECT_NAMES: folders whose name must never be shortened to an
+# alias, so the identifying substring survives into the spawned session's
+# name (and so CRSS_PROTECT_NAMES above can still match it). Deliberately a
+# SEPARATE variable from CRSS_PROTECT_NAMES — it is usually narrower (a
+# folder that merely *contains* your skill's own name is normally a regular,
+# aliasable dev session). Generic default is empty (no folder is
+# alias-protected out of the box).
+# Default: (empty)
+#CRSS_ALIAS_PROTECT_NAMES=my-other-bridge
+
+# CRSS_JUNK_RE_EXTRA — an ADDITIVE extra alternation appended to the
+# built-in "regenerable scaffolding" pattern that session-doctor.sh
+# (_WT_IGNORED_DENY_RE) and session-preserve.sh (JUNK_RE) already ship with
+# (node_modules, .venv, __pycache__, .gstack, .claude/skills, …). Use it to
+# add paths specific to tooling you run on top of crss that isn't part of
+# the public skill. Appended as `|<value>` to both patterns — write a
+# complete alternation fragment, e.g. `mytool-cache|\.mytoolstate`.
+# Default: (empty — no change to the built-in pattern)
+#CRSS_JUNK_RE_EXTRA=mytool-cache|\.mytoolstate
+
+# CRSS_HEALTH_SNAPSHOT_DIR — where fleet-status.sh looks for the latest
+# server-health-audit JSON snapshot (a directory of UTC-timestamped run
+# dirs, each containing summary.json). fleet-status degrades gracefully
+# with a "no snapshot found" note if this doesn't exist or nothing has ever
+# written to it — it is not a hard dependency.
+# Default: empty (the section prints a one-line note and is skipped)
+#CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.local/state/server-health/runs

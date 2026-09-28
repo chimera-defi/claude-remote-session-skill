@@ -3,13 +3,56 @@
 # persistent Claude Code session running in a tmux window with --remote-control.
 #
 # Usage: new-session <foldername> [workspace|sessions]
-#   workspace (default when /home/agents/workspace/<name> exists) — repo sessions
+#   workspace (default when $CRSS_WORKSPACE/<name> exists) — repo sessions
 #   sessions  — utility sessions (monitors, managers, etc.)
 set -e
 
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
+  done < "$_crss_cfg"
+  return 0
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+: "${CRSS_WORKSPACE:=$HOME/workspace}"
+: "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
+: "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
+if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
+  if [ -x /usr/bin/claude ]; then
+    CRSS_CLAUDE_BIN=/usr/bin/claude
+  else
+    CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
+  fi
+fi
+# Overlay visibility line, printed in --dry-run output and in the final
+# spawn confirmation below — a missing overlay should be visible, not silent.
+_crss_overlay_cfg_state=absent; [ -f "$CRSS_HOME/config.sh" ] && _crss_overlay_cfg_state=found
+_crss_overlay_rules_state=absent; [ -f "$CRSS_CLAUDE_HOME/rules/crss-host.md" ] && _crss_overlay_rules_state=found
+OVERLAY_LINE="overlay: ${CRSS_HOME} (config: ${_crss_overlay_cfg_state}, rules: ${_crss_overlay_rules_state})"
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  cat <<'HELP_EOF'
+  cat <<HELP_EOF
 Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run]
 
   foldername          Name for the session. Used in:
@@ -18,12 +61,12 @@ Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--dry-run
                         start script:    ~/.local/bin/ah-<alias>-<MMDD-HHMM>-start.sh
                         systemd service: ~/.config/systemd/user/ah-<alias>-<MMDD-HHMM>.service
 
-  workspace           Force workdir to /home/agents/workspace/<foldername>
-                      (repo sessions)
-  sessions            Force workdir to /home/agents/.sessions/<foldername>
-                      (utility sessions: monitors, managers, etc.)
-  auto (default)      Use workspace/ if /home/agents/workspace/<foldername>
-                      exists, otherwise .sessions/
+  workspace           Force workdir to \$CRSS_WORKSPACE/<foldername>
+                      (repo sessions; CRSS_WORKSPACE default: \$HOME/workspace)
+  sessions            Force workdir to \$CRSS_SESSIONS_DIR/<foldername>
+                      (utility sessions: monitors, managers, etc.; default: \$HOME/.sessions)
+  auto (default)      Use workspace/ if \$CRSS_WORKSPACE/<foldername>
+                      exists, otherwise the sessions dir
 
 Options:
   -h, --help          Print this help and exit.
@@ -268,13 +311,13 @@ case "$TYPE" in
      TYPE="auto" ;;
 esac
 if [ "$TYPE" = "auto" ]; then
-  [ -d "/home/agents/workspace/${FOLDERNAME}" ] && TYPE="workspace" || TYPE="sessions"
+  [ -d "${CRSS_WORKSPACE}/${FOLDERNAME}" ] && TYPE="workspace" || TYPE="sessions"
 fi
 
 if [ "$TYPE" = "workspace" ]; then
-  WORKDIR="/home/agents/workspace/${FOLDERNAME}"
+  WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"
 else
-  WORKDIR="/home/agents/.sessions/${FOLDERNAME}"
+  WORKDIR="${CRSS_SESSIONS_DIR}/${FOLDERNAME}"
 fi
 
 # ── Naming ──────────────────────────────────────────────────────────────────
@@ -382,8 +425,8 @@ SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$OVERLAY_LINE"
   exit 0
 fi
 
@@ -404,10 +447,10 @@ PROFILE="${PROFILE}"
 # variable here — the claude command runs inside the single-quoted supervisor
 # loop typed into the tmux pane (send-keys), whose shell does NOT inherit this
 # script's variables. They are baked as a literal into that command instead
-# (see the /usr/bin/claude lines below), which also surfaces the real flags in
+# (see the CRSS_CLAUDE_BIN lines below), which also surfaces the real flags in
 # \`ps\`. Value for this spawn: ${CLAUDE_EXTRA_FLAGS:-<none>}
-export PATH="/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export HOME="/home/agents"
+export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="${HOME}"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
 log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE event=\$1" | tee -a "\$LOG_FILE"; }
@@ -430,7 +473,7 @@ mkdir -p "\$RUNDIR/.claude"
 # committed .claude/skills/ on every spawn.)
 if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
   rm -f "\$RUNDIR/.claude/skills"
-  ln -sf /home/agents/.claude/skills "\$RUNDIR/.claude/skills"
+  ln -sf ${CRSS_CLAUDE_HOME}/skills "\$RUNDIR/.claude/skills"
 else
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
 fi
@@ -441,7 +484,7 @@ fi
 # Self-heal: (re)write if MISSING or not valid JSON. A truncated/corrupt file would
 # otherwise make claude silently ignore it, fall back to the proxy base URL, and
 # re-break registration with no error — so validate, don't just check existence.
-python3 -c "import json;json.load(open('/home/agents/.claude/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > /home/agents/.claude/rc-firstparty.settings.json
+python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
@@ -464,9 +507,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 while true; do
   START=\$(date +%s)
   if [ -f "\$SENTINEL" ]; then
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    /usr/bin/claude --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings /home/agents/.claude/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
@@ -512,8 +555,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=${SCRIPT}
 ExecStop=/usr/bin/tmux kill-session -t ${SESSION}
-Environment=HOME=/home/agents
-Environment=PATH=/home/agents/.local/bin:/home/agents/.npm-global/bin:/home/agents/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=${HOME}
+Environment=PATH=${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=TMUX_TMPDIR=/tmp
 [Install]
 WantedBy=default.target
@@ -629,4 +672,5 @@ fi
 echo ""
 echo "Session created: ${REMOTE_NAME}"
 echo "Connect: Claude Code app → Remote sessions → ${REMOTE_NAME}"
+echo "$OVERLAY_LINE"
 tmux list-sessions | grep "${SESSION}" || true

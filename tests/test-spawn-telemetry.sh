@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 RECORD="$HERE/../scripts/record-spawn-telemetry.sh"
 REPORT="$HERE/../scripts/telemetry-report.sh"
 pass=0; fail=0

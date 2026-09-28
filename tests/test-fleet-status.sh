@@ -5,6 +5,8 @@
 # deterministic regardless of what's actually running on the box.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 FS="$HERE/../scripts/fleet-status.sh"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
@@ -14,6 +16,9 @@ lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL:
 # Fake HOME with no ~/.gbrain at all, and no session-doctor on PATH, so every
 # test below is isolated from whatever's actually running on this host.
 FAKE_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_HOME"' EXIT
+# The health-snapshot section is opt-in via CRSS_HEALTH_SNAPSHOT_DIR (overlay
+# config); point it at the fake HOME for the snapshot tests below.
+export CRSS_HEALTH_SNAPSHOT_DIR="$FAKE_HOME/.gbrain/server-health/runs"
 
 # 1. Bad flag -> usage on stderr + exit 2.
 out="$(bash "$FS" --bogus 2>&1)"; rc=$?
@@ -35,6 +40,12 @@ ok    "host-only-exit0"          "$rc" "0"
 # 4. No server-health-audit snapshot at all (fresh fake HOME) -> graceful
 # fallback message, not a crash/empty-glob literal path.
 has "no-snapshot-message" "$out" "no server-health-audit snapshot found"
+
+# 4b. Snapshot dir unset (generic host without a health audit) -> one-line
+# note pointing at the overlay knob, still exit 0.
+out="$(CRSS_HEALTH_SNAPSHOT_DIR='' HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" --host 2>&1)"; rc=$?
+has "unset-snapshot-note"  "$out" "no health snapshot configured"
+ok  "unset-snapshot-exit0" "$rc" "0"
 
 # 5. session-doctor genuinely missing (neither co-located nor on PATH) ->
 # --sessions says so instead of silently printing nothing (mirrors
