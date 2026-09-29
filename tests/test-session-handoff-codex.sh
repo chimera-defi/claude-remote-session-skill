@@ -14,7 +14,7 @@ CODEX_READY='  >_ OpenAI Codex (v0.158.0)
 
   There is a perfectly good prompt with your name on it.
 
-› Ask Codex to do anything
+›
 
   GPT-5.5 medium · /tmp/example-codex-workdir
   ← for agents · ? for shortcuts'
@@ -26,7 +26,7 @@ CODEX_BUSY='  >_ OpenAI Codex (v0.158.0)
 
 • Working (0s • esc to interrupt)
 
-› Ask Codex to do anything
+›
 
   GPT-5.5 medium · /tmp/example-codex-workdir'
 
@@ -78,19 +78,45 @@ CODEX_SUBMITTED='  >_ OpenAI Codex (v0.158.0)
 
   9:23 PM
 
-› Ask Codex to do anything
+›
+
+  GPT-5.5 medium · /tmp/example-codex-workdir'
+
+CODEX_REPLY_WORKING_READY='  >_ OpenAI Codex (v0.158.0)
+     /tmp/example-codex-workdir
+
+› Explain status text.
+
+• Working through the checklist is complete.
+
+›
+
+  GPT-5.5 medium · /tmp/example-codex-workdir'
+
+CODEX_REPLY_APPROVAL_WORD_READY='  >_ OpenAI Codex (v0.158.0)
+     /tmp/example-codex-workdir
+
+› What did the user choose?
+
+• The reply included the words "Yes, proceed", but no approval widget is open.
+
+›
 
   GPT-5.5 medium · /tmp/example-codex-workdir'
 
 ok "codex-working-busy" "$(_is_working "$CODEX_BUSY" && echo yes || echo no)" "yes"
 ok "codex-working-ready" "$(_is_working "$CODEX_READY" && echo yes || echo no)" "no"
+ok "codex-working-reply-ready" "$(_is_working "$CODEX_REPLY_WORKING_READY" && echo yes || echo no)" "no"
 
 ok "codex-trust-menu" "$(_is_on_menu "$CODEX_TRUST_MENU" && echo yes || echo no)" "yes"
 ok "codex-model-menu" "$(_is_on_menu "$CODEX_MODEL_MENU" && echo yes || echo no)" "yes"
 ok "codex-approval-menu" "$(_is_on_menu "$CODEX_APPROVAL_MENU" && echo yes || echo no)" "yes"
 ok "codex-ready-not-menu" "$(_is_on_menu "$CODEX_READY" && echo yes || echo no)" "no"
+ok "codex-approval-word-reply-not-menu" "$(_is_on_menu "$CODEX_REPLY_APPROVAL_WORD_READY" && echo yes || echo no)" "no"
 
 ok "codex-has-prompt-ready" "$(_has_prompt "$CODEX_READY" && echo yes || echo no)" "yes"
+ok "codex-working-reply-safe" "$(_safety_reason "$CODEX_REPLY_WORKING_READY")" "safe"
+ok "codex-approval-word-reply-safe" "$(_safety_reason "$CODEX_REPLY_APPROVAL_WORD_READY")" "safe"
 
 FRAG="Reply with exactly: MULTILINE-OK"
 ok "codex-oninput-buffered" "$(_on_input_line "$FRAG" "$CODEX_BUFFERED" && echo yes || echo no)" "yes"
