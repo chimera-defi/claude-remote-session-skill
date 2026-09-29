@@ -305,7 +305,7 @@ EOF
   # the printed archive command really is runnable (subcommand exists and works)
   ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_PAY" ) >/dev/null 2>&1
   ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"
-  ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/files/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
+  ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/worktree/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
 
   # The whole chained line, pasted as a human (or a bulk executor — the 2026-08-29
   # incident) would: eval'd with a `session-doctor` shim on PATH, against a repo
@@ -326,7 +326,7 @@ EOF
   ok "worktree-stale-chain-failed-archive-keeps-worktree" "$([ -f "$WT_CH1/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
   ( export PATH="$SHIM:$PATH" HOME="$WTHOME"; eval "$cmd_ch2" ) >/dev/null 2>&1
   ok "worktree-stale-chain-removed-after-archive" "$([ -d "$WT_CH2" ] && echo yes || echo no)" "no"
-  ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/ah-wtchain2-0101-0900-*/files/artifacts/results.tsv 2>/dev/null)" "data"
+  ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/ah-wtchain2-0101-0900-*/worktree/artifacts/results.tsv 2>/dev/null)" "data"
 fi
 
 # _default_branch: real default branch resolution, no gh dependency needed for
@@ -545,6 +545,7 @@ if command -v tmux >/dev/null 2>&1; then
   RSTUB="$(mktemp -d)"
   cat > "$RSTUB/systemctl" <<'STUB_EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SYSTEMCTL_LOG:-/dev/null}"
 exit 0
 STUB_EOF
   chmod +x "$RSTUB/systemctl"
@@ -555,6 +556,7 @@ STUB_EOF
   # less HOME — registry_json() then fails closed (fails soft: a note, not
   # an error) instead of firing a live GET/DELETE.
   RHOME="$(mktemp -d)"
+  SYSTEMCTL_LOG="$RHOME/systemctl.log"; export SYSTEMCTL_LOG
 
   # 1. Protected name -> refused outright, regardless of --force, and nothing
   # is touched (there's no real resource here, so this only checks message +
@@ -571,7 +573,61 @@ STUB_EOF
   ok "reap-noop-exit0" "$nooprc" "0"
   has "reap-noop-message" "$noopout" "reaped 'ah_reap-noop-test-0101-0900'"
 
-  # 3. Live session with unlanded work: refused without --force (and the tmux
+  # 3. Unit cleanup: new-session.sh creates these exact paths from REMOTE_NAME
+  # (base): $HOME/.config/systemd/user/<base>.service and
+  # $HOME/.local/bin/<base>-start.sh. Reap must archive both into the same
+  # per-reap backup dir, record them in MANIFEST, remove originals, and daemon-
+  # reload after disabling/resetting the unit.
+  UNITBASE="ah-reapunit-0101-0900"
+  mkdir -p "$RHOME/.config/systemd/user" "$RHOME/.local/bin"
+  cat > "$RHOME/.config/systemd/user/$UNITBASE.service" <<'EOF'
+[Service]
+ExecStart=/bin/true
+EOF
+  cat > "$RHOME/.local/bin/$UNITBASE-start.sh" <<'EOF'
+#!/usr/bin/env bash
+echo start
+EOF
+  unitout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reapunit-0101-0900 --force 2>&1)"; unitrc=$?
+  UNITARCH="$(ls -d "$RHOME/backups/reaped-worktree-ignored/$UNITBASE"-* 2>/dev/null | head -1)"
+  ok "reap-unit-archive-exit0" "$unitrc" "0"
+  ok "reap-unit-archive-dir-exists" "$([ -n "$UNITARCH" ] && [ -d "$UNITARCH" ] && echo yes || echo no)" "yes"
+  ok "reap-unit-service-removed" "$([ -e "$RHOME/.config/systemd/user/$UNITBASE.service" ] && echo yes || echo no)" "no"
+  ok "reap-unit-start-removed" "$([ -e "$RHOME/.local/bin/$UNITBASE-start.sh" ] && echo yes || echo no)" "no"
+  ok "reap-unit-service-archived" "$(grep -cF ".config/systemd/user/$UNITBASE.service" "$UNITARCH/MANIFEST" 2>/dev/null)" "1"
+  ok "reap-unit-start-archived" "$(grep -cF ".local/bin/$UNITBASE-start.sh" "$UNITARCH/MANIFEST" 2>/dev/null)" "1"
+  ok "reap-unit-service-bytes" "$(grep -qF 'ExecStart=/bin/true' "$UNITARCH/unit/.config/systemd/user/$UNITBASE.service" && echo yes || echo no)" "yes"
+  ok "reap-unit-start-bytes" "$(grep -qF 'echo start' "$UNITARCH/unit/.local/bin/$UNITBASE-start.sh" && echo yes || echo no)" "yes"
+  has "reap-unit-archive-message-service" "$unitout" ".config/systemd/user/$UNITBASE.service"
+  ok "reap-unit-daemon-reload" "$(grep -qF -- "--user daemon-reload" "$SYSTEMCTL_LOG" && echo yes || echo no)" "yes"
+
+  # 4. Missing unit/start files are fine, but reap still creates the per-reap
+  # archive dir so this cleanup has one durable place to report "nothing".
+  MISSBASE="ah-reapmissing-0101-0900"
+  missout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reapmissing-0101-0900 --force 2>&1)"; missrc=$?
+  MISSARCH="$(ls -d "$RHOME/backups/reaped-worktree-ignored/$MISSBASE"-* 2>/dev/null | head -1)"
+  ok "reap-missing-unit-exit0" "$missrc" "0"
+  ok "reap-missing-archive-dir-exists" "$([ -n "$MISSARCH" ] && [ -d "$MISSARCH" ] && echo yes || echo no)" "yes"
+  ok "reap-missing-manifest-empty" "$(wc -l < "$MISSARCH/MANIFEST" | tr -d ' ')" "0"
+  has "reap-missing-message" "$missout" "reaped 'ah_reapmissing-0101-0900'"
+
+  # 5. Archive failure must fail open for the rest of reap and fail closed for
+  # the files themselves: originals are not deleted when their archive cannot
+  # be created.
+  FAILHOME="$(mktemp -d)"
+  mkdir -p "$FAILHOME/.config/systemd/user" "$FAILHOME/.local/bin"
+  : > "$FAILHOME/backups"
+  FAILBASE="ah-reaparchfail-0101-0900"
+  echo unit > "$FAILHOME/.config/systemd/user/$FAILBASE.service"
+  echo start > "$FAILHOME/.local/bin/$FAILBASE-start.sh"
+  failout="$(PATH="$RSTUB:$PATH" HOME="$FAILHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reaparchfail-0101-0900 --force 2>&1)"; failrc=$?
+  ok "reap-archive-failure-exit0" "$failrc" "0"
+  ok "reap-archive-failure-keeps-service" "$([ -f "$FAILHOME/.config/systemd/user/$FAILBASE.service" ] && echo yes || echo no)" "yes"
+  ok "reap-archive-failure-keeps-start" "$([ -f "$FAILHOME/.local/bin/$FAILBASE-start.sh" ] && echo yes || echo no)" "yes"
+  has "reap-archive-failure-warns" "$failout" "WARNING: unit/start-script archive failed"
+  has "reap-archive-failure-still-reaped" "$failout" "reaped 'ah_reaparchfail-0101-0900'"
+
+  # 6. Live session with unlanded work: refused without --force (and the tmux
   # session must survive the refusal), reaped with --force (and the tmux
   # session must actually be gone afterward).
   REAPTMP="$(mktemp -d)"
@@ -595,7 +651,7 @@ STUB_EOF
   has "reap-force-message" "$forceout" "reaped '$RS'"
   ok "reap-force-session-gone" "$(tmux has-session -t "$RS" 2>/dev/null && echo yes || echo no)" "no"
 
-  rm -rf "$RSTUB" "$REAPTMP" "$RHOME"
+  rm -rf "$RSTUB" "$REAPTMP" "$RHOME" "$FAILHOME"
   tmux kill-session -t "$RS" 2>/dev/null || true
 fi
 
