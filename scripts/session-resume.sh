@@ -27,8 +27,10 @@
 #      --remote-control <remote>, --resume <uuid>, and (when Claude's own
 #      session registry shows it) the resumed sessionId.
 #
-# Exit: 0 resumed+verified (or dry-run with nothing blocking), 1 refused or
-# verification failed, 2 usage error.
+# Exit: 0 resumed+verified (or dry-run with nothing blocking); 1 refused or
+# failed BEFORE the unit start (nothing is running); 2 usage error; 3 the unit
+# started but the relaunched process failed verification (something IS running
+# — inspect it before retrying).
 set -uo pipefail
 
 usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -143,9 +145,21 @@ elif ! git -C "$WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   RUNDIR="$WORKDIR"
 else
   RUNDIR="$WORKDIR"
-  if grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$(git -C "$WORKDIR" status --porcelain 2>/dev/null)"; then
-    refuse "run directory: the canonical tree $WORKDIR is dirty and there is no own worktree $OWN_WT, so the unit would start in a NEW worktree — not where this session's transcript lives"
+  # (A herestring of empty status is one empty line, which `grep -v` matches.)
+  st="$(git -C "$WORKDIR" status --porcelain 2>/dev/null)"
+  if [ -n "$st" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$st"; then
+    refuse "run directory: the canonical tree $WORKDIR is dirty and there is no own worktree $OWN_WT, so the unit would start in a NEW worktree — not where this session's transcript lives (commit or WIP-commit the canonical tree's changes first, or spawn fresh with new-session)"
   fi
+  # session-git-prep also treats the canonical tree as busy while its owner lock
+  # (same key derivation, current and legacy format) names another live tmux
+  # session; then it would put this session in a new worktree too.
+  flat="$(printf '%s' "$WORKDIR" | tr '/ ' '__')"
+  for lk in "${flat}_$(printf '%s' "$WORKDIR" | cksum | cut -d' ' -f1)" "$flat"; do
+    owner="$(cat "$CLAUDE_HOME/session-locks/$lk.owner" 2>/dev/null || true)"
+    if [ -n "$owner" ] && [ "$owner" != "$SESSION" ] && tmux has-session -t "=$owner" 2>/dev/null; then
+      refuse "run directory: live session $owner holds the canonical tree $WORKDIR, so the unit would start in a NEW worktree — not where this session's transcript lives"
+    fi
+  done
 fi
 say "run dir:      $RUNDIR${LOGGED_RUNDIR:+   (last logged: $LOGGED_RUNDIR)}"
 if [ -n "$LOGGED_RUNDIR" ] && [ "$LOGGED_RUNDIR" != "$RUNDIR" ]; then
@@ -176,7 +190,7 @@ if tmux has-session -t "=$SESSION" 2>/dev/null; then
   refuse "live: tmux session $SESSION exists (attach to it, or reap it first)"
 fi
 if systemctl --user is-active --quiet "$UNIT" 2>/dev/null; then
-  refuse "live: unit $UNIT is active"
+  refuse "live: unit $UNIT is active (if its tmux session is gone, stop it first: systemctl --user stop $UNIT)"
 fi
 holders="$(pgrep -af -- "--remote-control $REMOTE( |\$)" 2>/dev/null | grep -v -- 'session-resume' || true)"
 [ -n "$holders" ] && refuse "live: process(es) already run --remote-control $REMOTE: $(printf '%s' "$holders" | cut -c1-160 | tr '\n' ';')"
@@ -224,6 +238,7 @@ if [ "$NEEDS_PATCH" = 1 ] || [ -n "$NEW_MODEL" ]; then
   cp -p "$SCRIPT" "$bk" || { echo "session-resume: backup to $bk failed" >&2; exit 1; }
   say "backup:       $bk"
   tmp="$(mktemp "$SCRIPT.XXXXXX")" || exit 1
+  trap 'rm -f "$tmp"' EXIT
   if ! python3 - "$SCRIPT" "$PIN" "$NEEDS_PATCH" "$NEW_MODEL" >"$tmp" <<'PY'
 import re, sys
 path, pin, needs_patch, new_model = sys.argv[1], sys.argv[2], sys.argv[3] == '1', sys.argv[4]
@@ -299,7 +314,7 @@ for _ in $(seq 1 "$WAIT_SECS"); do
 done
 if [ -z "$pid" ]; then
   say "FAIL: no process running '--remote-control $REMOTE --resume $UUID' after ${WAIT_SECS}s (pin left: $( [ -f "$PIN" ] && echo yes || echo no )) — check: tmux capture-pane -p -t $SESSION"
-  exit 1
+  exit 3
 fi
 cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || ps -o args= -p "$pid")"
 bad=0
@@ -325,7 +340,7 @@ fi
 if [ -n "$sid" ] && [ "$sid" != "$UUID" ]; then
   say "FAIL: pid $pid registered sessionId $sid, not $UUID"; bad=1
 fi
-[ "$bad" = 0 ] || exit 1
+[ "$bad" = 0 ] || exit 3
 if [ -n "$sid" ]; then
   reg="Claude registry sessionId=$sid"
 else

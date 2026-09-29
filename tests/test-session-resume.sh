@@ -234,4 +234,30 @@ else
   fail=$((fail+1)); echo "FAIL: ns-unit-generated"
 fi
 
+# 10. canonical run dir held by ANOTHER live session's git-prep lock -> refuse
+# (git-prep would start this one in a new worktree, away from its transcript).
+R=ah-rsm-e; CAN="$T/canon-e"; mkdir -p "$CAN"; git init -q -b main "$CAN"; git -C "$CAN" commit -q --allow-empty -m i
+mk_session "$R"; SC="$T/scripts/$R-start.sh"
+sed -i "s#^WORKDIR=.*#WORKDIR=\"$CAN\"#" "$SC"; git -C "$T/repo-$R" worktree remove --force "$CRSS_CLAUDE_HOME/worktrees/$R"
+echo "[2026-09-28T02:56:04Z] session=ah_rsm-e rundir=$CAN" >> "$CRSS_SESSIONS_DIR/session-starts.log"
+mkdir -p "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')"
+echo '{}' > "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')/$NEW.jsonl"
+# A CLEAN canonical tree is not "dirty" (empty git status must not match).
+out="$(bash "$SR" ah_rsm-e --dry-run 2>&1)"; ok "canon-free-exit0" "$?" 0
+not_has "canon-clean-not-dirty" "$out" "is dirty"
+mkdir -p "$CRSS_CLAUDE_HOME/session-locks"
+echo ah_other > "$CRSS_CLAUDE_HOME/session-locks/$(printf '%s' "$CAN" | tr '/ ' '__')_$(printf '%s' "$CAN" | cksum | cut -d' ' -f1).owner"
+touch "$STUB_STATE/tmux-live"   # stub: every has-session succeeds, incl. ah_other...
+out="$(bash "$SR" ah_rsm-e --dry-run 2>&1)"; rm -f "$STUB_STATE/tmux-live"
+has "canon-locked-refuse" "$out" "live session ah_other holds the canonical tree"
+
+# 11. unit starts but the process never shows up -> exit 3 (something may be
+# running), distinct from a pre-start refusal's exit 1.
+R=ah-rsm-f; mk_session "$R"
+sed -i 's#^ExecStart=.*#ExecStart=/bin/true#' "$CRSS_UNIT_DIR/$R.service"
+cp "$T/scripts/$R-start.sh" "$T/f.sh"; printf '[Unit]\n[Service]\nExecStart=%s\n' "$T/f.sh" > "$CRSS_UNIT_DIR/$R.service"
+sed -i 's#tmux send-keys -t "ah_rsm-f" .LOG_FILE#tmux send-keys -t "ah_rsm-f" \x27exit 0\nLOG_FILE#' "$T/f.sh"
+out="$(CRSS_RESUME_WAIT=2 bash "$SR" ah_rsm-f 2>&1)"; ok "unverified-exit3" "$?" 3
+has "unverified-fail-line" "$out" "FAIL: no process running"
+
 echo "session-resume: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

@@ -741,6 +741,10 @@ _reap_archive_unit_files() {
   else
     echo "  WARNING: unit/start-script archive failed for '$base' ($_REAP_ARCHIVE_ERR); leaving originals in place" >&2
   fi
+  # A leftover one-shot resume pin (session-resume) would otherwise be consumed
+  # by a later session that reuses this name. A pin is a uuid, not state worth
+  # archiving.
+  rm -f -- "$HOME/.sessions/resume/${base}.uuid"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 }
 
