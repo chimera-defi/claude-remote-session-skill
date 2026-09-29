@@ -54,6 +54,36 @@ leadzero_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 
 ok "days-leadingzero-no-traceback" "$(printf '%s' "$leadzero_out" | grep -qi 'Traceback\|SyntaxError' && echo yes || echo no)" "no"
 ok "days-leadingzero-normalized"   "$(printf '%s' "$leadzero_out" | grep -qF '> 8d' && echo yes || echo no)" "yes"
 
+META_HOME="$(mktemp -d)"
+META_STUB="$(mktemp -d)"
+mkdir -p "$META_HOME/.local/bin"
+cat > "$META_HOME/.local/bin/ah-oldmeta-0101-0000-start.sh" <<'EOF'
+#!/usr/bin/env bash
+BACKEND="codex"
+MODEL="gpt-5.5"
+EOF
+cat > "$META_HOME/.local/bin/ah-newmeta-0101-0001-start.sh" <<'EOF'
+#!/usr/bin/env bash
+BACKEND=codex
+MODEL=gpt-5.5
+EOF
+cat > "$META_STUB/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = display-message ]; then
+  printf 'codex\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$META_STUB/tmux"
+# shellcheck disable=SC2034  # backend_of reads BIN from the sourced script.
+BIN="$META_HOME/.local/bin"
+ok "doctor-start-meta-old-backend" "$(backend_of ah_oldmeta-0101-0000)" "codex"
+ok "doctor-start-meta-new-backend" "$(backend_of ah_newmeta-0101-0001)" "codex"
+if PATH="$META_STUB:$PATH" proc_alive ah_newmeta-0101-0001; then alive=yes; else alive=no; fi
+ok "doctor-codex-proc-alive-from-new-meta" "$alive" "yes"
+rm -rf "$META_HOME" "$META_STUB"
+
 # reap-local orphan detection must NOT skip a unit just because systemd still
 # reports it "active" (regression: Type=oneshot/RemainAfterExit=yes units —
 # see new-session.sh's generated .service — go "active (exited)" once ExecStart
