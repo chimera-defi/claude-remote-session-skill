@@ -229,11 +229,24 @@ _codex_model_from_args() {
   done
 }
 
+# _shell_words_literal — split an overlay arg string into words the way a shell
+# would (quotes group, e.g. -c 'k="a b"'), without executing anything, then
+# %q-escape each word. The value is parsed as data, never evaluated. If quoting
+# is unbalanced it falls back to a plain whitespace split.
 _shell_words_literal() {
   local tok
-  for tok in ${1:-}; do
+  while IFS= read -r -d '' tok; do
     printf '%q ' "$tok"
-  done
+  done < <(python3 - "${1:-}" <<'PY'
+import shlex, sys
+s = sys.argv[1]
+try:
+    words = shlex.split(s, comments=False, posix=True)
+except ValueError:
+    words = s.split()
+sys.stdout.write(''.join(w + '\0' for w in words))
+PY
+)
 }
 
 _shell_quote() {
