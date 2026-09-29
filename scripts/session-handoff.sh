@@ -106,13 +106,19 @@ fi
 
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
 
-# _is_working — does the captured pane show the live generating status line?
-# Codex renders it as "• Working (0s • esc to interrupt)"; Claude's spinner
-# words vary (Crafting/Herding/Simmering/…), but the live status line keeps the
-# same elapsed/"esc to interrupt" suffix. Require that suffix so an ordinary
-# completed reply beginning "Working…" is inert transcript text, not activity.
+# _is_working — does the captured pane show Claude or Codex actively generating?
+# "esc to interrupt" is present throughout generation and is the robust anchor.
+# Claude's retry line ("· next try in 5s · attempt 2 · esc to interrupt") has
+# no parentheses, so don't require them. Claude's spinner words vary wildly
+# across releases (Crafting/Herding/Simmering/…), so rather than enumerate
+# them, also match the generic shape: a spinner GLYPH followed by a word ending
+# in "…" (e.g. "✽ Crafting…"). That matters for a collapsed multi-line paste
+# that doesn't echo into the transcript. Codex's "• Working (0s • esc to
+# interrupt)" is caught by the anchor. Codex's "•" bullet is deliberately NOT
+# in the glyph class: every Codex reply starts with "•", so a completed reply
+# beginning "Working…" must stay inert transcript text.
 _is_working() {
-  printf '%s' "$1" | grep -qE '\([^)]*esc to interrupt[^)]*\)'
+  printf '%s' "$1" | grep -qE 'esc to interrupt|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
 }
 
 _is_codex_selection_widget() {
