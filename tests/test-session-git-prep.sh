@@ -176,4 +176,16 @@ out_second="$(bash "$SGP" "$R10" sess-prefix remote-prefix 2>/dev/null)"
 ok "prefix-collision-not-falsely-reused" "$([ "$out_second" = "$HOME/.claude/worktrees/remote-prefix" ] && echo BUG-reused-unrelated-dir || echo ok)" "ok"
 ok "prefix-collision-emits-real-worktree" "$(git -C "$out_second" rev-parse --is-inside-work-tree 2>/dev/null)" "true"
 
+# 13. A restart must go back to the session's OWN worktree even when the
+# canonical tree has since become clean and free. Before, the clean+free branch
+# won and the restart landed in the canonical tree, away from its own
+# transcript dir, so `--continue` / `session-resume` had nothing to resume there.
+R11="$WORK/repo11"; mkrepo "$R11"
+echo "uncommitted" > "$R11/dirty.txt"
+out1="$(bash "$SGP" "$R11" sess-own remote-own 2>/dev/null)"
+rm -f "$R11/dirty.txt"
+out2="$(bash "$SGP" "$R11" sess-own remote-own 2>/dev/null)"
+ok "own-worktree-beats-clean-canonical" "$out2" "$out1"
+ok "own-worktree-canonical-not-claimed" "$([ -f "$HOME/.claude/session-locks/$(lock_key "$R11").owner" ] && echo yes || echo no)" "no"
+
 echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

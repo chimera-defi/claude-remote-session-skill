@@ -162,13 +162,17 @@ done
 tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
+RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
 while true; do
   START=\$(date +%s)
-  if [ -f "\$SENTINEL" ]; then
+  if [ -s "\$RESUME_PIN" ]; then
+    RESUME_ID=\$(cat "\$RESUME_PIN"); rm -f "\$RESUME_PIN"; touch "\$SENTINEL"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+  elif [ -f "\$SENTINEL" ]; then
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
