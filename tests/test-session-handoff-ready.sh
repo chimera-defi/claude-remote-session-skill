@@ -184,6 +184,12 @@ TRUNCATED_NO_BORDER_PANE='● Ready.
 # --- _safety_reason: one-word diagnosis ---------------------------------------
 ok "reason-ready"       "$(_safety_reason "$READY_PANE")"      "safe"
 ok "reason-busy"        "$(_safety_reason "$BUSY_PANE")"       "busy"
+# Claude's API-retry status line has no parentheses; it must still read busy.
+RETRY_PANE='● Working on the survey…
+✢ Retrying · next try in 5s · attempt 2 · esc to interrupt'
+ok "working-retry-line" "$(_is_working "$RETRY_PANE" && echo yes || echo no)" "yes"
+# Collapsed paste: spinner glyph + word… with no "esc to interrupt" yet.
+ok "working-glyph-only" "$(_is_working '✽ Crafting…' && echo yes || echo no)" "yes"
 ok "reason-draft"       "$(_safety_reason "$DRAFT_PANE")"      "draft-in-input-box"
 ok "reason-menu"        "$(_safety_reason "$MENU_PANE")"       "menu"
 ok "reason-no-prompt"   "$(_safety_reason "$STARTING_PANE")"   "no-prompt"

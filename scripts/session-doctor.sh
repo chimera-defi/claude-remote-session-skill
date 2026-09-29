@@ -403,6 +403,26 @@ tmux_to_base() {
   fi
 }
 
+start_script_field() {
+  local sc="$1" name="$2" line value
+  [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 1
+  [ -r "$sc" ] || return 1
+  line="$(grep -m1 -E "^${name}=" "$sc" 2>/dev/null)" || return 1
+  value="${line#*=}"
+  python3 - "$value" <<'PY'
+import shlex
+import sys
+
+try:
+    parts = shlex.split(sys.argv[1], comments=False, posix=True)
+except ValueError:
+    sys.exit(1)
+if len(parts) != 1:
+    sys.exit(1)
+print(parts[0])
+PY
+}
+
 _reap_safe_base() {
   local base="$1"
   [ -n "$base" ] || return 1
@@ -415,7 +435,7 @@ backend_of() {
   rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo claude; return; }
   sc="$BIN/${rem}-start.sh"
   if [ -f "$sc" ]; then
-    backend="$(sed -n 's/^BACKEND="\(.*\)"$/\1/p' "$sc" | head -1)"
+    backend="$(start_script_field "$sc" BACKEND)"
     [ -n "$backend" ] && { echo "$backend"; return; }
   fi
   backend="$(grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* backend=\([^ ]*\) .*/\1/p' | tail -1)"
