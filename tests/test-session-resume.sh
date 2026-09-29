@@ -260,4 +260,12 @@ sed -i 's#tmux send-keys -t "ah_rsm-f" .LOG_FILE#tmux send-keys -t "ah_rsm-f" \x
 out="$(CRSS_RESUME_WAIT=2 bash "$SR" ah_rsm-f 2>&1)"; ok "unverified-exit3" "$?" 3
 has "unverified-fail-line" "$out" "FAIL: no process running"
 
+# 12. two transcripts written in the same minute -> ambiguous, refuse unless --uuid.
+R=ah-rsm-g; mk_session "$R"
+PG="$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')"
+touch "$PG/$OLD.jsonl"
+out="$(bash "$SR" ah_rsm-g --dry-run 2>&1)"; ok "ambiguous-exit1" "$?" 1
+has "ambiguous-refuse" "$out" "ambiguous"
+out="$(bash "$SR" ah_rsm-g --dry-run --uuid "$NEW" 2>&1)"; ok "ambiguous-with-uuid-exit0" "$?" 0
+
 echo "session-resume: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
