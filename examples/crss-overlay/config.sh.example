@@ -68,8 +68,11 @@
 #CRSS_CODEX_BIN=/usr/local/bin/codex
 
 # CRSS_CODEX_ARGS — extra Codex CLI args for `--backend codex`. This is
-# intentionally host-owned: put model, sandbox, and approval policy here after
-# checking your installed `codex --help`.
+# intentionally host-owned: put model, sandbox, approval policy, and local
+# Codex config overrides here after checking your installed `codex --help`.
+# If your selected model triggers a one-time/new-model TUI menu, prefer a
+# host-local `-c ...` override here rather than hardcoding that machine's
+# preference in crss.
 # Default: empty
 # Example only:
 #CRSS_CODEX_ARGS=-m gpt-5.5 -s read-only -a never

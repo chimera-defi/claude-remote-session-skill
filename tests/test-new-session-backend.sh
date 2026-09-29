@@ -76,19 +76,48 @@ case "$1" in
 esac
 DATEEOF
 chmod +x "$DATESTUB/date"
+TOUCH_LOG="$SPAWN_HOME/touch.log"
+export TOUCH_LOG
+cat > "$DATESTUB/touch" <<'TOUCHEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TOUCH_LOG"
+exit 0
+TOUCHEOF
+chmod +x "$DATESTUB/touch"
 
 spawn_out="$(HOME="$SPAWN_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m stub-model -s read-only -a never' bash "$NS" --backend codex backend-start sessions --alias codexbe 2>&1)"
 has "codex-spawn-created" "$spawn_out" 'Session created: ah-codexbe-0101-0000'
 SCRIPT="$SPAWN_HOME/.local/bin/ah-codexbe-0101-0000-start.sh"
 [ -f "$SCRIPT" ] || { echo "FAIL: codex-start-script-created — missing $SCRIPT"; fail=$((fail+1)); SCRIPT=/dev/null; }
 script_text="$(cat "$SCRIPT" 2>/dev/null)"
-has "script-records-backend" "$script_text" '^BACKEND="codex"$'
-has "script-records-model" "$script_text" '^MODEL="stub-model"$'
+has "script-records-backend" "$script_text" '^BACKEND=(["'\'']?)codex\1$'
+has "script-records-model" "$script_text" '^MODEL=(["'\'']?)stub-model\1$'
 has "script-invokes-codex-bin" "$script_text" "$CODEX_STUB"
 has "script-invokes-codex-args" "$script_text" '-m stub-model -s read-only -a never'
+has "script-trusts-runtime-workdir" "$script_text" 'trust_level=\\"trusted\\"'
 not_has "script-no-claude-remote-control" "$script_text" '--remote-control'
 not_has "script-no-claude-settings" "$script_text" '--settings'
 not_has "script-no-skills-symlink" "$script_text" '\.claude/skills'
+
+malicious_out="$(HOME="$SPAWN_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m $(touch /tmp/x) "quoted' bash "$NS" --backend codex backend-mal sessions --alias codexbad 2>&1)"
+has "codex-malicious-spawn-created" "$malicious_out" 'Session created: ah-codexbad-0101-0000'
+MAL_SCRIPT="$SPAWN_HOME/.local/bin/ah-codexbad-0101-0000-start.sh"
+[ -f "$MAL_SCRIPT" ] || { echo "FAIL: codex-malicious-start-script-created — missing $MAL_SCRIPT"; fail=$((fail+1)); MAL_SCRIPT=/dev/null; }
+if bash -n "$MAL_SCRIPT"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: codex-malicious-script-bash-n"; fi
+not_has "codex-malicious-no-double-quoted-assignment" "$(cat "$MAL_SCRIPT" 2>/dev/null)" '^CODEX_ARGS="'
+PREFIX="$(mktemp)"
+sed -n '1,/^export PATH=/p' "$MAL_SCRIPT" > "$PREFIX"
+if bash "$PREFIX"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: codex-malicious-prefix-executes-cleanly"; fi
+[ ! -s "$TOUCH_LOG" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: codex-malicious-args-executed-command-substitution"; }
+rm -f "$PREFIX"
+
+# Quoted overlay args keep their grouping: -c 'k="a b"' must stay ONE argv word.
+grp_out="$(HOME="$SPAWN_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS="-m m1 -c 'k=\"a b\"'" bash "$NS" --backend codex backend-grp sessions --alias codexgrp 2>&1)"
+has "codex-grouped-spawn-created" "$grp_out" 'Session created: ah-codexgrp-0101-0000'
+GRP_SCRIPT="$SPAWN_HOME/.local/bin/ah-codexgrp-0101-0000-start.sh"
+grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '%s\\n' \"\${CODEX_ARGS[@]}\"" | wc -l)"
+ok "codex-grouped-args-count" "$grp_n" "4"
+ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
 echo "new-session-backend: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
