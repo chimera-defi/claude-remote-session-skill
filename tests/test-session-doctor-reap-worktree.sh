@@ -217,6 +217,29 @@ STUB_EOF
   rm -rf "$RSTUB"
 fi
 
+# ── 12c. full `reap` must reject an unsafe derived base BEFORE any filesystem
+# cleanup. `tmux_to_base ah_/../../x` used to derive `ah-/../../x`, which let
+# the unit/start-script archive+rm paths escape ~/.config/systemd/user and
+# ~/.local/bin. A reject here must be non-zero and delete nothing.
+RSTUB_TRAV="$(mktemp -d)"
+cat > "$RSTUB_TRAV/systemctl" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+chmod +x "$RSTUB_TRAV/systemctl"
+mkdir -p "$TESTHOME/.config/systemd/user/ah-" "$TESTHOME/.local/bin/ah-"
+printf 'keep unit\n' > "$TESTHOME/.config/systemd/x.service"
+printf 'keep script\n' > "$TESTHOME/.local/x-start.sh"
+trav_arch_before="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+trav_out="$(PATH="$RSTUB_TRAV:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap 'ah_/../../x' --force 2>&1)"; rc_trav=$?
+ok "traversal-reap-exit-nonzero" "$([ "$rc_trav" -ne 0 ] && echo yes || echo no)" "yes"
+has "traversal-reap-refuses-base" "$trav_out" "unsafe derived session base"
+ok "traversal-unit-sentinel-kept" "$([ -f "$TESTHOME/.config/systemd/x.service" ] && echo yes || echo no)" "yes"
+ok "traversal-script-sentinel-kept" "$([ -f "$TESTHOME/.local/x-start.sh" ] && echo yes || echo no)" "yes"
+trav_arch_after="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+ok "traversal-no-archive-created" "$trav_arch_after" "$trav_arch_before"
+rm -rf "$RSTUB_TRAV"
+
 # ── 13. gitignored payload: `git worktree remove` (with or without --force)
 # silently deletes gitignored files, and _wt_dirty / session-preserve both
 # ignore them, so a "clean" worktree can hold a whole campaign's results
@@ -245,6 +268,8 @@ coverage/
 next-env.d.ts
 EOF
 echo hi > "$IGNREPO/a.txt"; git -C "$IGNREPO" add -A; git -C "$IGNREPO" commit -q -m init
+printf '.config/\n' > "$WTTMP/global-ignore"
+git -C "$IGNREPO" config core.excludesFile "$WTTMP/global-ignore"
 ARCHROOT="$TESTHOME/backups/reaped-worktree-ignored"
 mkwt(){ git -C "$IGNREPO" worktree add -q -b "session/$1" "$TESTHOME/.claude/worktrees/$1" main >/dev/null 2>&1; }
 archives_of(){ ls -d "$ARCHROOT/$1"-* 2>/dev/null; }
@@ -261,11 +286,11 @@ cp "$WT_PAY/artifacts/results.tsv" "$WTTMP/orig-results.tsv"; cp "$WT_PAY/artifa
 out13a="$(_reap_remove_worktree ah-rwpayload-0101-0900 no)"
 ARCH_A="$(archives_of ah-rwpayload-0101-0900 | head -1)"
 ok "payload-archive-dir-exists" "$([ -n "$ARCH_A" ] && [ -d "$ARCH_A" ] && echo yes || echo no)" "yes"
-ok "payload-results-bytes-identical" "$(cmp -s "$WTTMP/orig-results.tsv" "$ARCH_A/files/artifacts/results.tsv" && echo yes || echo no)" "yes"
-ok "payload-blob-bytes-identical" "$(cmp -s "$WTTMP/orig-blob.bin" "$ARCH_A/files/artifacts/sub/blob.bin" && echo yes || echo no)" "yes"
-ok "payload-manifest-has-sha-size-path" "$(grep -cF "$(sha256sum < "$WTTMP/orig-results.tsv" | cut -d' ' -f1)"$'\t'"$(stat -c %s "$WTTMP/orig-results.tsv")"$'\t'"artifacts/results.tsv" "$ARCH_A/MANIFEST")" "1"
+ok "payload-results-bytes-identical" "$(cmp -s "$WTTMP/orig-results.tsv" "$ARCH_A/worktree/artifacts/results.tsv" && echo yes || echo no)" "yes"
+ok "payload-blob-bytes-identical" "$(cmp -s "$WTTMP/orig-blob.bin" "$ARCH_A/worktree/artifacts/sub/blob.bin" && echo yes || echo no)" "yes"
+ok "payload-manifest-has-sha-size-path" "$(grep -cF "$(sha256sum < "$WTTMP/orig-results.tsv" | cut -d' ' -f1)"$'\t'"$(stat -c %s "$WTTMP/orig-results.tsv")"$'\t'"worktree/artifacts/results.tsv" "$ARCH_A/MANIFEST")" "1"
 ok "payload-manifest-lists-both-files" "$(wc -l < "$ARCH_A/MANIFEST" | tr -d ' ')" "2"
-ok "payload-denylisted-not-archived" "$([ -e "$ARCH_A/files/node_modules" ] && echo yes || echo no)" "no"
+ok "payload-denylisted-not-archived" "$([ -e "$ARCH_A/worktree/node_modules" ] && echo yes || echo no)" "no"
 ok "payload-archive-dir-private" "$(stat -c %a "$ARCH_A")" "700"
 has "payload-archived-message" "$out13a" "archived 2 ignored file(s)"
 has "payload-archived-message-dest" "$out13a" "$ARCH_A"
@@ -356,8 +381,8 @@ out13f="$(_wt_archive_ignored "$WT_H")"; rc13f2=$?
 ARCH_H="$(archives_of ah-rwhelper-0101-0900 | head -1)"
 ok "helper-archive-rc0" "$rc13f2" "0"
 has "helper-archive-message" "$out13f" "archived 3 ignored file(s)"
-ok "helper-archive-spaced-name-bytes" "$(cmp -s "$WT_H/artifacts/a b/spaced name.txt" "$ARCH_H/files/artifacts/a b/spaced name.txt" && echo yes || echo no)" "yes"
-ok "helper-archive-symlink-kept-as-link" "$(readlink "$ARCH_H/files/artifacts/link")" "results.tsv"
+ok "helper-archive-spaced-name-bytes" "$(cmp -s "$WT_H/artifacts/a b/spaced name.txt" "$ARCH_H/worktree/artifacts/a b/spaced name.txt" && echo yes || echo no)" "yes"
+ok "helper-archive-symlink-kept-as-link" "$(readlink "$ARCH_H/worktree/artifacts/link")" "results.tsv"
 # an empty payload returns 1 and leaves the list empty
 mkwt ah-rwhelper2-0101-0900
 _wt_ignored_payload "$TESTHOME/.claude/worktrees/ah-rwhelper2-0101-0900" "$plist"; rc13g=$?
@@ -443,16 +468,33 @@ if command -v tmux >/dev/null 2>&1; then
   mkwt ah-rwdkeep-0101-0900; WT_DK="$TESTHOME/.claude/worktrees/ah-rwdkeep-0101-0900"
   mkdir -p "$WT_DK/artifacts"; echo data > "$WT_DK/artifacts/results.tsv"
   d_keep="$(reapd ah_rwdkeep-0101-0900 --force --keep-worktree)"
+  ARCH_DK="$(archives_of ah-rwdkeep-0101-0900 | head -1)"
   ok "dispatch-keep-worktree-present" "$([ -f "$WT_DK/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
-  ok "dispatch-keep-worktree-no-archive" "$(archives_of ah-rwdkeep-0101-0900 | wc -l | tr -d ' ')" "0"
-  ok "dispatch-keep-worktree-no-archive-line" "$(printf '%s' "$d_keep" | grep -c 'archived\|worktree removed\|worktree: kept')" "0"
+  ok "dispatch-keep-worktree-unit-archive-dir" "$([ -n "$ARCH_DK" ] && [ -d "$ARCH_DK" ] && echo yes || echo no)" "yes"
+  ok "dispatch-keep-worktree-no-ignored-archive-line" "$(printf '%s' "$d_keep" | grep -c 'ignored file(s)\|worktree removed\|worktree: kept')" "0"
 
   mkwt ah-rwdok-0101-0900; WT_DO="$TESTHOME/.claude/worktrees/ah-rwdok-0101-0900"
   mkdir -p "$WT_DO/artifacts"; echo data > "$WT_DO/artifacts/results.tsv"
   d_ok="$(reapd ah_rwdok-0101-0900 --force)"
   has "dispatch-archived-message" "$d_ok" "archived 1 ignored file(s)"
   ok "dispatch-archived-and-removed" "$([ -d "$WT_DO" ] && echo yes || echo no)" "no"
-  ok "dispatch-archived-copy-exists" "$(archives_of ah-rwdok-0101-0900 | head -1 | xargs -I{} test -f {}/files/artifacts/results.tsv && echo yes || echo no)" "yes"
+  ok "dispatch-archived-copy-exists" "$(archives_of ah-rwdok-0101-0900 | head -1 | xargs -I{} test -f {}/worktree/artifacts/results.tsv && echo yes || echo no)" "yes"
+
+  # 13l. A unit/start-script artifact and an ignored worktree payload with the
+  # same relative path must not share one archive destination. Keep them in
+  # separate archive subtrees so the worktree copy cannot overwrite the unit.
+  mkwt ah-rwdcollide-0101-0900; WT_COL="$TESTHOME/.claude/worktrees/ah-rwdcollide-0101-0900"
+  mkdir -p "$TESTHOME/.config/systemd/user" "$WT_COL/.config/systemd/user"
+  printf 'unit bytes\n' > "$TESTHOME/.config/systemd/user/ah-rwdcollide-0101-0900.service"
+  printf 'worktree bytes\n' > "$WT_COL/.config/systemd/user/ah-rwdcollide-0101-0900.service"
+  d_col="$(reapd ah_rwdcollide-0101-0900 --force)"
+  ARCH_COL="$(archives_of ah-rwdcollide-0101-0900 | head -1)"
+  has "dispatch-collision-unit-archived" "$d_col" "archived 1 unit/start file(s)"
+  has "dispatch-collision-worktree-archived" "$d_col" "archived 1 ignored file(s)"
+  ok "dispatch-collision-unit-bytes" "$(grep -qxF 'unit bytes' "$ARCH_COL/unit/.config/systemd/user/ah-rwdcollide-0101-0900.service" && echo yes || echo no)" "yes"
+  ok "dispatch-collision-worktree-bytes" "$(grep -qxF 'worktree bytes' "$ARCH_COL/worktree/.config/systemd/user/ah-rwdcollide-0101-0900.service" && echo yes || echo no)" "yes"
+  ok "dispatch-collision-manifest-unit" "$(grep -cF $'\tunit/.config/systemd/user/ah-rwdcollide-0101-0900.service' "$ARCH_COL/MANIFEST")" "1"
+  ok "dispatch-collision-manifest-worktree" "$(grep -cF $'\tworktree/.config/systemd/user/ah-rwdcollide-0101-0900.service' "$ARCH_COL/MANIFEST")" "1"
 
   # 13h. `archive-ignored <worktree>` — the explicit form of the same step.
   mkwt ah-rwsub-0101-0900; WT_S="$TESTHOME/.claude/worktrees/ah-rwsub-0101-0900"
