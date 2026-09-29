@@ -403,6 +403,13 @@ tmux_to_base() {
   fi
 }
 
+_reap_safe_base() {
+  local base="$1"
+  [ -n "$base" ] || return 1
+  case "$base" in */*|*..*) return 1 ;; esac
+  [[ "$base" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]
+}
+
 backend_of() {
   local rem sc backend
   rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo claude; return; }
@@ -644,10 +651,10 @@ _wt_ignored_payload() {
 # (SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES, default 2 GB) or any copy /
 # verify failure — with the reason in _WTI_ERR. A failed attempt removes its
 # own partial archive. The caller must keep the worktree on 1. Archive:
-# ~/backups/reaped-worktree-ignored/<worktree-name>-<UTC stamp>/{MANIFEST,files/<relpath>},
+# ~/backups/reaped-worktree-ignored/<worktree-name>-<UTC stamp>/{MANIFEST,worktree/<relpath>},
 # mode 0700 (ignored dirs often hold .env files); MANIFEST is
-# sha256<TAB>bytes<TAB>path, and every file is re-hashed from the COPY and
-# compared with the source's hash before this returns 0. Never prints file
+# sha256<TAB>bytes<TAB>archive-path, and every file is re-hashed from the COPY
+# and compared with the source's hash before this returns 0. Never prints file
 # contents, only paths and sizes. Used by `reap` (via _reap_remove_worktree)
 # and by `session-doctor archive-ignored <worktree>`.
 _reap_archive_prepare() {
@@ -665,18 +672,19 @@ _reap_archive_prepare() {
 }
 
 _reap_archive_home_paths() {
-  local base="$1" dest rel src dst dir hash got size archived
+  local base="$1" dest rel src dst dir hash got size archived manifest_path
   shift
   if ! _reap_archive_prepare "$base"; then
     return 1
   fi
   dest="$_REAP_ARCHIVE_DIR"
-  mkdir -p "$dest/files" || { _REAP_ARCHIVE_ERR="could not create $dest/files"; return 1; }
+  mkdir -p "$dest/unit" || { _REAP_ARCHIVE_ERR="could not create $dest/unit"; return 1; }
   archived=0
   for rel in "$@"; do
     src="$HOME/$rel"
     [ -e "$src" ] || [ -L "$src" ] || continue
-    dst="$dest/files/$rel"
+    dst="$dest/unit/$rel"
+    manifest_path="unit/$rel"
     dir="$(dirname "$dst")"
     mkdir -p "$dir" || { _REAP_ARCHIVE_ERR="could not create $dir"; return 1; }
     if [ -L "$src" ]; then
@@ -684,7 +692,7 @@ _reap_archive_home_paths() {
       tgt="$(readlink "$src")" || { _REAP_ARCHIVE_ERR="could not read symlink $rel"; return 1; }
       ln -s "$tgt" "$dst" || { _REAP_ARCHIVE_ERR="could not archive symlink $rel"; return 1; }
       [ "$(readlink "$dst")" = "$tgt" ] || { _REAP_ARCHIVE_ERR="could not verify symlink $rel"; return 1; }
-      printf 'symlink\t0\t%s\t-> %s\n' "$rel" "$tgt" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
+      printf 'symlink\t0\t%s\t-> %s\n' "$manifest_path" "$tgt" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
       echo "    archived: $rel"
       archived=$((archived+1))
       continue
@@ -694,7 +702,7 @@ _reap_archive_home_paths() {
     got="$(sha256sum "$dst" | awk '{print $1}')" || { _REAP_ARCHIVE_ERR="could not hash archived $rel"; return 1; }
     [ "$got" = "$hash" ] || { _REAP_ARCHIVE_ERR="could not verify archived $rel"; return 1; }
     size="$(wc -c < "$src" | tr -d ' ')" || { _REAP_ARCHIVE_ERR="could not size $rel"; return 1; }
-    printf '%s\t%s\t%s\n' "$hash" "$size" "$rel" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
+    printf '%s\t%s\t%s\n' "$hash" "$size" "$manifest_path" >> "$dest/MANIFEST" || { _REAP_ARCHIVE_ERR="could not update $dest/MANIFEST"; return 1; }
     echo "    archived: $rel"
     archived=$((archived+1))
   done
@@ -750,19 +758,20 @@ def sha(p):
     return h.hexdigest()
 def main():
     n = total = 0
-    os.makedirs(dest + b'/files', exist_ok=True)
+    os.makedirs(dest + b'/worktree', exist_ok=True)
     with open(dest + b'/MANIFEST', 'ab') as m:
         for rel in open(listfile, 'rb').read().split(b'\0'):
             if not rel:
                 continue
-            src, dst = wt + b'/' + rel, dest + b'/files/' + rel
+            archive_rel = b'worktree/' + rel
+            src, dst = wt + b'/' + rel, dest + b'/' + archive_rel
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if os.path.islink(src):
                 tgt = os.readlink(src)
                 os.symlink(tgt, dst)
                 if os.readlink(dst) != tgt:
                     sys.exit('verify failed: ' + os.fsdecode(rel))
-                m.write(b'symlink\t0\t' + rel + b'\t-> ' + tgt + b'\n')
+                m.write(b'symlink\t0\t' + archive_rel + b'\t-> ' + tgt + b'\n')
                 n += 1
                 continue
             want = sha(src)
@@ -770,7 +779,7 @@ def main():
             if sha(dst) != want or os.path.getsize(dst) != os.path.getsize(src):
                 sys.exit('verify failed: ' + os.fsdecode(rel))
             size = os.path.getsize(dst)
-            m.write(want.encode() + b'\t' + str(size).encode() + b'\t' + rel + b'\n')
+            m.write(want.encode() + b'\t' + str(size).encode() + b'\t' + archive_rel + b'\n')
             n += 1
             total += size
     print(n, total)
@@ -1854,6 +1863,10 @@ else:
       fi
     fi
     base="$(tmux_to_base "$NAME")"
+    if [ -n "$base" ] && ! _reap_safe_base "$base"; then
+      echo "session-doctor: refusing to reap '$NAME' — unsafe derived session base '$base'" >&2
+      exit 2
+    fi
     tmux kill-session -t "$NAME" 2>/dev/null \
       && echo "  tmux session killed: $NAME" || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
