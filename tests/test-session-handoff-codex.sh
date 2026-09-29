@@ -3,6 +3,11 @@
 # captures. Keep these host-path-free; test-no-host-leaks scans tracked files.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Keep the `ah_*` metadata fixtures below independent of the operator's overlay
+# and CI's generic defaults.
+export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+export CRSS_SESSION_PREFIX=ah
+export CRSS_LEGACY_PREFIXES=agenthost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"
 
