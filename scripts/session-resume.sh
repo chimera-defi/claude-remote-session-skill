@@ -180,6 +180,16 @@ if [ -z "$UUID" ]; then
   UUID="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | head -1)"
   UUID="${UUID%.jsonl}"
   [ -n "$UUID" ] || refuse "transcript: no <uuid>.jsonl under $PROJ — nothing to resume (pass --uuid, or spawn fresh with new-session)"
+  # Newest-by-mtime is only a safe guess when it is clearly newest: a session
+  # shut down with two transcripts open (e.g. a fresh restart then an in-pane
+  # /resume) writes both in the same instant (ah-spx-successor 2026-09-30: 4 ms).
+  if [ -n "$UUID" ]; then
+    # shellcheck disable=SC2012
+    second="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | sed -n 2p)"
+    if [ -n "$second" ] && [ $(( $(stat -c %Y "$PROJ/$UUID.jsonl") - $(stat -c %Y "$PROJ/$second") )) -lt 60 ]; then
+      refuse "transcript: ambiguous — ${second%.jsonl} was written within 60s of $UUID; pass --uuid <the one to resume>"
+    fi
+  fi
 elif [ ! -f "$PROJ/$UUID.jsonl" ]; then
   refuse "transcript: $UUID.jsonl is not under $PROJ — resuming it would move the conversation to a different cwd"
 fi
