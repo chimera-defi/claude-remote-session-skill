@@ -111,5 +111,13 @@ if bash "$PREFIX"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: cod
 [ ! -s "$TOUCH_LOG" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: codex-malicious-args-executed-command-substitution"; }
 rm -f "$PREFIX"
 
+# Quoted overlay args keep their grouping: -c 'k="a b"' must stay ONE argv word.
+grp_out="$(HOME="$SPAWN_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS="-m m1 -c 'k=\"a b\"'" bash "$NS" --backend codex backend-grp sessions --alias codexgrp 2>&1)"
+has "codex-grouped-spawn-created" "$grp_out" 'Session created: ah-codexgrp-0101-0000'
+GRP_SCRIPT="$SPAWN_HOME/.local/bin/ah-codexgrp-0101-0000-start.sh"
+grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '%s\\n' \"\${CODEX_ARGS[@]}\"" | wc -l)"
+ok "codex-grouped-args-count" "$grp_n" "4"
+ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
+
 echo "new-session-backend: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
