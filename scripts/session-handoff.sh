@@ -115,6 +115,16 @@ _is_working() {
   printf '%s' "$1" | grep -qE '\([^)]*esc to interrupt[^)]*\)'
 }
 
+_is_codex_selection_widget() {
+  printf '%s\n' "$1" | tail -n 12 | awk '
+    /^[[:space:]]*›[[:space:]]*1[.)][[:space:]]/ { one=1 }
+    /^[[:space:]]*1[.)][[:space:]]/ { one=1 }
+    /^[[:space:]]*2[.)][[:space:]]/ { two=1 }
+    /enter select/ && /esc back/ { footer=1 }
+    END { exit !(one && two && footer) }
+  '
+}
+
 # _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
 # widget (numbered options + checkboxes, arrow-key navigation)? Free text sent
 # into it is not a valid input and is silently dropped — see references/troubleshooting.md
@@ -138,6 +148,7 @@ _is_working() {
 # --help`, -p/--print note) confirming this dialog is a real, versioned
 # feature of Claude Code, not a one-off rendering.
 _is_on_menu() {
+  _is_codex_selection_widget "$1" && return 0
   printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Press enter to confirm|Back to Agent Command Center'
 }
 
@@ -390,6 +401,26 @@ tmux_to_base() {
   fi
 }
 
+_start_script_field() {
+  local sc="$1" name="$2" line value
+  [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 1
+  [ -r "$sc" ] || return 1
+  line="$(grep -m1 -E "^${name}=" "$sc" 2>/dev/null)" || return 1
+  value="${line#*=}"
+  python3 - "$value" <<'PY'
+import shlex
+import sys
+
+try:
+    parts = shlex.split(sys.argv[1], comments=False, posix=True)
+except ValueError:
+    sys.exit(1)
+if len(parts) != 1:
+    sys.exit(1)
+print(parts[0])
+PY
+}
+
 _pane_cmd() { tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null; }
 _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
 # _capture_ansi — like _capture, but keeps SGR escape codes (`-e`). `ready`
@@ -426,7 +457,7 @@ _paste_and_wait() {
 _model_of() {
   local rem sc; rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo "?"; return; }
   sc="$HOME/.local/bin/${rem}-start.sh"
-  if [ -f "$sc" ]; then sed -n 's/^MODEL="\(.*\)"$/\1/p' "$sc" | head -1; return; fi
+  if [ -f "$sc" ]; then _start_script_field "$sc" MODEL; return; fi
   grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* model=\([^ ]*\) .*/\1/p' | tail -1
 }
 
@@ -435,7 +466,7 @@ _backend_of() {
   rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo claude; return; }
   sc="$HOME/.local/bin/${rem}-start.sh"
   if [ -f "$sc" ]; then
-    backend="$(sed -n 's/^BACKEND="\(.*\)"$/\1/p' "$sc" | head -1)"
+    backend="$(_start_script_field "$sc" BACKEND)"
     [ -n "$backend" ] && { echo "$backend"; return; }
   fi
   backend="$(grep -F "remote=$rem " "$HOME/.sessions/session-starts.log" 2>/dev/null | sed -n 's/.* backend=\([^ ]*\) .*/\1/p' | tail -1)"
