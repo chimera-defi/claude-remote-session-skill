@@ -610,18 +610,32 @@ done
 # pane_current_command shows the loop actually launched.
 SCRIPT_EOF
 
+# Claude supervisor loop, first match wins each iteration:
+#   resume pin  -> `--resume <uuid>` once (written by `session-resume`; consumed
+#                  before launch so a bad uuid can't wedge the loop)
+#   sentinel    -> `--continue` (a restart of this session)
+#   neither     -> fresh session. The sentinel is touched BEFORE that first launch:
+#                  touching it after claude exits meant a session killed from outside
+#                  (tmux kill-session, unit stop) never got one, and its next unit
+#                  start was a fresh conversation (2026-09-30, ah-spx-successor-owner).
+#                  `--continue` with no prior conversation just starts fresh (checked
+#                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
   cat >> "$SCRIPT" << SCRIPT_EOF
 tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
+RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
 while true; do
   START=\$(date +%s)
-  if [ -f "\$SENTINEL" ]; then
+  if [ -s "\$RESUME_PIN" ]; then
+    RESUME_ID=\$(cat "\$RESUME_PIN"); rm -f "\$RESUME_PIN"; touch "\$SENTINEL"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+  elif [ -f "\$SENTINEL" ]; then
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
     touch "\$SENTINEL"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"

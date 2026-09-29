@@ -103,6 +103,25 @@ if check_lock "$LOCK" || check_lock "$LEGACY_LOCK"; then
 fi
 
 # --- Decision -------------------------------------------------------------
+WT_BASE="$HOME/.claude/worktrees"
+mkdir -p "$WT_BASE" 2>/dev/null || true
+WT="$WT_BASE/$REMOTE"
+BR="session/$REMOTE"
+
+# REMOTE is stable across systemd restarts of the SAME session (it's baked into
+# that session's generated start script, not regenerated per spawn) — so a
+# worktree already registered at $WT is almost always this session's own from
+# a prior run, not a stray collision. Reuse it BEFORE anything else:
+#   - before the clean+free canonical branch below: a restart that lands in the
+#     canonical tree loses its own transcript dir, so `--continue` and
+#     `session-resume` find nothing to resume there;
+#   - before the -$$ suffix: unconditionally suffixing used to orphan the prior
+#     worktree, and any uncommitted work inside it, on every restart of a
+#     session whose canonical repo was dirty/busy at spawn time.
+if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $WT"; then
+  log "worktree at $WT already registered (prior run of '$REMOTE'); reusing -> $WT"
+  emit "$WT"
+fi
 if [ -z "$DIRTY" ] && [ -z "$BUSY" ]; then
   # Canonical tree is free + clean: land it on the default branch and claim it.
   CUR=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -120,23 +139,8 @@ if [ -z "$DIRTY" ] && [ -z "$BUSY" ]; then
 fi
 
 # Dirty or busy: isolate this session in its own worktree from the base ref.
-WT_BASE="$HOME/.claude/worktrees"
-mkdir -p "$WT_BASE" 2>/dev/null || true
-WT="$WT_BASE/$REMOTE"
-BR="session/$REMOTE"
 REASON="dirty=$([ -n "$DIRTY" ] && echo yes || echo no) busy=$([ -n "$BUSY" ] && echo yes || echo no)"
 
-# REMOTE is stable across systemd restarts of the SAME session (it's baked into
-# that session's generated start script, not regenerated per spawn) — so a
-# worktree already registered at $WT is almost always this session's own from
-# a prior run, not a stray collision. Reuse it BEFORE ever considering the -$$
-# suffix below: unconditionally suffixing here used to orphan the prior
-# worktree, and any uncommitted work inside it, on every restart of a session
-# whose canonical repo was dirty/busy at spawn time.
-if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $WT"; then
-  log "worktree at $WT already registered (prior run of '$REMOTE'); reusing -> $WT"
-  emit "$WT"
-fi
 [ -e "$WT" ] && WT="$WT_BASE/${REMOTE}-$$"   # belt-and-suspenders: path exists but isn't a worktree of this repo
 
 if git -C "$REPO" worktree add --quiet -b "$BR" "$WT" "$BASE" 2>/dev/null; then
