@@ -106,14 +106,13 @@ fi
 
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
 
-# _is_working — does the captured pane show Claude actively generating? "esc to
-# interrupt" is present throughout generation and is the robust anchor. The
-# spinner words vary wildly across releases (Crafting/Herding/Simmering/…), so
-# rather than enumerate them, also match the generic shape: a spinner GLYPH
-# followed by a word ending in the "…" ellipsis (e.g. "✽ Crafting…"). This
-# matters for a collapsed multi-line paste that doesn't echo into the transcript.
+# _is_working — does the captured pane show the live generating status line?
+# Codex renders it as "• Working (0s • esc to interrupt)"; Claude's spinner
+# words vary (Crafting/Herding/Simmering/…), but the live status line keeps the
+# same elapsed/"esc to interrupt" suffix. Require that suffix so an ordinary
+# completed reply beginning "Working…" is inert transcript text, not activity.
 _is_working() {
-  printf '%s' "$1" | grep -qE 'esc to interrupt|[•][[:space:]]*Working|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
+  printf '%s' "$1" | grep -qE '\([^)]*esc to interrupt[^)]*\)'
 }
 
 # _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
@@ -139,7 +138,7 @@ _is_working() {
 # --help`, -p/--print note) confirming this dialog is a real, versioned
 # feature of Claude Code, not a one-off rendering.
 _is_on_menu() {
-  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Yes, proceed|Press enter to confirm|Back to Agent Command Center'
+  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Press enter to confirm|Back to Agent Command Center'
 }
 
 # _frag — a distinctive single-line fragment of a (possibly multi-line) message,
