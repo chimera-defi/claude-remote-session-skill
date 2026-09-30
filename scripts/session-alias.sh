@@ -226,7 +226,7 @@ infer() { # $1 = folder ; echo alias
   # Never emit an empty alias. A folder name with no [a-z0-9-] content after
   # normalization (e.g. a non-ASCII-only or symbols-only name) would otherwise
   # sanitize to "" here, which would then flow into a tmux/systemd name with a
-  # dangling separator (e.g. "ah-0715-0630-"). Fall back to a short,
+  # dangling separator (e.g. "px-0715-0630-"). Fall back to a short,
   # deterministic, charset-safe token derived from the folder name.
   [ -n "$a" ] || a="s$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
   # Final safety net: infer() must never itself emit a session-name-shaped
