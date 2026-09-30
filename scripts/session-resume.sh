@@ -16,16 +16,18 @@
 #      the unit is active, a process runs `--remote-control <remote>`, or a
 #      live Claude process has the transcript uuid open.
 #   3. Resolves the run directory the unit will start in and the transcript
-#      uuid to resume (newest <uuid>.jsonl for that cwd, or --uuid, which must
-#      live in that same cwd's transcript dir).
+#      uuid to resume (--uuid, which must live in that same cwd's transcript dir;
+#      omitted, it is taken only when exactly ONE transcript exists — with
+#      several it refuses and lists them, never guessing "newest").
 #   4. If the start script predates resume pins, patches its supervisor loop
 #      once (backup kept): a one-shot pin file makes the loop launch the SAME
 #      binary+flags with `--resume <uuid>` instead of `--continue`/fresh.
 #      --model rewrites the script's model (MODEL= and every --model "...").
 #   5. Writes the pin, then `systemctl --user reset-failed/enable/start` the unit.
 #   6. Verifies the relaunched claude process: same binary, skip-permissions,
-#      --remote-control <remote>, --resume <uuid>, and (when Claude's own
-#      session registry shows it) the resumed sessionId.
+#      --remote-control <remote>, --resume <uuid>, and Claude's own session
+#      registry showing that sessionId. A missing registry entry is a WARN and
+#      exit 3, never OK.
 #
 # Exit: 0 resumed+verified (or dry-run with nothing blocking); 1 refused or
 # failed BEFORE the unit start (nothing is running); 2 usage error; 3 the unit
@@ -40,6 +42,7 @@ UNIT_DIR="${CRSS_UNIT_DIR:-$HOME/.config/systemd/user}"
 SESSIONS_DIR="${CRSS_SESSIONS_DIR:-$HOME/.sessions}"
 BACKUP_DIR="${CRSS_RESUME_BACKUP_DIR:-$HOME/backups/session-resume}"
 WAIT_SECS="${CRSS_RESUME_WAIT:-60}"
+REG_WAIT="${CRSS_RESUME_REG_WAIT:-15}"
 LOG_FILE="$SESSIONS_DIR/session-starts.log"
 PIN_DIR="$SESSIONS_DIR/resume"
 
@@ -180,15 +183,15 @@ if [ -z "$UUID" ]; then
   UUID="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | head -1)"
   UUID="${UUID%.jsonl}"
   [ -n "$UUID" ] || refuse "transcript: no <uuid>.jsonl under $PROJ — nothing to resume (pass --uuid, or spawn fresh with new-session)"
-  # Newest-by-mtime is only a safe guess when it is clearly newest: a session
-  # shut down with two transcripts open (e.g. a fresh restart then an in-pane
-  # /resume) writes both in the same instant (ah-spx-successor 2026-09-30: 4 ms).
-  if [ -n "$UUID" ]; then
-    # shellcheck disable=SC2012
-    second="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | sed -n 2p)"
-    if [ -n "$second" ] && [ $(( $(stat -c %Y "$PROJ/$UUID.jsonl") - $(stat -c %Y "$PROJ/$second") )) -lt 60 ]; then
-      refuse "transcript: ambiguous — ${second%.jsonl} was written within 60s of $UUID; pass --uuid <the one to resume>"
-    fi
+  # Never guess between transcripts: the newest one is not necessarily the real
+  # one (ah-spx-successor 2026-09-30: a bare restart had made a fresh, newest
+  # transcript sitting over the conversation to recover). Auto-pick only when
+  # exactly one exists; otherwise the caller names the uuid.
+  # shellcheck disable=SC2012
+  all="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | sed 's/\.jsonl$//' || true)"
+  if [ "$(printf '%s\n' "$all" | grep -c .)" -gt 1 ]; then
+    refuse "transcript: $(printf '%s\n' "$all" | grep -c .) transcripts under $PROJ (newest first: $(printf '%s' "$all" | head -5 | tr '\n' ' ')) — pass --uuid <the one to resume>; the newest is not necessarily the real conversation"
+    UUID=""
   fi
 elif [ ! -f "$PROJ/$UUID.jsonl" ]; then
   refuse "transcript: $UUID.jsonl is not under $PROJ — resuming it would move the conversation to a different cwd"
@@ -256,6 +259,7 @@ lines = open(path).read().split('\n')
 out = []
 i = 0
 patched = False
+pin_rm = False
 while i < len(lines):
     l = lines[i]
     if needs_patch and l.startswith('SENTINEL=') and not patched:
@@ -271,8 +275,9 @@ while i < len(lines):
         if (cont == fresh + ' --continue' and els.strip() == 'else'
                 and touch.strip() == 'touch "$SENTINEL"' and fi.strip() == 'fi'):
             body = fresh[:len(fresh) - len(fresh.lstrip())]
-            out += [ind + 'if [ -s "$RESUME_PIN" ]; then',
-                    body + 'RESUME_ID=$(cat "$RESUME_PIN"); rm -f "$RESUME_PIN"; touch "$SENTINEL"',
+            out += [ind + 'PINNED=0',
+                    ind + 'if [ -s "$RESUME_PIN" ]; then',
+                    body + 'RESUME_ID=$(cat "$RESUME_PIN"); PINNED=1; touch "$SENTINEL"',
                     fresh + ' --resume "$RESUME_ID"',
                     ind + 'elif [ -f "$SENTINEL" ]; then',
                     cont,
@@ -284,8 +289,15 @@ while i < len(lines):
             i += 6
             continue
     out.append(l)
+    # The pin outlives the launch: it is cleared only once claude has run 30s+
+    # (same threshold as the quick-exit backoff), else the next loop would fall
+    # back to --continue and lose the explicit uuid.
+    if needs_patch and patched and not pin_rm and l.lstrip().startswith('RUNTIME='):
+        ind = l[:len(l) - len(l.lstrip())]
+        out.append(ind + 'if [ "$PINNED" = 1 ] && [ "$RUNTIME" -ge 30 ]; then rm -f "$RESUME_PIN"; fi')
+        pin_rm = True
     i += 1
-if needs_patch and not patched:
+if needs_patch and not (patched and pin_rm):
     sys.exit(3)
 text = '\n'.join(out)
 if new_model:
@@ -338,7 +350,7 @@ if [ -n "${BIN_MODEL:-}" ]; then
   case "$cmd" in *"--model $BIN_MODEL "*) ;; *) say "FAIL: pid $pid is not on --model $BIN_MODEL: $cmd"; bad=1 ;; esac
 fi
 sid=""
-for _ in $(seq 1 15); do
+for _ in $(seq 1 "$REG_WAIT"); do
   [ -f "$CLAUDE_HOME/sessions/$pid.json" ] && sid="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("sessionId",""))' "$CLAUDE_HOME/sessions/$pid.json" 2>/dev/null)"
   [ -n "$sid" ] && break
   sleep 1
@@ -350,10 +362,13 @@ fi
 if [ -n "$sid" ] && [ "$sid" != "$UUID" ]; then
   say "FAIL: pid $pid registered sessionId $sid, not $UUID"; bad=1
 fi
-[ "$bad" = 0 ] || exit 3
-if [ -n "$sid" ]; then
-  reg="Claude registry sessionId=$sid"
-else
-  reg="Claude registry entry not seen yet — confirm with: session-handoff check $SESSION"
+# argv proves only what we asked for; the registry proves what Claude opened.
+if [ -z "$sid" ]; then
+  say "WARN: pid $pid started with --resume $UUID but Claude's registry ($CLAUDE_HOME/sessions/$pid.json) has no sessionId after ${REG_WAIT}s — NOT confirmed; the pin stays until the loop clears it after a 30s run. Check: session-handoff check $SESSION"
+  bad=1
 fi
-say "OK: pid $pid${exe:+ ($exe)} resumed $UUID on $UNIT with its own flags; $reg"
+[ "$bad" = 0 ] || exit 3
+# Confirmed: Claude accepted the uuid, so the pin has done its job. Dropping it
+# now keeps a later external kill from replaying a stale uuid.
+rm -f "$PIN"
+say "OK: pid $pid${exe:+ ($exe)} resumed $UUID on $UNIT with its own flags; Claude registry sessionId=$sid"
