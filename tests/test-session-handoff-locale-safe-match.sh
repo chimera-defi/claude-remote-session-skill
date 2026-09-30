@@ -35,21 +35,39 @@ pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 has_glyph_bracket() {
-  # Ignore comment-only lines. Match whole glyph literals, even in LC_ALL=C.
-  grep -vE '^[[:space:]]*#' | grep -E '\[\^?\]?([^]]|\[:[^]]*:\])*(❯|›)[^]]*\]' >/dev/null
+  # Flag ANY bracket expression containing a non-ASCII character (a multi-byte
+  # glyph inside [...] is decomposed into member BYTES under a byte locale).
+  # grep -P under LC_ALL=C sees raw bytes, so \x80-\xff is "any byte of a
+  # multi-byte character" regardless of the caller's locale.
+  # Comment-only lines are ignored. Documented exceptions (none is a regex
+  # class; each is a non-ASCII literal that merely sits between square
+  # brackets): a parameter expansion like `${x//─/}`, the bracketed
+  # '[no log entry — ...]' note, and the python '[... is LIVE now — ...]' note.
+  # Every other line is checked, including multi-line awk/sed program bodies.
+  grep -vE '^[[:space:]]*#' |
+    grep -vE '\$\{[A-Za-z_]+//[^}]*\}|\[no log entry |is LIVE now — ' |
+    LC_ALL=C grep -P '\[\^?\]?(?:[^\]]|\[:[^\]]*:\])*[\x80-\xff]' >/dev/null
 }
 
-# Even a single glyph inside a bracket expression decomposes into bytes.
-if has_glyph_bracket < "$SH"; then
-  fail=$((fail+1))
-  echo "FAIL: no-prompt-glyph-bracket-class — found a bracket expression containing ❯ or › in $SH"
-else
-  pass=$((pass+1))
-fi
-for pattern in '[❯]' '[›]' '[ ❯›]' '[^❯›]' '[[:space:]❯]' '[]❯]' '[^]›]'; do
-  ok "guard-rejects-$pattern" "$(printf '%s\n' "$pattern" | has_glyph_bracket && echo yes || echo no)" yes
+# Every script under scripts/ must be free of such classes (the original
+# prompt-glyph bug, and the spinner-glyph class in _is_working).
+for f in "$HERE"/../scripts/*.sh; do
+  if has_glyph_bracket < "$f"; then
+    fail=$((fail+1))
+    echo "FAIL: no-nonascii-bracket-class — found a bracket expression containing a non-ASCII char in $f"
+  else
+    pass=$((pass+1))
+  fi
 done
-ok guard-ignores-comment "$(printf '%s\n' '# [❯]' | has_glyph_bracket && echo yes || echo no)" no
+for pattern in '[❯]' '[›]' '[ ❯›]' '[^❯›]' '[[:space:]❯]' '[]❯]' '[^]›]' '[✻✽✶·]' '[a…]'; do
+  ok "guard-rejects-$pattern" "$(printf '%s\n' "grep -E 'x$pattern'" | has_glyph_bracket && echo yes || echo no)" yes
+done
+for pattern in "grep -E 'x[[:space:]]*y'" 'if [ -z "${x//─/}" ]; then' "echo '[no log entry — none]'" "grep -E '(✻|✽)'" "grep -E '[a-z]'"; do
+  ok "guard-accepts-$pattern" "$(printf '%s\n' "$pattern" | has_glyph_bracket && echo yes || echo no)" no
+done
+# A multi-line awk program: the class sits on a line with no tool name.
+ok "guard-rejects-multiline-awk" "$(printf '%s\n' "awk '" '/[❯›]/ { n++ }' "'" | has_glyph_bracket && echo yes || echo no)" yes
+ok guard-ignores-comment "$(printf '%s\n' "# grep -E '[❯]'" | has_glyph_bracket && echo yes || echo no)" no
 
 # Sanity: the alternation form this was fixed to use is actually present, so
 # this guard isn't just checking a pattern that no longer exists at all.
@@ -90,6 +108,12 @@ for awk_impl in awk gawk mawk; do
       ok status-safe "$(_safety_reason "$pane")" safe
       pane=$'❯ \n  real draft\n────────────────'
       ok multiline-draft "$(_safety_reason "$pane")" draft-in-input-box
+      # _is_working: a spinner glyph class must not false-match the bytes of
+      # an ordinary ellipsis ("…" = E2 80 A6; A6 is a byte of "✦" = E2 9C A6).
+      ok "working-spinner" "$(_is_working '✽ Crafting…' && echo yes || echo no)" yes
+      ok "working-esc" "$(_is_working 'x (esc to interrupt)' && echo yes || echo no)" yes
+      ok "idle-two-ellipses" "$(_is_working 'Reading… done…' && echo yes || echo no)" no
+      ok "idle-see-foo" "$(_is_working 'see foo… bar…' && echo yes || echo no)" no
       echo "  $awk_impl / $test_locale: pass=$pass fail=$fail"
       [ "$fail" -eq 0 ]
     ); then

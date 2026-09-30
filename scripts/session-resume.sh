@@ -4,9 +4,9 @@
 # Bring a dead Claude session back ON ITS OWN systemd unit, resuming ITS OWN
 # transcript by explicit uuid. This is the supported replacement for
 # hand-relaunching (`claude --resume <uuid> ...` typed into a fresh tmux pane),
-# which on 2026-09-29 silently dropped --dangerously-skip-permissions, swapped
-# /usr/bin/claude for the npm-global CLI and left the unit failed+disabled, so
-# every relaunched owner stalled on approval prompts nobody could see.
+# which can silently drop --dangerously-skip-permissions, swap the claude
+# binary for a different install and leave the unit failed+disabled, so the
+# relaunched session stalls on approval prompts nobody can see.
 #
 # What it does (every step is printed; --dry-run stops before any change):
 #   1. Reads the unit's ExecStart -> the generated start script, and from that
@@ -34,6 +34,69 @@
 # started but the relaunched process failed verification (something IS running
 # — inspect it before retrying).
 set -uo pipefail
+
+# ── Host-local overlay config ────────────────────────────────────────────────
+# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
+# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
+# file is fine (generic defaults below apply). Copied verbatim in every script
+# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# CRSS-CONFIG-LOADER-START
+_crss_load_config() {
+  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
+  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
+  export CRSS_HOME="$_crss_home"
+  _crss_cfg="$_crss_home/config.sh"
+  [ -r "$_crss_cfg" ] || return 0
+  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
+    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
+    _crss_key="${BASH_REMATCH[1]}"
+    _crss_val="${BASH_REMATCH[2]}"
+    _crss_val="${_crss_val%$'\r'}"
+    case "$_crss_val" in
+      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
+      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
+    esac
+    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
+  done < "$_crss_cfg"
+  return 0
+}
+_crss_load_config
+# CRSS-CONFIG-LOADER-END
+
+# ── Session-name prefix recognition ─────────────────────────────────────────
+# CRSS_SESSION_PREFIX is what NEW sessions get; CRSS_LEGACY_PREFIXES is a
+# `|`-separated list of EXTRA prefixes still RECOGNISED when parsing an existing
+# name (see scripts/session-registry.sh for the full contract). Both feed one
+# validated alternation, _crss_prefix_re. Copied verbatim in every script that
+# needs it — see tests/test-crss-overlay-config.sh.
+# CRSS-PREFIX-RE-START
+_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
+if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
+  CRSS_SESSION_PREFIX=cs
+fi
+if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
+  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
+  CRSS_SESSION_PREFIX=cs
+fi
+_crss_prefix_re="$CRSS_SESSION_PREFIX"
+if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
+  _crss_legacy_re=""
+  _crss_legacy_ok=yes
+  while IFS= read -r _crss_legacy_tok; do
+    [ -n "$_crss_legacy_tok" ] || continue
+    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
+      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
+    else
+      _crss_legacy_ok=no
+    fi
+  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
+  if [ "$_crss_legacy_ok" = yes ]; then
+    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
+  else
+    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
+  fi
+fi
+# CRSS-PREFIX-RE-END
 
 usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
@@ -70,12 +133,13 @@ refuse() { REFUSE+=("$1"); }
 say() { printf '%s\n' "$*"; }
 
 # ── 1. unit -> start script -> fields ────────────────────────────────────────
-# Accept the tmux name (ah_x), the remote/unit name (ah-x) or the unit file name.
+# Accept the tmux name (<prefix>_x), the remote/unit name (<prefix>-x) or the unit file name.
 base="${TARGET%.service}"
-case "$base" in
-  ah_*)        base="ah-${base#ah_}" ;;
-  agenthost_*) base="agenthost-${base#agenthost_}" ;;
-esac
+# Every recognised prefix (current + legacy, from _crss_prefix_re) maps
+# `<prefix>_x` -> `<prefix>-x`.
+if [[ "$base" =~ ^($_crss_prefix_re)_(.+)$ ]]; then
+  base="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+fi
 if ! [[ "$base" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
   echo "session-resume: unsafe session name '$TARGET'" >&2; exit 2
 fi
@@ -184,8 +248,8 @@ if [ -z "$UUID" ]; then
   UUID="${UUID%.jsonl}"
   [ -n "$UUID" ] || refuse "transcript: no <uuid>.jsonl under $PROJ — nothing to resume (pass --uuid, or spawn fresh with new-session)"
   # Never guess between transcripts: the newest one is not necessarily the real
-  # one (ah-spx-successor 2026-09-30: a bare restart had made a fresh, newest
-  # transcript sitting over the conversation to recover). Auto-pick only when
+  # one (a bare restart can make a fresh, newest
+  # transcript that sits over the conversation to recover). Auto-pick only when
   # exactly one exists; otherwise the caller names the uuid.
   # shellcheck disable=SC2012
   all="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | sed 's/\.jsonl$//' || true)"

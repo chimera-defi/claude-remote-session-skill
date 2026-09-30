@@ -274,8 +274,8 @@ fi
 # ── Preflight capacity gate ──────────────────────────────────────────────────
 # Sessions are long-lived and nothing reaps them automatically, so spawns
 # accumulate until the box runs out of RAM and every session degrades together
-# (observed 2026-08-16: 33 live sessions, 1.4G free of 64G, 18.5G in swap, load
-# 8+ on 12 cores — turns taking 10-12min, `uv run` hanging with no output).
+# (observed on a loaded box: dozens of live sessions, little free RAM, heavy
+# swap, high load — turns taking 10+ minutes, commands hanging with no output).
 # A wedged fleet looks like a Claude bug but is really host exhaustion, so
 # refuse to make it worse. Advisory by default; only a genuinely unsafe box
 # hard-blocks, and --force always overrides.
@@ -373,8 +373,8 @@ fi
 # deferred built-ins too, so omitting it here made it unreachable ENTIRELY —
 # which presents as "advisor is broken" rather than "never allowlisted".
 # NB it is ALSO gated on the agent's own model, independent of this list
-# (verified 2026-08-27: sonnet-5 and opus-4-8 have it, claude-opus-5 does not;
-# re-verified 2026-09-24: claude-opus-5-5 does not either).
+# (verified against the installed CLI: the sonnet line has it, the opus 5.x
+# line does not).
 # This allowlist is necessary but not sufficient — keep builder on sonnet.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 
@@ -581,7 +581,7 @@ else
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
 fi
 # Remote-control bridge requires a first-party ANTHROPIC_BASE_URL (CLI >= 2026-07-07);
-# a headroom/proxy base URL (e.g. 127.0.0.1) silently disables session registration so
+# a proxy base URL (e.g. 127.0.0.1) silently disables session registration so
 # the session never appears on the phone. Force first-party via a dedicated --settings
 # layer, which merges over the user settings.json (keeping hooks/MCP/plugins).
 # Self-heal: (re)write if MISSING or not valid JSON. A truncated/corrupt file would
@@ -620,7 +620,7 @@ SCRIPT_EOF
 #   neither     -> fresh session. The sentinel is touched BEFORE that first launch:
 #                  touching it after claude exits meant a session killed from outside
 #                  (tmux kill-session, unit stop) never got one, and its next unit
-#                  start was a fresh conversation (2026-09-30, ah-spx-successor-owner).
+#                  start was a fresh conversation.
 #                  `--continue` with no prior conversation just starts fresh (checked
 #                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
@@ -782,8 +782,7 @@ if [ -n "$TASK" ]; then
     # itself up at that exact instant — the very first paste sent right on
     # the heels of "ready" then lands on a not-quite-live input handler and
     # is silently dropped (input box stays empty, text never reaches the
-    # transcript). Observed 8/8 on first sends via --task-file, most recently
-    # cs_pf-process-0924-0734, 2026-09-24 07:34; a manual retry seconds later
+    # transcript). Observed 8/8 on first sends via --task-file; a manual retry seconds later
     # always landed, pointing at the paste racing readiness rather than
     # anything wrong with the target session. A few consecutive ready polls
     # give that handler time to settle before the first paste is ever
@@ -802,7 +801,7 @@ if [ -n "$TASK" ]; then
       # resolve to "ready" on its own; it is waiting on a human. Stop
       # polling the instant it shows up rather than burning the whole
       # NEW_SESSION_TASK_READY_TRIES budget on a state that cannot change
-      # without intervention, and say so plainly. Verified 2026-09-24: no
+      # without intervention, and say so plainly. Verified against the installed CLI: no
       # documented way to pre-accept a folder's trust for an INTERACTIVE
       # session exists in `claude --help` short of writing
       # `~/.claude.json`'s per-project `hasTrustDialogAccepted` by hand
