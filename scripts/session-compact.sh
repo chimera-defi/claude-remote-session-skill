@@ -83,7 +83,7 @@
 # pane-state (`session-handoff.sh check`) is a fallback only. See
 # _do_compact's own comment for why: pane-state ALONE previously produced a
 # false "timeout" on two genuinely-successful real compacts (Bug B, confirmed
-# 2026-09-11) because the pane never reported `busy` even once during either
+# against live sessions) because the pane never reported `busy` even once during either
 # run. On timeout (neither signal confirms), report it and do NOT write a
 # success marker. `before-relay` fails CLOSED: if a compact was issued but
 # completion could not be verified, the message is NOT sent.
@@ -190,8 +190,8 @@ print(mx or '')
 # number — the same "never guess a percentage" rule that governs an
 # unparseable transcript (see _context_snapshot below).
 #
-# *fable* added 2026-09-12 after a live dry-run showed all three `claude-fable-5`
-# orchestrator sessions reporting "context unavailable" — their transcripts were
+# *fable* was added after a live dry-run showed every `claude-fable-5`
+# orchestrator session reporting "context unavailable" — their transcripts were
 # large (3.4M-4.1M) and perfectly parseable; the model simply wasn't in this
 # table, so the high-context trigger was silently inert on exactly the most
 # bloated sessions on the host. Adding a model here is required whenever a new
@@ -210,8 +210,8 @@ _model_window_for() {
 # real `message.usage` object, or "" if the transcript dir is missing, has no
 # such message, or every candidate's model is the literal string
 # "<synthetic>". That synthetic-model exclusion is load-bearing, not
-# defensive filler: a REAL transcript on this host (2026-08-26,
-# .../agent-host-control-framework) carries a trailing assistant entry with
+# defensive filler: a REAL transcript (under
+# .../<project>) carries a trailing assistant entry with
 # model="<synthetic>" and all-zero usage AFTER the last real turn (a hook- or
 # statusline-injected pseudo-turn, not a model call) — picking it as "last"
 # would silently report 0 tokens / 0% for a session that is actually at
@@ -747,7 +747,7 @@ declare -A _COMPACT_ISSUED=()
 # <cwd> is OPTIONAL (both real call sites have it — the sensor's column 4 —
 # but tests calling this directly may omit it) and drives the PRIMARY
 # completion signal: the transcript. Bug B (found by running this for real
-# against two live sessions 2026-09-11): both compactions genuinely succeeded
+# against two live sessions): both compactions genuinely succeeded
 # — panes showed "Compacted (ctrl+o to see full summary)" — but this function
 # sat the full --timeout and reported "timeout" both times, writing no
 # success marker. Root cause, confirmed by reading _pane_state's call chain
@@ -760,7 +760,7 @@ declare -A _COMPACT_ISSUED=()
 # for the entire window, on two separate real runs. The only reading
 # consistent with that is that Claude Code's compacting indicator doesn't
 # match `_is_working`'s spinner/"esc to interrupt" patterns — NOT investigated
-# further live (this host is read-only for this fix: no sending text into
+# further live (that fix was read-only: no sending text into
 # real panes), because the fix below doesn't need pane text to be correct at
 # all: it moves the PRIMARY signal off the pane entirely.
 #

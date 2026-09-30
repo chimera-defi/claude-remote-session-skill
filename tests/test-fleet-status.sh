@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fleet-status.sh composes session-doctor + a server-health-audit JSON
+# fleet-status.sh composes session-doctor + a health-audit JSON
 # snapshot + rtk into one report. These tests isolate that composition from
 # the real host (fake HOME, fake/missing session-doctor) so they're
 # deterministic regardless of what's actually running on the box.
@@ -13,12 +13,12 @@ ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FA
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
 
-# Fake HOME with no ~/.gbrain at all, and no session-doctor on PATH, so every
-# test below is isolated from whatever's actually running on this host.
+# Fake HOME with no health dir at all, and no session-doctor on PATH, so every
+# test below is isolated from whatever is actually running.
 FAKE_HOME="$(mktemp -d)"; trap 'rm -rf "$FAKE_HOME"' EXIT
 # The health-snapshot section is opt-in via CRSS_HEALTH_SNAPSHOT_DIR (overlay
 # config); point it at the fake HOME for the snapshot tests below.
-export CRSS_HEALTH_SNAPSHOT_DIR="$FAKE_HOME/.gbrain/server-health/runs"
+export CRSS_HEALTH_SNAPSHOT_DIR="$FAKE_HOME/health/runs"
 
 # 1. Bad flag -> usage on stderr + exit 2.
 out="$(bash "$FS" --bogus 2>&1)"; rc=$?
@@ -28,18 +28,18 @@ ok  "bad-flag-exit2" "$rc" "2"
 # 2. --sessions prints the SESSIONS header, not HOST.
 out="$(HOME="$FAKE_HOME" bash "$FS" --sessions 2>&1)"
 has   "sessions-only-has-sessions" "$out" "SESSIONS"
-lacks "sessions-only-lacks-host"   "$out" "HOST / GBRAIN"
+lacks "sessions-only-lacks-host"   "$out" "HOST HEALTH"
 
 # 3. --host prints the HOST header, not SESSIONS, and reports missing
 # session-doctor cleanly rather than crashing (no ~/.local/bin on PATH here).
 out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" --host 2>&1)"; rc=$?
-has   "host-only-has-host"       "$out" "HOST / GBRAIN"
+has   "host-only-has-host"       "$out" "HOST HEALTH"
 lacks "host-only-lacks-sessions" "$out" "SESSIONS"
 ok    "host-only-exit0"          "$rc" "0"
 
-# 4. No server-health-audit snapshot at all (fresh fake HOME) -> graceful
+# 4. No health-audit snapshot at all (fresh fake HOME) -> graceful
 # fallback message, not a crash/empty-glob literal path.
-has "no-snapshot-message" "$out" "no server-health-audit snapshot found"
+has "no-snapshot-message" "$out" "no health-audit snapshot found"
 
 # 4b. Snapshot dir unset (generic host without a health audit) -> one-line
 # note pointing at the overlay knob, still exit 0.
@@ -62,7 +62,7 @@ rm -rf "$ISOLATED"
 # 6. Newest run dir present but its summary.json hasn't landed yet (audit
 # service mid-write race) -> falls back to the newest COMPLETE run instead
 # of reporting "no snapshot found". Regression test for that race.
-RUNS="$FAKE_HOME/.gbrain/server-health/runs"
+RUNS="$FAKE_HOME/health/runs"
 mkdir -p "$RUNS/20260101T000000Z"
 printf '{"status":"ok","resources":{"disk_used_pct":1,"memory_used_pct":1,"load_1m":"0.1"},"gbrain":{"doctor_status":"ok","doctor_failures":0,"stale_embeddings":0},"failed_units":{}}\n' \
   > "$RUNS/20260101T000000Z/summary.json"
@@ -71,17 +71,17 @@ out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" --host 2>&1)"
 has   "picks-newest-complete-run" "$out" "20260101T000000Z"
 lacks "skips-incomplete-run"      "$out" "snapshot: 20260102T000000Z"
 
-# 7. A complete newest run's fields are surfaced (status/resources/gbrain),
+# 7. A complete newest run's fields are surfaced (status/resources/index),
 # proving the jq extraction actually runs end to end, not just the fallback
 # path exercised above.
 has "surfaces-status"    "$out" "status: ok"
 has "surfaces-resources" "$out" "disk=1% mem=1% load_1m=0.1"
-has "surfaces-gbrain"    "$out" "doctor_status=ok failures=0"
+has "surfaces-index"    "$out" "doctor_status=ok failures=0"
 
 # 8. Default (no args) == --all: both sections present.
 out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" 2>&1)"
 has "default-has-sessions" "$out" "SESSIONS"
-has "default-has-host"     "$out" "HOST / GBRAIN"
+has "default-has-host"     "$out" "HOST HEALTH"
 
 echo "fleet-status: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

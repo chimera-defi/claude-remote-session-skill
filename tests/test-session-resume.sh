@@ -23,6 +23,8 @@ cleanup() { pkill -f -- "$T/" 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 export CRSS_CLAUDE_HOME="$T/claude" CRSS_UNIT_DIR="$T/units" CRSS_SESSIONS_DIR="$T/sessions"
 export CRSS_RESUME_BACKUP_DIR="$T/backups" CRSS_RESUME_WAIT=10
+# Prefix config is explicit (no overlay file): current prefix "ah", one legacy prefix.
+export CRSS_HOME="$T/no-overlay" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost
 mkdir -p "$CRSS_CLAUDE_HOME/sessions" "$CRSS_UNIT_DIR" "$CRSS_SESSIONS_DIR" "$T/bin" "$T/state" "$T/scripts"
 
 # ── stubs ────────────────────────────────────────────────────────────────────
@@ -204,6 +206,17 @@ R=ah-rsm-c; mk_session "$R"
 rm -f "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')"/*.jsonl
 out="$(bash "$SR" ah_rsm-c --dry-run 2>&1)"; ok "no-transcript-exit1" "$?" 1
 has "no-transcript-refuse" "$out" "nothing to resume"
+
+# 7b. a configured LEGACY prefix maps <legacy>_x -> <legacy>-x -> its unit file;
+# an unconfigured prefix is refused as unsafe (no literal prefix in the script).
+R=ah-rsm-l; mk_session "$R"; cp "$CRSS_UNIT_DIR/$R.service" "$CRSS_UNIT_DIR/oldhost-rsm-l.service"
+out="$(bash "$SR" oldhost_rsm-l --dry-run 2>&1)"
+has "legacy-prefix-reads-unit" "$out" "remote-control name: ah-rsm-l"
+not_has "legacy-prefix-maps-to-unit" "$out" "no unit file"
+not_has "legacy-prefix-not-unsafe" "$out" "unsafe session name"
+out="$(bash "$SR" zzz_rsm-l --dry-run 2>&1)"; ok "unknown-prefix-exit2" "$?" 2
+has "unknown-prefix-unsafe" "$out" "unsafe session name"
+out="$(CRSS_LEGACY_PREFIXES='' bash "$SR" oldhost_rsm-l --dry-run 2>&1)"; ok "legacy-unset-exit2" "$?" 2
 
 # 8. codex-backend unit -> refused (its loop has no resume path).
 R=ah-rsm-d; mk_session "$R"; sed -i 's/^PROFILE=.*/&\nBACKEND=codex/' "$T/scripts/$R-start.sh"

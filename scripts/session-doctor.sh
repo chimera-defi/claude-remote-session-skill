@@ -252,7 +252,7 @@ if [ "$MINUTES_SET" = yes ]; then
 fi
 
 # registry_json — fetch EVERY page of GET /v1/sessions and return them merged
-# as {"data": [...]}. The registry paginates (confirmed live 2026-09-24: a
+# as {"data": [...]}. The registry paginates (confirmed against the live API: a
 # bare GET returns {data, first_id, has_more, last_id}; production page size
 # is 200; has_more flips false only once exhausted; after_id=<last_id> fetches
 # the next page with zero id overlap with the previous one). A single
@@ -358,8 +358,8 @@ for s in cand:
 
 # _title_protected <title> — PROTECT (defined above) is written for machine
 # names (tmux/systemd, always hyphen-separated, e.g. claude-remote-bridge);
-# registry titles can instead be human-typed with spaces (e.g. the real
-# "Agenthost Direct Claude Remote" entry), which the literal PROTECT regex
+# registry titles can instead be human-typed with spaces (e.g. a
+# "My Direct Claude Remote" entry), which the literal PROTECT regex
 # would silently miss. Squeeze whitespace runs to '-' before matching so the
 # same PROTECT terms catch both forms, without widening PROTECT itself (it's
 # also used against tmux/systemd names elsewhere, where that broadening isn't
@@ -596,9 +596,9 @@ _wt_landed() {
 # files, and neither _wt_dirty (`git status` without --ignored) nor
 # session-preserve (`ls-files --exclude-standard`) counts them, so a worktree
 # whose results live under a gitignored dir (`artifacts/`) reads "clean" /
-# SAFE-TO-REAP and its data goes with it. Real loss, 2026-08-29: a research
+# SAFE-TO-REAP and its data goes with it. A real loss: a
 # worktree, `status=clean ahead=0`, removed via worktree-stale's printed
-# `remove:` line; its never-committed artifacts/ held a research campaign.
+# `remove:` line, held never-committed results under artifacts/.
 # So `reap` archives that payload before removing (_wt_archive_ignored) and
 # worktree-stale flags it. tests/test-session-doctor-reap-worktree.sh pins this.
 
@@ -855,18 +855,16 @@ _is_caller_cwd() {
 # literal `ExecStart=<path>/...`) — including a drop-in override under
 # <unit>.service.d/*.conf. Real case this guards against: a live session's
 # worktree can go on being another unit's WorkingDirectory/--state-dir long
-# after the SESSION that first created it is reaped (e.g.
-# cs-bus-follower-v2-0919-0108, the WorkingDirectory/--state-dir of the live
-# bus timers). A plain substring match on the whole unit file is deliberately
+# after the SESSION that first created it is reaped (e.g. a
+# long-lived unit whose WorkingDirectory/--state-dir is that worktree). A plain substring match on the whole unit file is deliberately
 # used instead of parsing specific directive names — these generated unit
 # files only ever contain [Unit]/[Service]/[Install] directives, so a path
 # appearing anywhere in one is already a reference worth refusing over.
 # Checks both the given path and its resolved realpath (a unit may reference
 # either form), and for each of those also the systemd %h-relative form —
 # %h expands to $HOME, and generated unit files may spell a home-relative
-# path as %h/... instead of the literal $HOME/... (real case:
-# bus-router-idle-reaper.service.d/state-dir.conf uses
-# %h/.claude/worktrees/<name>/...). Returns 1 (nothing printed) if no other
+# path as %h/... instead of the literal $HOME/... (e.g. a
+# <unit>.service.d/<drop-in>.conf using %h/.claude/worktrees/<name>/...). Returns 1 (nothing printed) if no other
 # unit references it in any of these forms.
 _wt_ref_in_file() {
   local f="$1" wt="$2" wt_real="$3" cand
@@ -1092,7 +1090,7 @@ _history_matches() {
   # literal folder the caller named.
   # CONFIRMED: `history /home/youruser/workspace/claude-remote-session-skill`
   # (a real, existing directory, NOT under wt_base) matched a long-deleted
-  # `oldhost-claude-remote-session-skill-20260715-0630` worktree instead —
+  # `<legacy>-<folder>-<date>` worktree instead —
   # the basename-based substring search never even looked at whether the
   # literal path existed. A query that does NOT resolve to a real directory
   # (folder already deleted from disk, or a bare name/substring with no
@@ -1566,7 +1564,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
         # deletes it and status=clean never shows it. When there is some, the
         # archive step is chained AHEAD of the printed remove command (so pasting
-        # just the `remove:` line — how the 2026-08-29 loss above happened —
+        # just the `remove:` line — how the loss above happened —
         # archives first, and a failed/over-cap archive stops the removal) and a
         # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
         arch_pre=""
@@ -1682,7 +1680,7 @@ if MINUTES is not None:
 else:
     cutoff = (now - datetime.timedelta(days=DAYS)) if DAYS > 0 else None
 
-# The only Claude Code build empirically verified (on this host) to emit a
+# The only Claude Code build empirically verified to emit a
 # type:system/subtype:compact_boundary entry (with a compactMetadata object)
 # for a completed /compact is 2.1.206. The true minimum version this shipped
 # in is unknown, so rather than guess a lower bound, only a transcript whose
@@ -1744,8 +1742,8 @@ for line in sys.stdin:
                     # A completed /compact leaves THREE MORE type:user artifacts
                     # in the transcript beyond the isCompactSummary write above,
                     # and none of them is genuine activity either. Confirmed
-                    # against two REAL sweep --apply runs on this host
-                    # (2026-09-11): excluding only isCompactSummary was NOT
+                    # against two REAL sweep --apply runs:
+                    # excluding only isCompactSummary was NOT
                     # enough to fix the resulting idle-reset bug, because the
                     # /compact keystroke itself is EARLIER than these three, so
                     # it was never the max timestamp — these three were:
@@ -1776,12 +1774,12 @@ for line in sys.stdin:
                     # would push toward compacting a session someone is
                     # actively using — the dangerous direction. (/model and
                     # /login were both observed emitting their own
-                    # local-command-stdout line on this host; an un-scoped
+                    # local-command-stdout line; an un-scoped
                     # 'starts with local-command-stdout' exclusion would have
                     # swallowed those genuine turns too.)
                     #
                     # The bare-trigger match is EXACT ('/compact', stripped),
-                    # not a prefix match: a real transcript on this host holds
+                    # not a prefix match: a real transcript can hold
                     # a genuine chat message '/compact handoff first' that is
                     # NOT a command invocation (no caveat/echo/stdout cascade
                     # follows it) — a prefix match would have wrongly swallowed
