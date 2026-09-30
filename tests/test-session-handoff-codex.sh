@@ -3,10 +3,10 @@
 # captures. Keep these host-path-free; test-no-host-leaks scans tracked files.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Keep the `ah_*` metadata fixtures below independent of the operator's overlay
+# Keep the `px_*` metadata fixtures below independent of the operator's overlay
 # and CI's generic defaults.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-export CRSS_SESSION_PREFIX=ah
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"
@@ -149,26 +149,26 @@ ok "codex-verdict-landed" "$(_verdict "$FRAG" "$CODEX_SUBMITTED")" "landed"
 META_HOME="$(mktemp -d)"
 trap 'rm -rf "$META_HOME"' EXIT
 mkdir -p "$META_HOME/.local/bin"
-cat > "$META_HOME/.local/bin/ah-oldmeta-0101-0000-start.sh" <<'EOF'
+cat > "$META_HOME/.local/bin/px-oldmeta-0101-0000-start.sh" <<'EOF'
 #!/usr/bin/env bash
 BACKEND="codex"
 MODEL="gpt-5.5"
 EOF
-cat > "$META_HOME/.local/bin/ah-newmeta-0101-0001-start.sh" <<'EOF'
+cat > "$META_HOME/.local/bin/px-newmeta-0101-0001-start.sh" <<'EOF'
 #!/usr/bin/env bash
 BACKEND=codex
 MODEL=gpt-5.5
 EOF
-cat > "$META_HOME/.local/bin/ah-quotedmeta-0101-0002-start.sh" <<'EOF'
+cat > "$META_HOME/.local/bin/px-quotedmeta-0101-0002-start.sh" <<'EOF'
 #!/usr/bin/env bash
 BACKEND=codex
 MODEL=gpt\ 5.5
 EOF
-ok "start-meta-old-backend" "$(HOME="$META_HOME" _backend_of ah_oldmeta-0101-0000)" "codex"
-ok "start-meta-old-model" "$(HOME="$META_HOME" _model_of ah_oldmeta-0101-0000)" "gpt-5.5"
-ok "start-meta-new-backend" "$(HOME="$META_HOME" _backend_of ah_newmeta-0101-0001)" "codex"
-ok "start-meta-new-model" "$(HOME="$META_HOME" _model_of ah_newmeta-0101-0001)" "gpt-5.5"
-ok "start-meta-percentq-model" "$(HOME="$META_HOME" _model_of ah_quotedmeta-0101-0002)" "gpt 5.5"
+ok "start-meta-old-backend" "$(HOME="$META_HOME" _backend_of px_oldmeta-0101-0000)" "codex"
+ok "start-meta-old-model" "$(HOME="$META_HOME" _model_of px_oldmeta-0101-0000)" "gpt-5.5"
+ok "start-meta-new-backend" "$(HOME="$META_HOME" _backend_of px_newmeta-0101-0001)" "codex"
+ok "start-meta-new-model" "$(HOME="$META_HOME" _model_of px_newmeta-0101-0001)" "gpt-5.5"
+ok "start-meta-percentq-model" "$(HOME="$META_HOME" _model_of px_quotedmeta-0101-0002)" "gpt 5.5"
 
 echo "session-handoff-codex: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

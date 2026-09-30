@@ -48,14 +48,14 @@ PAGEDIR="$(mktemp -d)"
 cat > "$PAGEDIR/page1.json" <<'EOF'
 {"first_id":"sess_p1_stale","has_more":true,"last_id":"sess_p1_last",
  "data":[
-   {"id":"sess_p1_stale","updated_at":"2020-01-01T00:00:00Z","created_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"ah-p1-stale-0101-0100"},
-   {"id":"sess_p1_last","updated_at":"2026-09-20T00:00:00Z","created_at":"2026-09-20T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"ah-p1-fresh-0101-0100"}
+   {"id":"sess_p1_stale","updated_at":"2020-01-01T00:00:00Z","created_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"px-p1-stale-0101-0100"},
+   {"id":"sess_p1_last","updated_at":"2026-09-20T00:00:00Z","created_at":"2026-09-20T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"px-p1-fresh-0101-0100"}
  ]}
 EOF
 cat > "$PAGEDIR/page2.json" <<'EOF'
 {"first_id":"sess_p2_stale","has_more":false,"last_id":"sess_p2_stale",
  "data":[
-   {"id":"sess_p2_stale","updated_at":"2020-01-01T00:00:00Z","created_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"ah-p2-stale-0101-0100"}
+   {"id":"sess_p2_stale","updated_at":"2020-01-01T00:00:00Z","created_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"px-p2-stale-0101-0100"}
  ]}
 EOF
 # ages above are far in the past (well beyond any --days window) so both
@@ -135,7 +135,7 @@ while [ "\$i" -lt "\${#args[@]}" ]; do
 done
 n=\$(( \$(cat "$CAPCOUNTER") + 1 )); echo "\$n" > "$CAPCOUNTER"
 [ -n "\${FAKE_CURL_LOG:-}" ] && echo GET >> "\${FAKE_CURL_LOG}"
-body="{\"data\":[{\"id\":\"sess_inf_\$n\",\"updated_at\":\"2020-01-01T00:00:00Z\",\"connection_status\":\"disconnected\",\"session_status\":\"idle\",\"title\":\"ah-inf-\$n\"}],\"has_more\":true,\"last_id\":\"sess_inf_\$n\"}"
+body="{\"data\":[{\"id\":\"sess_inf_\$n\",\"updated_at\":\"2020-01-01T00:00:00Z\",\"connection_status\":\"disconnected\",\"session_status\":\"idle\",\"title\":\"px-inf-\$n\"}],\"has_more\":true,\"last_id\":\"sess_inf_\$n\"}"
 if [ -n "\$outfile" ]; then printf '%s' "\$body" > "\$outfile"; else printf '%s' "\$body"; fi
 STUB_EOF
 chmod +x "$CAPSTUB/curl"
@@ -162,7 +162,7 @@ rm -rf "$CAPSTUB"
 PF_PAGEDIR="$(mktemp -d)"
 cat > "$PF_PAGEDIR/page1.json" <<'EOF'
 {"first_id":"sess_pf1_a","has_more":true,"last_id":"sess_pf1_a",
- "data":[{"id":"sess_pf1_a","updated_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"ah-pf1-a"}]}
+ "data":[{"id":"sess_pf1_a","updated_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"px-pf1-a"}]}
 EOF
 PFSTUB="$(mktemp -d)"
 cat > "$PFSTUB/curl" <<STUB_EOF

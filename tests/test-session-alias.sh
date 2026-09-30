@@ -11,10 +11,10 @@ STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 # default is empty (see session-alias.sh), so a real $CRSS_HOME/config.sh
 # would change which folders are protected out from under this test.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 
 # short folder (<=18) passes through unchanged
@@ -46,7 +46,7 @@ ok "unprotected-by-default" "$(bash "$ALIAS" otherbot-autoresearch --alias oa2)"
 # a folder name that normalizes to nothing (symbols-only, > CAP chars) must
 # never produce an empty alias — found via independent review:
 # an empty alias would flow into a malformed tmux/systemd name like
-# "ah-0715-0630-" (dangling separator).
+# "px-0715-0630-" (dangling separator).
 long_symbolic='@@@@@@@@@@@@@@@@@@@@'
 out="$(bash "$ALIAS" "$long_symbolic")"
 ok "empty-normalize-nonempty" "$([ -n "$out" ] && echo yes || echo no)" "yes"
@@ -58,19 +58,19 @@ ok "nosave-resolves"  "$(SESSION_ALIAS_STORE="$NS_STORE" bash "$ALIAS" brand-new
 ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "absent"
 
 # ── Anti-poisoning (regression: real corrupt values seen in the live store) ──
-# The alias must never itself look like a session name (ah- prefix / MMDD-HHMM /
-# trailing -MMDD / long numeric run) — that yields doubled ah-ah-...-MMDD-MMDD names.
-notsess(){ printf '%s' "$1" | grep -qE '^ah[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
+# The alias must never itself look like a session name (px- prefix / MMDD-HHMM /
+# trailing -MMDD / long numeric run) — that yields doubled px-px-...-MMDD-MMDD names.
+notsess(){ printf '%s' "$1" | grep -qE '^px[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
 
 # READ-PATH guard: a poisoned stored value (from an external writer / manual edit /
 # legacy) is discarded on resolution, re-inferred, and self-healed in the store.
 PZ="$(mktemp)"
 printf 'my-example-long-project-name\ttranche1-ready-0728\n' > "$PZ"
 printf 'discovery-0718\tdiscovery-0718-153051-4107171\n' >> "$PZ"
-printf 'ah-demo-project-0722\tah-demo-project-0722-194533-425253\n' >> "$PZ"
+printf 'px-demo-project-0722\tah-demo-project-0722-194533-425253\n' >> "$PZ"
 r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" my-example-long-project-name)"
 r2="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" discovery-0718)"
-r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" ah-demo-project-0722)"
+r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" px-demo-project-0722)"
 ok "readguard-1-clean" "$(notsess "$r1")" "clean"
 ok "readguard-2-value" "$r2" "discovery"
 ok "readguard-3-value" "$r3" "demo-project"
@@ -83,24 +83,24 @@ ok "readguard-selfheal" "$(awk -F'\t' '{print $2}' "$PZ" | while read -r v; do n
 # assertion below would trivially read as "clean" off a nonexistent file
 # instead of actually exercising store_upsert's guard.
 W="$(mktemp)"; rm -f "$W"
-ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias ah-batch-cleanup-0725 --set-default)")" "clean"
+ok "aliasguard-return" "$(notsess "$(SESSION_ALIAS_STORE="$W" bash "$ALIAS" myproj --alias px-batch-cleanup-0725 --set-default)")" "clean"
 ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")" "clean"
 
 # INFER de-sessionify: a folder that is itself a session name yields a clean alias
-# from the meaningful part (no ah-ah- / MMDD-MMDD doubling).
-ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" ah-widget-build-0721)" "widget-build"
+# from the meaningful part (no px-px- / MMDD-MMDD doubling).
+ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" px-widget-build-0721)" "widget-build"
 
 # INFER de-sessionify is a FIXED POINT, not a single pass: a folder poisoned more
-# than one layer deep (e.g. `ah-ah-x-0722-0725` — literally the doubled name a
-# prior poisoning incident produces) must still yield a clean, non-`ah-`-prefixed
-# alias. A single-pass strip would leave `ah-demo-project` (still session-name-
+# than one layer deep (e.g. `px-px-x-0722-0725` — literally the doubled name a
+# prior poisoning incident produces) must still yield a clean, non-`px-`-prefixed
+# alias. A single-pass strip would leave `px-demo-project` (still session-name-
 # shaped), which store_upsert then refuses to persist — so the poisoned value is
 # never self-healed and keeps re-doubling on every future spawn.
 DP="$(mktemp -u)"
-dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" ah-ah-demo-project-0722-0725)"
+dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" px-px-demo-project-0722-0725)"
 ok "layered-poison-value" "$dp_out" "demo-project"
 ok "layered-poison-clean" "$(notsess "$dp_out")" "clean"
-ok "layered-poison-stored" "$(awk -F'\t' '$1=="ah-ah-demo-project-0722-0725"{print $2}' "$DP")" "demo-project"
+ok "layered-poison-stored" "$(awk -F'\t' '$1=="px-px-demo-project-0722-0725"{print $2}' "$DP")" "demo-project"
 
 # Trailing-4-digit false positives (regression: a folder ending in a plain
 # 4-digit number that is NOT a calendar date must alias as-is, not get treated
@@ -126,7 +126,7 @@ ok "not-longrun-issue-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" issue-123
 ok "not-longrun-ticket-id" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" ticket-99999)" "ticket-99999"
 ok "not-longrun-build-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" build-100000)" "build-100000"
 # A genuine multi-group timestamp+random tail (real production fixture, no
-# ah- prefix so it relies solely on the long-numeric-run check) still poisons.
+# px- prefix so it relies solely on the long-numeric-run check) still poisons.
 ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" discovery-0718-153051-4107171)" "discovery"
 
 # Two-group false positives (found in review: the [0-9]{4}-[0-9]{4} fast path
@@ -220,10 +220,10 @@ out_nl="$(SESSION_ALIAS_STORE="$NK" bash "$ALIAS" "$nlfolder" 2>/dev/null)"
 ok "newlinekey-resolves"     "$([ -n "$out_nl" ] && echo yes || echo no)" "yes"
 ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "absent"
 
-# CASE-INSENSITIVITY guard: looks_like_session_name's ah-/ah_ prefix check must
+# CASE-INSENSITIVITY guard: looks_like_session_name's px-/px_ prefix check must
 # catch mixed/upper-case values too, not just lowercase. The store is
 # documented as user-editable and this is also the read-path guard for values
-# from an external writer, so a hand-typed `AH-foo-bar` (no embedded date, so
+# from an external writer, so a hand-typed `PX-foo-bar` (no embedded date, so
 # none of the digit checks would catch it either) must not silently survive as
 # a stored alias — found via targeted probing of the read path.
 CI="$(mktemp)"
@@ -233,11 +233,11 @@ ok "caseinsens-readguard-caught"    "$(notsess "$ci_out")" "clean"
 ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI")" "$ci_out"
 
 # CASE-INSENSITIVITY, infer(): a folder whose own name carries an uppercase
-# `AH-` prefix + a real embedded date must still desessionify down to the
-# meaningful part (like the lowercase `ah-widget-build-0721` case above),
+# `PX-` prefix + a real embedded date must still desessionify down to the
+# meaningful part (like the lowercase `px-widget-build-0721` case above),
 # not fall back to an opaque checksum alias because desessionify's prefix
 # strip couldn't match the uppercase prefix.
-ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "AH-project-0810-1234")" "project"
+ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "PX-project-0810-1234")" "project"
 
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
@@ -277,9 +277,9 @@ ok "bare-resolve-after-set-default" \
   "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "renamed"
 # Opting in must not be a way to smuggle a poisoned default past the guard: the
 # anti-poisoning check runs BEFORE the persist decision.
-pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias ah-x-0722-0725 --set-default 2>/dev/null)"
+pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias px-x-0722-0725 --set-default 2>/dev/null)"
 ok "set-default-rejects-poisoned"      "$(notsess "$pz_out")" "clean"
-ok "set-default-poisoned-not-verbatim" "$(grep -cF 'ah-x-0722-0725' "$PS" 2>/dev/null; true)" "0"
+ok "set-default-poisoned-not-verbatim" "$(grep -cF 'px-x-0722-0725' "$PS" 2>/dev/null; true)" "0"
 # Inference still persists -- that is a deterministic cache, not drift.
 PS2="$(mktemp -u)"
 inf_out="$(SESSION_ALIAS_STORE="$PS2" bash "$ALIAS" some-very-long-project-name)"

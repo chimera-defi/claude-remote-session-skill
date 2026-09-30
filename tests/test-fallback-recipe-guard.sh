@@ -11,7 +11,7 @@
 #
 # Since #104 (configurable CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES), the
 # guard's prefix check reads $CRSS_SESSION_PREFIX instead of a hardcoded
-# "ah-"/"ah_" — so this test also pulls the doc's own default-resolution line
+# "px-"/"px_" — so this test also pulls the doc's own default-resolution line
 # (pinning it stays "cs", matching new-session.sh's generic default) and adds
 # cases proving the guard actually tracks a reconfigured prefix rather than
 # still being hardcoded under the hood.
@@ -50,9 +50,9 @@ ok "prefix-match-mixed-case" "$(poisoned CS-foo-bar)"                       "POI
 # prefix) — isolating the prefix check specifically. A value shaped like the
 # OLD default must be clean once the prefix no longer matches it, and the
 # newly configured prefix must be caught instead.
-ok "old-default-not-caught-once-unconfigured" "$(poisoned ah-foo-bar)" "clean"
-CRSS_SESSION_PREFIX=ah
-ok "reconfigured-prefix-caught"                 "$(poisoned ah-foo-bar)" "POISONED"
+ok "old-default-not-caught-once-unconfigured" "$(poisoned px-foo-bar)" "clean"
+CRSS_SESSION_PREFIX=px
+ok "reconfigured-prefix-caught"                 "$(poisoned px-foo-bar)" "POISONED"
 ok "prior-default-not-caught-once-reconfigured" "$(poisoned cs-foo-bar)" "clean"
 CRSS_SESSION_PREFIX=cs   # restore for the remaining default-prefix fixtures below
 
