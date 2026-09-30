@@ -210,3 +210,6 @@ Yes/No choice, not an arrow-key+checkbox+Submit-page flow: recover with
 `tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the
 Down/Right/Enter sequence above.
 
+
+# planted
+root at /home/realuser and key sk-abcd1234efgh5678ijkl and bus seq 4321
