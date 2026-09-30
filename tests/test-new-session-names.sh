@@ -3,10 +3,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 NS="$HERE/../scripts/new-session.sh"
 # Expose the helper as `session-alias` (no .sh) via a throwaway bin dir on PATH,
@@ -20,25 +20,25 @@ pass=0; fail=0
 has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
-# Name-first, date last: ah-<alias>-<MMDD-HHMM>.
+# Name-first, date last: px-<alias>-<MMDD-HHMM>.
 out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
-has "remote-alias-id" "$out" 'REMOTE_NAME=ah-svlpn-[0-9]\{4\}-[0-9]\{4\}'
-has "tmux-underscore" "$out" 'SESSION=ah_svlpn-[0-9]\{4\}-[0-9]\{4\}'
-has "service-name"    "$out" 'SERVICE=.*/ah-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service'
+has "remote-alias-id" "$out" 'REMOTE_NAME=px-svlpn-[0-9]\{4\}-[0-9]\{4\}'
+has "tmux-underscore" "$out" 'SESSION=px_svlpn-[0-9]\{4\}-[0-9]\{4\}'
+has "service-name"    "$out" 'SERVICE=.*/px-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service'
 out2="$(bash "$NS" --dry-run some-proj --alias myproj 2>/dev/null)"
-has "explicit-alias"  "$out2" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
+has "explicit-alias"  "$out2" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
 # this repo's folder contains "claude-remote" but is NOT alias-protected (only
 # names matching a host's CRSS_ALIAS_PROTECT_NAMES are); it shortens to its
 # acronym like any long dev folder.
 out3="$(bash "$NS" --dry-run claude-remote-session-skill 2>/dev/null)"
-has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=ah-crss-[0-9]\{4\}-[0-9]\{4\}'
+has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=px-crss-[0-9]\{4\}-[0-9]\{4\}'
 # regression: a folder literally named `sessions`/`workspace`/`auto` must be
 # spawnable — the type keyword is only a TYPE as the SECOND positional.
 out4="$(bash "$NS" --dry-run sessions 2>/dev/null)"
-has "folder-named-sessions" "$out4" 'REMOTE_NAME=ah-sessions-[0-9]\{4\}-[0-9]\{4\}'
+has "folder-named-sessions" "$out4" 'REMOTE_NAME=px-sessions-[0-9]\{4\}-[0-9]\{4\}'
 # and the type positional still works after the folder
 out5="$(bash "$NS" --dry-run myproj workspace 2>/dev/null)"
-has "type-positional-after-folder" "$out5" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
+has "type-positional-after-folder" "$out5" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
 
 # Regression: spawning the same folder twice inside the same clock-minute must
 # NOT collide on SESSION/REMOTE_NAME. Simulate the collision with a live tmux
@@ -69,7 +69,7 @@ DATEEOF
   tmux kill-session -t "$first_session" 2>/dev/null || true
   rm -rf "$DATESTUB"
   if [ "$first_session" != "$second_session" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: same-minute collision — got identical SESSION '$second_session' twice"; fi
-  has "same-minute-collision-suffixed" "$second_session" '^ah_cft-0101-0000-2$'
+  has "same-minute-collision-suffixed" "$second_session" '^px_cft-0101-0000-2$'
 fi
 
 # Regression: a name whose tmux session is DEAD but whose worktree is still
@@ -89,10 +89,10 @@ esac
 DATEEOF
 chmod +x "$DATESTUB2/date"
 WTHOME="$(mktemp -d)"
-mkdir -p "$WTHOME/.claude/worktrees/ah-retained-wt-test-0101-0000"
+mkdir -p "$WTHOME/.claude/worktrees/px-retained-wt-test-0101-0000"
 retained="$(HOME="$WTHOME" PATH="$DATESTUB2:$PATH" bash "$NS" --dry-run retained-wt-test 2>/dev/null)"
 rm -rf "$DATESTUB2" "$WTHOME"
-has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=ah-retained-wt-test-0101-0000-2'
+has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=px-retained-wt-test-0101-0000-2'
 
 # ── Real (non-dry-run) collision suffix must also be "-2", not "-3" ──────────
 # (found by Codex review on this PR): the bounded mkdir-lock loop added above
@@ -124,12 +124,12 @@ CTLEOF
   # Base candidate for a 18-char-or-under folder is the folder name as-is
   # (see the short-passthrough rule), so the pre-existing live session's name
   # is deterministic without needing a --dry-run probe first.
-  tmux new-session -d -s ah_collide-real-test-0101-0000 2>/dev/null
+  tmux new-session -d -s px_collide-real-test-0101-0000 2>/dev/null
   RSTORE="$(mktemp -u)"
   rout="$(PATH="$RSTUBBIN:$PATH" HOME="$RLOCKHOME" SESSION_ALIAS_STORE="$RSTORE" bash "$NS" collide-real-test 2>&1)"
-  tmux kill-session -t ah_collide-real-test-0101-0000 2>/dev/null || true
+  tmux kill-session -t px_collide-real-test-0101-0000 2>/dev/null || true
   rm -rf "$RLOCKHOME" "$RSTUBBIN"
-  has "real-collision-suffixed-minus-2" "$rout" 'ah-collide-real-test-0101-0000-2'
+  has "real-collision-suffixed-minus-2" "$rout" 'px-collide-real-test-0101-0000-2'
   if printf '%s' "$rout" | grep -q -- '-0101-0000-3'; then fail=$((fail+1)); echo "FAIL: real-collision-skipped-minus-2 — got -3 instead of -2"; else pass=$((pass+1)); fi
 fi
 
@@ -184,7 +184,7 @@ has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
 # defeating the "check what this would resolve to" use case --dry-run exists
 # for. A dry-run spawns nothing and consumes no RAM, so it never needs this gate.
 outcap="$(NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run 2>/dev/null)"
-has "dry-run-bypasses-capacity-gate" "$outcap" 'REMOTE_NAME=ah-capacity-dry-run-'
+has "dry-run-bypasses-capacity-gate" "$outcap" 'REMOTE_NAME=px-capacity-dry-run-'
 capexit=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run >/dev/null 2>&1 || capexit=$?
 ok "dry-run-bypasses-capacity-gate-exit0" "$capexit" "0"
 # Sanity: a real (non-dry-run) spawn on the same low-memory condition must
@@ -199,7 +199,7 @@ ok "non-dry-run-capacity-gate-still-refuses" "$capexit2" "1"
 # repo-intended spawn into .sessions/ with zero diagnostic — inconsistent with
 # how CLAUDE_SESSION_PROFILE validates unknown values (warn + fall back).
 outty="$(bash "$NS" --dry-run type-typo-test workspce 2>/dev/null)"
-has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/ah-type-typo-test-'
+has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/px-type-typo-test-'
 erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1 1>/dev/null)"
 has "unknown-type-warns" "$erty" "unknown session type 'workspce'"
 # A recognized TYPE must NOT warn (no false positive on the new validation).

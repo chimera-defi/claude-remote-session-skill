@@ -9,10 +9,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
@@ -165,7 +165,7 @@ STUB_EOF
   # A: headline case — newest type:user entry is a /compact summary
   # (isCompactSummary:true); idle must be measured from the PRIOR genuine
   # turn, not this one.
-  WT_A="$TB/wt-a"; spawn "$WT_A" "ah-tsv-compactsum-0101-0100"
+  WT_A="$TB/wt-a"; spawn "$WT_A" "px-tsv-compactsum-0101-0100"
   WT_A="$(cd "$WT_A" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_A")"
   cat > "$PROJB/$(_encode_cwd "$WT_A")/sess.jsonl" <<'EOF'
@@ -181,8 +181,8 @@ EOF
   git -C "$GREPO" config user.email t@t.com; git -C "$GREPO" config user.name t
   echo hi > "$GREPO/a.txt"; git -C "$GREPO" add a.txt; git -C "$GREPO" commit -q -m init
   WT_B="$TB/wt-b"
-  git -C "$GREPO" worktree add -q -b session/ah-tsv-boundary-0101-0200 "$WT_B" main >/dev/null 2>&1
-  spawn "$WT_B" "ah-tsv-boundary-0101-0200"
+  git -C "$GREPO" worktree add -q -b session/px-tsv-boundary-0101-0200 "$WT_B" main >/dev/null 2>&1
+  spawn "$WT_B" "px-tsv-boundary-0101-0200"
   WT_B="$(cd "$WT_B" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_B")"
   cat > "$PROJB/$(_encode_cwd "$WT_B")/sess.jsonl" <<'EOF'
@@ -193,10 +193,10 @@ EOF
   # C: no compact_boundary, version-bearing (aware build) -> col8=no. Also an
   # UNLANDED worktree (one commit not on main) -> col9=no.
   WT_C="$TB/wt-c"
-  git -C "$GREPO" worktree add -q -b session/ah-tsv-noboundary-0101-0300 "$WT_C" main >/dev/null 2>&1
+  git -C "$GREPO" worktree add -q -b session/px-tsv-noboundary-0101-0300 "$WT_C" main >/dev/null 2>&1
   git -C "$WT_C" config user.email t@t.com; git -C "$WT_C" config user.name t
   echo new > "$WT_C/new.txt"; git -C "$WT_C" add new.txt; git -C "$WT_C" commit -q -m "unlanded work"
-  spawn "$WT_C" "ah-tsv-noboundary-0101-0300"
+  spawn "$WT_C" "px-tsv-noboundary-0101-0300"
   WT_C="$(cd "$WT_C" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_C")"
   cat > "$PROJB/$(_encode_cwd "$WT_C")/sess.jsonl" <<'EOF'
@@ -206,7 +206,7 @@ EOF
   # D: no version evidence anywhere in the transcript -> col8=unknown. Plain
   # non-git directory -> col9/10 also no-worktree/unknown (covers "not a
   # worktree", alongside F's "gone from disk" below).
-  WT_D="$TB/wt-d"; spawn "$WT_D" "ah-tsv-noversion-0101-0400"
+  WT_D="$TB/wt-d"; spawn "$WT_D" "px-tsv-noversion-0101-0400"
   WT_D="$(cd "$WT_D" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_D")"
   cat > "$PROJB/$(_encode_cwd "$WT_D")/sess.jsonl" <<'EOF'
@@ -217,7 +217,7 @@ EOF
   # compacted once, then kept working) -> col8 must be "no", not "yes" —
   # proves this is a "later than the last genuine turn" comparison, not "any
   # compact_boundary exists anywhere".
-  WT_E="$TB/wt-e"; spawn "$WT_E" "ah-tsv-staleboundary-0101-0500"
+  WT_E="$TB/wt-e"; spawn "$WT_E" "px-tsv-staleboundary-0101-0500"
   WT_E="$(cd "$WT_E" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_E")"
   cat > "$PROJB/$(_encode_cwd "$WT_E")/sess.jsonl" <<'EOF'
@@ -229,7 +229,7 @@ EOF
   # "transcript outlives the worktree" case — -> col9/10 no-worktree/unknown,
   # row still has all 10 columns.
   WT_F="$TB/wt-f"; mkdir -p "$WT_F"; WT_F="$(cd "$WT_F" && pwd -P)"
-  ( cd "$WT_F" && exec -a claude bash -c 'trap : TERM; sleep 30' ignored --remote-control ah-tsv-gonecwd-0101-0600 ) &
+  ( cd "$WT_F" && exec -a claude bash -c 'trap : TERM; sleep 30' ignored --remote-control px-tsv-gonecwd-0101-0600 ) &
   PIDS+=("$!")
   sleep 0.3
   rmdir "$WT_F" 2>/dev/null || true
@@ -237,7 +237,7 @@ EOF
   # G: a FRESH genuine turn (timestamp = now) -> must be FILTERED OUT under a
   # tight --minutes threshold (proves --minutes actually filters, not just
   # parses).
-  WT_G="$TB/wt-g"; spawn "$WT_G" "ah-tsv-freshts-0101-0700"
+  WT_G="$TB/wt-g"; spawn "$WT_G" "px-tsv-freshts-0101-0700"
   WT_G="$(cd "$WT_G" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_G")"
   NOWTS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
@@ -246,7 +246,7 @@ EOF
   # H: a version OLDER than the one build empirically verified to emit
   # compact_boundary, no compact_boundary present -> col8=unknown (a real
   # absence-of-evidence case, not just "no version field at all" like D).
-  WT_H="$TB/wt-h"; spawn "$WT_H" "ah-tsv-oldversion-0101-0800"
+  WT_H="$TB/wt-h"; spawn "$WT_H" "px-tsv-oldversion-0101-0800"
   WT_H="$(cd "$WT_H" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_H")"
   cat > "$PROJB/$(_encode_cwd "$WT_H")/sess.jsonl" <<'EOF'
@@ -267,7 +267,7 @@ EOF
   # 'yes' once genuine_mx correctly falls back to the old turn (compact_mx is
   # then necessarily newer than genuine_mx — no separate col8 code path
   # needed, this is the same yes/no/unknown comparison already tested above).
-  WT_I="$TB/wt-i"; spawn "$WT_I" "ah-tsv-compactnoise-0101-0900"
+  WT_I="$TB/wt-i"; spawn "$WT_I" "px-tsv-compactnoise-0101-0900"
   WT_I="$(cd "$WT_I" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_I")"
   cat > "$PROJB/$(_encode_cwd "$WT_I")/sess.jsonl" <<'EOF'
@@ -284,14 +284,14 @@ EOF
 
   tsvout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report --minutes 0 --tsv 2>&1)"
 
-  rowA="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-compactsum-0101-0100')"
-  rowB="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-boundary-0101-0200')"
-  rowC="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-noboundary-0101-0300')"
-  rowD="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-noversion-0101-0400')"
-  rowE="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-staleboundary-0101-0500')"
-  rowF="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-gonecwd-0101-0600')"
-  rowH="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-oldversion-0101-0800')"
-  rowI="$(printf '%s\n' "$tsvout" | grep -F 'ah-tsv-compactnoise-0101-0900')"
+  rowA="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-compactsum-0101-0100')"
+  rowB="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-boundary-0101-0200')"
+  rowC="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-noboundary-0101-0300')"
+  rowD="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-noversion-0101-0400')"
+  rowE="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-staleboundary-0101-0500')"
+  rowF="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-gonecwd-0101-0600')"
+  rowH="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-oldversion-0101-0800')"
+  rowI="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-compactnoise-0101-0900')"
 
   ok "tsv-a-idle-from-genuine-turn" "$(printf '%s' "$rowA" | awk -F'\t' '{print $6}')" "2026-01-01T09:00:00Z"
   # Bug A regression: idle must be measured from the pre-compact genuine turn
@@ -338,15 +338,15 @@ EOF
   # --minutes actually filters (not just parses): a tight window must exclude
   # G's fresh turn but still include D's ancient one.
   tightout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report --minutes 45 --tsv 2>&1)"
-  ok  "tsv-minutes-excludes-fresh" "$(printf '%s\n' "$tightout" | grep -c 'ah-tsv-freshts-0101-0700')" "0"
-  has "tsv-minutes-includes-old"   "$tightout" "ah-tsv-noversion-0101-0400"
+  ok  "tsv-minutes-excludes-fresh" "$(printf '%s\n' "$tightout" | grep -c 'px-tsv-freshts-0101-0700')" "0"
+  has "tsv-minutes-includes-old"   "$tightout" "px-tsv-noversion-0101-0400"
 
   # --days behavior unchanged: default (no --minutes) still uses the
   # day-granularity header text verbatim, and the last-genuine-turn fix
   # applies to the human format too, not just --tsv.
   daysout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report 2>&1)"
   has "days-default-header-unchanged"     "$daysout" "NO type:user message in the last 2 day(s)"
-  arow="$(printf '%s\n' "$daysout" | grep -F 'ah_tsv-compactsum-0101-0100')"
+  arow="$(printf '%s\n' "$daysout" | grep -F 'px_tsv-compactsum-0101-0100')"
   has "days-mode-also-skips-compact-summary" "$arow" "2026-01-01T09:00:00Z"
 fi
 

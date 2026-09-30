@@ -6,10 +6,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 SP="$HERE/../scripts/session-preserve.sh"
 pass=0; fail=0
@@ -203,7 +203,7 @@ ok "junk-wip-junk-not-committed" "$(git -C "$R4B" show HEAD:real.txt)" "two"
 # sentinel alone, on every restarted session, regardless of real work (found
 # in review, PR #76).
 R4C="$WORK/repo4c"; mkrepo "$R4C"
-echo x > "$R4C/.sessions-init-ah-example-0101-0100"
+echo x > "$R4C/.sessions-init-px-example-0101-0100"
 S_SENTINEL="$(spawn_in "$R4C")"
 out="$(bash "$SP" "$S_SENTINEL" 2>&1)"; rc=$?
 has "sentinel-untracked-safe" "$out" "SAFE-TO-REAP"
@@ -213,7 +213,7 @@ ok  "sentinel-untracked-exit0" "$rc" "0"
 # NOT-SAFE-TO-REAP for the real file -- the sentinel exclusion must not mask
 # actual unsaved work sitting next to it.
 R4D="$WORK/repo4d"; mkrepo "$R4D"
-echo x > "$R4D/.sessions-init-ah-example-0101-0100"
+echo x > "$R4D/.sessions-init-px-example-0101-0100"
 echo "real work" > "$R4D/scratch.txt"
 S_SENTINELPLUS="$(spawn_in "$R4D")"
 out="$(bash "$SP" "$S_SENTINELPLUS" 2>&1)"; rc=$?
@@ -261,8 +261,8 @@ has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
 
-# 9. --all audits every live ah_/oldhost_ session. The synthetic sp-test-*
-# sessions above are NOT ah_/oldhost_-prefixed, so --all must skip them.
+# 9. --all audits every live px_/oldhost_ session. The synthetic sp-test-*
+# sessions above are NOT px_/oldhost_-prefixed, so --all must skip them.
 # Its EXIT CODE reflects real host state (0 = every audited session safe,
 # 1 = at least one not-safe) — both are valid completions. So assert it
 # completed without a crash/usage error (rc 0 or 1) AND that it never named a
@@ -281,9 +281,9 @@ ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")
 # WORKTREE — the exact bug that nearly cost 320 lines of unsaved work in practice (see the header comment). Must now fall back to locating and
 # auditing the worktree, and correctly report NOT-SAFE-TO-REAP.
 WT_BASE="$HOME/.claude/worktrees"; mkdir -p "$WT_BASE"
-R7="$WT_BASE/ah-sp-repro-$$"; mkrepo "$R7"
+R7="$WT_BASE/px-sp-repro-$$"; mkrepo "$R7"
 echo "unsaved work" > "$R7/scratch.txt"    # untracked, real work
-S_DEAD_DIRTY="ah_sp-repro-$$"               # no tmux session spawned for this name
+S_DEAD_DIRTY="px_sp-repro-$$"               # no tmux session spawned for this name
 out="$(bash "$SP" "$S_DEAD_DIRTY" 2>&1)"; rc=$?
 has "deadwt-found-via-fallback" "$out" "located via worktree lookup"
 has "deadwt-not-safe"           "$out" "NOT-SAFE-TO-REAP"
@@ -293,12 +293,12 @@ ok  "deadwt-exit1"              "$rc" "1"
 # 11. Same fallback path, but the located worktree is genuinely CLEAN -> must
 # fall through to the SAME SAFE-TO-REAP verdict a live session would get
 # (not a separate, weaker message). The session name carries a SECOND
-# underscore in its slug (ah_sp_clean_$$) to prove only the FIRST "_" after
-# the ah/oldhost prefix is converted to "-" — matching the mapping
-# (ah_xx-0101-0101 -> ah-xx-0101-0101) — and later underscores in
+# underscore in its slug (px_sp_clean_$$) to prove only the FIRST "_" after
+# the px/oldhost prefix is converted to "-" — matching the mapping
+# (px_xx-0101-0101 -> px-xx-0101-0101) — and later underscores in
 # the slug are left alone.
-R8="$WT_BASE/ah-sp_clean_$$"; mkrepo "$R8"
-S_DEAD_CLEAN="ah_sp_clean_$$"
+R8="$WT_BASE/px-sp_clean_$$"; mkrepo "$R8"
+S_DEAD_CLEAN="px_sp_clean_$$"
 out="$(bash "$SP" "$S_DEAD_CLEAN" 2>&1)"; rc=$?
 has "deadwt-clean-found" "$out" "located via worktree lookup"
 has "deadwt-clean-safe"  "$out" "SAFE-TO-REAP (work is on branch"
@@ -311,10 +311,10 @@ ok  "deadwt-clean-exit0" "$rc" "0"
 # suffix; the branch survives unsuffixed). Must still be found by scanning
 # every worktree dir and matching on ITS OWN branch, not just the direct
 # dirname guess, and the printed rundir must be the REAL suffixed path.
-R9="$WT_BASE/ah-sp-collide-$$-9999"; mkrepo "$R9"
-git -C "$R9" checkout --quiet -b "session/ah-sp-collide-$$"
+R9="$WT_BASE/px-sp-collide-$$-9999"; mkrepo "$R9"
+git -C "$R9" checkout --quiet -b "session/px-sp-collide-$$"
 echo "unsaved" > "$R9/scratch.txt"
-S_COLLIDE_DEAD="ah_sp-collide-$$"
+S_COLLIDE_DEAD="px_sp-collide-$$"
 out="$(bash "$SP" "$S_COLLIDE_DEAD" 2>&1)"; rc=$?
 has "deadwt-collide-found-suffixed" "$out" "$R9"
 has "deadwt-collide-not-safe"       "$out" "NOT-SAFE-TO-REAP"
@@ -328,11 +328,11 @@ ok  "deadwt-collide-exit1"          "$rc" "1"
 # lookup would return the clean decoy and report SAFE-TO-REAP while the
 # actual dirty worktree goes unaudited — the exact fail-open class this
 # whole fix targets. Branch match must win over the dirname match.
-R10="$WT_BASE/ah-sp-decoy-$$"; mkrepo "$R10"   # clean, dirname matches guess exactly
-R11="$WT_BASE/ah-sp-decoy-$$-5555"; mkrepo "$R11"  # dirty, dirname does NOT match
-git -C "$R11" checkout --quiet -b "session/ah-sp-decoy-$$"
+R10="$WT_BASE/px-sp-decoy-$$"; mkrepo "$R10"   # clean, dirname matches guess exactly
+R11="$WT_BASE/px-sp-decoy-$$-5555"; mkrepo "$R11"  # dirty, dirname does NOT match
+git -C "$R11" checkout --quiet -b "session/px-sp-decoy-$$"
 echo "unsaved" > "$R11/scratch.txt"
-S_DECOY_DEAD="ah_sp-decoy-$$"
+S_DECOY_DEAD="px_sp-decoy-$$"
 out="$(bash "$SP" "$S_DECOY_DEAD" 2>&1)"; rc=$?
 has "decoy-finds-real-dirty-worktree" "$out" "$R11"
 has "decoy-not-safe"                  "$out" "NOT-SAFE-TO-REAP"

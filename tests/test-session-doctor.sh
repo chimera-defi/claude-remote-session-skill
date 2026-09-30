@@ -4,10 +4,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run report (source-guard)
@@ -16,10 +16,10 @@ ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FA
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 ok "legacy tmux->base" "$(tmux_to_base oldhost_foo-20260101-0900)" "oldhost-foo-20260101-0900"
-ok "new tmux->base"    "$(tmux_to_base ah_0101-0900-foo)"            "ah-0101-0900-foo"
+ok "new tmux->base"    "$(tmux_to_base px_0101-0900-foo)"            "px-0101-0900-foo"
 ok "foreign tmux->base" "$(tmux_to_base codexhost_x)"               ""
 ok "legacy svc->tmux"  "$(svc_to_tmux oldhost-foo-20260101-0900)" "oldhost_foo-20260101-0900"
-ok "new svc->tmux"     "$(svc_to_tmux ah-0101-0900-foo)"            "ah_0101-0900-foo"
+ok "new svc->tmux"     "$(svc_to_tmux px-0101-0900-foo)"            "px_0101-0900-foo"
 
 # registry-stale must degrade gracefully (no Python traceback) when the registry
 # is unavailable (e.g. missing/expired credentials), same as `report` mode already
@@ -57,12 +57,12 @@ ok "days-leadingzero-normalized"   "$(printf '%s' "$leadzero_out" | grep -qF '> 
 META_HOME="$(mktemp -d)"
 META_STUB="$(mktemp -d)"
 mkdir -p "$META_HOME/.local/bin"
-cat > "$META_HOME/.local/bin/ah-oldmeta-0101-0000-start.sh" <<'EOF'
+cat > "$META_HOME/.local/bin/px-oldmeta-0101-0000-start.sh" <<'EOF'
 #!/usr/bin/env bash
 BACKEND="codex"
 MODEL="gpt-5.5"
 EOF
-cat > "$META_HOME/.local/bin/ah-newmeta-0101-0001-start.sh" <<'EOF'
+cat > "$META_HOME/.local/bin/px-newmeta-0101-0001-start.sh" <<'EOF'
 #!/usr/bin/env bash
 BACKEND=codex
 MODEL=gpt-5.5
@@ -78,9 +78,9 @@ EOF
 chmod +x "$META_STUB/tmux"
 # shellcheck disable=SC2034  # backend_of reads BIN from the sourced script.
 BIN="$META_HOME/.local/bin"
-ok "doctor-start-meta-old-backend" "$(backend_of ah_oldmeta-0101-0000)" "codex"
-ok "doctor-start-meta-new-backend" "$(backend_of ah_newmeta-0101-0001)" "codex"
-if PATH="$META_STUB:$PATH" proc_alive ah_newmeta-0101-0001; then alive=yes; else alive=no; fi
+ok "doctor-start-meta-old-backend" "$(backend_of px_oldmeta-0101-0000)" "codex"
+ok "doctor-start-meta-new-backend" "$(backend_of px_newmeta-0101-0001)" "codex"
+if PATH="$META_STUB:$PATH" proc_alive px_newmeta-0101-0001; then alive=yes; else alive=no; fi
 ok "doctor-codex-proc-alive-from-new-meta" "$alive" "yes"
 rm -rf "$META_HOME" "$META_STUB"
 
@@ -99,10 +99,10 @@ exit 0
 STUB_EOF
 chmod +x "$STUBBIN/systemctl"
 TESTCFG="$(mktemp -d)"; mkdir -p "$TESTCFG/systemd/user"
-touch "$TESTCFG/systemd/user/ah-test-orphan-0101-0100.service"
+touch "$TESTCFG/systemd/user/px-test-orphan-0101-0100.service"
 TESTHOME="$(mktemp -d)"
 orphan_out="$(PATH="$STUBBIN:$PATH" XDG_CONFIG_HOME="$TESTCFG" HOME="$TESTHOME" bash "$HERE/../scripts/session-doctor.sh" reap-local 2>&1)"
-ok "reap-local-ignores-is-active" "$(printf '%s' "$orphan_out" | grep -qF 'ORPHAN unit (no tmux): ah-test-orphan-0101-0100.service' && echo yes || echo no)" "yes"
+ok "reap-local-ignores-is-active" "$(printf '%s' "$orphan_out" | grep -qF 'ORPHAN unit (no tmux): px-test-orphan-0101-0100.service' && echo yes || echo no)" "yes"
 rm -rf "$STUBBIN" "$TESTCFG" "$TESTHOME"
 
 # worktree-stale: a worktree under ~/.claude/worktrees/ whose owning tmux session
@@ -111,27 +111,27 @@ rm -rf "$STUBBIN" "$TESTCFG" "$TESTHOME"
 # or a protected name, must NOT be listed. Removal is never automated (mirrors
 # registry-stale — a dead session's worktree may hold unpushed work).
 if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
-  WTTMP="$(mktemp -d)"; trap 'rm -rf "$WTTMP"; tmux kill-session -t ah_wtlive-0101-0900 2>/dev/null || true' EXIT
+  WTTMP="$(mktemp -d)"; trap 'rm -rf "$WTTMP"; tmux kill-session -t px_wtlive-0101-0900 2>/dev/null || true' EXIT
   REPO="$WTTMP/repo"; mkdir -p "$REPO"
   git -C "$REPO" init -q -b main
   git -C "$REPO" config user.email t@t.com; git -C "$REPO" config user.name t
   echo hi > "$REPO/a.txt"; git -C "$REPO" add a.txt; git -C "$REPO" commit -q -m init
 
   WTHOME="$WTTMP/home"; mkdir -p "$WTHOME/.claude/worktrees"
-  WT_DEAD="$WTHOME/.claude/worktrees/ah-wtdead-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtdead-0101-0900 "$WT_DEAD" main >/dev/null 2>&1
-  WT_LIVE="$WTHOME/.claude/worktrees/ah-wtlive-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtlive-0101-0900 "$WT_LIVE" main >/dev/null 2>&1
-  WT_PROT="$WTHOME/.claude/worktrees/ah-thirdbot-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-thirdbot-0101-0900 "$WT_PROT" main >/dev/null 2>&1
-  tmux new-session -d -s ah_wtlive-0101-0900 -c "$WT_LIVE" 'sleep 60'
+  WT_DEAD="$WTHOME/.claude/worktrees/px-wtdead-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtdead-0101-0900 "$WT_DEAD" main >/dev/null 2>&1
+  WT_LIVE="$WTHOME/.claude/worktrees/px-wtlive-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtlive-0101-0900 "$WT_LIVE" main >/dev/null 2>&1
+  WT_PROT="$WTHOME/.claude/worktrees/px-thirdbot-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-thirdbot-0101-0900 "$WT_PROT" main >/dev/null 2>&1
+  tmux new-session -d -s px_wtlive-0101-0900 -c "$WT_LIVE" 'sleep 60'
 
   # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
   # a host overlay adds thirdbot via CRSS_PROTECT_NAMES — set it explicitly
   # here to exercise that config-driven protection, matching the fixture's
-  # "ah-thirdbot-..." worktree name below.
+  # "px-thirdbot-..." worktree name below.
   wtout="$(HOME="$WTHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
-  tmux kill-session -t ah_wtlive-0101-0900 2>/dev/null || true
+  tmux kill-session -t px_wtlive-0101-0900 2>/dev/null || true
 
   ok "worktree-stale-lists-dead"     "$(printf '%s' "$wtout" | grep -qF "$WT_DEAD" && echo yes || echo no)" "yes"
   ok "worktree-stale-skips-live"     "$(printf '%s' "$wtout" | grep -qF "$WT_LIVE" && echo yes || echo no)" "no"
@@ -143,18 +143,18 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # unsuffixed). Liveness must be derived from the branch, not the directory name,
   # or a live session's worktree gets misreported as stale and offered for --force
   # removal (regression: found via review).
-  WT_PIDLIVE="$WTHOME/.claude/worktrees/ah-wtpidlive-0101-0900-99999"
-  git -C "$REPO" worktree add -q -b session/ah-wtpidlive-0101-0900 "$WT_PIDLIVE" main >/dev/null 2>&1
-  tmux new-session -d -s ah_wtpidlive-0101-0900 -c "$WT_PIDLIVE" 'sleep 60'
+  WT_PIDLIVE="$WTHOME/.claude/worktrees/px-wtpidlive-0101-0900-99999"
+  git -C "$REPO" worktree add -q -b session/px-wtpidlive-0101-0900 "$WT_PIDLIVE" main >/dev/null 2>&1
+  tmux new-session -d -s px_wtpidlive-0101-0900 -c "$WT_PIDLIVE" 'sleep 60'
   wtout2="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
-  tmux kill-session -t ah_wtpidlive-0101-0900 2>/dev/null || true
+  tmux kill-session -t px_wtpidlive-0101-0900 2>/dev/null || true
   ok "worktree-stale-skips-pidsuffixed-live" "$(printf '%s' "$wtout2" | grep -qF "$WT_PIDLIVE" && echo yes || echo no)" "no"
 
   # A dead worktree whose session switched off its session/<remote> branch onto
   # something else must NOT suggest `branch -D` on that (possibly unmerged,
   # unrelated) branch — only the worktree removal (regression: found via review).
-  WT_SWITCHED="$WTHOME/.claude/worktrees/ah-wtswitched-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtswitched-0101-0900 "$WT_SWITCHED" main >/dev/null 2>&1
+  WT_SWITCHED="$WTHOME/.claude/worktrees/px-wtswitched-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtswitched-0101-0900 "$WT_SWITCHED" main >/dev/null 2>&1
   git -C "$WT_SWITCHED" checkout -q -b feature/unrelated >/dev/null 2>&1
   wtout3="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   ok "worktree-stale-lists-switched-branch" "$(printf '%s' "$wtout3" | grep -qF "$WT_SWITCHED" && echo yes || echo no)" "yes"
@@ -166,8 +166,8 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # (and generally shell-quoted) — regression: found via review (unquoted %s
   # interpolation).
   REPO_SP="$WTTMP/my repo"; git clone -q "$REPO" "$REPO_SP" >/dev/null 2>&1
-  WT_SP="$WTHOME/.claude/worktrees/ah-wtspacey-0101-0900"
-  git -C "$REPO_SP" worktree add -q -b session/ah-wtspacey-0101-0900 "$WT_SP" main >/dev/null 2>&1
+  WT_SP="$WTHOME/.claude/worktrees/px-wtspacey-0101-0900"
+  git -C "$REPO_SP" worktree add -q -b session/px-wtspacey-0101-0900 "$WT_SP" main >/dev/null 2>&1
   wtout4="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   cmd="$(printf '%s' "$wtout4" | grep -F 'remove:' | grep -F "$WT_SP" | sed 's/^ *remove: //')"
   ( eval "$cmd" ) >/dev/null 2>&1
@@ -184,8 +184,8 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   WTUD="$WTHOME/.config/systemd/user"; mkdir -p "$WTUD"
 
   # (a) referenced by another unit's WorkingDirectory
-  WT_UNIT="$WTHOME/.claude/worktrees/ah-wtunit-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtunit-0101-0900 "$WT_UNIT" main >/dev/null 2>&1
+  WT_UNIT="$WTHOME/.claude/worktrees/px-wtunit-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtunit-0101-0900 "$WT_UNIT" main >/dev/null 2>&1
   cat > "$WTUD/wtstale-bus.service" <<EOF
 [Service]
 WorkingDirectory=$WT_UNIT
@@ -194,21 +194,21 @@ EOF
 
   # (b) referenced only via a .service.d/*.conf drop-in, in systemd's %h form
   # (real case: bus-router-idle-reaper.service.d/state-dir.conf)
-  WT_DROP="$WTHOME/.claude/worktrees/ah-wtdrop-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtdrop-0101-0900 "$WT_DROP" main >/dev/null 2>&1
+  WT_DROP="$WTHOME/.claude/worktrees/px-wtdrop-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtdrop-0101-0900 "$WT_DROP" main >/dev/null 2>&1
   mkdir -p "$WTUD/wtstale-reaper.service.d"
   cat > "$WTUD/wtstale-reaper.service.d/state-dir.conf" <<'EOF'
 [Service]
 ExecStart=
-ExecStart=/usr/bin/python3 bus.py --state-dir=%h/.claude/worktrees/ah-wtdrop-0101-0900
+ExecStart=/usr/bin/python3 bus.py --state-dir=%h/.claude/worktrees/px-wtdrop-0101-0900
 EOF
 
   # (d) referenced only by the dead session's OWN unit (${remote}.service, as
   # reap derives it) — that unit goes away with the session, so it must not
   # count as "another unit".
-  WT_OWN="$WTHOME/.claude/worktrees/ah-wtown-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtown-0101-0900 "$WT_OWN" main >/dev/null 2>&1
-  cat > "$WTUD/ah-wtown-0101-0900.service" <<EOF
+  WT_OWN="$WTHOME/.claude/worktrees/px-wtown-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtown-0101-0900 "$WT_OWN" main >/dev/null 2>&1
+  cat > "$WTUD/px-wtown-0101-0900.service" <<EOF
 [Service]
 WorkingDirectory=$WT_OWN
 ExecStart=/bin/true
@@ -217,7 +217,7 @@ EOF
   wtout5="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   ok "worktree-stale-unit-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_UNIT" && echo yes || echo no)" "yes"
   ok "worktree-stale-unit-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_UNIT" && echo yes || echo no)" "no"
-  ok "worktree-stale-unit-ref-no-branch-D"     "$(printf '%s' "$wtout5" | grep -F 'branch -D' | grep -qF 'ah-wtunit-0101-0900' && echo yes || echo no)" "no"
+  ok "worktree-stale-unit-ref-no-branch-D"     "$(printf '%s' "$wtout5" | grep -F 'branch -D' | grep -qF 'px-wtunit-0101-0900' && echo yes || echo no)" "no"
   ok "worktree-stale-unit-ref-keep-names-unit" "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_UNIT" | grep -qF 'KEEP: in use by unit wtstale-bus.service — do not remove' && echo yes || echo no)" "yes"
   ok "worktree-stale-dropin-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_DROP" && echo yes || echo no)" "yes"
   ok "worktree-stale-dropin-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_DROP" && echo yes || echo no)" "no"
@@ -244,17 +244,17 @@ EOF
   # (.git/info/exclude is shared by every worktree of $REPO; only the ones
   # below ever get these directories.)
   printf 'artifacts/\nnode_modules/\n.venv/\n' >> "$REPO/.git/info/exclude"
-  WT_PAY="$WTHOME/.claude/worktrees/ah-wtpay-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtpay-0101-0900 "$WT_PAY" main >/dev/null 2>&1
+  WT_PAY="$WTHOME/.claude/worktrees/px-wtpay-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtpay-0101-0900 "$WT_PAY" main >/dev/null 2>&1
   mkdir -p "$WT_PAY/artifacts"; printf 'raw\n' > "$WT_PAY/artifacts/results.tsv"; printf 'more\n' > "$WT_PAY/artifacts/keeper.log"
-  WT_NOPAY="$WTHOME/.claude/worktrees/ah-wtnopay-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtnopay-0101-0900 "$WT_NOPAY" main >/dev/null 2>&1
+  WT_NOPAY="$WTHOME/.claude/worktrees/px-wtnopay-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtnopay-0101-0900 "$WT_NOPAY" main >/dev/null 2>&1
   mkdir -p "$WT_NOPAY/node_modules/x" "$WT_NOPAY/.venv/lib"; echo a > "$WT_NOPAY/node_modules/x/i.js"; echo a > "$WT_NOPAY/.venv/lib/l.py"
-  WT_PAYDIRTY="$WTHOME/.claude/worktrees/ah-wtpaydirty-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtpaydirty-0101-0900 "$WT_PAYDIRTY" main >/dev/null 2>&1
+  WT_PAYDIRTY="$WTHOME/.claude/worktrees/px-wtpaydirty-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtpaydirty-0101-0900 "$WT_PAYDIRTY" main >/dev/null 2>&1
   mkdir -p "$WT_PAYDIRTY/artifacts"; echo x > "$WT_PAYDIRTY/artifacts/r.tsv"; echo work > "$WT_PAYDIRTY/scratch.txt"
-  WT_PAYKEEP="$WTHOME/.claude/worktrees/ah-wtpaykeep-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-wtpaykeep-0101-0900 "$WT_PAYKEEP" main >/dev/null 2>&1
+  WT_PAYKEEP="$WTHOME/.claude/worktrees/px-wtpaykeep-0101-0900"
+  git -C "$REPO" worktree add -q -b session/px-wtpaykeep-0101-0900 "$WT_PAYKEEP" main >/dev/null 2>&1
   mkdir -p "$WT_PAYKEEP/artifacts"; echo x > "$WT_PAYKEEP/artifacts/r.tsv"
   cat > "$WTUD/wtstale-paykeep.service" <<EOF
 [Service]
@@ -291,8 +291,8 @@ EOF
   # "no payload": the row keeps the archive chained ahead of remove (which then
   # refuses) and says why (skipped as root, which ignores modes).
   if [ "$(id -u)" -ne 0 ]; then
-    WT_LK="$WTHOME/.claude/worktrees/ah-wtlocked-0101-0900"
-    git -C "$REPO" worktree add -q -b session/ah-wtlocked-0101-0900 "$WT_LK" main >/dev/null 2>&1
+    WT_LK="$WTHOME/.claude/worktrees/px-wtlocked-0101-0900"
+    git -C "$REPO" worktree add -q -b session/px-wtlocked-0101-0900 "$WT_LK" main >/dev/null 2>&1
     mkdir -p "$WT_LK/artifacts/locked"; echo x > "$WT_LK/artifacts/locked/f"; chmod 000 "$WT_LK/artifacts/locked"
     wtout7="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
     ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_LK" ) >/dev/null 2>&1; rc_lk=$?
@@ -305,7 +305,7 @@ EOF
   # the printed archive command really is runnable (subcommand exists and works)
   ( HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" archive-ignored "$WT_PAY" ) >/dev/null 2>&1
   ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"
-  ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/worktree/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
+  ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/px-wtpay-0101-0900-"*/worktree/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
 
   # The whole chained line, pasted as a human (or a bulk executor — as in the
   # original incident) would: eval'd with a `session-doctor` shim on PATH, against a repo
@@ -314,7 +314,7 @@ EOF
   SHIM="$WTTMP/shim"; mkdir -p "$SHIM"
   printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$HERE/../scripts/session-doctor.sh" > "$SHIM/session-doctor"; chmod +x "$SHIM/session-doctor"
   printf 'artifacts/\n' >> "$REPO_SP/.git/info/exclude"
-  WT_CH1="$WTHOME/.claude/worktrees/ah-wtchain1-0101-0900"; WT_CH2="$WTHOME/.claude/worktrees/ah-wtchain2-0101-0900"
+  WT_CH1="$WTHOME/.claude/worktrees/px-wtchain1-0101-0900"; WT_CH2="$WTHOME/.claude/worktrees/px-wtchain2-0101-0900"
   for w in "$WT_CH1" "$WT_CH2"; do
     git -C "$REPO_SP" worktree add -q -b "session/$(basename "$w")" "$w" main >/dev/null 2>&1
     mkdir -p "$w/artifacts"; echo data > "$w/artifacts/results.tsv"
@@ -326,7 +326,7 @@ EOF
   ok "worktree-stale-chain-failed-archive-keeps-worktree" "$([ -f "$WT_CH1/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
   ( export PATH="$SHIM:$PATH" HOME="$WTHOME"; eval "$cmd_ch2" ) >/dev/null 2>&1
   ok "worktree-stale-chain-removed-after-archive" "$([ -d "$WT_CH2" ] && echo yes || echo no)" "no"
-  ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/ah-wtchain2-0101-0900-*/worktree/artifacts/results.tsv 2>/dev/null)" "data"
+  ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/px-wtchain2-0101-0900-*/worktree/artifacts/results.tsv 2>/dev/null)" "data"
 fi
 
 # _default_branch: real default branch resolution, no gh dependency needed for
@@ -381,7 +381,7 @@ if command -v git >/dev/null 2>&1; then
   mkdir -p "$DIRTYTMP/repo/.claude"
   ln -sf /nonexistent-skills-target "$DIRTYTMP/repo/.claude/skills"
   ok "wtdirty-ignores-claude-skills-baseline" "$(_wt_dirty "$DIRTYTMP/repo")" "clean"
-  touch "$DIRTYTMP/repo/.sessions-init-ah-something"
+  touch "$DIRTYTMP/repo/.sessions-init-px-something"
   ok "wtdirty-ignores-sessions-init-sentinel" "$(_wt_dirty "$DIRTYTMP/repo")" "clean"
   # A REAL untracked file must still be reported dirty (the ignore list is not
   # a blanket "ignore everything untracked").
@@ -405,13 +405,13 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
 
   # Landed: dead worktree, straight off main, no new commits, WITH the
   # .claude/skills baseline present (proves both fixes together).
-  WT_LANDED="$LCHOME/.claude/worktrees/ah-lclanded-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lclanded-0101-0900 "$WT_LANDED" main >/dev/null 2>&1
+  WT_LANDED="$LCHOME/.claude/worktrees/px-lclanded-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lclanded-0101-0900 "$WT_LANDED" main >/dev/null 2>&1
   mkdir -p "$WT_LANDED/.claude"; ln -sf /nonexistent-skills-target "$WT_LANDED/.claude/skills"
 
   # Unlanded: dead worktree with a commit not on main.
-  WT_UNLANDED="$LCHOME/.claude/worktrees/ah-lcunlanded-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lcunlanded-0101-0900 "$WT_UNLANDED" main >/dev/null 2>&1
+  WT_UNLANDED="$LCHOME/.claude/worktrees/px-lcunlanded-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lcunlanded-0101-0900 "$WT_UNLANDED" main >/dev/null 2>&1
   git -C "$WT_UNLANDED" config user.email t@t.com; git -C "$WT_UNLANDED" config user.name t
   echo new > "$WT_UNLANDED/new.txt"; git -C "$WT_UNLANDED" add new.txt
   git -C "$WT_UNLANDED" commit -q -m "unlanded work"
@@ -433,22 +433,22 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$REPO_U" config user.email t@t.com; git -C "$REPO_U" config user.name t
   echo hi > "$REPO_U/a.txt"; git -C "$REPO_U" add a.txt; git -C "$REPO_U" commit -q -m init
   git -C "$REPO_U" checkout -q --detach
-  WT_UNKNOWN="$LCHOME/.claude/worktrees/ah-lcunknown-0101-0900"
-  git -C "$REPO_U" worktree add -q -b session/ah-lcunknown-0101-0900 "$WT_UNKNOWN" HEAD >/dev/null 2>&1
+  WT_UNKNOWN="$LCHOME/.claude/worktrees/px-lcunknown-0101-0900"
+  git -C "$REPO_U" worktree add -q -b session/px-lcunknown-0101-0900 "$WT_UNKNOWN" HEAD >/dev/null 2>&1
 
   # DIRTY rows (real uncommitted work — not the spawner baseline _wt_dirty ignores):
   # an untracked file plus a modified tracked file. Three code paths: owned +
   # landed=yes, owned + landed=no, and a session that switched off session/*.
-  WT_DIRTYY="$LCHOME/.claude/worktrees/ah-lcdirtyyes-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtyyes-0101-0900 "$WT_DIRTYY" main >/dev/null 2>&1
+  WT_DIRTYY="$LCHOME/.claude/worktrees/px-lcdirtyyes-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lcdirtyyes-0101-0900 "$WT_DIRTYY" main >/dev/null 2>&1
   echo scratch > "$WT_DIRTYY/scratch.txt"; echo edit >> "$WT_DIRTYY/a.txt"
   echo '*.ignored-log' >> "$LCREPO/.git/info/exclude"; echo precious > "$WT_DIRTYY/local-only.ignored-log"
-  WT_DIRTYN="$LCHOME/.claude/worktrees/ah-lcdirtyno-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtyno-0101-0900 "$WT_DIRTYN" main >/dev/null 2>&1
+  WT_DIRTYN="$LCHOME/.claude/worktrees/px-lcdirtyno-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lcdirtyno-0101-0900 "$WT_DIRTYN" main >/dev/null 2>&1
   echo new > "$WT_DIRTYN/new.txt"; git -C "$WT_DIRTYN" add new.txt; git -C "$WT_DIRTYN" commit -q -m "unlanded work"
   echo scratch > "$WT_DIRTYN/scratch.txt"
-  WT_DIRTYSW="$LCHOME/.claude/worktrees/ah-lcdirtysw-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lcdirtysw-0101-0900 "$WT_DIRTYSW" main >/dev/null 2>&1
+  WT_DIRTYSW="$LCHOME/.claude/worktrees/px-lcdirtysw-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lcdirtysw-0101-0900 "$WT_DIRTYSW" main >/dev/null 2>&1
   git -C "$WT_DIRTYSW" checkout -q -b feature/dirty-switched >/dev/null 2>&1
   echo scratch > "$WT_DIRTYSW/scratch.txt"
 
@@ -459,14 +459,14 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   blk_no="$(_test_wsblock "$wsout2" "$WT_UNLANDED")"
   blk_unk="$(_test_wsblock "$wsout2" "$WT_UNKNOWN")"
   ok "wstale-branchD-fixture-unknown" "$(printf '%s' "$blk_unk" | grep -oE 'landed=[a-z]+')" "landed=unknown"
-  ok "wstale-branchD-landed-yes-keeps-it"       "$(printf '%s' "$blk_yes" | grep -qF 'branch -D session/ah-lclanded-0101-0900' && echo yes || echo no)" "yes"
+  ok "wstale-branchD-landed-yes-keeps-it"       "$(printf '%s' "$blk_yes" | grep -qF 'branch -D session/px-lclanded-0101-0900' && echo yes || echo no)" "yes"
   ok "wstale-branchD-landed-yes-no-keep-note"   "$(printf '%s' "$blk_yes" | grep -qF 'not known-landed' && echo yes || echo no)" "no"
   ok "wstale-branchD-landed-no-still-removes-wt" "$(printf '%s' "$blk_no" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
   ok "wstale-branchD-landed-no-dropped"         "$(printf '%s' "$blk_no" | grep -qF 'branch -D' && echo yes || echo no)" "no"
-  has "wstale-branchD-landed-no-note" "$blk_no" "NOTE: branch session/ah-lcunlanded-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
+  has "wstale-branchD-landed-no-note" "$blk_no" "NOTE: branch session/px-lcunlanded-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
   ok "wstale-branchD-unknown-still-removes-wt"  "$(printf '%s' "$blk_unk" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
   ok "wstale-branchD-unknown-dropped"           "$(printf '%s' "$blk_unk" | grep -qF 'branch -D' && echo yes || echo no)" "no"
-  has "wstale-branchD-unknown-note" "$blk_unk" "NOTE: branch session/ah-lcunknown-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
+  has "wstale-branchD-unknown-note" "$blk_unk" "NOTE: branch session/px-lcunknown-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
 
   # A status=DIRTY row must not get a copy-paste line that discards its
   # uncommitted changes: `--force` is exactly what makes git remove modified/
@@ -505,19 +505,19 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "wstale-dirty-pasted-cmd-kept-worktree"  "$([ -d "$WT_DIRTYY" ] && echo yes || echo no)" "yes"
   ok "wstale-dirty-pasted-cmd-kept-untracked" "$([ -f "$WT_DIRTYY/scratch.txt" ] && echo yes || echo no)" "yes"
   ok "wstale-dirty-pasted-cmd-kept-modified"  "$(grep -qx edit "$WT_DIRTYY/a.txt" 2>/dev/null && echo yes || echo no)" "yes"
-  ok "wstale-dirty-pasted-cmd-kept-branch"    "$(git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/ah-lcdirtyyes-0101-0900 && echo yes || echo no)" "yes"
+  ok "wstale-dirty-pasted-cmd-kept-branch"    "$(git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/px-lcdirtyyes-0101-0900 && echo yes || echo no)" "yes"
   # owned + landed=no + DIRTY: both NOTEs, no --force, no branch -D.
   ok "wstale-dirty-no-no-force"       "$(_test_rmline "$blk_dn" | grep -qF -- '--force' && echo yes || echo no)" "no"
   ok "wstale-dirty-no-no-branch-D"    "$(printf '%s' "$blk_dn" | grep -qF 'branch -D' && echo yes || echo no)" "no"
   has "wstale-dirty-no-dirty-note"  "$blk_dn" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYN status --ignored)"
-  has "wstale-dirty-no-branch-note" "$blk_dn" "NOTE: branch session/ah-lcdirtyno-0101-0900 is not known-landed"
+  has "wstale-dirty-no-branch-note" "$blk_dn" "NOTE: branch session/px-lcdirtyno-0101-0900 is not known-landed"
   # switched off session/* + DIRTY: no --force, dirty NOTE, and the existing branch NOTE.
   ok "wstale-dirty-sw-no-force"       "$(_test_rmline "$blk_dsw" | grep -qF -- '--force' && echo yes || echo no)" "no"
   has "wstale-dirty-sw-dirty-note"  "$blk_dsw" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYSW status --ignored)"
   has "wstale-dirty-sw-branch-note" "$blk_dsw" "NOTE: current branch feature/dirty-switched is not a session/* name"
   # Clean rows are unchanged: still --force, still branch -D (landed=yes), no dirty NOTE.
   ok "wstale-clean-yes-keeps-force"   "$(_test_rmline "$blk_yes" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
-  ok "wstale-clean-yes-keeps-branch-D" "$(_test_rmline "$blk_yes" | grep -qF 'branch -D session/ah-lclanded-0101-0900' && echo yes || echo no)" "yes"
+  ok "wstale-clean-yes-keeps-branch-D" "$(_test_rmline "$blk_yes" | grep -qF 'branch -D session/px-lclanded-0101-0900' && echo yes || echo no)" "yes"
   ok "wstale-clean-yes-no-dirty-note" "$(printf '%s' "$blk_yes" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
   ok "wstale-clean-no-keeps-force"    "$(_test_rmline "$blk_no" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
   ok "wstale-clean-no-no-dirty-note"  "$(printf '%s' "$blk_no" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
@@ -525,11 +525,11 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # land-check: report-only (no mutation — both worktrees still exist after),
   # and unlike worktree-stale it must NOT filter by liveness — add a LIVE
   # worktree and confirm it's still reported (worktree-stale would skip it).
-  WT_LCLIVE="$LCHOME/.claude/worktrees/ah-lclive-0101-0900"
-  git -C "$LCREPO" worktree add -q -b session/ah-lclive-0101-0900 "$WT_LCLIVE" main >/dev/null 2>&1
-  tmux new-session -d -s ah_lclive-0101-0900 -c "$WT_LCLIVE" 'sleep 60'
+  WT_LCLIVE="$LCHOME/.claude/worktrees/px-lclive-0101-0900"
+  git -C "$LCREPO" worktree add -q -b session/px-lclive-0101-0900 "$WT_LCLIVE" main >/dev/null 2>&1
+  tmux new-session -d -s px_lclive-0101-0900 -c "$WT_LCLIVE" 'sleep 60'
   lcout="$(HOME="$LCHOME" bash "$HERE/../scripts/session-doctor.sh" land-check)"
-  tmux kill-session -t ah_lclive-0101-0900 2>/dev/null || true
+  tmux kill-session -t px_lclive-0101-0900 2>/dev/null || true
 
   has "landcheck-lists-landed"   "$lcout" "$WT_LANDED"
   has "landcheck-lists-unlanded" "$lcout" "$WT_UNLANDED"
@@ -563,22 +563,22 @@ STUB_EOF
   # exit code). PROTECT's generic default is just "claude-remote" (see
   # session-doctor.sh); a host overlay adds thirdbot via
   # CRSS_PROTECT_NAMES — set it explicitly to exercise that config-driven path.
-  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" reap ah-thirdbot-fake-0101-0900 --force 2>&1)"; protrc=$?
+  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" reap px-thirdbot-fake-0101-0900 --force 2>&1)"; protrc=$?
   has "reap-protected-refused" "$protout" "PROTECTED"
   ok  "reap-protected-exit2"   "$protrc" "2"
 
   # 2. Idempotent no-op: tmux session and systemd unit both already absent —
   # must still exit 0, not error.
-  noopout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reap-noop-test-0101-0900 --force 2>&1)"; nooprc=$?
+  noopout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap px_reap-noop-test-0101-0900 --force 2>&1)"; nooprc=$?
   ok "reap-noop-exit0" "$nooprc" "0"
-  has "reap-noop-message" "$noopout" "reaped 'ah_reap-noop-test-0101-0900'"
+  has "reap-noop-message" "$noopout" "reaped 'px_reap-noop-test-0101-0900'"
 
   # 3. Unit cleanup: new-session.sh creates these exact paths from REMOTE_NAME
   # (base): $HOME/.config/systemd/user/<base>.service and
   # $HOME/.local/bin/<base>-start.sh. Reap must archive both into the same
   # per-reap backup dir, record them in MANIFEST, remove originals, and daemon-
   # reload after disabling/resetting the unit.
-  UNITBASE="ah-reapunit-0101-0900"
+  UNITBASE="px-reapunit-0101-0900"
   mkdir -p "$RHOME/.config/systemd/user" "$RHOME/.local/bin"
   cat > "$RHOME/.config/systemd/user/$UNITBASE.service" <<'EOF'
 [Service]
@@ -589,7 +589,7 @@ EOF
 echo start
 EOF
   mkdir -p "$RHOME/.sessions/resume"; echo 11111111-1111-4111-8111-111111111111 > "$RHOME/.sessions/resume/$UNITBASE.uuid"
-  unitout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reapunit-0101-0900 --force 2>&1)"; unitrc=$?
+  unitout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap px_reapunit-0101-0900 --force 2>&1)"; unitrc=$?
   ok "reap-unit-resume-pin-removed" "$([ -e "$RHOME/.sessions/resume/$UNITBASE.uuid" ] && echo yes || echo no)" "no"
   UNITARCH="$(ls -d "$RHOME/backups/reaped-worktree-ignored/$UNITBASE"-* 2>/dev/null | head -1)"
   ok "reap-unit-archive-exit0" "$unitrc" "0"
@@ -605,13 +605,13 @@ EOF
 
   # 4. Missing unit/start files are fine, but reap still creates the per-reap
   # archive dir so this cleanup has one durable place to report "nothing".
-  MISSBASE="ah-reapmissing-0101-0900"
-  missout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reapmissing-0101-0900 --force 2>&1)"; missrc=$?
+  MISSBASE="px-reapmissing-0101-0900"
+  missout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap px_reapmissing-0101-0900 --force 2>&1)"; missrc=$?
   MISSARCH="$(ls -d "$RHOME/backups/reaped-worktree-ignored/$MISSBASE"-* 2>/dev/null | head -1)"
   ok "reap-missing-unit-exit0" "$missrc" "0"
   ok "reap-missing-archive-dir-exists" "$([ -n "$MISSARCH" ] && [ -d "$MISSARCH" ] && echo yes || echo no)" "yes"
   ok "reap-missing-manifest-empty" "$(wc -l < "$MISSARCH/MANIFEST" | tr -d ' ')" "0"
-  has "reap-missing-message" "$missout" "reaped 'ah_reapmissing-0101-0900'"
+  has "reap-missing-message" "$missout" "reaped 'px_reapmissing-0101-0900'"
 
   # 5. Archive failure must fail open for the rest of reap and fail closed for
   # the files themselves: originals are not deleted when their archive cannot
@@ -619,15 +619,15 @@ EOF
   FAILHOME="$(mktemp -d)"
   mkdir -p "$FAILHOME/.config/systemd/user" "$FAILHOME/.local/bin"
   : > "$FAILHOME/backups"
-  FAILBASE="ah-reaparchfail-0101-0900"
+  FAILBASE="px-reaparchfail-0101-0900"
   echo unit > "$FAILHOME/.config/systemd/user/$FAILBASE.service"
   echo start > "$FAILHOME/.local/bin/$FAILBASE-start.sh"
-  failout="$(PATH="$RSTUB:$PATH" HOME="$FAILHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reaparchfail-0101-0900 --force 2>&1)"; failrc=$?
+  failout="$(PATH="$RSTUB:$PATH" HOME="$FAILHOME" bash "$HERE/../scripts/session-doctor.sh" reap px_reaparchfail-0101-0900 --force 2>&1)"; failrc=$?
   ok "reap-archive-failure-exit0" "$failrc" "0"
   ok "reap-archive-failure-keeps-service" "$([ -f "$FAILHOME/.config/systemd/user/$FAILBASE.service" ] && echo yes || echo no)" "yes"
   ok "reap-archive-failure-keeps-start" "$([ -f "$FAILHOME/.local/bin/$FAILBASE-start.sh" ] && echo yes || echo no)" "yes"
   has "reap-archive-failure-warns" "$failout" "WARNING: unit/start-script archive failed"
-  has "reap-archive-failure-still-reaped" "$failout" "reaped 'ah_reaparchfail-0101-0900'"
+  has "reap-archive-failure-still-reaped" "$failout" "reaped 'px_reaparchfail-0101-0900'"
 
   # 6. Live session with unlanded work: refused without --force (and the tmux
   # session must survive the refusal), reaped with --force (and the tmux
@@ -638,7 +638,7 @@ EOF
   git -C "$REAPREPO" config user.email t@t.com; git -C "$REAPREPO" config user.name t
   git -C "$REAPREPO" commit -q --allow-empty -m init
   echo "uncommitted" > "$REAPREPO/scratch.txt"
-  RS="ah_reaplivetest-0101-0900"
+  RS="px_reaplivetest-0101-0900"
   tmux new-session -d -s "$RS" -c "$REAPREPO" 2>/dev/null
   tmux send-keys -t "$RS" 'sleep 300 &' Enter
   sleep 1

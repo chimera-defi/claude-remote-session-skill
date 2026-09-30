@@ -160,8 +160,8 @@ out="$(bash -c "set -uo pipefail; unset CRSS_SESSION_PREFIX CRSS_LEGACY_PREFIXES
 has "unset-defaults-to-cs" "$out" "RE=cs"
 
 # valid CRSS_SESSION_PREFIX + valid CRSS_LEGACY_PREFIXES (a configured-prefix shape).
-out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "valid-host-shape" "$out" "RE=ah|oldhost"
+out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "valid-host-shape" "$out" "RE=px|oldhost"
 
 # multiple valid legacy prefixes.
 out="$(CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='oldhost|oldprefix' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
@@ -186,15 +186,15 @@ has "empty-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX '' is invalid"
 
 # ANY invalid element in CRSS_LEGACY_PREFIXES drops the WHOLE legacy list
 # (not just the bad element) — a valid CRSS_SESSION_PREFIX survives on its own.
-out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "invalid-legacy-element-drops-whole-list" "$out" "RE=ah"
-has "invalid-legacy-element-not-oldhost" "$(printf '%s' "$out" | grep -qF 'RE=ah|oldhost' && echo yes || echo no)" "no"
+out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "invalid-legacy-element-drops-whole-list" "$out" "RE=px"
+has "invalid-legacy-element-not-oldhost" "$(printf '%s' "$out" | grep -qF 'RE=px|oldhost' && echo yes || echo no)" "no"
 has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
 
 # unset/empty CRSS_LEGACY_PREFIXES is the documented default (no legacy
 # prefixes) — no warning, prefix_re is just CRSS_SESSION_PREFIX.
-out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-ok "empty-legacy-no-warning" "$out" "RE=ah"
+out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+ok "empty-legacy-no-warning" "$out" "RE=px"
 
 echo "test-crss-overlay-config: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

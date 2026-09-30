@@ -7,7 +7,7 @@
 # that still told the model to derive SESSION=oldhost_<folder>-<YYYYMMDD>, to
 # hand-write the start script and systemd unit inline, and to commit them to
 # `<mono-repo>/scripts/oldhost/`. Every one of those is wrong now: the naming
-# scheme is ah_<alias>-<MMDD-HHMM>, new-session.sh generates the unit, and the
+# scheme is px_<alias>-<MMDD-HHMM>, new-session.sh generates the unit, and the
 # generated scripts are explicitly local-only. Invoking /create-session outside
 # this repo therefore produced a session named on the legacy scheme with none of
 # the aliasing, profile/model defaults, or same-minute collision lock — the exact
@@ -38,7 +38,7 @@ has "forbids-hand-rolling-inline"  'do not hand-roll the start script/systemd un
 ok "no-legacy-oldhost-naming" "$(grep -cE 'oldhost[_-]' "$CMD")" "0"
 # The date shape too: legacy was `date +%Y%m%d`, current is <MMDD-HHMM>.
 ok "no-legacy-date-derivation"  "$(grep -cE 'date \+%Y%m%d' "$CMD")" "0"
-has "documents-current-name-shape" 'ah-<alias>-<MMDD-HHMM>' "$CMD"
+has "documents-current-name-shape" '<alias>-<MMDD-HHMM>' "$CMD"
 
 # It must NOT walk the model through writing the unit/start script by hand.
 ok "no-inline-start-script-step" "$(grep -cE 'Create the start script at' "$CMD")" "0"

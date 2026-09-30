@@ -6,10 +6,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
@@ -18,7 +18,7 @@ ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FA
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # ── _encode_cwd: pure string transform, order matters ('.' before '/') ───────
-ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/ah-x-1")" "-home-youruser--claude-worktrees-ah-x-1"
+ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/px-x-1")" "-home-youruser--claude-worktrees-px-x-1"
 ok "encode-no-path-required" "$(_encode_cwd "/does/not/exist.d/here")" "-does-not-exist-d-here"
 
 # ── _history_matches: pure logic over synthetic wt_base/proj_base dirs ───────
@@ -27,23 +27,23 @@ ok "encode-no-path-required" "$(_encode_cwd "/does/not/exist.d/here")" "-does-no
 # to fake a whole $HOME/.claude tree just to exercise the matching logic.)
 MBASE="$(mktemp -d)"
 WTB="$MBASE/worktrees"; PROJB="$MBASE/projects"
-mkdir -p "$WTB/ah-foo-0101-0100" "$WTB/ah-bar-0101-0200" "$PROJB"
+mkdir -p "$WTB/px-foo-0101-0100" "$WTB/px-bar-0101-0200" "$PROJB"
 # A worktree that's been removed from disk but still has transcript history —
 # the common PAST case. Recovered from proj_base by stripping the deterministic
 # encode(wt_base)+"-" prefix, so it's discoverable even though nothing exists
 # under $WTB for it.
 GONE_PREFIX="$(_encode_cwd "$WTB")-"
-mkdir -p "$PROJB/${GONE_PREFIX}ah-gone-0101-0300"
+mkdir -p "$PROJB/${GONE_PREFIX}px-gone-0101-0300"
 
-ok "match-exact-name" "$(_history_matches "ah-foo-0101-0100" "$WTB" "$PROJB")" "$WTB/ah-foo-0101-0100"
-ok "match-exact-abspath" "$(_history_matches "$WTB/ah-foo-0101-0100/" "$WTB" "$PROJB")" "$WTB/ah-foo-0101-0100"
-ok "match-exact-gone-worktree-via-transcript" "$(_history_matches "ah-gone-0101-0300" "$WTB" "$PROJB")" "$WTB/ah-gone-0101-0300"
+ok "match-exact-name" "$(_history_matches "px-foo-0101-0100" "$WTB" "$PROJB")" "$WTB/px-foo-0101-0100"
+ok "match-exact-abspath" "$(_history_matches "$WTB/px-foo-0101-0100/" "$WTB" "$PROJB")" "$WTB/px-foo-0101-0100"
+ok "match-exact-gone-worktree-via-transcript" "$(_history_matches "px-gone-0101-0300" "$WTB" "$PROJB")" "$WTB/px-gone-0101-0300"
 
-sub_out="$(_history_matches "ah" "$WTB" "$PROJB")"
+sub_out="$(_history_matches "px" "$WTB" "$PROJB")"
 ok "match-substring-count" "$(printf '%s\n' "$sub_out" | grep -c .)" "3"
-has "match-substring-has-foo"  "$sub_out" "$WTB/ah-foo-0101-0100"
-has "match-substring-has-bar"  "$sub_out" "$WTB/ah-bar-0101-0200"
-has "match-substring-has-gone" "$sub_out" "$WTB/ah-gone-0101-0300"
+has "match-substring-has-foo"  "$sub_out" "$WTB/px-foo-0101-0100"
+has "match-substring-has-bar"  "$sub_out" "$WTB/px-bar-0101-0200"
+has "match-substring-has-gone" "$sub_out" "$WTB/px-gone-0101-0300"
 
 no_out="$(_history_matches "zzz-totally-unmatched" "$WTB" "$PROJB")"; no_rc=$?
 ok "match-none-empty-output" "$no_out" ""
@@ -80,16 +80,16 @@ ok "match-bare-dot" \
 
 # ── exact-name match must win outright over a substring decoy, not just
 # happen to be included among possibly-multiple substring hits.
-mkdir -p "$WTB/ah-foo-0101-0100-plus"
-exact_out="$(_history_matches "ah-foo-0101-0100" "$WTB" "$PROJB")"
-ok "match-exact-beats-substring-value"      "$exact_out" "$WTB/ah-foo-0101-0100"
+mkdir -p "$WTB/px-foo-0101-0100-plus"
+exact_out="$(_history_matches "px-foo-0101-0100" "$WTB" "$PROJB")"
+ok "match-exact-beats-substring-value"      "$exact_out" "$WTB/px-foo-0101-0100"
 ok "match-exact-beats-substring-linecount"  "$(printf '%s\n' "$exact_out" | grep -c .)" "1"
 
 rm -rf "$MBASE"
 
 # ── _history_report: PAST parsing (turn counting, ordering, zero-user files) ─
 RBASE="$(mktemp -d)"
-WT_R="$RBASE/wt/ah-histtest-0101-0400"; mkdir -p "$WT_R"
+WT_R="$RBASE/wt/px-histtest-0101-0400"; mkdir -p "$WT_R"
 WT_R="$(cd "$WT_R" && pwd -P)"   # canonicalize, same as the cwd /proc would report
 PROJB_R="$RBASE/projects"
 ENC_R="$(_encode_cwd "$WT_R")"
@@ -162,10 +162,10 @@ if command -v git >/dev/null 2>&1; then
   git -C "$FREPO" config user.email t@t.com; git -C "$FREPO" config user.name t
   echo hi > "$FREPO/a.txt"; git -C "$FREPO" add a.txt; git -C "$FREPO" commit -q -m init
   WT_F="$FBASE/wt"
-  git -C "$FREPO" worktree add -q -b session/ah-footertest-0101-0500 "$WT_F" main >/dev/null 2>&1
+  git -C "$FREPO" worktree add -q -b session/px-footertest-0101-0500 "$WT_F" main >/dev/null 2>&1
 
   fout="$(_history_footer "$WT_F")"
-  has "footer-present-branch"  "$fout" "branch=session/ah-footertest-0101-0500"
+  has "footer-present-branch"  "$fout" "branch=session/px-footertest-0101-0500"
   has "footer-present-landed"  "$fout" "landed=yes"
   has "footer-present-status"  "$fout" "status=clean"
   has "footer-present-gitlog"  "$fout" "init"
@@ -187,13 +187,13 @@ if command -v git >/dev/null 2>&1; then
   git -C "$E2EREPO" init -q -b main
   git -C "$E2EREPO" config user.email t@t.com; git -C "$E2EREPO" config user.name t
   echo hi > "$E2EREPO/a.txt"; git -C "$E2EREPO" add a.txt; git -C "$E2EREPO" commit -q -m init
-  WT_E2E="$E2EHOME/.claude/worktrees/ah-e2elive-0101-0600"
-  git -C "$E2EREPO" worktree add -q -b session/ah-e2elive-0101-0600 "$WT_E2E" main >/dev/null 2>&1
+  WT_E2E="$E2EHOME/.claude/worktrees/px-e2elive-0101-0600"
+  git -C "$E2EREPO" worktree add -q -b session/px-e2elive-0101-0600 "$WT_E2E" main >/dev/null 2>&1
 
-  exactout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history ah-e2elive-0101-0600 2>&1)"; exactrc=$?
+  exactout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history px-e2elive-0101-0600 2>&1)"; exactrc=$?
   ok  "e2e-exact-exit0"      "$exactrc" "0"
-  has "e2e-exact-header"     "$exactout" "1 worktree(s) matching 'ah-e2elive-0101-0600'"
-  has "e2e-exact-footer"     "$exactout" "branch=session/ah-e2elive-0101-0600"
+  has "e2e-exact-header"     "$exactout" "1 worktree(s) matching 'px-e2elive-0101-0600'"
+  has "e2e-exact-footer"     "$exactout" "branch=session/px-e2elive-0101-0600"
   has "e2e-exact-landed"     "$exactout" "landed=yes"
 fi
 
@@ -201,7 +201,7 @@ fi
 # exercised end-to-end: no directory under .claude/worktrees/, only a
 # transcript dir; exact-name lookup must still find it and the footer must say
 # it's gone, not crash trying to run git against a missing path.
-WT_GONE_NAME="ah-e2egone-0101-0700"
+WT_GONE_NAME="px-e2egone-0101-0700"
 WT_GONE_PATH="$E2EHOME/.claude/worktrees/$WT_GONE_NAME"
 ENC_GONE="$(_encode_cwd "$WT_GONE_PATH")"
 mkdir -p "$E2EHOME/.claude/projects/$ENC_GONE"
@@ -222,8 +222,8 @@ ok "e2e-gone-turns" "$(printf '%s\n' "$goneout" | grep -F deadbeef | awk '{print
 # "e2e" substring and must both be reported in one invocation.
 repoout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history e2e 2>&1)"; reporc=$?
 ok  "e2e-repo-exit0"        "$reporc" "0"
-has "e2e-repo-finds-live"   "$repoout" "ah-e2elive-0101-0600"
-has "e2e-repo-finds-gone"   "$repoout" "ah-e2egone-0101-0700"
+has "e2e-repo-finds-live"   "$repoout" "px-e2elive-0101-0600"
+has "e2e-repo-finds-gone"   "$repoout" "px-e2egone-0101-0700"
 
 # No match at all -> clear message on stderr, exit 2.
 nomatchout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history zz-nope-nothing-here 2>&1)"; nomatchrc=$?
@@ -265,7 +265,7 @@ EOF
   # resident instead of tail-call-execing away into sleep — see the comment
   # above. That trap also means a plain `kill` (SIGTERM) is deliberately
   # ignored by this process, so cleanup below uses SIGKILL, not SIGTERM.
-  ( cd "$WT_L" && exec -a claude bash -c 'trap : TERM; sleep 15' ignored --remote-control ah-histtest-live-0101-0800 ) &
+  ( cd "$WT_L" && exec -a claude bash -c 'trap : TERM; sleep 15' ignored --remote-control px-histtest-live-0101-0800 ) &
   LIVEPID=$!
   sleep 0.3
 
@@ -273,7 +273,7 @@ EOF
   kill -9 "$LIVEPID" 2>/dev/null; wait "$LIVEPID" 2>/dev/null
 
   has "live-now-shows-pid"        "$liveout" "$LIVEPID"
-  has "live-now-shows-remote-name" "$liveout" "ah-histtest-live-0101-0800"
+  has "live-now-shows-remote-name" "$liveout" "px-histtest-live-0101-0800"
   has "live-cross-ref-marks-newest" "$liveout" "${UUID_NEW:0:8} is LIVE now"
   has "live-older-still-in-past"  "$liveout" "${UUID_OLD:0:8}"
   ok  "live-past-count-excludes-newest" "$(printf '%s' "$liveout" | grep -oE -- '--- [0-9]+ past session' | grep -oE '[0-9]+')" "1"

@@ -9,10 +9,10 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "ah", legacy "oldhost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 NS="$HERE/../scripts/new-session.sh"
 pass=0; fail=0
@@ -46,7 +46,7 @@ fi
 # (non-)spawn preview still resolves names normally. The task itself is never
 # sent in dry-run (nothing spawns to send it into).
 out4="$(bash "$NS" --dry-run valid-task-test --task "hello world" 2>&1)"; rc4=$?
-has "valid-task-dry-run-still-resolves" "$out4" "SESSION=ah_valid-task-test-"
+has "valid-task-dry-run-still-resolves" "$out4" "SESSION=px_valid-task-test-"
 ok  "valid-task-dry-run-exit0"          "$rc4" "0"
 
 # --task-file content is read (not just existence-checked) — content wired
@@ -54,7 +54,7 @@ ok  "valid-task-dry-run-exit0"          "$rc4" "0"
 # file with content does not trip the "missing or unreadable" rejection.
 CONTENTFILE="$(mktemp)"; printf 'do the thing\nand the other thing\n' > "$CONTENTFILE"
 out5="$(bash "$NS" --dry-run tfcontent --task-file "$CONTENTFILE" 2>&1)"; rc5=$?
-has "task-file-content-accepted" "$out5" "SESSION=ah_tfcontent-"
+has "task-file-content-accepted" "$out5" "SESSION=px_tfcontent-"
 ok  "task-file-content-exit0"    "$rc5" "0"
 rm -f "$CONTENTFILE"
 
