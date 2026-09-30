@@ -79,7 +79,7 @@
 
 # CRSS_SESSION_PREFIX — the prefix NEW sessions get. tmux uses `<prefix>_`,
 # systemd/remote-control uses `<prefix>-` (e.g. prefix "cs" -> tmux `cs_foo-
-# 0715-0630`, remote-control `cs-foo-0715-0630`). Every crss script that
+# 0715-0630`, remote-control `cs-foo-0101-0630`). Every crss script that
 # parses an existing session name (session-doctor's tmux_to_base/svc_to_tmux/
 # reap-local, session-alias's poisoned-alias guard, session-handoff/
 # session-preserve/session-registry's session enumeration) recognises this
