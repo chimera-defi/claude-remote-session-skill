@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # fleet-status.sh — one-shot composite view of "how's the fleet/server doing":
-# sessions (tmux/systemd/registry), host resources + gbrain, and token-savings
+# sessions (tmux/systemd/registry), host resources + knowledge-index health, and token-savings
 # telemetry. Orchestrates existing tools rather than re-implementing any of
-# them — session-doctor.sh owns sessions, server-health-audit.service already
-# owns host+gbrain checks (this reads its latest JSON snapshot instead of
-# re-running `gbrain doctor` live, which is the slow part), rtk owns token
-# stats. Read-only; never reaps, never deletes, never starts/stops units.
+# them — session-doctor.sh owns sessions, a host health-audit service (optional,
+# configured via CRSS_HEALTH_SNAPSHOT_DIR) owns host checks (this reads its
+# latest JSON snapshot instead of re-running the slow checks live), and a
+# token-stats CLI (if on PATH) owns token stats. Read-only; never reaps, never deletes, never starts/stops units.
 #
 # Usage:
-#   fleet-status.sh              # everything: sessions + host/gbrain + rtk
+#   fleet-status.sh              # everything: sessions + host health + token stats
 #   fleet-status.sh --sessions   # sessions section only
-#   fleet-status.sh --host       # host/gbrain section only
+#   fleet-status.sh --host       # host health section only
 set -uo pipefail
 
 # ── Host-local overlay config ────────────────────────────────────────────────
@@ -68,11 +68,10 @@ print_sessions() {
 }
 
 print_host() {
-  echo "########## HOST / GBRAIN ##########"
-  # server-health-audit.service writes a fresh JSON snapshot roughly every
-  # 15min — read the latest one instead of re-running `gbrain doctor` and a
-  # full df/free/systemctl sweep live on every call (the slow part of the old
-  # hand-rolled routine). Falls back to a note if the audit has never run.
+  echo "########## HOST HEALTH ##########"
+  # The health-audit service writes a fresh JSON snapshot periodically —
+  # read the latest one instead of re-running a full df/free/systemctl sweep
+  # (and index diagnostics) live on every call. Falls back to a note if the audit has never run.
   local runs_dir="$CRSS_HEALTH_SNAPSHOT_DIR"
   if [ -z "$runs_dir" ]; then
     echo "  (no health snapshot configured — set CRSS_HEALTH_SNAPSHOT_DIR in \$CRSS_HOME/config.sh)"
@@ -90,7 +89,7 @@ print_host() {
     [ -f "${d}summary.json" ] && { latest="$d"; break; }
   done
   if [ -z "$latest" ]; then
-    echo "  (no server-health-audit snapshot found under $runs_dir)"
+    echo "  (no health-audit snapshot found under $runs_dir)"
   else
     local run_id iso run_epoch age_s
     run_id="$(basename "${latest%/}")"
@@ -106,10 +105,13 @@ print_host() {
     else
       echo "  snapshot: $run_id"
     fi
+    # NOTE: the `.gbrain` JSON key read below is a data contract with the
+    # snapshot writer (an overlay-side tool) and is kept as-is; only the
+    # printed label is generic.
     jq -r '
       "  status: \(.status)",
       "  resources: disk=\(.resources.disk_used_pct)% mem=\(.resources.memory_used_pct)% load_1m=\(.resources.load_1m)",
-      "  gbrain: doctor_status=\(.gbrain.doctor_status) failures=\(.gbrain.doctor_failures) stale_embeddings=\(.gbrain.stale_embeddings)",
+      "  index: doctor_status=\(.gbrain.doctor_status) failures=\(.gbrain.doctor_failures) stale_embeddings=\(.gbrain.stale_embeddings)",
       (if (.failed_units.observed_user // "") != "" then "  failed user units: \(.failed_units.observed_user)" else empty end),
       (if (.failed_units.observed_system // "") != "" then "  failed system units: \(.failed_units.observed_system)" else empty end),
       (if (.failed_units.persistent_user // "") != "" then "  PERSISTENT failed user units: \(.failed_units.persistent_user)" else empty end),
