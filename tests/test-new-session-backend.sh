@@ -12,7 +12,7 @@ not_has(){ if printf '%s' "$2" | grep -qE -- "$3"; then fail=$((fail+1)); echo "
 
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 
 BIN="$(mktemp -d)"
 WORKHOME="$(mktemp -d)"

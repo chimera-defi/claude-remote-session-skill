@@ -6,11 +6,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
 pass=0; fail=0
@@ -55,12 +55,12 @@ ok "match-none-nonzero-rc" "$no_rc" "1"
 # the literal path existed, then only searched under wt_base — so a real
 # path outside wt_base got degraded into a substring search and hijacked by
 # any candidate whose name merely contains that basename). The decoy name
-# below mirrors the real repro: a long-deleted "agenthost-<name>-<date>"
+# below mirrors the failing shape: a long-deleted "oldhost-<name>-<date>"
 # worktree whose basename contains the queried repo's basename as a
 # substring.
 EXT_DIR="$MBASE/external/claude-remote-session-skill"
 mkdir -p "$EXT_DIR"
-mkdir -p "$WTB/agenthost-claude-remote-session-skill-20260715-0630"
+mkdir -p "$WTB/oldhost-some-repo-20260101-0101"
 EXT_CANON="$(cd "$EXT_DIR" && pwd)"
 
 ok "match-real-outside-path-wins-over-decoy" \

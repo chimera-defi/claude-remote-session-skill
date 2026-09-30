@@ -6,11 +6,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 SP="$HERE/../scripts/session-preserve.sh"
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
@@ -261,8 +261,8 @@ has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
 
-# 9. --all audits every live ah_/agenthost_ session. The synthetic sp-test-*
-# sessions above are NOT ah_/agenthost_-prefixed, so --all must skip them.
+# 9. --all audits every live ah_/oldhost_ session. The synthetic sp-test-*
+# sessions above are NOT ah_/oldhost_-prefixed, so --all must skip them.
 # Its EXIT CODE reflects real host state (0 = every audited session safe,
 # 1 = at least one not-safe) — both are valid completions. So assert it
 # completed without a crash/usage error (rc 0 or 1) AND that it never named a
@@ -276,10 +276,9 @@ ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")
 # 10. FAIL-OPEN REGRESSION: a dead session (no tmux session at all, so
 # rundir_of() fails outright — the COMMON case for a reap, not an edge case)
 # whose name maps to a worktree dir that actually has real, unsaved work in
-# it. Before the 2026-09-12 fix this printed "SAFE-TO-REAP (nothing to
+# it. Before the fix this printed "SAFE-TO-REAP (nothing to
 # preserve)" purely because the PROCESS was gone, never once looking at the
-# WORKTREE — the exact bug that nearly cost 320 lines of unsaved work on the
-# live host (see the header comment). Must now fall back to locating and
+# WORKTREE — the exact bug that nearly cost 320 lines of unsaved work in practice (see the header comment). Must now fall back to locating and
 # auditing the worktree, and correctly report NOT-SAFE-TO-REAP.
 WT_BASE="$HOME/.claude/worktrees"; mkdir -p "$WT_BASE"
 R7="$WT_BASE/ah-sp-repro-$$"; mkrepo "$R7"
@@ -295,8 +294,8 @@ ok  "deadwt-exit1"              "$rc" "1"
 # fall through to the SAME SAFE-TO-REAP verdict a live session would get
 # (not a separate, weaker message). The session name carries a SECOND
 # underscore in its slug (ah_sp_clean_$$) to prove only the FIRST "_" after
-# the ah/agenthost prefix is converted to "-" — matching the mapping observed
-# on the host (ah_hh-0717-0224 -> ah-hh-0717-0224) — and later underscores in
+# the ah/oldhost prefix is converted to "-" — matching the mapping
+# (ah_xx-0101-0101 -> ah-xx-0101-0101) — and later underscores in
 # the slug are left alone.
 R8="$WT_BASE/ah-sp_clean_$$"; mkrepo "$R8"
 S_DEAD_CLEAN="ah_sp_clean_$$"

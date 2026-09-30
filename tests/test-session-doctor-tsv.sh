@@ -9,11 +9,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
@@ -254,7 +254,7 @@ EOF
 EOF
 
   # I: Bug A regression — the FULL real-world /compact noise cascade (all four
-  # artifacts confirmed on this host 2026-09-11 across two live sweep --apply
+  # artifacts observed across live sweep --apply
   # runs: the bare '/compact' trigger, the isMeta caveat, the command-name
   # echo, and the local-command-stdout 'Compacted' line — see session-doctor.sh's
   # comment above the exclusion block for why each one is here and why the

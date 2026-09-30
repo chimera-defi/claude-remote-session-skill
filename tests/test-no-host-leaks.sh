@@ -26,7 +26,7 @@
 #      where <globs> is a comma-separated list of path globs (matched against
 #      the path as `git ls-files` prints it). The term is then simply not
 #      checked against any path matching one of those globs — e.g.
-#      `\bah[_-][a-z]<TAB>tests/*` means "don't check this term under
+#      `\bxx[_-][a-z]<TAB>tests/*` means "don't check this term under
 #      tests/". Use this (not the allowlist below) for a term that some
 #      files legitimately need to contain — e.g. tests that pin a host-shaped
 #      session-name-prefix fixture — without also exempting those files from
@@ -34,8 +34,8 @@
 #
 # Allowlist: tests/leak-allowlist.txt lists path GLOBS (matched against the
 # path exactly as `git ls-files` prints it) that are exempt from ALL checks
-# below — fixtures, the nightly-review state file, this test's own known-good
-# third-party citation. Every entry there needs a reason. Keep it minimal:
+# below — e.g. this test's own known-good
+# sources. Every entry there needs a reason. Keep it minimal:
 # prefer fixing a doc's content over adding a line here.
 #
 # Output: one "file:line: match  [reason]" per hit, then a FAIL summary.
