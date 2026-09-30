@@ -77,13 +77,13 @@ check, so a missing or half-set-up overlay is visible rather than silent.
 1. Decide what kind of fact it is.
    - A value a script reads (a path, a model flag, a protected name, a timeout): add a
      `CRSS_*=value` line to `$CRSS_HOME/config.sh`. Most variables are documented in
-     `config.sh.example` with their default. Four are read from the environment only
-     (`CRSS_UNIT_DIR`, `CRSS_RESUME_BACKUP_DIR`, `CRSS_RESUME_WAIT`,
-     `CRSS_RESUME_REG_WAIT`); `session-resume` does not load `config.sh`. The scripts that
+     `config.sh.example` with their default; a few (`CRSS_UNIT_DIR`, `CRSS_RESUME_BACKUP_DIR`,
+     `CRSS_RESUME_WAIT`, `CRSS_RESUME_REG_WAIT`, read by `session-resume`) are not listed there
+     but are accepted the same way, because the loader takes any `CRSS_*` key. The scripts that
      load `config.sh` are `fleet-status`, `new-session`, `record-spawn-telemetry`,
      `session-alias`, `session-doctor`, `session-handoff`, `session-preserve`,
-     `session-registry` and `telemetry-report`; `session-compact`, `session-git-prep`,
-     `session-resume` and `session-send` do not.
+     `session-registry`, `session-resume` and `telemetry-report`; `session-compact`,
+     `session-git-prep` and `session-send` do not (set their variables in the environment).
    - Prose for a human or agent (who the operator is, where to escalate, which project
      lives where, which delegate to use): add it to `$CRSS_HOME/local.md`.
 2. Do NOT put either in `SKILL.md`, `references/`, a script, or a test in this repo. It is
