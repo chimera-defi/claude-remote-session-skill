@@ -104,9 +104,9 @@ Start scripts generated before the pin loop are patched once, and a backup goes 
 `~/backups/session-resume/`. Codex-backend units are refused, because their loop has no
 resume path.
 
-Why a tool: on 2026-09-29 sessions whose units had died were relaunched by hand. They came
-back without `--dangerously-skip-permissions`, on a different CLI binary, and with no unit.
-Every owner then stalled on approval prompts. A bare `systemctl start` of a session killed
+Why a tool: a session whose unit died and is relaunched by hand comes back without
+`--dangerously-skip-permissions`, possibly on a different CLI binary, and with no unit, so
+it stalls on approval prompts. A bare `systemctl start` of a session killed
 from outside started a *fresh* conversation, because the `--continue` sentinel was only
 written when claude exited on its own.
 
@@ -134,7 +134,7 @@ written when claude exited on its own.
 
 If a **new** session never appears on the phone, the usual cause is the remote-control
 bridge gate: the CLI only enables the bridge when `ANTHROPIC_BASE_URL` is absent or its
-host is `api.anthropic.com`. A proxy base URL (e.g. headroom `127.0.0.1`) silently
+host is `api.anthropic.com`. A proxy base URL (e.g. a local `127.0.0.1` proxy) silently
 disables registration. The launcher fixes this by forcing a first-party base URL via
 `--settings …/rc-firstparty.settings.json`. If you see a session live in `tmux` but
 absent/disconnected in `session-doctor report`'s registry section, check that its

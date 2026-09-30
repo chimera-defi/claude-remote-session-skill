@@ -37,12 +37,9 @@ so that's the most expensive moment to compact, not the cheapest. `session-compa
 to `--min-idle 60` for this reason; the mechanism, measurements, and the managed-orchestrator
 exceptions are in [`docs/session-compaction.md`](../docs/session-compaction.md).
 
-**Auto-compact reality check** (re-verified against the installed CLI, 2026-09-28, 2.1.280
-— this corrects an earlier version of this note): auto-compaction is a real built-in
+**Auto-compact reality check** (checked against the installed CLI, 2.1.280): auto-compaction is a real built-in
 feature and is on by default. `autoCompactEnabled` and `autoCompactWindow` **are** real
-`settings.json`-schema fields — an earlier version of this doc claimed a guide agent had
-fabricated those exact key names and that they don't exist; that claim was itself never
-checked, and it was wrong. Evidence:
+`settings.json`-schema fields. Evidence:
 
 - `autoCompactWindow` is causally confirmed, not just present in the schema: a throwaway
   `claude -p ... --settings '{"autoCompactWindow": N}'` run produced the identical

@@ -42,8 +42,9 @@ the generic defaults given here and in `kickoff-templates.md`.
    peers already enforce in this domain?* Restate it explicitly in the prompt — a relay must
    never silently drop it. If unsure whether a guardrail applies, **include it and flag it to
    the human** rather than omitting it.
-   > (a trading domain) "This is **WATCH-only**. Do NOT place or execute any order. Execution
-   > requires an explicit `EXECUTION_APPROVED_HUMAN=1` from the operator **in this session**."
+   > (a domain with destructive side effects) "This is **read-only**. Do NOT delete, migrate, or
+   > deploy anything. Any write requires an explicit `WRITE_APPROVED_HUMAN=1` from the operator
+   > **in this session**."
 
 6. **Scope boundaries** — what NOT to touch (other sessions, other repos) and any bounded-scope
    rule for the target's role. Name the concrete anti-patterns for this domain ("don't
@@ -109,8 +110,8 @@ Known state (VERIFY, don't assume): I think X/Y/Z are live candidates — confir
        <source> first; this list may be stale.
 Deliverable: memory/tranche1-survey.md + a one-paragraph summary back to me. Mark any
        candidate you couldn't confirm, and say where you looked.
-Guardrail: WATCH-only. No orders. Execution needs EXECUTION_APPROVED_HUMAN=1 in this session.
-Scope: this repo only; do not touch other portfolio sessions.
+Guardrail: read-only. No deletes or deploys. Writes need WRITE_APPROVED_HUMAN=1 in this session.
+Scope: this repo only; do not touch other project sessions.
 Stop rule: keep going through the survey; stop and ask only if <source> is unreachable.
        Genuinely my call goes to me via `session-send <parent> --file <f>`.
 ```

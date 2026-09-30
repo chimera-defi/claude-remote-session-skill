@@ -78,8 +78,8 @@ is the safety property. Rows flagged `[P]` are **protected** (the built-in
    "user"`, **excluding all FIVE artifacts one `/compact` invocation writes**, not
    just the obvious one. A `/compact` writes its summary back as an
    `isCompactSummary:true` `type:user` entry — that one was excluded from the
-   start — but confirmed against two REAL `sweep --apply` runs on this host
-   (2026-09-11), excluding only that entry was **not enough**: idle still reset
+   start — but confirmed against real `sweep --apply` runs,
+   excluding only that entry was **not enough**: idle still reset
    from days to single-digit minutes on both, because FOUR MORE `type:user`
    artifacts land alongside it and are just as synthetic:
    - the bare `/compact` keystroke that triggers the whole cascade;
@@ -97,7 +97,7 @@ is the safety property. Rows flagged `[P]` are **protected** (the built-in
    `/compact`) carries essentially the same timestamp. The other three
    (bare trigger, command-name echo, stdout line) are excluded **only** when
    tied to `/compact` specifically (exact match on the bare trigger, not a
-   prefix — a real transcript on this host has a genuine chat message
+   prefix — a real transcript can have a genuine chat message
    `/compact handoff first` that is NOT a command invocation). Do **not**
    generalize any of this to "any `<command-name>` echo" or "any bare slash
    command" or "any `<local-command-stdout>`": a human typing `/clear`,
@@ -119,14 +119,14 @@ is the safety property. Rows flagged `[P]` are **protected** (the built-in
 > candidate. If you ever need "no *human* touch in N days" specifically, that's a
 > separate, named follow-up — not this tool.
 
-## Sample (`--days 30` on the live host)
+## Sample (`--days 30`)
 
 ```
 === LOCAL: live sessions with NO type:user message in the last 30 day(s) — REPORT ONLY, kills nothing ===
   LAST type:user         PROT  TMUX SESSION                                   CWD
-  never: no transcript   [P]   claude-remote                                  /home/youruser/.claude-remote
+  never: no transcript   [P]   <protected-session>                            /home/youruser/<protected-dir>
   never: no user msgs          <prefix>_my-project-0808-2337                  /home/youruser/.claude/worktrees/<prefix>-my-project-0808-2337
-  2026-07-10T05:58:00Z         my-server-control-20260710-0757                /home/youruser/.sessions/sessions-mgmt
+  2026-07-10T05:58:00Z         <utility-session>                              /home/youruser/.sessions/<name>
   ...
   --- 3 idle session(s), incl. 1 PROTECTED (never reap). All are ALIVE -> reap-local will NOT touch them.
   Report only. Reap an idle-but-alive one by hand:

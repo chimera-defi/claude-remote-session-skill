@@ -17,11 +17,11 @@ A change is done when **all** of these are true — not before:
    ```
    `tests/test-no-host-leaks.sh` is in that loop — this is a public repo, so it fails the
    build on an absolute home path, a real email, or a github.com URL naming another owner.
-   That generic check is what CI runs. On this host, also run it with the host-specific
+   That generic check is what CI runs. On a host with an overlay, also run it with the host-specific
    denylist (your own project/handle vocabulary — never checked into this repo) for a
    stricter local pass:
    ```bash
-   CRSS_LEAK_DENYLIST=~/.config/crss/leak-denylist.txt bash tests/test-no-host-leaks.sh
+   CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
    PR, `shell-tests` is green, and it's merged. Never push to `main`; never self-approve.
@@ -61,14 +61,14 @@ Each of these has happened here. Don't repeat them.
   *both* directions; a blind overwrite silently reverted a deployed-only hand-patch (that's
   how `advisor` fell out of `BUILDER_TOOLS`).
 - **`git log @{u}..` to decide whether work is pushed.** With no upstream it prints nothing,
-  so unpushed work reads as clean (once reported 10,162 local-only commits as "0 unpushed").
+  so unpushed work reads as clean (once reported a large number of local-only commits as "0 unpushed").
   Use `git log HEAD --not --remotes` and check `git remote` separately.
 - **`git cherry` / patch-id to decide a branch is landed.** Squash merges change patch-ids.
   Verify by content diff against `origin/main` or by the PR's merge record before deleting.
 - **Deleting a `session/*` or research branch** to "clean up". The branch ref is what keeps
   a reaped session's commits reachable; deleting it is the dangerous step, not the reap.
 - **Accepting a tool's "safe"/"nothing to preserve" verdict without looking.**
-  `session-preserve` once called an orphan worktree holding 320 unsaved lines safe. Before
+  `session-preserve` once called an orphan worktree holding hundreds of unsaved lines safe. Before
   any reap, enumerate on-disk state yourself (`git status`, untracked files, worktree list).
 - **Treating green fixture tests as proof a sensor/actuator tool works.** 619 passing
   assertions once hid a self-observation feedback loop. Run tools that read or act on live
@@ -76,16 +76,16 @@ Each of these has happened here. Don't repeat them.
 - **Writing config keys or CLI flags from memory or from another agent's summary — and
   trusting an unverified "that's fabricated" the same way.** A guide agent once claimed
   `autoCompactEnabled`/`autoCompactWindow` don't exist as `settings.json` keys; this was
-  repeated in this doc without being checked. A 2026-09-28 pass against the installed CLI
-  (2.1.280) found both ARE real settings-schema fields — see
+  repeated in this doc without being checked. A later pass against the installed CLI
+  found both ARE real settings-schema fields — see
   `references/troubleshooting.md`'s compaction section for the evidence. Check the
   installed CLI yourself before documenting a knob, in either direction: "it doesn't
   exist" needs the same verification as "it does".
 - **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
   Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
 - **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
-  can hold gitignored results, and `git worktree remove` deletes them (2026-08-29 loss: a
-  research worktree's `artifacts/`). `reap` now archives them first (`_wt_archive_ignored`);
+  can hold gitignored results, and `git worktree remove` deletes them (a research
+  worktree's `artifacts/` was lost this way). `reap` now archives them first (`_wt_archive_ignored`);
   a hand-run `git worktree remove` does not.
 - **Bare `git stash` / `git stash pop`.** The stash stack is shared across every worktree
   and session. Use a WIP commit instead.
@@ -104,8 +104,7 @@ silently loses the `advisor` tool.
 names, or diff the change yourself. If it gave no evidence, treat the item as unverified.
 Consolidate the verified results in one table at the end.
 
-**The Opus orchestrator's own second opinion is Fable, not a Sonnet builder.** (Operator
-directive, 2026-09-26.) Opus 5.x has no `advisor` tool; spawning a Sonnet builder for a
+**The Opus orchestrator's own second opinion is Fable, not a Sonnet builder.** Opus 5.x has no `advisor` tool; spawning a Sonnet builder for a
 second opinion is Sonnet re-checking its own reasoning, not an independent perspective.
 Spawn Fable directly instead — `Agent({description, prompt, model: "fable"})` — at the
 forks `advisor` would otherwise cover: before a risky or destructive action, before

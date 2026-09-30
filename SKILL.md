@@ -113,9 +113,8 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
   Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
   deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
   "fable"})` — not a Sonnet builder, which would just be Sonnet checking its own
-  reasoning. `model: fable` in an agent definition's frontmatter is a live-verified value
-  on this CLI (2.1.280): a probe agent with that frontmatter ran as `claude-fable-5-1`
-  when spawned. (Operator directive, 2026-09-26.)
+  reasoning. `model: fable` in an agent definition's frontmatter is a valid value on the
+  installed CLI: a probe agent with that frontmatter ran as a Fable model when spawned.
 - ChatGPT is reached, if at all, through a project-specific relay subagent (not a standalone
   session) — if your project has one, it's defined in that project's own `.claude/agents/`
   and roles table. How it calls out lives in that agent file; don't copy it here. See your
@@ -143,7 +142,7 @@ the generic defaults in those two files. The parts that matter most for a fresh 
   <parent-session> --file <f>` — a numbered list with your recommended option. Decide
   defaults yourself when there's a normal recommended answer; report them afterwards."*
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
-  domain ("don't branch from local `main`", "no orders without `EXECUTION_APPROVED_HUMAN=1`").
+  domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
 - **Delegate every independent slice.** Research, per-file edits, and verification each go
   to their own subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
@@ -233,7 +232,7 @@ a broken repo.
 
 | Question | Command | Notes |
 |---|---|---|
-| Is the fleet/server healthy? | `fleet-status` (`--sessions`, `--host`) | composes `session-doctor report`, `worktree-stale`, the ~15-min `server-health-audit` snapshot (prints its age), and `rtk gain`. On demand only. |
+| Is the fleet/server healthy? | `fleet-status` (`--sessions`, `--host`) | composes `session-doctor report`, `worktree-stale`, a host health snapshot (prints its age), and a token-savings tool's summary, where the host has them. On demand only. |
 | Which sessions are older than N? | `session-registry --older-than 3d` | age = *first-ever* spawn from `~/.sessions/session-starts.log`, so a restart doesn't reset it |
 | What ran in this folder before / now? | `session-doctor history <folder-or-substring>` | NOW (live, idle mins) + PAST (from transcripts, which outlive worktrees) + branch/landed/dirty |
 | Relay into an idle/stale session | `session-compact before-relay <name> "task"` | compacts, verifies, then relays; fails closed. Don't compact under ~60 min idle — the 1h cache is still live |
@@ -242,7 +241,7 @@ a broken repo.
 | Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes that session's own entry unless `--keep-registry` — see `references/session-lifecycle.md` |
 | Clean up a reaped session's leftover worktree | `session-doctor worktree-stale` | for one NOT already handled — `reap <name>` removes its own worktree automatically (`--keep-worktree` to skip); see `references/session-lifecycle.md` |
 
-Host-specific ops tooling (e.g. gbrain fleet maintenance) lives outside this repo.
+Host-specific ops tooling lives outside this repo.
 
 Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu sessions:
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
@@ -255,6 +254,26 @@ no upstream — use `git log HEAD --not --remotes`, check `git remote` separatel
 deleting a branch is the dangerous operation, not reaping. A respawn also starts fresh, not
 on the old session's branch — name the prior branch/transcript/progress in the kickoff, or
 the replacement re-derives it all at full cost.
+
+## Host-local overlay: where host facts go
+
+This repo is public and generic. Anything specific to one machine or operator (paths,
+which `claude` binary, protected session names, escalation channel, project index, private
+vocabulary) lives in the overlay directory `$CRSS_HOME` (default `~/.config/crss`), never
+in this repo:
+
+| File | Holds | Read by |
+|---|---|---|
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | the scripts that load it (`new-session`, `session-doctor`, `session-handoff`, `session-preserve`, `session-registry`, `session-alias`, `fleet-status`, telemetry scripts); not `session-compact`, `session-git-prep`, `session-resume`, `session-send` |
+| `local.md` | host prose: operator handle, escalation channel, project index, routing | agents, via a tiny user rules file that `@`-imports it |
+| `leak-denylist.txt` | host-private terms that must never reach this repo | `tests/test-no-host-leaks.sh`, only when `CRSS_LEAK_DENYLIST` is set |
+
+To add a host fact: machine-readable knob goes in `config.sh` (see
+`examples/crss-overlay/config.sh.example`), human/agent prose goes in `local.md`; do not edit
+`SKILL.md` or any file in this repo. Step-by-step setup, the denylist term syntax, and how to
+run the stricter local leak check are in
+[`examples/crss-overlay/README.md`](examples/crss-overlay/README.md). `session-doctor overlay`
+reports whether the overlay is healthy.
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
