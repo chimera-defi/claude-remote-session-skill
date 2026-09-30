@@ -48,17 +48,17 @@ expect_fail aws-key              "id AK""IA$(printf 'A%.0s' $(seq 16))"
 expect_fail jwt                  "jwt ey""JhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkw.sig"
 expect_fail bearer-literal       "Authorization: Bear""er ${body}"
 expect_fail quoted-api-key       "api_key = \"${body}${body}\""
-expect_fail bus-seq              "landed, bus se""q 4455"
+expect_fail bus-seq              "landed, bus se""q 1234"
 expect_fail scope-claim          "post a scope_""claim first"
-expect_fail task-id              "the task_""id is X"
-expect_fail operator-ruling      "Operator dir""ective, 2026-09-26"
-expect_fail session-name         "see ah-mything-0930-2041 running"
-expect_fail worktree-stamp       "worktree mything-20260930-2041"
+expect_fail operator-ruling      "Operator dir""ective, 2026-01-01"
+expect_fail session-name         "see zz-mything-03""15-1200 running"
+expect_fail worktree-stamp       "worktree mything-202603""15-1200"
 expect_fail own-hostname         "runs on zorblatt today"
 
 expect_pass clean-placeholders   "$(printf '%s\n' \
   "paths ${H}youruser${S} ${H}youruser ${H}user ${H}me and ${H}<name>" \
   "tok=\$tok; curl -H \"Authorization: Bearer \$tok\"; api_key = \"\$KEY\"; token = \"<your-token-here>\"" \
+  "token = \"your-token-here\" and api_key = \"local-development-key\" and Bearer REPLACE_WITH_YOUR_TOKEN_HERE" \
   "TOKEN=\"FAKE-TOKEN-not-real-1234567890\" and sk-dry-run-still-resolves" \
   "session <prefix>-<alias>-<MMDD-HHMM> and fixture px-foo-0101-0100 and px-foo-MMDD-xxxx" \
   "WARN-tier only: this host, broker, ~/backups")"

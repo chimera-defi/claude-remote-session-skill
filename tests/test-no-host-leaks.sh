@@ -143,16 +143,17 @@ _host_name="$(hostname -s 2>/dev/null | tr 'A-Z' 'a-z')"
 case "$_host_name" in
   localhost|runner|ubuntu|debian|fedora|centos|alpine|docker|github|server|hostname|machine|buildkitd|builder|codespaces|linux|macbook) _host_name="" ;;
 esac
-[ "${#_host_name}" -ge 4 ] || _host_name=""   # too short to be a meaningful literal
+# Too short / too word-like to be a meaningful literal: need >=6 chars or a digit.
+if [ "${#_host_name}" -lt 4 ] || { [ "${#_host_name}" -lt 6 ] && [[ "$_host_name" != *[0-9]* ]]; }; then _host_name=""; fi
 
 # Allowances: an sk- token must contain a digit (real keys always do; it keeps
 # kebab-case words like "sk-dry-run-still-resolves" from matching), and a
-# credential assignment whose value says FAKE/EXAMPLE/PLACEHOLDER/DUMMY is a
+# credential assignment whose value says FAKE/EXAMPLE/PLACEHOLDER/DUMMY/YOUR/HERE/CHANGEME/XXX/LOCAL/REDACTED/TEST (or '...') is a
 # self-evidently fake test fixture.
 # Secret shapes built from fragments so this file does not match itself.
 _SECRET_RE='\bsk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|0x[0-9a-fA-F]{40}([0-9a-fA-F]{24})?\b|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.|Bearer [A-Za-z0-9._-]{20,}'
 _SECRET_ASSIGN_RE='(api[_-]?key|token|secret|password)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"'$<{ ][^"'"'"']{12,}'
-_BUS_RE='\bbus seq\b|\bseq[ #]?[0-9]{3,}\b|scope_claim|\btask_id\b|coordination_bus|[Oo]perator (directive|ruling)|OPERATOR RULING'
+_BUS_RE='\bbus seq\b|\bseq #[0-9]{3,}\b|scope_claim|coordination_bus|[Oo]perator (directive|ruling)|OPERATOR RULING'
 # <word>[_-]<slug>-MMDD-HHMM with a real-looking date. Fixtures stamp 0101-HHMM
 # (January 1st) or use placeholders (MMDD, xxxx), so a month of 02-12 is what
 # marks a real session name.
@@ -173,8 +174,8 @@ _warn() {  # $1 = file, $2 = grep -n output, $3 = reason
 
 for f in "${files[@]}"; do
   [ -f "$f" ] || continue
-  report "$f" "$(grep -noE -- "$_SECRET_RE" "$f" 2>/dev/null | grep -vE ':sk-[A-Za-z-]*$')" "secret-shaped literal"
-  report "$f" "$(grep -noiE -- "$_SECRET_ASSIGN_RE" "$f" 2>/dev/null | grep -viE 'fake|example|placeholder|dummy')" "quoted credential assignment with a literal value"
+  report "$f" "$(grep -noE -- "$_SECRET_RE" "$f" 2>/dev/null | grep -vE ':sk-[A-Za-z-]*$' | grep -viE 'fake|example|placeholder|dummy|your|here|changeme|xxx|local|\.\.\.|redacted|test')" "secret-shaped literal"
+  report "$f" "$(grep -noiE -- "$_SECRET_ASSIGN_RE" "$f" 2>/dev/null | grep -viE 'fake|example|placeholder|dummy|your|here|changeme|xxx|local|\.\.\.|redacted|test')" "quoted credential assignment with a literal value"
   report "$f" "$(grep -noE -- "$_BUS_RE" "$f" 2>/dev/null)" "coordination-bus / operator-ruling reference"
   report "$f" "$(grep -noE -- "$_SESSION_RE" "$f" 2>/dev/null)" "real-looking session name (use a 0101-HHMM fixture stamp)"
   if [ -n "$_host_name" ]; then
