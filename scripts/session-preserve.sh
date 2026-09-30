@@ -7,18 +7,18 @@
 #   session-preserve <tmux-session> --wip      # + commit uncommitted TRACKED changes as a WIP commit
 #   session-preserve --all                     # audit every live session (recognised prefix)
 #
-# WHY THIS EXISTS (2026-08-17): a reap sweep was nearly run against a fleet
+# WHY THIS EXISTS: a reap sweep was nearly run against a fleet
 # audited with `git log @{u}..`, which returns NOTHING when a branch has no
-# upstream configured — so 10,162 local-only commits were reported as "0
+# upstream configured — so thousands of local-only commits were reported as "0
 # unpushed". Never use @{u} for this. Use `git log HEAD --not --remotes`, and
 # treat "repo has no remote at all" as its own finding.
 #
-# FAIL-OPEN FIX (2026-09-12): when rundir_of() fails (no tmux session, no live
+# FAIL-OPEN FIX: when rundir_of() fails (no tmux session, no live
 # claude proc under it — the COMMON case when reaping DEAD sessions, not an
 # edge case) this used to print "SAFE-TO-REAP (nothing to preserve)" and exit
 # 0. That verdict was inferred from the PROCESS being gone, not from the
-# WORKTREE being clean, and destroyed real work on this host (an orphaned
-# worktree carrying 320 uncommitted/untracked lines audited as "nothing to
+# WORKTREE being clean, and destroyed real work (an orphaned
+# worktree carrying hundreds of uncommitted/untracked lines audited as "nothing to
 # preserve"). Now falls back to worktree_of(), which locates the session's
 # worktree on disk from its tmux name and runs the SAME audit against it
 # (dirty/untracked/reachability, same as a live session). Only when no

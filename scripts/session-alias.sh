@@ -199,9 +199,9 @@ looks_like_session_name() {
 # clean alias from the meaningful part instead of doubling the decoration.
 # Prefix match is case-insensitive (sed's `I` flag) to match
 # looks_like_session_name's case-folding: without it, a mixed-case folder
-# like `AH-project-0810-1234` keeps its `AH-` prefix after the date is
+# like `PFX-project-0810-1234` keeps its `PFX-` prefix after the date is
 # stripped, the fixed-point loop in infer() can't make progress past
-# `AH-project`, and infer() falls back to an opaque checksum alias via its
+# `PFX-project`, and infer() falls back to an opaque checksum alias via its
 # final safety net instead of the clean `project` a same-cased folder would get.
 desessionify() { printf '%s' "$1" | sed -E "s/^(${_crss_prefix_re})[-_]//I; s/(-[0-9]{4,})+\$//"; }
 

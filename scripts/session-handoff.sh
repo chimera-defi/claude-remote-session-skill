@@ -21,7 +21,7 @@
 # corrupted merge. `ready` also refuses when the pane is on an interactive
 # menu widget (arrow-key only; plain text sent into it is silently dropped —
 # see references/troubleshooting.md "Detecting a stuck-on-a-menu session") or
-# has no visible prompt at all. As of 2026-09-24 that menu check also covers
+# has no visible prompt at all. That menu check also covers
 # Claude Code's first-launch folder-trust dialog (see _is_on_menu's comment),
 # and `check`/`send` now refuse on it too via `_state_of`'s `menu` state —
 # `send` still does not consult the FULL `ready` predicate before its first
@@ -118,7 +118,7 @@ fi
 # in the glyph class: every Codex reply starts with "•", so a completed reply
 # beginning "Working…" must stay inert transcript text.
 _is_working() {
-  printf '%s' "$1" | grep -qE 'esc to interrupt|[✻✽✶✳✢✷✦✧⋆∗·][[:space:]]*[[:alpha:]][[:alpha:]]*…'
+  printf '%s' "$1" | grep -qE 'esc to interrupt|(✻|✽|✶|✳|✢|✷|✦|✧|⋆|∗|·)[[:space:]]*[[:alpha:]][[:alpha:]]*…'
 }
 
 _is_codex_selection_widget() {
@@ -142,7 +142,7 @@ _is_codex_selection_widget() {
 # trust this folder / No, exit · Enter to confirm · Esc to cancel") — same
 # hazard class as the menu widgets above (blind Enter answers it instead of
 # being dropped), and worse: it can pick the DEFAULT option, which is not
-# necessarily "trust". Confirmed live 2026-09-24 (9th dropped-first-send
+# necessarily "trust". Confirmed live (a dropped-first-send
 # incident, `new-session my-project --task-file` on its very first
 # launch in that worktree): the kickoff paste's Enter landed on this dialog
 # and selected "No, exit", so Claude exited immediately and the supervisor
@@ -178,7 +178,7 @@ _frag() { printf '%s' "$1" | sed -n '/[^[:space:]]/{p;q}' | cut -c1-48; }
 # ready pane as draft-in-input-box. Alternation compares each branch as a
 # whole literal byte string instead, which is locale-independent. Confirmed
 # reproducing under LC_ALL=C; regression from the Codex-prompt support added
-# here (2026-09-28) — see tests/test-session-handoff-ready.sh.
+# here — see tests/test-session-handoff-ready.sh.
 _input_region()      { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
 _transcript_region() { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
 
@@ -197,7 +197,7 @@ _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
 # real message can never find it there. Without this, a landed-but-still-
 # buffered large paste reads (wrongly) as "gone from the input line", and
 # _verdict falls straight through "buffered" to "unverified" instead of
-# pressing Enter again. Confirmed live 2026-09-24 (cs_svc-gate-0924-0802,
+# pressing Enter again. Confirmed live (a session spawned with
 # `new-session my-project --task-file`): send reported UNVERIFIED
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
@@ -224,7 +224,7 @@ _strip_ansi() {
 # _is_dim_span — is $1 (raw, ANSI-preserving) ENTIRELY a "dim" (SGR 2) styled
 # run, optionally reset with ESC[0m at the end? This is how Claude Code's TUI
 # renders its auto-suggested "next action" ghost text in an otherwise-empty
-# input box — it is NOT a user draft (confirmed empirically 2026-09-11:
+# input box — it is NOT a user draft (confirmed empirically:
 # `tmux capture-pane -p -e` on live sessions shows `ESC[2m<suggestion>ESC[0m`
 # after the ❯ marker on idle panes, vs. no such wrapping when real text is
 # there). The terminal's cursor cell can split the run — if the cursor sits on
@@ -240,8 +240,8 @@ _strip_ansi() {
 # the dim attribute), which would misclassify real colored draft text as safe.
 #
 # The load-bearing assumption here — that a genuine user-typed draft renders
-# WITHOUT the dim attribute — was VERIFIED empirically on 2026-09-11 against a
-# disposable session (`cs-draft-probe-0911-0630`, CC v2.1.206), not assumed.
+# WITHOUT the dim attribute — was VERIFIED empirically against a
+# disposable probe session (CC v2.1.206), not assumed.
 # A real unsubmitted draft captures as `ESC[39m❯ <NBSP>this is a real
 # unsubmitted draft` — no `ESC[2m` anywhere — while that same pane's organic
 # ghost text captures as `ESC[39m❯ <NBSP>ESC[2mmark the rest complete tooESC[0m`.
@@ -401,7 +401,7 @@ _safety_reason() {
 # the full predicate (draft-in-input-box is still not checked before the
 # INITIAL paste — only during the dropped-paste recovery path, see `send`'s
 # comment). `_state_of` DOES now short-circuit the menu/trust-dialog case
-# specifically (2026-09-24 — see _is_on_menu's comment): `menu` is its own
+# specifically (see _is_on_menu's comment): `menu` is its own
 # state with its own refusing arm in `send`'s `case "$st"`, no longer folded
 # into `ready`. A pane with an unsubmitted DRAFT sitting on the prompt is
 # still classified `ready` by `_state_of` (it has no visibility into input-
@@ -468,7 +468,7 @@ _capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 # _paste_and_wait <session> <frag> <msg> — bracket-paste <msg> then run the
 # Enter-retry loop, echoing the resulting verdict (buffered|landed|
 # unverified). Factored out of the `send` dispatch so the dropped-paste
-# recovery path below (2026-09-24 incident — see its comment) can reuse the
+# recovery path below (see its comment) can reuse the
 # EXACT same paste+verify mechanics for its one retry, rather than a second
 # hand-copy of this loop silently drifting from it over time.
 _paste_and_wait() {
@@ -511,7 +511,7 @@ _backend_of() {
 }
 
 # _state_of — dead | starting | busy | menu | ready, from pane command +
-# capture. `menu` (added 2026-09-24, see _is_on_menu's comment for the
+# capture. `menu` (see _is_on_menu's comment for the
 # incident) covers both the AskUserQuestion-style widgets and the folder-
 # trust dialog — checked before busy/ready so `check` (which gates
 # new-session.sh's kickoff send on `state = ready`) refuses to call a pane
@@ -531,7 +531,7 @@ _state_of() {
     # contract) — which pastes straight into a bare shell mid-`sleep`, where
     # the text sits buffered for whatever next reads that pty's stdin (the
     # next `claude` invocation once the loop restarts it, or the shell
-    # itself). Confirmed live 2026-09-24: a kickoff prompt containing
+    # itself). Confirmed live: a kickoff prompt containing
     # backticks and $(...) was pasted into exactly this state and was headed
     # for execution as shell input — caught and killed in time. Treat it
     # like `starting`: no claude process to send into yet, refuse.
@@ -599,7 +599,7 @@ case "$MODE" in
       # Both messages below name the ACTUAL pane_current_command (not just
       # the coarse dead/starting label) so "claude not running in pane
       # (<cmd>)" is always present verbatim — the exact signal to grep for
-      # (2026-09-24: this refusal is what stops a paste from landing on a
+      # (this refusal is what stops a paste from landing on a
       # bare supervisor shell instead of Claude Code — see `sleep`'s comment
       # in _state_of).
       dead)     echo "send: claude not running in pane ($(_pane_cmd "$S")) — '$S' looks dead — refusing to send" >&2; exit 2;;
@@ -607,7 +607,7 @@ case "$MODE" in
       # Unlike `busy` (below), a menu/dialog widget is a HARD refusal, not a
       # queue-behind-it note: plain text sent into it is either dropped
       # (an AskUserQuestion widget) or answers it with whatever Enter
-      # submits, which is not necessarily the safe/intended choice (2026-09-24
+      # submits, which is not necessarily the safe/intended choice (a real
       # incident: a kickoff paste's Enter answered a first-launch folder-
       # trust dialog with its default "No, exit" and killed the session — see
       # _is_on_menu's comment). Answer it by hand first.
@@ -622,8 +622,8 @@ case "$MODE" in
     # false "unverified".
     [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
     verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
-    # ── dropped-first-paste recovery (2026-09-24 incident, e.g.
-    # cs_pf-process-0924-0734 07:34) ────────────────────────────────────────
+    # ── dropped-first-paste recovery (a real dropped-first-send
+    # incident) ────────────────────────────────────────
     # On a freshly booted Claude Code, `check` (and new-session.sh's ready
     # poll) can observe the ❯ prompt render and call the session "ready"
     # before the TUI's own bracketed-paste handling has finished wiring
