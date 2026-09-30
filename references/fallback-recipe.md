@@ -165,8 +165,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
 while true; do
   START=\$(date +%s)
+  PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
-    RESUME_ID=\$(cat "\$RESUME_PIN"); rm -f "\$RESUME_PIN"; touch "\$SENTINEL"
+    RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL"
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
@@ -175,6 +176,7 @@ while true; do
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" --exclude-dynamic-system-prompt-sections --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
+  if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
   if [ "\$RUNTIME" -lt 30 ]; then
     echo "[${SESSION}] quick exit \${RUNTIME}s — backoff 300s" | tee -a "\$LOG_FILE"

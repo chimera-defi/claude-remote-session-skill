@@ -31,11 +31,12 @@ mkdir -p "$CRSS_CLAUDE_HOME/sessions" "$CRSS_UNIT_DIR" "$CRSS_SESSIONS_DIR" "$T/
 cat > "$T/bin/claude" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$ARGV_LOG"
+[ -n "${FAKE_CLAUDE_EXIT:-}" ] && exit 0
 ls .sessions-init-* >/dev/null 2>&1 && echo yes > "$ARGV_LOG.sentinel" || echo no > "$ARGV_LOG.sentinel"
 sid=""; prev=""
 for a in "$@"; do [ "$prev" = --resume ] && sid="$a"; prev="$a"; done
-[ -n "$sid" ] && printf '{"pid": %s, "sessionId": "%s"}\n' "$$" "$sid" > "$CRSS_CLAUDE_HOME/sessions/$$.json"
-sleep 20
+[ -n "$sid" ] && [ -z "${FAKE_CLAUDE_NOREG:-}" ] && printf '{"pid": %s, "sessionId": "%s"}\n' "$$" "$sid" > "$CRSS_CLAUDE_HOME/sessions/$$.json"
+sleep "${FAKE_CLAUDE_SLEEP:-20}"
 EOF
 cat > "$T/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -108,7 +109,9 @@ SCRIPT
   local proj
   proj="$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$wt" | sed 's/[^A-Za-z0-9]/-/g')"
   mkdir -p "$proj"
-  echo '{}' > "$proj/11111111-1111-4111-8111-111111111111.jsonl"; touch -d '2 days ago' "$proj/11111111-1111-4111-8111-111111111111.jsonl"
+  if [ "${2:-}" != one ]; then
+    echo '{}' > "$proj/11111111-1111-4111-8111-111111111111.jsonl"; touch -d '2 days ago' "$proj/11111111-1111-4111-8111-111111111111.jsonl"
+  fi
   echo '{}' > "$proj/22222222-2222-4222-8222-222222222222.jsonl"
   echo "$wt" > "$STUB_STATE/rundir"
 }
@@ -123,12 +126,12 @@ bash "$SR" '../etc' >/dev/null 2>&1; ok "unsafe-name-exit2" "$?" 2
 out="$(bash "$SR" ah_nounit 2>&1)"; ok "no-unit-exit1" "$?" 1
 has "no-unit-message" "$out" "no unit file"
 
-# 2. dry-run on the dead fixture: resolves the newest transcript, plans the
+# 2. dry-run on the dead fixture (ONE transcript -> auto-picked): resolves it, plans the
 # patch + unit start with the script's own flags, changes nothing.
-R=ah-rsm-a; mk_session "$R"; SC="$T/scripts/$R-start.sh"; cp "$SC" "$T/orig-a.sh"
+R=ah-rsm-a; mk_session "$R" one; SC="$T/scripts/$R-start.sh"; cp "$SC" "$T/orig-a.sh"
 out="$(bash "$SR" ah_rsm-a --dry-run 2>&1)"; rc=$?
 ok  "dry-run-exit0" "$rc" 0
-has "dry-run-uuid-newest" "$out" "resume uuid:  $NEW"
+has "dry-run-uuid-sole" "$out" "resume uuid:  $NEW"
 has "dry-run-rundir-own-wt" "$out" "run dir:      $CRSS_CLAUDE_HOME/worktrees/$R"
 has "dry-run-plans-patch" "$out" "patch $SC supervisor loop"
 has "dry-run-expect-own-flags" "$out" "expect: $T/bin/claude --dangerously-skip-permissions --model \"claude-opus-5-5\" --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $NEW"
@@ -165,10 +168,10 @@ cmp -s "$SC" "$T/orig-a.sh"; ok "refuse-script-untouched" "$?" 0
 # 4. real run: patches the loop once, pins the uuid, starts the unit, and the
 # relaunched claude carries the ORIGINAL flags plus --resume <uuid>.
 : > "$STUB_STATE/systemctl.log"
-out="$(bash "$SR" ah_rsm-a --uuid "$OLD" 2>&1)"; rc=$?
+out="$(bash "$SR" ah_rsm-a --uuid "$NEW" 2>&1)"; rc=$?
 ok  "run-exit0" "$rc" 0
 has "run-ok-line" "$out" "OK: pid"
-ok  "run-argv" "$(cat "$ARGV_LOG" 2>/dev/null)" "--dangerously-skip-permissions --model claude-opus-5-5 --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $OLD"
+ok  "run-argv" "$(cat "$ARGV_LOG" 2>/dev/null)" "--dangerously-skip-permissions --model claude-opus-5-5 --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $NEW"
 ok  "run-systemctl-order" "$(grep -E '^(reset-failed|enable|start) ' "$STUB_STATE/systemctl.log" | cut -d' ' -f1 | tr '\n' ' ')" "reset-failed enable start "
 ok  "run-pin-consumed" "$([ -e "$CRSS_SESSIONS_DIR/resume/$R.uuid" ] && echo left || echo gone)" gone
 ok  "run-sentinel-touched" "$([ -f "$CRSS_CLAUDE_HOME/worktrees/$R/.sessions-init-$R" ] && echo yes || echo no)" yes
@@ -189,7 +192,7 @@ has "repeat-argv-resume" "$(cat "$ARGV_LOG")" "--remote-control $R --resume $NEW
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
 
 # 6. --model rewrites MODEL= and every --model "..." — nothing else.
-R=ah-rsm-b; mk_session "$R"; SC="$T/scripts/$R-start.sh"
+R=ah-rsm-b; mk_session "$R" one; SC="$T/scripts/$R-start.sh"
 out="$(bash "$SR" ah_rsm-b --model sonnet 2>&1)"; ok "model-run-exit0" "$?" 0
 ok  "model-argv" "$(cat "$ARGV_LOG")" "--dangerously-skip-permissions --model sonnet --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $NEW"
 has "model-field" "$(cat "$SC")" 'MODEL="sonnet"'
@@ -253,19 +256,62 @@ has "canon-locked-refuse" "$out" "live session ah_other holds the canonical tree
 
 # 11. unit starts but the process never shows up -> exit 3 (something may be
 # running), distinct from a pre-start refusal's exit 1.
-R=ah-rsm-f; mk_session "$R"
+R=ah-rsm-f; mk_session "$R" one
 sed -i 's#^ExecStart=.*#ExecStart=/bin/true#' "$CRSS_UNIT_DIR/$R.service"
 cp "$T/scripts/$R-start.sh" "$T/f.sh"; printf '[Unit]\n[Service]\nExecStart=%s\n' "$T/f.sh" > "$CRSS_UNIT_DIR/$R.service"
 sed -i 's#tmux send-keys -t "ah_rsm-f" .LOG_FILE#tmux send-keys -t "ah_rsm-f" \x27exit 0\nLOG_FILE#' "$T/f.sh"
 out="$(CRSS_RESUME_WAIT=2 bash "$SR" ah_rsm-f 2>&1)"; ok "unverified-exit3" "$?" 3
 has "unverified-fail-line" "$out" "FAIL: no process running"
 
-# 12. two transcripts written in the same minute -> ambiguous, refuse unless --uuid.
+# 12. several transcripts, no --uuid -> refuse and list them, even when one is
+# clearly newest (a fresh transcript from a bad restart sits over the real one,
+# as in the ah-spx-successor incident); --uuid names the one to resume.
 R=ah-rsm-g; mk_session "$R"
-PG="$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')"
-touch "$PG/$OLD.jsonl"
-out="$(bash "$SR" ah_rsm-g --dry-run 2>&1)"; ok "ambiguous-exit1" "$?" 1
-has "ambiguous-refuse" "$out" "ambiguous"
-out="$(bash "$SR" ah_rsm-g --dry-run --uuid "$NEW" 2>&1)"; ok "ambiguous-with-uuid-exit0" "$?" 0
+out="$(bash "$SR" ah_rsm-g --dry-run 2>&1)"; ok "multi-transcript-exit1" "$?" 1
+has "multi-transcript-refuse" "$out" "pass --uuid"
+has "multi-transcript-lists-newest" "$out" "$NEW"
+has "multi-transcript-lists-old" "$out" "$OLD"
+not_has "multi-transcript-no-resume-uuid" "$out" "resume uuid:  $NEW"
+out="$(bash "$SR" ah_rsm-g --dry-run --uuid "$OLD" 2>&1)"; ok "multi-transcript-with-uuid-exit0" "$?" 0
+has "multi-transcript-uuid-honoured" "$out" "resume uuid:  $OLD"
+touch "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')/$OLD.jsonl"
+out="$(bash "$SR" ah_rsm-g --dry-run 2>&1)"; ok "multi-transcript-same-minute-exit1" "$?" 1
+
+# 13. registry never confirms the sessionId -> WARN + exit 3, never OK; the pin
+# stays (only a confirmed run, or the loop after 30s, clears it).
+R=ah-rsm-h; mk_session "$R" one
+out="$(FAKE_CLAUDE_NOREG=1 CRSS_RESUME_REG_WAIT=2 bash "$SR" ah_rsm-h 2>&1)"; ok "noreg-exit3" "$?" 3
+has "noreg-warn" "$out" "WARN:"
+has "noreg-not-confirmed" "$out" "NOT confirmed"
+not_has "noreg-no-ok-line" "$out" "OK: pid"
+ok "noreg-pin-kept" "$([ -s "$CRSS_SESSIONS_DIR/resume/$R.uuid" ] && echo kept || echo gone)" kept
+pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
+rm -f "$CRSS_SESSIONS_DIR/resume/$R.uuid"
+
+# 14. the loop keeps the pin when claude exits at once (bad/corrupt transcript):
+# after the pause the next iteration must retry --resume, not fall back to
+# --continue. Uses the loop new-session generated for test 9.
+PINF="$(sed -n 's/^RESUME_PIN="\(.*\)"$/\1/p' "$NSC" | head -1)"
+mkdir -p "$(dirname "$PINF")"; printf '%s\n' "$NEW" > "$PINF"
+QK="$T/quick"; mkdir -p "$QK"; rm -f "$ARGV_LOG"
+( cd "$QK" && FAKE_CLAUDE_EXIT=1 setsid timeout 3 bash -c "$payload" >/dev/null 2>&1 & )
+for _ in $(seq 1 30); do [ -s "$ARGV_LOG" ] && break; sleep 0.2; done; sleep 1
+has "ns-quick-exit-resumed" "$(cat "$ARGV_LOG")" "--resume $NEW"
+ok  "ns-quick-exit-pin-kept" "$([ -s "$PINF" ] && echo kept || echo gone)" kept
+ok  "ns-quick-exit-sentinel" "$(ls "$QK"/.sessions-init-* >/dev/null 2>&1 && echo yes || echo no)" yes
+
+# ...and clears it once claude has run long enough (threshold shortened here).
+LP="$(printf '%s' "$payload" | sed 's/"\$RUNTIME" -ge 30/"$RUNTIME" -ge 1/')"
+not_has "ns-threshold-patched" "$LP" '-ge 30'
+LK="$T/long"; mkdir -p "$LK"; rm -f "$ARGV_LOG"
+( cd "$LK" && FAKE_CLAUDE_SLEEP=2 setsid timeout 4 bash -c "$LP" >/dev/null 2>&1 & )
+for _ in $(seq 1 40); do [ -s "$ARGV_LOG" ] && break; sleep 0.2; done; sleep 3
+has "ns-long-run-resumed" "$(cat "$ARGV_LOG")" "--resume $NEW"
+ok  "ns-long-run-pin-cleared" "$([ -s "$PINF" ] && echo kept || echo gone)" gone
+
+# 15. a pre-pin script patched by session-resume gets the same keep-until-30s loop.
+has "patched-loop-pinned-flag" "$(cat "$T/scripts/ah-rsm-a-start.sh")" 'PINNED=1'
+has "patched-loop-pin-cleared-after-run" "$(cat "$T/scripts/ah-rsm-a-start.sh")" 'if [ "$PINNED" = 1 ] && [ "$RUNTIME" -ge 30 ]; then rm -f "$RESUME_PIN"; fi'
+not_has "patched-loop-no-early-rm" "$(cat "$T/scripts/ah-rsm-a-start.sh")" 'PINNED=1; rm'
 
 echo "session-resume: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]

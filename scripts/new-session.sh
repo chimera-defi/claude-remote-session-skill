@@ -611,8 +611,11 @@ done
 SCRIPT_EOF
 
 # Claude supervisor loop, first match wins each iteration:
-#   resume pin  -> `--resume <uuid>` once (written by `session-resume`; consumed
-#                  before launch so a bad uuid can't wedge the loop)
+#   resume pin  -> `--resume <uuid>` (written by `session-resume`). The pin is
+#                  cleared only after claude has run 30s+ (or by session-resume
+#                  once the registry confirms it): a bad uuid that exits at once
+#                  is retried after the backoff, never silently downgraded to
+#                  `--continue` (which could open the wrong conversation).
 #   sentinel    -> `--continue` (a restart of this session)
 #   neither     -> fresh session. The sentinel is touched BEFORE that first launch:
 #                  touching it after claude exits meant a session killed from outside
@@ -628,8 +631,9 @@ SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
 while true; do
   START=\$(date +%s)
+  PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
-    RESUME_ID=\$(cat "\$RESUME_PIN"); rm -f "\$RESUME_PIN"; touch "\$SENTINEL"
+    RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL"
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
@@ -638,6 +642,7 @@ while true; do
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
+  if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
   if [ "\$RUNTIME" -lt 30 ]; then
     echo "[${SESSION}] quick exit \${RUNTIME}s — backoff 300s" | tee -a "\$LOG_FILE"
