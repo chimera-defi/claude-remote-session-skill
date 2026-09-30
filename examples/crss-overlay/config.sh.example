@@ -75,7 +75,7 @@
 # preference in crss.
 # Default: empty
 # Example only:
-#CRSS_CODEX_ARGS=-m gpt-5.5 -s read-only -a never
+#CRSS_CODEX_ARGS=-m <model> -s read-only -a never
 
 # CRSS_SESSION_PREFIX — the prefix NEW sessions get. tmux uses `<prefix>_`,
 # systemd/remote-control uses `<prefix>-` (e.g. prefix "cs" -> tmux `cs_foo-

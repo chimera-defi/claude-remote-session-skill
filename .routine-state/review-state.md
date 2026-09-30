@@ -8,18 +8,16 @@ or re-litigate something an earlier run already found, fixed, or rejected.
 - date: 2026-09-29
 - status: completed
 - gh_mode: mcp (gh binary absent; mcp__github__ tools used for the whole run)
-- pr: https://github.com/chimera-defi/claude-remote-session-skill/pull/110
+- pr: PR #110 of this repo
 - branch: nightly-review-2026-09-29
 
 ## PHASE 0 gate note
 
 No open `nightly-review-*` PR existed at run start. One unrelated open PR
 existed (#107, `fix/reap-archive-unit`, author-driven, not a nightly-review
-artifact) — no overlap with this run's files, left untouched. 18 open
-`diag: nightly-review YYYY-MM-DD - no changes` issues exist (#52-#100,
-2026-09-04 through 2026-09-28); still an accumulating backlog with no
-cleanup mechanism in this routine's scope (carried over from the
-2026-09-23 note; still true).
+artifact) — no overlap with this run's files, left untouched. Open
+`diag: nightly-review YYYY-MM-DD - no changes` issues accumulate as a backlog with no
+cleanup mechanism in this routine's scope.
 
 `main` had moved by 9 merged PRs since the last full review-state snapshot
 (2026-09-23/PR #77) that hadn't been covered by any prior nightly pass:
@@ -83,7 +81,7 @@ by any nightly pass before tonight.
   reason to suspect regression since `scripts/session-alias.sh` was not
   touched by any of the 9 PRs reviewed tonight. Re-verify fully next run if
   this note is still the most recent confirmation.
-- `scripts/fleet-status.sh`, `scripts/gbrain-heal.sh`, `session-doctor.sh`'s
+- `scripts/fleet-status.sh`, host-ops health scripts, `session-doctor.sh`'s
   worktree-stale/reap paths: confirmed solid as of 2026-09-28 (#100); not
   touched by tonight's 9 PRs except `session-doctor.sh`'s `backend_of`/
   `proc_alive`/`_state_of` additions (PR #108, see "New surface" below —
