@@ -163,10 +163,24 @@ _is_on_menu() {
 _frag() { printf '%s' "$1" | sed -n '/[^[:space:]]/{p;q}' | cut -c1-48; }
 
 # _input_region / _transcript_region — split a capture at the LAST prompt line
-# (the `❯` input box). Content on/after it is the pending input; content before
-# it is the conversation transcript.
-_input_region()      { printf '%s\n' "$2" | awk '/[❯›]/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
-_transcript_region() { printf '%s\n' "$2" | awk '/[❯›]/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
+# (the `❯` input box, or Codex's `›`). Content on/after it is the pending
+# input; content before it is the conversation transcript.
+#
+# Alternation (`❯|›`), NOT a bracket class (`[❯›]`): a `[...]` class is byte-
+# oriented under mawk or any awk/grep in a non-UTF-8 locale (see
+# _input_box_empty's border-line comment for the same class of bug) and a
+# multi-byte UTF-8 char inside `[...]` there decomposes into its individual
+# bytes as separate class members, not one atomic character. `❯`/`›` share a
+# lead byte (E2) with nearly every other symbol the Claude/Codex TUIs print
+# (✢✻✽⏵…), so `[❯›]` under LC_ALL=C/POSIX false-matched on ANY line
+# containing any of those — e.g. the "⏵⏵ bypass permissions on" status line —
+# collapsing _input_region to the tail of the buffer and misreading every
+# ready pane as draft-in-input-box. Alternation compares each branch as a
+# whole literal byte string instead, which is locale-independent. Confirmed
+# reproducing under LC_ALL=C; regression from the Codex-prompt support added
+# here (2026-09-28) — see tests/test-session-handoff-ready.sh.
+_input_region()      { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
+_transcript_region() { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
 
 # _on_input_line — is the fragment still sitting in the input box (typed but not
 # submitted)? Then another Enter is needed.
@@ -191,10 +205,12 @@ _is_collapsed_paste_in_input() {
   _input_region "" "$1" | grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]'
 }
 
-# _has_prompt — is there a real ❯ input line visible anywhere in the capture?
+# _has_prompt — is there a real ❯/› input line visible anywhere in the capture?
 # Absent during startup (still in the supervisor loop / model not yet in a TUI
 # frame) or if the capture is empty/garbled.
-_has_prompt() { printf '%s' "$1" | grep -qE '[❯›]'; }
+# Alternation, not a bracket class — see _input_region's comment above for why
+# `[❯›]` false-matches under a POSIX/C locale.
+_has_prompt() { printf '%s' "$1" | grep -qE '❯|›'; }
 
 # _strip_ansi — drop ANSI CSI sequences (ESC '[' params letter), e.g. color /
 # bold / dim SGR codes from `tmux capture-pane -e`. Used to make the busy /
@@ -313,10 +329,25 @@ _input_box_empty() {
   # blank line) with real text on line 2+. Checking only the first line (an
   # earlier cut of this function, via `head -1`) silently read that as an
   # empty box -> SAFE — the dangerous direction, confirmed by direct
-  # reproduction against this function. Strip the ❯ prefix off line 1 only
+  # reproduction against this function. Strip the ❯/› prefix off line 1 only
   # (line 2+ carries no such prefix) and look at the WHOLE box, not just its
   # first line.
-  rest="$(printf '%s\n' "$box" | sed '1s/^[^❯›]*[❯›]//')"
+  #
+  # Strip through the FIRST literal prompt glyph on line 1 only. A greedy
+  # `.*(❯|›)` strips through the last glyph, hiding drafts like `❯ explain ›`.
+  # The old `[^❯›]*[❯›]` form is also unsafe: in a byte-oriented locale its
+  # bracket classes can consume part of a glyph and leave invalid UTF-8.
+  # index/substr/length use consistent units (bytes or characters) in both
+  # gawk and mawk, so matching whole literals works regardless of locale.
+  rest="$(printf '%s\n' "$box" | awk '
+    NR == 1 {
+      p = index($0, "❯"); glyph = "❯"
+      q = index($0, "›")
+      if (q && (!p || q < p)) { p = q; glyph = "›" }
+      if (p) $0 = substr($0, p + length(glyph))
+    }
+    { print }
+  ')"
   visible="$(_strip_ansi "$rest" | tr -d '\n' | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
   [ -z "$visible" ] && return 0
   # Claude Code's dim "suggested next action" ghost text is always exactly
