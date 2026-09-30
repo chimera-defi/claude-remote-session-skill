@@ -317,15 +317,21 @@ _input_box_empty() {
   # (line 2+ carries no such prefix) and look at the WHOLE box, not just its
   # first line.
   #
-  # Greedy `.*` up to the alternation, NOT a `[^❯›]*[❯›]` bracket-class pair:
-  # under a POSIX/C locale a bracket class decomposes a multi-byte UTF-8 char
-  # into individual bytes (see _input_region's comment), so `[^❯›]*` there
-  # stops early at ANY other multi-byte glyph sharing a byte with ❯/›
-  # (spinners, ellipses, …) and the substitution silently no-ops, leaving a
-  # would-be-safe status line misread as draft text. `.*(❯|›)` matches each
-  # branch as a whole literal byte string instead, so it correctly finds and
-  # strips through the real prompt glyph regardless of what precedes it.
-  rest="$(printf '%s\n' "$box" | sed -E '1s/^.*(❯|›)//')"
+  # Strip through the FIRST literal prompt glyph on line 1 only. A greedy
+  # `.*(❯|›)` strips through the last glyph, hiding drafts like `❯ explain ›`.
+  # The old `[^❯›]*[❯›]` form is also unsafe: in a byte-oriented locale its
+  # bracket classes can consume part of a glyph and leave invalid UTF-8.
+  # index/substr/length use consistent units (bytes or characters) in both
+  # gawk and mawk, so matching whole literals works regardless of locale.
+  rest="$(printf '%s\n' "$box" | awk '
+    NR == 1 {
+      p = index($0, "❯"); glyph = "❯"
+      q = index($0, "›")
+      if (q && (!p || q < p)) { p = q; glyph = "›" }
+      if (p) $0 = substr($0, p + length(glyph))
+    }
+    { print }
+  ')"
   visible="$(_strip_ansi "$rest" | tr -d '\n' | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
   [ -z "$visible" ] && return 0
   # Claude Code's dim "suggested next action" ghost text is always exactly
