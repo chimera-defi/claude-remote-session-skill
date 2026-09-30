@@ -213,3 +213,6 @@ Yes/No choice, not an arrow-key+checkbox+Submit-page flow: recover with
 `tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the
 Down/Right/Enter sequence above.
 
+
+# planted
+see /home/realuser/secret-project and someone@realmail.com
