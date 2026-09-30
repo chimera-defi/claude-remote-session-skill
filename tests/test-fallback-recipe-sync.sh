@@ -77,15 +77,15 @@ ok "fallback-model-default-not-stale-sonnet" \
 # path silently lost the cache-reuse win new-session.sh already has.
 has "new-session-has-cache-flag" 'CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"' "$NS"
 # The fallback recipe's invocation has no CLAUDE_EXTRA_FLAGS variable (it isn't
-# PROFILE-aware), so check the flag is baked directly into BOTH claude
-# invocation lines (fresh-start and --continue), not just mentioned in prose.
+# PROFILE-aware), so check the flag is baked directly into ALL THREE claude
+# invocation lines (resume-pin, --continue, fresh-start), not just mentioned in prose.
 # Both scripts invoke via the host-overridable ${CRSS_CLAUDE_BIN} (genericize
 # pass, PR docs/genericize-host-specifics): a literal /usr/bin/claude here would
 # both hardcode a host path and silently drop out of sync with new-session.sh,
 # which resolves CRSS_CLAUDE_BIN from the overlay. Match the resolved-variable
 # form, not a literal binary path.
-ok "fallback-cache-flag-on-both-invocations" \
-  "$(grep -cE -- '^\s*\$\{CRSS_CLAUDE_BIN\} .*--exclude-dynamic-system-prompt-sections' "$FB")" "2"
+ok "fallback-cache-flag-on-every-invocation" \
+  "$(grep -cE -- '^\s*\$\{CRSS_CLAUDE_BIN\} .*--exclude-dynamic-system-prompt-sections' "$FB")" "3"
 
 # Both scripts source their host-local paths from the same CRSS_* overlay
 # variables (examples/crss-overlay/README.md) rather than a hardcoded host
