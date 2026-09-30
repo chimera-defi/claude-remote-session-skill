@@ -75,7 +75,7 @@
 # preference in crss.
 # Default: empty
 # Example only:
-#CRSS_CODEX_ARGS=-m gpt-5.5 -s read-only -a never
+#CRSS_CODEX_ARGS=-m <model> -s read-only -a never
 
 # CRSS_SESSION_PREFIX — the prefix NEW sessions get. tmux uses `<prefix>_`,
 # systemd/remote-control uses `<prefix>-` (e.g. prefix "cs" -> tmux `cs_foo-
@@ -137,7 +137,7 @@
 #CRSS_JUNK_RE_EXTRA=mytool-cache|\.mytoolstate
 
 # CRSS_HEALTH_SNAPSHOT_DIR — where fleet-status.sh looks for the latest
-# server-health-audit JSON snapshot (a directory of UTC-timestamped run
+# host health snapshot writer's JSON snapshot (a directory of UTC-timestamped run
 # dirs, each containing summary.json). fleet-status degrades gracefully
 # with a "no snapshot found" note if this doesn't exist or nothing has ever
 # written to it — it is not a hard dependency.
