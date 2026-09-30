@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Regression coverage for the dropped-first-paste race (2026-09-24 incident,
-# observed 8/8 on first sends via `new-session --task-file`, most recently
-# ah_pf-process-0924-0734 07:34): session-handoff.sh's `send` polls `check`
+# Regression coverage for the dropped-first-paste race (observed 8/8 on first sends
+# via `new-session --task-file`): session-handoff.sh's `send` polls `check`
 # until the ❯ prompt renders, then bracket-pastes the message. On a freshly
 # booted Claude Code the prompt can render before the TUI's paste handling is
 # fully wired up, so the very first paste is silently dropped — the input box
