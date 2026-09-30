@@ -92,16 +92,16 @@ ok "aliasguard-store"  "$(notsess "$(awk -F'\t' '$1=="myproj"{print $2}' "$W")")
 ok "desessionify-folder" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" px-widget-build-0721)" "widget-build"
 
 # INFER de-sessionify is a FIXED POINT, not a single pass: a folder poisoned more
-# than one layer deep (e.g. `px-px-x-0722-0725` — literally the doubled name a
+# than one layer deep (e.g. `px-px-x-0101-0725` — literally the doubled name a
 # prior poisoning incident produces) must still yield a clean, non-`px-`-prefixed
 # alias. A single-pass strip would leave `px-demo-project` (still session-name-
 # shaped), which store_upsert then refuses to persist — so the poisoned value is
 # never self-healed and keeps re-doubling on every future spawn.
 DP="$(mktemp -u)"
-dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" px-px-demo-project-0722-0725)"
+dp_out="$(SESSION_ALIAS_STORE="$DP" bash "$ALIAS" px-px-demo-project-0101-0725)"
 ok "layered-poison-value" "$dp_out" "demo-project"
 ok "layered-poison-clean" "$(notsess "$dp_out")" "clean"
-ok "layered-poison-stored" "$(awk -F'\t' '$1=="px-px-demo-project-0722-0725"{print $2}' "$DP")" "demo-project"
+ok "layered-poison-stored" "$(awk -F'\t' '$1=="px-px-demo-project-0101-0725"{print $2}' "$DP")" "demo-project"
 
 # Trailing-4-digit false positives (regression: a folder ending in a plain
 # 4-digit number that is NOT a calendar date must alias as-is, not get treated
@@ -238,7 +238,7 @@ ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI"
 # meaningful part (like the lowercase `px-widget-build-0721` case above),
 # not fall back to an opaque checksum alias because desessionify's prefix
 # strip couldn't match the uppercase prefix.
-ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "PX-project-0810-1234")" "project"
+ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "PX-project-0101-1234")" "project"
 
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
@@ -278,9 +278,9 @@ ok "bare-resolve-after-set-default" \
   "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "renamed"
 # Opting in must not be a way to smuggle a poisoned default past the guard: the
 # anti-poisoning check runs BEFORE the persist decision.
-pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias px-x-0722-0725 --set-default 2>/dev/null)"
+pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias px-x-0101-0725 --set-default 2>/dev/null)"
 ok "set-default-rejects-poisoned"      "$(notsess "$pz_out")" "clean"
-ok "set-default-poisoned-not-verbatim" "$(grep -cF 'px-x-0722-0725' "$PS" 2>/dev/null; true)" "0"
+ok "set-default-poisoned-not-verbatim" "$(grep -cF 'px-x-0101-0725' "$PS" 2>/dev/null; true)" "0"
 # Inference still persists -- that is a deterministic cache, not drift.
 PS2="$(mktemp -u)"
 inf_out="$(SESSION_ALIAS_STORE="$PS2" bash "$ALIAS" some-very-long-project-name)"

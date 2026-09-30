@@ -110,11 +110,11 @@ for f in "${files[@]}"; do
   # 1. Absolute home paths: /home/<user>/ except the documented placeholders.
   while IFS=: read -r ln match; do
     [ -n "${ln:-}" ] || continue
-    user="${match#/home/}"; user="${user%/}"
+    user="${match#/home/}"; user="${user%/}"   # trailing slash is optional: bare /home/<name> leaks too
     _is_safe_home_user "$user" && continue
     echo "FAIL: $f:$ln: $match  [absolute home path — use /home/youruser/, /home/user/, or /home/me/]"
     hits=$((hits + 1))
-  done < <(grep -noE '/home/[a-z_][a-z0-9_-]*/' "$f" 2>/dev/null)
+  done < <(grep -noE '/home/[a-z_][a-z0-9_-]*' "$f" 2>/dev/null)
 
   # 2. macOS-style absolute home paths.
   report "$f" "$(grep -noE '/Users/[A-Za-z0-9_.-]+/' "$f" 2>/dev/null)" "/Users/ absolute path"
@@ -133,6 +133,57 @@ for f in "${files[@]}"; do
   # 5. A systemd unit's HOME baked in as a literal absolute path (should
   #    always be derived at generation time from $HOME instead).
   report "$f" "$(grep -noE 'Environment=HOME=/[^[:space:]]*' "$f" 2>/dev/null)" "systemd unit hardcodes HOME as a literal path"
+done
+
+# ── Extra generic checks (added after a privacy audit found whole classes
+#    invisible to the checks above). Still NO private vocabulary: only shapes
+#    and this machine's own runtime identity.  HARD = fails the build;
+#    WARN = printed, never fails.
+_host_name="$(hostname -s 2>/dev/null | tr 'A-Z' 'a-z')"
+case "$_host_name" in
+  localhost|runner|ubuntu|debian|fedora|centos|alpine|docker|github|server|hostname|machine|buildkitd|builder|codespaces|linux|macbook) _host_name="" ;;
+esac
+# Too short / too word-like to be a meaningful literal: need >=6 chars or a digit.
+if [ "${#_host_name}" -lt 4 ] || { [ "${#_host_name}" -lt 6 ] && [[ "$_host_name" != *[0-9]* ]]; }; then _host_name=""; fi
+
+# Allowances: an sk- token must contain a digit (real keys always do; it keeps
+# kebab-case words like "sk-dry-run-still-resolves" from matching), and a
+# credential assignment whose value says FAKE/EXAMPLE/PLACEHOLDER/DUMMY/YOUR/HERE/CHANGEME/XXX/LOCAL/REDACTED/TEST (or '...') is a
+# self-evidently fake test fixture.
+# Secret shapes built from fragments so this file does not match itself.
+_SECRET_RE='\bsk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|0x[0-9a-fA-F]{40}([0-9a-fA-F]{24})?\b|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.|Bearer [A-Za-z0-9._-]{20,}'
+_SECRET_ASSIGN_RE='(api[_-]?key|token|secret|password)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"'$<{ ][^"'"'"']{12,}'
+_BUS_RE='\bbus seq\b|\bseq #[0-9]{3,}\b|scope_claim|coordination_bus|[Oo]perator (directive|ruling)|OPERATOR RULING'
+# <word>[_-]<slug>-MMDD-HHMM with a real-looking date. Fixtures stamp 0101-HHMM
+# (January 1st) or use placeholders (MMDD, xxxx), so a month of 02-12 is what
+# marks a real session name.
+_SESSION_RE='\b[A-Za-z]{2,12}[_-][a-z][a-z0-9-]*-(0[2-9]|1[0-2])[0-3][0-9]-[0-2][0-9][0-5][0-9]\b|-20[0-9]{2}(0[2-9]|1[0-2])[0-3][0-9]-[0-9]{4}\b'
+_WARN_NARR_RE='(this|our) (host|box|machine|server)\b|on this host|happened for real|[Rr]eal (loss|case|repro)\b|confirmed live'
+_WARN_DOMAIN_RE='\b(broker(age)?|execution gate|EXECUTION_APPROVED[A-Za-z_]*|equities|sleeve|portfolio|wallet|book_domain|prereg(istration|istered)?)\b'
+# shellcheck disable=SC2088  # a literal "~/" in prose, deliberately unexpanded
+_WARN_HOMEDIR_RE='~/(backups|agent-[a-z-]+|research[a-z-]*|\.gbrain|\.sessions)'
+
+_warn() {  # $1 = file, $2 = grep -n output, $3 = reason
+  local line
+  [ -n "$2" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "WARN: $1:$line  [$3]"
+  done <<< "$2"
+}
+
+for f in "${files[@]}"; do
+  [ -f "$f" ] || continue
+  report "$f" "$(grep -noE -- "$_SECRET_RE" "$f" 2>/dev/null | grep -vE ':sk-[A-Za-z-]*$' | grep -viE 'fake|example|placeholder|dummy|your|here|changeme|xxx|local|\.\.\.|redacted|test')" "secret-shaped literal"
+  report "$f" "$(grep -noiE -- "$_SECRET_ASSIGN_RE" "$f" 2>/dev/null | grep -viE 'fake|example|placeholder|dummy|your|here|changeme|xxx|local|\.\.\.|redacted|test')" "quoted credential assignment with a literal value"
+  report "$f" "$(grep -noE -- "$_BUS_RE" "$f" 2>/dev/null)" "coordination-bus / operator-ruling reference"
+  report "$f" "$(grep -noE -- "$_SESSION_RE" "$f" 2>/dev/null)" "real-looking session name (use a 0101-HHMM fixture stamp)"
+  if [ -n "$_host_name" ]; then
+    report "$f" "$(grep -noiwF -- "$_host_name" "$f" 2>/dev/null)" "this machine's own hostname"
+  fi
+  _warn "$f" "$(grep -noE -- "$_WARN_NARR_RE" "$f" 2>/dev/null)" "host-narrative phrasing"
+  _warn "$f" "$(grep -noE -- "$_WARN_DOMAIN_RE" "$f" 2>/dev/null)" "trading/broker vocabulary"
+  _warn "$f" "$(grep -noE -- "$_WARN_HOMEDIR_RE" "$f" 2>/dev/null)" "host-specific ~/ directory"
 done
 
 # 6. github.com/<owner>/ other than this repo's own origin owner.

@@ -52,7 +52,7 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, configurable via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0715-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
+The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, configurable via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0101-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
 
 ## Model default
 

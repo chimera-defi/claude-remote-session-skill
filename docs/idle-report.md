@@ -125,7 +125,7 @@ is the safety property. Rows flagged `[P]` are **protected** (the built-in
 === LOCAL: live sessions with NO type:user message in the last 30 day(s) — REPORT ONLY, kills nothing ===
   LAST type:user         PROT  TMUX SESSION                                   CWD
   never: no transcript   [P]   <protected-session>                            /home/youruser/<protected-dir>
-  never: no user msgs          <prefix>_my-project-0808-2337                  /home/youruser/.claude/worktrees/<prefix>-my-project-0808-2337
+  never: no user msgs          <prefix>_my-project-0101-2337                  /home/youruser/.claude/worktrees/<prefix>-my-project-0101-2337
   2026-07-10T05:58:00Z         <utility-session>                              /home/youruser/.sessions/<name>
   ...
   --- 3 idle session(s), incl. 1 PROTECTED (never reap). All are ALIVE -> reap-local will NOT touch them.

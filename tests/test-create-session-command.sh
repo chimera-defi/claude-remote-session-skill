@@ -38,7 +38,9 @@ has "forbids-hand-rolling-inline"  'do not hand-roll the start script/systemd un
 ok "no-legacy-oldhost-naming" "$(grep -cE 'oldhost[_-]' "$CMD")" "0"
 # The date shape too: legacy was `date +%Y%m%d`, current is <MMDD-HHMM>.
 ok "no-legacy-date-derivation"  "$(grep -cE 'date \+%Y%m%d' "$CMD")" "0"
-has "documents-current-name-shape" '<alias>-<MMDD-HHMM>' "$CMD"
+has "documents-current-name-shape" '<prefix>-<alias>-<MMDD-HHMM>' "$CMD"
+# ...and must not hard-code a concrete host's session prefix (ah/px/cs + -|_ + <alias>).
+ok "no-hardcoded-prefix-name-shape" "$(grep -cE '\b(ah|px|cs)[_-]<alias>' "$CMD")" "0"
 
 # It must NOT walk the model through writing the unit/start script by hand.
 ok "no-inline-start-script-step" "$(grep -cE 'Create the start script at' "$CMD")" "0"
