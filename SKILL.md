@@ -53,7 +53,19 @@ session-send <name> "..."             # relay a follow-up (or --file <path>)
 session-doctor reap <name> [--force] [--keep-registry] [--keep-worktree]
                                        # teardown (tmux + unit) + registry entry + worktree
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
+session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
+                                       # bring a DEAD session back on its own unit + transcript
 ```
+
+**A dead session comes back with `session-resume`, never by hand.** Every agent, Codex
+included: do not type `claude --resume <uuid> …` into a new tmux pane and do not
+`systemctl --user start` the unit bare. A hand relaunch drops the unit's
+`--dangerously-skip-permissions` and binary, so the session stalls on approval prompts
+nobody sees. A bare unit start can open a fresh conversation instead of the old one.
+`session-resume` resumes the session's own transcript by uuid through its own unit, keeps
+the unit's launch flags, and refuses while anything still holds the session. Run
+`--dry-run` first. The steps are in its header comment in `scripts/session-resume.sh`,
+pinned by `tests/test-session-resume.sh`.
 
 `reap` refuses protected names outright, and refuses a session with unlanded/uncommitted
 work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`. It also
@@ -91,7 +103,7 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
 ## Key Rules
 
 - `--dangerously-skip-permissions` always — sessions must never prompt
-- Sentinel file `.sessions-init-<remote_name>` prevents 0s exit on fresh workdirs triggering 300s backoff
+- Sentinel file `.sessions-init-<remote_name>` (touched before the first launch) makes every later restart `--continue`; a one-shot resume pin from `session-resume` overrides it with `--resume <uuid>`
 - `using-superpowers` and the global skills are wired into every session automatically — don't wait for the user to ask
 - One Bash call for the whole recipe — `new-session` is one command; don't split it into manual steps
 - The *generated* start scripts and units are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — never commit them to any repo

@@ -588,7 +588,9 @@ EOF
 #!/usr/bin/env bash
 echo start
 EOF
+  mkdir -p "$RHOME/.sessions/resume"; echo 11111111-1111-4111-8111-111111111111 > "$RHOME/.sessions/resume/$UNITBASE.uuid"
   unitout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" bash "$HERE/../scripts/session-doctor.sh" reap ah_reapunit-0101-0900 --force 2>&1)"; unitrc=$?
+  ok "reap-unit-resume-pin-removed" "$([ -e "$RHOME/.sessions/resume/$UNITBASE.uuid" ] && echo yes || echo no)" "no"
   UNITARCH="$(ls -d "$RHOME/backups/reaped-worktree-ignored/$UNITBASE"-* 2>/dev/null | head -1)"
   ok "reap-unit-archive-exit0" "$unitrc" "0"
   ok "reap-unit-archive-dir-exists" "$([ -n "$UNITARCH" ] && [ -d "$UNITARCH" ] && echo yes || echo no)" "yes"

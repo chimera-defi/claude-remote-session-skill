@@ -85,6 +85,31 @@ Safety guarantees:
   proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
   then kill an idle-but-alive one by hand. It never kills anything itself.
 
+## Bringing a dead session back: `scripts/session-resume.sh`
+
+The inverse of `reap`. `session-resume <name> --dry-run` prints the unit, start script,
+exact launch line, the run directory, the transcript uuid it would resume, and every reason it
+would refuse. Pass `--uuid`: without it the tool auto-picks only when exactly one
+transcript exists in that cwd, and otherwise refuses and lists them (the newest is not
+necessarily the real conversation). Without `--dry-run`, it:
+
+1. writes a one-shot resume pin;
+2. runs `systemctl --user reset-failed`, `enable` and `start` on the unit;
+3. checks that the relaunched process has the same binary and flags plus `--resume <uuid>`,
+   and that Claude's own registry shows that sessionId. No registry entry is a WARN and
+   exit 3, not success. The pin is kept until claude has run 30s+ (or that confirmation),
+   so a uuid claude rejects is retried, never downgraded to `--continue`.
+
+Start scripts generated before the pin loop are patched once, and a backup goes to
+`~/backups/session-resume/`. Codex-backend units are refused, because their loop has no
+resume path.
+
+Why a tool: on 2026-09-29 sessions whose units had died were relaunched by hand. They came
+back without `--dangerously-skip-permissions`, on a different CLI binary, and with no unit.
+Every owner then stalled on approval prompts. A bare `systemctl start` of a session killed
+from outside started a *fresh* conversation, because the `--continue` sentinel was only
+written when claude exited on its own.
+
 ## Recommended cadence (expiry policy)
 
 1. **Weekly:** `session-doctor.sh report`. If orphan units or dead tmux pile up,
