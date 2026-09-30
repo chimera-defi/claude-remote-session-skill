@@ -193,7 +193,7 @@ ExecStart=/bin/true
 EOF
 
   # (b) referenced only via a .service.d/*.conf drop-in, in systemd's %h form
-  # (real case: bus-router-idle-reaper.service.d/state-dir.conf)
+  # (real case: a service.d/state-dir.conf drop-in)
   WT_DROP="$WTHOME/.claude/worktrees/px-wtdrop-0101-0900"
   git -C "$REPO" worktree add -q -b session/px-wtdrop-0101-0900 "$WT_DROP" main >/dev/null 2>&1
   mkdir -p "$WTUD/wtstale-reaper.service.d"

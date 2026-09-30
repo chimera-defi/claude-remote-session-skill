@@ -103,8 +103,8 @@ has "fallback-uses-crss-claude-bin"     '${CRSS_CLAUDE_BIN}'  "$FB"
 # Neither script should carry the old hardcoded home-dir path this pass removed —
 # a regression here means someone pasted a literal path back in instead of
 # using the CRSS_* var.
-ok "new-session-no-hardcoded-home" "$(grep -cF "/home/$(id -un)" "$NS")" "0"
-ok "fallback-no-hardcoded-home"    "$(grep -cF "/home/$(id -un)" "$FB")" "0"
+ok "new-session-no-hardcoded-home" "$(grep -cE '/home/[a-z_][a-z0-9_-]*' "$NS")" "0"
+ok "fallback-no-hardcoded-home"    "$(grep -cE '/home/[a-z_][a-z0-9_-]*' "$FB")" "0"
 
 echo "fallback-recipe-sync: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

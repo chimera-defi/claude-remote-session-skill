@@ -34,7 +34,8 @@ ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
 bash "$ALIAS" a-very-long-folder-name-here --alias keep --set-default >/dev/null
 ok "store-hit" "$(bash "$ALIAS" a-very-long-folder-name-here)" "keep"
 # protected folder is never aliased (token must survive), and not stored.
-# ALIAS_PROTECT's generic default is empty (see session-alias.sh) — a host's# overlay is what adds otherbot|thirdbot via CRSS_ALIAS_PROTECT_NAMES, so these
+# ALIAS_PROTECT's generic default is empty (see session-alias.sh) — a host's
+# overlay is what adds otherbot|thirdbot via CRSS_ALIAS_PROTECT_NAMES, so these
 # assertions set it explicitly to exercise that config-driven path.
 ok "protected-passthrough" "$(CRSS_ALIAS_PROTECT_NAMES='otherbot|thirdbot' bash "$ALIAS" otherbot-autoresearch)" "otherbot-autoresearch"
 ok "protected-not-stored" "$(awk -F'\t' '$1=="otherbot-autoresearch"' "$STORE" | wc -l | tr -d ' ')" "0"
@@ -60,14 +61,14 @@ ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "abs
 # ── Anti-poisoning (regression: real corrupt values seen in the live store) ──
 # The alias must never itself look like a session name (px- prefix / MMDD-HHMM /
 # trailing -MMDD / long numeric run) — that yields doubled px-px-...-MMDD-MMDD names.
-notsess(){ printf '%s' "$1" | grep -qE '^px[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
+notsess(){ printf '%s' "$1" | grep -qiE '^px[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
 
 # READ-PATH guard: a poisoned stored value (from an external writer / manual edit /
 # legacy) is discarded on resolution, re-inferred, and self-healed in the store.
 PZ="$(mktemp)"
 printf 'my-example-long-project-name\ttranche1-ready-0728\n' > "$PZ"
 printf 'discovery-0718\tdiscovery-0718-153051-4107171\n' >> "$PZ"
-printf 'px-demo-project-0722\tah-demo-project-0722-194533-425253\n' >> "$PZ"
+printf 'px-demo-project-0722\tpx-demo-project-0722-194533-425253\n' >> "$PZ"
 r1="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" my-example-long-project-name)"
 r2="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" discovery-0718)"
 r3="$(SESSION_ALIAS_STORE="$PZ" bash "$ALIAS" px-demo-project-0722)"
@@ -227,7 +228,7 @@ ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "a
 # none of the digit checks would catch it either) must not silently survive as
 # a stored alias — found via targeted probing of the read path.
 CI="$(mktemp)"
-printf 'myproj\tAH-foo-bar\n' > "$CI"
+printf 'myproj\tPX-foo-bar\n' > "$CI"
 ci_out="$(SESSION_ALIAS_STORE="$CI" bash "$ALIAS" myproj)"
 ok "caseinsens-readguard-caught"    "$(notsess "$ci_out")" "clean"
 ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI")" "$ci_out"
