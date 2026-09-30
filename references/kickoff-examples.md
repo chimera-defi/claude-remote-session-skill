@@ -46,6 +46,11 @@ WORKING NOTES
   string crosses the parent-to-subagent boundary. Have them write large output to files
   and return short summaries; check their evidence before accepting a report.
 
+STOP RULE: when a step doesn't need a decision from outside, keep going and put status in
+the same message as your next action. Stop and ask only when you can't continue without a
+decision that's genuinely a human's to make, or before something destructive: deleting
+branches/data you didn't create, force-pushing, touching another session or repo.
+
 ESCALATION: anything only a human can decide goes on a numbered list (short description
 plus a recommended option), sent as you find it, not at the end:
 `session-send <launcher> --file <decisions-file>`
@@ -100,6 +105,11 @@ BOUNDARIES, each with its reason
 - Do not delete the worker's working directory: its service unit runs from there.
 - Do not use a bare `git stash`: the stash stack is shared across every worktree.
 - Do not restart sessions you did not start: someone else may be mid-task in them.
+
+STOP RULE: when a step doesn't need a decision from outside, keep going and put status in
+the same message as your next action. Stop and ask only when you can't continue without a
+decision that's genuinely a human's to make, or before something destructive: deleting
+branches/data you didn't create, force-pushing, touching another session or repo.
 
 ESCALATION: decisions only a human can make go to
 `session-send <launcher> --file <decisions-file>` as you find them, each with a

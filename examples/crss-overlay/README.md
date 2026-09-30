@@ -11,7 +11,7 @@ still behaving exactly the way a given host needs it to.
 
 ## What `CRSS_HOME` is
 
-Every crss script resolves the overlay directory as:
+Every crss script that uses the overlay resolves the overlay directory as:
 
 ```
 CRSS_HOME=${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}
@@ -19,7 +19,7 @@ CRSS_HOME=${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}
 
 So by default it's `~/.config/crss`. Inside it:
 
-- `config.sh` — machine-readable settings the scripts read (see below).
+- `config.sh` — machine-readable settings the scripts listed below read.
 - `local.md` — free-form host prose for a human/agent to read before
   spawning a session or writing a kickoff (operator handle, escalation
   channel, project index, delegate routing, whatever is useful). Not read by
@@ -76,8 +76,14 @@ check, so a missing or half-set-up overlay is visible rather than silent.
 
 1. Decide what kind of fact it is.
    - A value a script reads (a path, a model flag, a protected name, a timeout): add a
-     `CRSS_*=value` line to `$CRSS_HOME/config.sh`. The variable must already exist in
-     `config.sh.example`; that file lists every supported one with its default.
+     `CRSS_*=value` line to `$CRSS_HOME/config.sh`. Most variables are documented in
+     `config.sh.example` with their default. Four are read from the environment only
+     (`CRSS_UNIT_DIR`, `CRSS_RESUME_BACKUP_DIR`, `CRSS_RESUME_WAIT`,
+     `CRSS_RESUME_REG_WAIT`); `session-resume` does not load `config.sh`. The scripts that
+     load `config.sh` are `fleet-status`, `new-session`, `record-spawn-telemetry`,
+     `session-alias`, `session-doctor`, `session-handoff`, `session-preserve`,
+     `session-registry` and `telemetry-report`; `session-compact`, `session-git-prep`,
+     `session-resume` and `session-send` do not.
    - Prose for a human or agent (who the operator is, where to escalate, which project
      lives where, which delegate to use): add it to `$CRSS_HOME/local.md`.
 2. Do NOT put either in `SKILL.md`, `references/`, a script, or a test in this repo. It is
@@ -93,7 +99,7 @@ check, so a missing or half-set-up overlay is visible rather than silent.
 2. Run the stricter local check from a repo checkout:
 
    ```sh
-   CRSS_LEAK_DENYLIST="$CRSS_HOME/leak-denylist.txt" bash tests/test-no-host-leaks.sh
+   CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 
    Any hit names the file and line; fix the file in the repo (make it generic), not the

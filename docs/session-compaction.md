@@ -212,8 +212,8 @@ a real fleet, **most reclaimable idle transcript bytes sit in sessions idle >24h
 which a 30–60min window cannot touch by construction.
 
 **Eager (`sweep`) — shipped, but not automatic.** At the time of measurement the
-30–60min bucket held **0 sessions**, while >24h held 21. A point-in-time snapshot
-*cannot* prove a timer would rarely fire — every one of those 21 transited the window
+30–60min bucket held **0 sessions**, while >24h held most of them. A point-in-time snapshot
+*cannot* prove a timer would rarely fire — every one of those sessions transited the window
 earlier — so this is not evidence the timer is useless. It *is* evidence the timer
 can only ever be **forward hygiene** (stopping backlog accumulating), never a fix for
 the existing backlog.
@@ -243,8 +243,8 @@ session-compact.sh install-timer        # writes the .service/.timer; enables NO
 systemctl --user enable --now session-compact-report.timer    # explicit opt-in
 ```
 
-**The unit `install-timer` generates runs `report` mode.** Nothing enables it for you; check with `systemctl --user is-enabled
-session-compact-report.timer`.) Enabling it is safe: it logs who *would* be
+**The unit `install-timer` generates runs `report` mode.** Nothing enables it for you; check with
+`systemctl --user is-enabled session-compact-report.timer`. Enabling it is safe: it logs who *would* be
 compacted to `~/.local/state/session-compact/report.log` and mutates nothing. That
 gives real data on how often the window is actually populated — the thing the
 snapshot above could not measure. Promoting it to `sweep --apply` is a deliberate,
