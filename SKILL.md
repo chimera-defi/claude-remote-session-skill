@@ -264,7 +264,7 @@ in this repo:
 
 | File | Holds | Read by |
 |---|---|---|
-| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | the scripts that load it (`new-session`, `session-doctor`, `session-handoff`, `session-preserve`, `session-registry`, `session-alias`, `fleet-status`, telemetry scripts); not `session-compact`, `session-git-prep`, `session-resume`, `session-send` |
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | the scripts that load it (`new-session`, `session-doctor`, `session-handoff`, `session-preserve`, `session-registry`, `session-alias`, `session-resume`, `fleet-status`, telemetry scripts); not `session-compact`, `session-git-prep`, `session-send` |
 | `local.md` | host prose: operator handle, escalation channel, project index, routing | agents, via a tiny user rules file that `@`-imports it |
 | `leak-denylist.txt` | host-private terms that must never reach this repo | `tests/test-no-host-leaks.sh`, only when `CRSS_LEAK_DENYLIST` is set |
 
