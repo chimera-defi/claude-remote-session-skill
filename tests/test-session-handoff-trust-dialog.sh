@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Regression coverage for Claude Code's first-launch workspace-trust dialog
 # ("Do you trust the files in this folder?" ... "Enter to confirm · Esc to
-# cancel") being treated as a menu widget, not a ready pane. Incident
-# (2026-09-24): a kickoff paste's Enter landed on exactly this dialog on the
+# cancel") being treated as a menu widget, not a ready pane. Incident: a kickoff paste's Enter landed on exactly this dialog on the
 # very first launch in a fresh worktree and answered it with its default
 # "No, exit" — Claude exited immediately and the supervisor loop went into a
 # 300s restart backoff, while `send` reported UNVERIFIED (true, but not why).
@@ -13,7 +12,7 @@
 # BEFORE busy/ready — so both `check` (which gates new-session.sh's kickoff)
 # and `send`'s own initial gate refuse outright instead of falling through to
 # a paste. There is no documented way to pre-accept trust for an INTERACTIVE
-# session (verified against `claude --help` on the installed CLI, 2026-09-24
+# session (verified against `claude --help` on the installed CLI
 # — the only built-in bypass is `-p`/non-interactive mode, which does not
 # apply to a persistent spawned TUI session); the honest fix is to refuse and
 # say so, not to fabricate an auto-answer or write `~/.claude.json` by hand.

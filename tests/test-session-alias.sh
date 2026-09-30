@@ -11,11 +11,11 @@ STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
 # default is empty (see session-alias.sh), so a real $CRSS_HOME/config.sh
 # would change which folders are protected out from under this test.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 
 # short folder (<=18) passes through unchanged
 ok "short-passthrough" "$(bash "$ALIAS" widget-tracker)" "widget-tracker"
@@ -34,16 +34,15 @@ ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
 bash "$ALIAS" a-very-long-folder-name-here --alias keep --set-default >/dev/null
 ok "store-hit" "$(bash "$ALIAS" a-very-long-folder-name-here)" "keep"
 # protected folder is never aliased (token must survive), and not stored.
-# ALIAS_PROTECT's generic default is empty (see session-alias.sh) — this host's
-# overlay is what adds openclaw|hermes via CRSS_ALIAS_PROTECT_NAMES, so these
+# ALIAS_PROTECT's generic default is empty (see session-alias.sh) — a host's# overlay is what adds otherbot|thirdbot via CRSS_ALIAS_PROTECT_NAMES, so these
 # assertions set it explicitly to exercise that config-driven path.
-ok "protected-passthrough" "$(CRSS_ALIAS_PROTECT_NAMES='openclaw|hermes' bash "$ALIAS" openclaw-autoresearch)" "openclaw-autoresearch"
-ok "protected-not-stored" "$(awk -F'\t' '$1=="openclaw-autoresearch"' "$STORE" | wc -l | tr -d ' ')" "0"
+ok "protected-passthrough" "$(CRSS_ALIAS_PROTECT_NAMES='otherbot|thirdbot' bash "$ALIAS" otherbot-autoresearch)" "otherbot-autoresearch"
+ok "protected-not-stored" "$(awk -F'\t' '$1=="otherbot-autoresearch"' "$STORE" | wc -l | tr -d ' ')" "0"
 # --alias on a protected folder is ignored (still keeps identity token)
-ok "protected-ignores-alias" "$(CRSS_ALIAS_PROTECT_NAMES='openclaw|hermes' bash "$ALIAS" openclaw-autoresearch --alias oa)" "openclaw-autoresearch"
+ok "protected-ignores-alias" "$(CRSS_ALIAS_PROTECT_NAMES='otherbot|thirdbot' bash "$ALIAS" otherbot-autoresearch --alias oa)" "otherbot-autoresearch"
 # with no overlay at all (generic default), the same folder is NOT protected
 # — it aliases normally like any other folder.
-ok "unprotected-by-default" "$(bash "$ALIAS" openclaw-autoresearch --alias oa2)" "oa2"
+ok "unprotected-by-default" "$(bash "$ALIAS" otherbot-autoresearch --alias oa2)" "oa2"
 # a folder name that normalizes to nothing (symbols-only, > CAP chars) must
 # never produce an empty alias — found via independent review:
 # an empty alias would flow into a malformed tmux/systemd name like
@@ -242,7 +241,7 @@ ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$
 
 # Every current legit alias must survive untouched (no false positives).
 LS="$(mktemp -u)"
-for x in crss widgets opt-verify eth2qs-orch sl0 ahbr rc-disconnect ebw wmc srf; do
+for x in crss widgets opt-verify proj-orch sl0 ahbr rc-disconnect ebw wmc srf; do
   ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
 done
 
@@ -252,8 +251,8 @@ done
 # and every later bare `new-session <folder>` inherited a name describing work
 # that finished weeks ago. Two audits found 11-of-37 and 11-of-42 entries
 # drifted and every single one was this shape -- none were collisions. The
-# operator cleared all 11 and asked for the leak itself to be closed
-# (2026-09-03), so the common case is now non-destructive and persisting is an
+# operator cleared all 11 and the leak itself was closed,
+# so the common case is now non-destructive and persisting is an
 # explicit opt-in via --set-default.
 PS="$(mktemp -u)"
 # No stored entry yet: --alias resolves for this spawn and stores NOTHING.

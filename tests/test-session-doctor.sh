@@ -4,21 +4,21 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run report (source-guard)
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
-ok "legacy tmux->base" "$(tmux_to_base agenthost_foo-20260101-0900)" "agenthost-foo-20260101-0900"
+ok "legacy tmux->base" "$(tmux_to_base oldhost_foo-20260101-0900)" "oldhost-foo-20260101-0900"
 ok "new tmux->base"    "$(tmux_to_base ah_0101-0900-foo)"            "ah-0101-0900-foo"
 ok "foreign tmux->base" "$(tmux_to_base codexhost_x)"               ""
-ok "legacy svc->tmux"  "$(svc_to_tmux agenthost-foo-20260101-0900)" "agenthost_foo-20260101-0900"
+ok "legacy svc->tmux"  "$(svc_to_tmux oldhost-foo-20260101-0900)" "oldhost_foo-20260101-0900"
 ok "new svc->tmux"     "$(svc_to_tmux ah-0101-0900-foo)"            "ah_0101-0900-foo"
 
 # registry-stale must degrade gracefully (no Python traceback) when the registry
@@ -122,15 +122,15 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$REPO" worktree add -q -b session/ah-wtdead-0101-0900 "$WT_DEAD" main >/dev/null 2>&1
   WT_LIVE="$WTHOME/.claude/worktrees/ah-wtlive-0101-0900"
   git -C "$REPO" worktree add -q -b session/ah-wtlive-0101-0900 "$WT_LIVE" main >/dev/null 2>&1
-  WT_PROT="$WTHOME/.claude/worktrees/ah-hermes-0101-0900"
-  git -C "$REPO" worktree add -q -b session/ah-hermes-0101-0900 "$WT_PROT" main >/dev/null 2>&1
+  WT_PROT="$WTHOME/.claude/worktrees/ah-thirdbot-0101-0900"
+  git -C "$REPO" worktree add -q -b session/ah-thirdbot-0101-0900 "$WT_PROT" main >/dev/null 2>&1
   tmux new-session -d -s ah_wtlive-0101-0900 -c "$WT_LIVE" 'sleep 60'
 
   # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
-  # this host's overlay adds hermes via CRSS_PROTECT_NAMES — set it explicitly
+  # a host overlay adds thirdbot via CRSS_PROTECT_NAMES — set it explicitly
   # here to exercise that config-driven protection, matching the fixture's
-  # "ah-hermes-..." worktree name below.
-  wtout="$(HOME="$WTHOME" CRSS_PROTECT_NAMES='claude-remote|hermes' bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
+  # "ah-thirdbot-..." worktree name below.
+  wtout="$(HOME="$WTHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   tmux kill-session -t ah_wtlive-0101-0900 2>/dev/null || true
 
   ok "worktree-stale-lists-dead"     "$(printf '%s' "$wtout" | grep -qF "$WT_DEAD" && echo yes || echo no)" "yes"
@@ -176,9 +176,9 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
 
   # A dead worktree that ANOTHER systemd --user unit still runs from must get a
   # KEEP line and NO removal command — the printed `remove:` line is what gets
-  # pasted. Regression (live, 2026-09-26): ah-bus-follower-v2-0919-0108 was
+  # pasted. Regression: a dead worktree was
   # offered for `worktree remove --force && branch -D` while being the
-  # WorkingDirectory of four live bus units. Same guard `reap` uses
+  # WorkingDirectory of several live units. Same guard `reap` uses
   # (_wt_used_by_other_unit; see also tests/test-session-doctor-reap-worktree.sh).
   # XDG_CONFIG_HOME is pinned so the unit dir is the fixture, not the real host's.
   WTUD="$WTHOME/.config/systemd/user"; mkdir -p "$WTUD"
@@ -234,7 +234,7 @@ EOF
 
   # Gitignored payload. `git worktree remove` deletes gitignored files (with or
   # without --force) and status=clean never counts them, so a "clean" row can
-  # hold a whole campaign's results — the 2026-08-29 loss, where a
+  # hold a whole campaign's results — a real data loss, where a
   # session pasted these `remove:` lines in bulk. A row whose worktree holds
   # non-regenerable ignored files must carry a NOTE (count / bytes / example
   # path / the archive command) AND have that archive chained ahead of the
@@ -307,8 +307,8 @@ EOF
   ok "worktree-stale-payload-archive-cmd-runs" "$?" "0"
   ok "worktree-stale-payload-archive-cmd-made-archive" "$(ls -d "$WTHOME/backups/reaped-worktree-ignored/ah-wtpay-0101-0900-"*/worktree/artifacts/results.tsv 2>/dev/null | wc -l | tr -d ' ')" "1"
 
-  # The whole chained line, pasted as a human (or a bulk executor — the 2026-08-29
-  # incident) would: eval'd with a `session-doctor` shim on PATH, against a repo
+  # The whole chained line, pasted as a human (or a bulk executor — as in the
+  # original incident) would: eval'd with a `session-doctor` shim on PATH, against a repo
   # whose path has a space. (1) archive fails (over the cap) -> `&&` stops the
   # chain and the worktree survives; (2) archive succeeds -> archived, THEN removed.
   SHIM="$WTTMP/shim"; mkdir -p "$SHIM"
@@ -357,7 +357,7 @@ if command -v git >/dev/null 2>&1; then
   # (exercises the cache-hit branch, not just the compute path).
   ok "defbr-cached-call" "$(_default_branch "$DBTMP/clone")" "main"
 
-  # Real repo with a github.com origin: gh is authenticated on this host and
+  # Real repo with a github.com origin: gh is authenticated on the host and
   # resolves the real default branch, matching the incident this exists to
   # prevent (a hardcoded/stale "main" silently disagreeing with reality).
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
@@ -475,7 +475,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # can't discard uncommitted changes — but git-IGNORED files are still deleted
   # (as the old --force line also did), which is why the NOTE points at
   # `status --ignored`: it lists those files, which a paste would still lose.
-  # Regression (live): ah-pf-process-0924-0734 was status=DIRTY landed=yes and
+  # Regression: a worktree was status=DIRTY landed=yes and
   # still got `worktree remove --force … && branch -D …`. Clean rows keep --force
   # (git counts the spawner's untracked .claude/skills baseline as untracked, which
   # _wt_dirty deliberately ignores — see the WT_LANDED fixture above).
@@ -561,9 +561,9 @@ STUB_EOF
   # 1. Protected name -> refused outright, regardless of --force, and nothing
   # is touched (there's no real resource here, so this only checks message +
   # exit code). PROTECT's generic default is just "claude-remote" (see
-  # session-doctor.sh); this host's overlay adds hermes via
+  # session-doctor.sh); a host overlay adds thirdbot via
   # CRSS_PROTECT_NAMES — set it explicitly to exercise that config-driven path.
-  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" CRSS_PROTECT_NAMES='claude-remote|hermes' bash "$HERE/../scripts/session-doctor.sh" reap ah-hermes-fake-0101-0900 --force 2>&1)"; protrc=$?
+  protout="$(PATH="$RSTUB:$PATH" HOME="$RHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" reap ah-thirdbot-fake-0101-0900 --force 2>&1)"; protrc=$?
   has "reap-protected-refused" "$protout" "PROTECTED"
   ok  "reap-protected-exit2"   "$protrc" "2"
 

@@ -3,7 +3,7 @@
 # prompt-glyph matching must never use a bracket character class containing
 # any multi-byte prompt glyph (e.g. `[❯›]`).
 #
-# Concrete bug this guards (found in nightly review, 2026-09-29): the Codex
+# Concrete bug this guards (found in review): the Codex
 # backend PR added Codex's `›` prompt alongside Claude's `❯` by writing
 # `[❯›]`/`[^❯›]` bracket expressions in _input_region/_transcript_region/
 # _has_prompt and the input-box prefix-strip in _input_box_empty. Under a

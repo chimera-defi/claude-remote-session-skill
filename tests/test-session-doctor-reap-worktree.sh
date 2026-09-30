@@ -14,11 +14,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
@@ -109,7 +109,7 @@ has "dropin-guard-message" "$out5" "in use by unit another-bus-unit.service"
 
 # ── 5b. unit-reference guard: a drop-in referencing the worktree only via
 # systemd's %h specifier (= $HOME) must still be caught — real case:
-# bus-router-idle-reaper.service.d/state-dir.conf spells the path
+# a service.d/state-dir.conf drop-in spells the path
 # %h/.claude/worktrees/<name>/... instead of $HOME/.claude/worktrees/... ────
 WT_PCTH="$TESTHOME/.claude/worktrees/ah-rwpcth-0101-0900"
 git -C "$REPO" worktree add -q -b session/ah-rwpcth-0101-0900 "$WT_PCTH" main >/dev/null 2>&1
@@ -243,7 +243,7 @@ rm -rf "$RSTUB_TRAV"
 # ── 13. gitignored payload: `git worktree remove` (with or without --force)
 # silently deletes gitignored files, and _wt_dirty / session-preserve both
 # ignore them, so a "clean" worktree can hold a whole campaign's results
-# (2026-08-29 loss). reap must ARCHIVE the non-regenerable ones before
+# (a real data loss). reap must ARCHIVE the non-regenerable ones before
 # removing, and keep the worktree if it cannot. The fixture repo ignores the
 # same scaffolding paths the host's global git ignore does, so the deny-list
 # (not git) is what has to keep those out of the payload.

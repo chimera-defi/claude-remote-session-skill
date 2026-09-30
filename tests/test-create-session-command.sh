@@ -2,11 +2,11 @@
 # test-create-session-command.sh — regression: the /create-session command must
 # stay a thin pointer at new-session.sh, never a hand-rolled recipe.
 #
-# Concrete incident this guards (2026-09-02): the DEPLOYED global command at
-# ~/.claude/commands/create-session.md was a stale physical copy from 2026-06-08
-# that still told the model to derive SESSION=agenthost_<folder>-<YYYYMMDD>, to
+# Concrete failure this guards: a DEPLOYED global command at
+# ~/.claude/commands/create-session.md was a stale physical copy
+# that still told the model to derive SESSION=oldhost_<folder>-<YYYYMMDD>, to
 # hand-write the start script and systemd unit inline, and to commit them to
-# `<mono-repo>/scripts/agenthost/`. Every one of those is wrong now: the naming
+# `<mono-repo>/scripts/oldhost/`. Every one of those is wrong now: the naming
 # scheme is ah_<alias>-<MMDD-HHMM>, new-session.sh generates the unit, and the
 # generated scripts are explicitly local-only. Invoking /create-session outside
 # this repo therefore produced a session named on the legacy scheme with none of
@@ -32,10 +32,10 @@ has "delegates-to-new-session"     'new-session "$FOLDERNAME"' "$CMD"
 has "points-at-fallback-recipe"    'references/fallback-recipe.md' "$CMD"
 has "forbids-hand-rolling-inline"  'do not hand-roll the start script/systemd unit inline' "$CMD"
 
-# It must NOT re-teach the legacy creation scheme. `agenthost_`/`agenthost-` are
+# It must NOT re-teach the legacy creation scheme. `oldhost_`/`oldhost-` are
 # still recognised by session-doctor/handoff/preserve/registry for the live
 # legacy session, but nothing should ever CREATE one again.
-ok "no-legacy-agenthost-naming" "$(grep -cE 'agenthost[_-]' "$CMD")" "0"
+ok "no-legacy-oldhost-naming" "$(grep -cE 'oldhost[_-]' "$CMD")" "0"
 # The date shape too: legacy was `date +%Y%m%d`, current is <MMDD-HHMM>.
 ok "no-legacy-date-derivation"  "$(grep -cE 'date \+%Y%m%d' "$CMD")" "0"
 has "documents-current-name-shape" 'ah-<alias>-<MMDD-HHMM>' "$CMD"

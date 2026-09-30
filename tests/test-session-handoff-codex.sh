@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # and CI's generic defaults.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"
 

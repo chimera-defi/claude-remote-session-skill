@@ -3,11 +3,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "ah", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "ah_"/"ah-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 NS="$HERE/../scripts/new-session.sh"
 # Expose the helper as `session-alias` (no .sh) via a throwaway bin dir on PATH,
 # so new-session's `command -v session-alias` resolves it — WITHOUT polluting the
@@ -136,8 +136,8 @@ fi
 # ── Spawn profile switch + per-role model default (CLAUDE_SESSION_PROFILE) ────
 # A profile selects BOTH the tool footprint AND a default model. builder/
 # copywriter use a bare alias so those role defaults auto-track the latest
-# release for their tier; orchestrator is pinned to claude-opus-5-5 (2026-09-24,
-# see scripts/new-session.sh's Model selection comment for why). An explicit
+# release for their tier; orchestrator is pinned to claude-opus-5-5
+# (see scripts/new-session.sh's Model selection comment for why). An explicit
 # CLAUDE_SESSION_MODEL always overrides. Unknown profile → orchestrator + warning.
 outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
 has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
@@ -175,7 +175,7 @@ has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
 erru="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>&1 1>/dev/null)"
 has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
 
-# ── --dry-run must bypass the preflight capacity gate (found in nightly review) ──
+# ── --dry-run must bypass the preflight capacity gate (found in review) ──
 # --dry-run is documented as a pure, side-effect-free preview ("print the
 # resolved names and exit — no session spawned, store untouched"), but the
 # capacity gate ran unconditionally before DRYRUN was consulted, so a --dry-run
@@ -193,7 +193,7 @@ capexit2=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" capacity-real-run-test
 ok "non-dry-run-capacity-gate-still-refuses" "$capexit2" "1"
 
 # ── Unknown TYPE positional must warn and fall back, not silently redirect ──
-# (found in nightly review): only "auto" and "workspace" were explicitly
+# (found in review): only "auto" and "workspace" were explicitly
 # checked; any other value (e.g. a typo like `workspce`) fell straight into
 # the `else` branch and was silently treated as `sessions`, redirecting a
 # repo-intended spawn into .sessions/ with zero diagnostic — inconsistent with
@@ -207,7 +207,7 @@ ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1 1>/dev/null)"
 if printf '%s' "$ertyok" | grep -q 'unknown session type'; then fail=$((fail+1)); echo "FAIL: known-type-should-not-warn"; else pass=$((pass+1)); fi
 
 # ── Session-name lock loop must not hang forever on a persistent mkdir failure ──
-# (found in nightly review): the mkdir-based same-minute-collision lock had no
+# (found in review): the mkdir-based same-minute-collision lock had no
 # bound — a persistent (non-transient) mkdir failure (LOCKROOT on a read-only/
 # full filesystem, or a plain file occupying that path) made every iteration
 # fail identically forever, spinning with no sleep, no cap, and no diagnostic.
@@ -232,8 +232,8 @@ fi
 # broken" rather than "never allowlisted", with no error and no warning.
 #
 # This already regressed once and was caught only in production: the DEPLOYED
-# ~/.local/bin/new-session was hand-patched to re-add `advisor` (2026-08-27,
-# cf. its .pre-advisor-readd backup) but the fix was never landed back here, so
+# ~/.local/bin/new-session was hand-patched to re-add `advisor`
+# but the fix was never landed back here, so
 # the repo stayed wrong and any redeploy-from-source would silently undo it.
 # Nothing tested the allowlist, which is why the drift survived. It does now.
 builder_tools_line="$(grep -m1 '^BUILDER_TOOLS=' "$NS")"
@@ -243,7 +243,7 @@ ok "builder-tools-comment-not-stale" \
   "$(grep -c 'SendUserFile, advisor, ReportFindings' "$NS")" "0"
 
 # ── `new-session --alias` must NOT mutate the folder's stored default ─────────
-# Operator directive 2026-09-03, after clearing 11 drifted entries: --alias is
+# Policy: --alias is
 # PER-SPAWN; persisting is opt-in via --set-default-alias.
 #
 # Testing this through --dry-run would be VACUOUS: --dry-run already passes

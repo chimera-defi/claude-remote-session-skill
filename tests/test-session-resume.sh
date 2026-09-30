@@ -71,7 +71,7 @@ EOF
 chmod +x "$T/bin/"*
 export PATH="$T/bin:$PATH" STUB_STATE="$T/state" ARGV_LOG="$T/state/argv"
 
-# ── fixture: a session whose unit died, as on 2026-09-28 ─────────────────────
+# ── fixture: a session whose unit died, after a crash ─────────────────────
 # Old (pre-pin) start-script shape, copied from a real generated script.
 mk_session() {  # $1 = remote name (ah-...) -> repo, own worktree, unit, script, 2 transcripts
   local r="$1" s="ah_${1#ah-}" repo="$T/repo-$1" wt="$CRSS_CLAUDE_HOME/worktrees/$1"
@@ -107,7 +107,7 @@ done'
 SCRIPT
   chmod +x "$sc"
   printf '[Unit]\nDescription=x\n[Service]\nType=oneshot\nExecStart=%s\nExecStop=/usr/bin/tmux kill-session -t %s\n' "$sc" "$s" > "$CRSS_UNIT_DIR/$r.service"
-  echo "[2026-09-28T02:56:03Z] session=$s rundir=$wt" >> "$CRSS_SESSIONS_DIR/session-starts.log"
+  echo "[2026-01-01T01:01:01Z] session=$s rundir=$wt" >> "$CRSS_SESSIONS_DIR/session-starts.log"
   local proj
   proj="$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$wt" | sed 's/[^A-Za-z0-9]/-/g')"
   mkdir -p "$proj"
@@ -255,7 +255,7 @@ fi
 R=ah-rsm-e; CAN="$T/canon-e"; mkdir -p "$CAN"; git init -q -b main "$CAN"; git -C "$CAN" commit -q --allow-empty -m i
 mk_session "$R"; SC="$T/scripts/$R-start.sh"
 sed -i "s#^WORKDIR=.*#WORKDIR=\"$CAN\"#" "$SC"; git -C "$T/repo-$R" worktree remove --force "$CRSS_CLAUDE_HOME/worktrees/$R"
-echo "[2026-09-28T02:56:04Z] session=ah_rsm-e rundir=$CAN" >> "$CRSS_SESSIONS_DIR/session-starts.log"
+echo "[2026-01-01T01:01:02Z] session=ah_rsm-e rundir=$CAN" >> "$CRSS_SESSIONS_DIR/session-starts.log"
 mkdir -p "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')"
 echo '{}' > "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')/$NEW.jsonl"
 # A CLEAN canonical tree is not "dirty" (empty git status must not match).
@@ -278,7 +278,7 @@ has "unverified-fail-line" "$out" "FAIL: no process running"
 
 # 12. several transcripts, no --uuid -> refuse and list them, even when one is
 # clearly newest (a fresh transcript from a bad restart sits over the real one,
-# as in the ah-spx-successor incident); --uuid names the one to resume.
+# as after a bad restart); --uuid names the one to resume.
 R=ah-rsm-g; mk_session "$R"
 out="$(bash "$SR" ah_rsm-g --dry-run 2>&1)"; ok "multi-transcript-exit1" "$?" 1
 has "multi-transcript-refuse" "$out" "pass --uuid"

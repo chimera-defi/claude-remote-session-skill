@@ -6,7 +6,7 @@
 # session-registry.sh). The shared block's OWN logic (byte-identity, fallback
 # rules) is pinned by tests/test-crss-overlay-config.sh; this file exercises
 # each script's actual parse/generate FUNCTION or PATH with:
-#   - this host's real shape (CRSS_SESSION_PREFIX=ah, CRSS_LEGACY_PREFIXES=agenthost)
+#   - a configured-prefix shape (CRSS_SESSION_PREFIX=ah, CRSS_LEGACY_PREFIXES=oldhost)
 #   - the generic default (no prefix config at all -> "cs")
 #   - a custom prefix (CRSS_SESSION_PREFIX=zz)
 #   - an unrelated/foreign tmux-style name (must never be recognised)
@@ -43,25 +43,25 @@ trap _crss_test_cleanup EXIT
 #    existing test-session-doctor.sh already uses).
 # ═══════════════════════════════════════════════════════════════════════════
 
-# 1a. host shape (CRSS_SESSION_PREFIX=ah, CRSS_LEGACY_PREFIXES=agenthost):
+# 1a. host shape (CRSS_SESSION_PREFIX=ah, CRSS_LEGACY_PREFIXES=oldhost):
 # byte-identical to today for both the current and legacy prefix.
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash -c "
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash -c "
   source '$REPO/scripts/session-doctor.sh'
-  echo \"legacy-base=\$(tmux_to_base agenthost_foo-20260101-0900)\"
+  echo \"legacy-base=\$(tmux_to_base oldhost_foo-20260101-0900)\"
   echo \"new-base=\$(tmux_to_base ah_0101-0900-foo)\"
   echo \"foreign-base=[\$(tmux_to_base codexhost_x)]\"
-  echo \"legacy-svc=\$(svc_to_tmux agenthost-foo-20260101-0900)\"
+  echo \"legacy-svc=\$(svc_to_tmux oldhost-foo-20260101-0900)\"
   echo \"new-svc=\$(svc_to_tmux ah-0101-0900-foo)\"
 ")"
-has "doctor-host-legacy-tmux2base" "$out" "legacy-base=agenthost-foo-20260101-0900"
+has "doctor-host-legacy-tmux2base" "$out" "legacy-base=oldhost-foo-20260101-0900"
 has "doctor-host-new-tmux2base"    "$out" "new-base=ah-0101-0900-foo"
 has "doctor-host-foreign-tmux2base" "$out" "foreign-base=[]"
-has "doctor-host-legacy-svc2tmux"  "$out" "legacy-svc=agenthost_foo-20260101-0900"
+has "doctor-host-legacy-svc2tmux"  "$out" "legacy-svc=oldhost_foo-20260101-0900"
 has "doctor-host-new-svc2tmux"     "$out" "new-svc=ah_0101-0900-foo"
 
 # 1b. generic default (no prefix config at all): "cs_foo" parses, "ah_foo"
-# (this host's ACTUAL live prefix) does NOT — the safe direction, proving a
-# fresh/other host never silently inherits this host's sessions.
+# (a configured prefix) does NOT — the safe direction, proving a
+# fresh/other host never silently inherits another host's sessions.
 out="$(CRSS_HOME="$ISO_HOME" bash -c "
   source '$REPO/scripts/session-doctor.sh'
   echo \"generic-base=\$(tmux_to_base cs_foo-0101-0900)\"
@@ -78,13 +78,13 @@ out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz bash -c "
 has "doctor-custom-prefix-parses" "$out" "zz-base=zz-foo-0101-0900"
 
 # 1d. unrelated tmux names are never recognised, under any config.
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash -c "
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash -c "
   source '$REPO/scripts/session-doctor.sh'
   echo \"random-base=[\$(tmux_to_base random_foo)]\"
-  echo \"openclaw-base=[\$(tmux_to_base openclaw-gateway)]\"
+  echo \"otherbot-base=[\$(tmux_to_base otherbot-gateway)]\"
 ")"
 has "doctor-random-foo-rejected" "$out" "random-base=[]"
-has "doctor-openclaw-gateway-rejected" "$out" "openclaw-base=[]"
+has "doctor-otherbot-gateway-rejected" "$out" "otherbot-base=[]"
 
 # 1e. invalid prefix values fall back safely and never match everything —
 # confirmed against reap-local's actual orphan-unit enumeration (the grep -E
@@ -103,14 +103,14 @@ done
 # same `grep -E "^(${_crss_prefix_re})-.*\.service$"` fragment) against a
 # fake systemd user dir — proves the LIVE code path, not a re-derived regex.
 FAKE_UD="$(mktemp -d)"; _CLEANUP_DIRS+=("$FAKE_UD")
-touch "$FAKE_UD/ah-foo-0101-0900.service" "$FAKE_UD/agenthost-bar-0101-0900.service" "$FAKE_UD/codexhost-baz.service" "$FAKE_UD/notaservice.txt"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost XDG_CONFIG_HOME="$(dirname "$FAKE_UD")" bash -c "
+touch "$FAKE_UD/ah-foo-0101-0900.service" "$FAKE_UD/oldhost-bar-0101-0900.service" "$FAKE_UD/codexhost-baz.service" "$FAKE_UD/notaservice.txt"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost XDG_CONFIG_HOME="$(dirname "$FAKE_UD")" bash -c "
   mkdir -p '$(dirname "$FAKE_UD")/systemd/user' 2>/dev/null
   cp '$FAKE_UD'/*.service '$(dirname "$FAKE_UD")/systemd/user/' 2>/dev/null
   bash '$REPO/scripts/session-doctor.sh' reap-local 2>&1
 ")"
 has "reap-local-enumerates-current-prefix" "$out" "ah-foo-0101-0900.service"
-has "reap-local-enumerates-legacy-prefix"  "$out" "agenthost-bar-0101-0900.service"
+has "reap-local-enumerates-legacy-prefix"  "$out" "oldhost-bar-0101-0900.service"
 lacks "reap-local-skips-foreign-unit" "$out" "codexhost-baz.service"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -121,35 +121,35 @@ lacks "reap-local-skips-foreign-unit" "$out" "codexhost-baz.service"
 ALIAS="$REPO/scripts/session-alias.sh"
 
 # 2a. host shape: an ah-prefixed folder desessionifies; a legacy
-# agenthost-prefixed one does too.
+# oldhost-prefixed one does too.
 S1="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost SESSION_ALIAS_STORE="$S1" bash "$ALIAS" ah-agent-torque-0721)"
-ok "alias-host-ah-desessionify" "$out" "agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost SESSION_ALIAS_STORE="$S1" bash "$ALIAS" ah-agent-alpha-0721)"
+ok "alias-host-ah-desessionify" "$out" "agent-alpha"
 S2="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost SESSION_ALIAS_STORE="$S2" bash "$ALIAS" agenthost-agent-torque-0721)"
-ok "alias-host-agenthost-desessionify" "$out" "agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost SESSION_ALIAS_STORE="$S2" bash "$ALIAS" oldhost-agent-alpha-0721)"
+ok "alias-host-oldhost-desessionify" "$out" "agent-alpha"
 
 # 2b. generic default: a cs-prefixed folder desessionifies; an ah-prefixed
 # one under generic defaults is NOT treated as poisoned (no host config ->
 # "ah" is just an ordinary folder-name prefix, not a reserved one).
 S3="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" SESSION_ALIAS_STORE="$S3" bash "$ALIAS" cs-agent-torque-0721)"
-ok "alias-generic-cs-desessionify" "$out" "agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" SESSION_ALIAS_STORE="$S3" bash "$ALIAS" cs-agent-alpha-0721)"
+ok "alias-generic-cs-desessionify" "$out" "agent-alpha"
 S4="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" SESSION_ALIAS_STORE="$S4" bash "$ALIAS" ah-agent-torque-0721)"
-ok "alias-generic-default-ah-not-poisoned" "$out" "ah-agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" SESSION_ALIAS_STORE="$S4" bash "$ALIAS" ah-agent-alpha-0721)"
+ok "alias-generic-default-ah-not-poisoned" "$out" "ah-agent-alpha"
 
 # 2c. custom prefix.
 S5="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz SESSION_ALIAS_STORE="$S5" bash "$ALIAS" zz-agent-torque-0721)"
-ok "alias-custom-zz-desessionify" "$out" "agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz SESSION_ALIAS_STORE="$S5" bash "$ALIAS" zz-agent-alpha-0721)"
+ok "alias-custom-zz-desessionify" "$out" "agent-alpha"
 
 # 2d. invalid CRSS_SESSION_PREFIX falls back to generic "cs" — a folder
 # merely starting with the (rejected) configured value must not be treated
 # as poisoned, and "cs-..." must still be recognised via the fallback.
 S6="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX='.*' SESSION_ALIAS_STORE="$S6" bash "$ALIAS" cs-agent-torque-0721 2>/dev/null)"
-ok "alias-invalid-prefix-falls-back-to-cs" "$out" "agent-torque"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX='.*' SESSION_ALIAS_STORE="$S6" bash "$ALIAS" cs-agent-alpha-0721 2>/dev/null)"
+ok "alias-invalid-prefix-falls-back-to-cs" "$out" "agent-alpha"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. session-preserve.sh — tmux_to_base. Not source-guarded (sourcing runs
@@ -167,15 +167,15 @@ else
 fi
 out="$(bash -c "
   $PRESERVE_FUNC
-  _crss_prefix_re='ah|agenthost'
-  echo \"legacy-base=\$(tmux_to_base agenthost_foo-0101-0900)\"
+  _crss_prefix_re='ah|oldhost'
+  echo \"legacy-base=\$(tmux_to_base oldhost_foo-0101-0900)\"
   echo \"new-base=\$(tmux_to_base ah_0101-0900-foo)\"
   echo \"foreign-base=[\$(tmux_to_base random_foo)]\"
   _crss_prefix_re='cs'
   echo \"generic-base=\$(tmux_to_base cs_foo-0101-0900)\"
   echo \"ah-under-generic=[\$(tmux_to_base ah_foo-0101-0900)]\"
 ")"
-has "preserve-host-legacy-tmux2base" "$out" "legacy-base=agenthost-foo-0101-0900"
+has "preserve-host-legacy-tmux2base" "$out" "legacy-base=oldhost-foo-0101-0900"
 has "preserve-host-new-tmux2base"    "$out" "new-base=ah-0101-0900-foo"
 has "preserve-host-foreign-rejected" "$out" "foreign-base=[]"
 has "preserve-generic-default-parses" "$out" "generic-base=cs-foo-0101-0900"
@@ -184,11 +184,11 @@ has "preserve-generic-default-rejects-ah" "$out" "ah-under-generic=[]"
 # --all's live-session enumeration (grep -E "^(${_crss_prefix_re})_") against
 # real (but clearly test-only, PID-suffixed) tmux sessions.
 if command -v tmux >/dev/null 2>&1; then
-  T1="ah_pfxtest-$$-0101-0900"; T2="agenthost_pfxtest-$$-0101-0900"; T3="random_pfxtest-$$-x"
+  T1="ah_pfxtest-$$-0101-0900"; T2="oldhost_pfxtest-$$-0101-0900"; T3="random_pfxtest-$$-x"
   tmux new-session -d -s "$T1" 2>/dev/null
   tmux new-session -d -s "$T2" 2>/dev/null
   tmux new-session -d -s "$T3" 2>/dev/null
-  out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash "$REPO/scripts/session-preserve.sh" --all 2>&1)"
+  out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash "$REPO/scripts/session-preserve.sh" --all 2>&1)"
   has "preserve-all-includes-current-prefix" "$out" "$T1"
   has "preserve-all-includes-legacy-prefix"  "$out" "$T2"
   lacks "preserve-all-skips-foreign"          "$out" "$T3"
@@ -201,13 +201,13 @@ fi
 # 4. session-handoff.sh — tmux_to_base / _live_ours (source-guarded; safe to
 #    source directly, same technique as session-doctor.sh above).
 # ═══════════════════════════════════════════════════════════════════════════
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash -c "
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash -c "
   source '$REPO/scripts/session-handoff.sh'
-  echo \"legacy-base=\$(tmux_to_base agenthost_foo-0101-0900)\"
+  echo \"legacy-base=\$(tmux_to_base oldhost_foo-0101-0900)\"
   echo \"new-base=\$(tmux_to_base ah_0101-0900-foo)\"
   echo \"foreign-base=[\$(tmux_to_base random_foo)]\"
 ")"
-has "handoff-host-legacy-tmux2base" "$out" "legacy-base=agenthost-foo-0101-0900"
+has "handoff-host-legacy-tmux2base" "$out" "legacy-base=oldhost-foo-0101-0900"
 has "handoff-host-new-tmux2base"    "$out" "new-base=ah-0101-0900-foo"
 has "handoff-host-foreign-rejected" "$out" "foreign-base=[]"
 
@@ -241,19 +241,19 @@ fi
 #    which is fine for this prefix-recognition test).
 # ═══════════════════════════════════════════════════════════════════════════
 if command -v tmux >/dev/null 2>&1; then
-  R1="ah_regtest-$$-0101-0100"; R2="agenthost_regtest-$$-0101-0100"; R3="random_regtest-$$-x"
+  R1="ah_regtest-$$-0101-0100"; R2="oldhost_regtest-$$-0101-0100"; R3="random_regtest-$$-x"
   tmux new-session -d -s "$R1" 2>/dev/null
   tmux new-session -d -s "$R2" 2>/dev/null
   tmux new-session -d -s "$R3" 2>/dev/null
   NOHOME="$(mktemp -d)"
-  out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
+  out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
   has "registry-includes-current-prefix" "$out" "$R1"
   has "registry-includes-legacy-prefix"  "$out" "$R2"
   lacks "registry-skips-foreign"          "$out" "$R3"
-  # generic default: none of the ah_/agenthost_ test sessions show up.
+  # generic default: none of the ah_/oldhost_ test sessions show up.
   out2="$(CRSS_HOME="$ISO_HOME" HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
   lacks "registry-generic-default-skips-ah" "$out2" "$R1"
-  lacks "registry-generic-default-skips-agenthost" "$out2" "$R2"
+  lacks "registry-generic-default-skips-oldhost" "$out2" "$R2"
   rm -rf "$NOHOME"
   for s in "$R1" "$R2" "$R3"; do tmux kill-session -t "$s" 2>/dev/null || true; done
 else
@@ -268,7 +268,7 @@ BINDIR="$(mktemp -d)"; _CLEANUP_DIRS+=("$BINDIR")
 ln -sf "$REPO/scripts/session-alias.sh" "$BINDIR/session-alias"
 STORE="$(mktemp)"; rm -f "$STORE"
 
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost PATH="$BINDIR:$PATH" SESSION_ALIAS_STORE="$STORE" bash "$NS" --dry-run pfxtestproj 2>/dev/null)"
+out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost PATH="$BINDIR:$PATH" SESSION_ALIAS_STORE="$STORE" bash "$NS" --dry-run pfxtestproj 2>/dev/null)"
 has "new-session-host-shape-remote" "$out" "REMOTE_NAME=ah-pfxtestproj"
 has "new-session-host-shape-tmux"   "$out" "SESSION=ah_pfxtestproj"
 

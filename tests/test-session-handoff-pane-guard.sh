@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Regression coverage for two related 2026-09-24 incidents, both about
+# Regression coverage for two related incidents, both about
 # session-handoff.sh correctly reading what's ACTUALLY in the pane before
 # acting on it, rather than trusting a stale or oversimplified signal:
 #
-# 1. BUFFERED NOT DETECTED (cs_svc-gate-0924-0802, `new-session
+# 1. BUFFERED NOT DETECTED (`new-session
 #    my-project --task-file`): Claude Code collapses a large/multi-
 #    line paste to a placeholder ("[Pasted text #1 +17 lines]") instead of
 #    echoing it verbatim. `send` reported UNVERIFIED while the pane showed
@@ -121,7 +121,7 @@ check2_out="$(bash "$NEW_HANDOFF" check "$S2" 2>&1)"; check2_rc=$?
 has "sleep-check-starting" "$check2_out" "state=starting"
 ok  "sleep-check-exit1"    "$check2_rc" "1"
 
-# The dangerous payload from the live incident's shape: backticks + $(...).
+# The dangerous payload from the shape of the original incident: backticks + $(...).
 # If this ever reaches a real shell's stdin, it would execute — the pane
 # capture after `send` must be BYTE-IDENTICAL to before, proving nothing was
 # pasted, not just that send() printed a refusal.

@@ -159,13 +159,13 @@ extract_prefix_re "$REPO/scripts/${PREFIX_RE_FILES[0]}" > "$PREFIX_FILE"
 out="$(bash -c "set -uo pipefail; unset CRSS_SESSION_PREFIX CRSS_LEGACY_PREFIXES; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 has "unset-defaults-to-cs" "$out" "RE=cs"
 
-# valid CRSS_SESSION_PREFIX + valid CRSS_LEGACY_PREFIXES (this host's shape).
-out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=agenthost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "valid-host-shape" "$out" "RE=ah|agenthost"
+# valid CRSS_SESSION_PREFIX + valid CRSS_LEGACY_PREFIXES (a configured-prefix shape).
+out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES=oldhost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "valid-host-shape" "$out" "RE=ah|oldhost"
 
 # multiple valid legacy prefixes.
-out="$(CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='agenthost|oldprefix' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "multiple-legacy-prefixes" "$out" "RE=cs|agenthost|oldprefix"
+out="$(CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='oldhost|oldprefix' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+has "multiple-legacy-prefixes" "$out" "RE=cs|oldhost|oldprefix"
 
 # invalid CRSS_SESSION_PREFIX ('a|', not ^[a-z][a-z0-9]{0,15}$) falls back to
 # the generic default with a warning on stderr — never to an empty pattern.
@@ -186,10 +186,10 @@ has "empty-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX '' is invalid"
 
 # ANY invalid element in CRSS_LEGACY_PREFIXES drops the WHOLE legacy list
 # (not just the bad element) — a valid CRSS_SESSION_PREFIX survives on its own.
-out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='agenthost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
+out="$(CRSS_SESSION_PREFIX=ah CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 has "invalid-legacy-element-drops-whole-list" "$out" "RE=ah"
-has "invalid-legacy-element-not-agenthost" "$(printf '%s' "$out" | grep -qF 'RE=ah|agenthost' && echo yes || echo no)" "no"
-has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'agenthost|.*' has an invalid element"
+has "invalid-legacy-element-not-oldhost" "$(printf '%s' "$out" | grep -qF 'RE=ah|oldhost' && echo yes || echo no)" "no"
+has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
 
 # unset/empty CRSS_LEGACY_PREFIXES is the documented default (no legacy
 # prefixes) — no warning, prefix_re is just CRSS_SESSION_PREFIX.

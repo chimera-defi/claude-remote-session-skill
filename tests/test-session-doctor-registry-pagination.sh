@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for session-doctor.sh's registry_json() pagination.
 #
-# Bug (2026-09-24): registry_json() fetched only the FIRST page of
+# Bug: registry_json() fetched only the FIRST page of
 # GET https://api.anthropic.com/v1/sessions. Live-API evidence: a bare GET
 # returns {data, first_id, has_more, last_id}; has_more=true once the
 # registry holds more than one page (page size 200 in production, confirmed

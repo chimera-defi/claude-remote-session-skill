@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fake-claude-tui.py — throwaway fixture standing in for a Claude Code TUI
 pane in tests/test-session-handoff-paste-race.sh (see that file for the full
-incident writeup: the dropped-first-paste race, 2026-09-24).
+context: the dropped-first-paste race).
 
 Renders a minimal claude-like screen — a "-" status line, a bordered
 ❯-prompt input box, a "[Sonnet 5] <name>" footer — shaped so session-
@@ -11,7 +11,7 @@ read a real captured pane. Renders are full clear+redraw (`ESC[2J ESC[H`) so
 `tmux capture-pane` always reflects current state, not a scrollback smear.
 
 Declares bracketed-paste support (`ESC[?2004h`) before switching the tty to
-raw mode — confirmed empirically (2026-09-24, this task) that tmux's
+raw mode — confirmed empirically that tmux's
 `paste-buffer -p` only wraps content in the `ESC[200~ ... ESC[201~` bracket
 markers when the foreground app has asked for bracketed paste; skipping this
 would make our own paste-vs-keystroke split untestable, not just unrealistic.
@@ -32,7 +32,7 @@ Usage: fake-claude-tui.py <mode>
                    observed bug (a freshly-booted TUI silently eats the first
                    bracketed paste). Paste #2+ is accepted normally, and
                    Enter on a non-empty input box submits it to the
-                   transcript. Models the incident this fix targets.
+                   transcript. Models the failure this fix targets.
   silent-accept   Every paste is logged (i.e. genuinely "delivered" to the
                    app) but NEVER changes the input box or transcript — the
                    screen stays exactly as idle/"safe" as it started, and
@@ -59,7 +59,7 @@ Usage: fake-claude-tui.py <mode>
                    never rendered or acted on — this fixture cannot itself
                    pick "Yes"/"No"; it's here to prove session-handoff.sh
                    refuses to type into it at all, not to model what
-                   happens after an answer is picked. See the 2026-09-24
+                   happens after an answer is picked. See the
                    incident in _is_on_menu's comment (session-handoff.sh).
   collapsed-paste Paste #1 is accepted, but rendered as Claude Code's
                    collapsed-multiline-paste placeholder ("[Pasted text #1
@@ -73,8 +73,8 @@ Usage: fake-claude-tui.py <mode>
                    actually submits it (clears the input box, goes busy).
                    Proves send's retry loop must classify the placeholder as
                    "still buffered" (re-press Enter) rather than "unverified"
-                   (give up after only one try). See the 2026-09-24
-                   ah_svc-gate-0924-0802 incident in _is_collapsed_paste_in_input's
+                   (give up after only one try). See the
+                   original incident in _is_collapsed_paste_in_input's
                    comment (session-handoff.sh).
 """
 import os
@@ -119,7 +119,7 @@ def render():
 
 def render_trust_dialog():
     # No ❯ box at all — the real dialog REPLACES the normal screen, it
-    # doesn't sit inside it. Text matches the live incident transcript
+    # doesn't sit inside it. Text matches the original incident transcript
     # (session-handoff.sh's _is_on_menu comment) closely enough to exercise
     # the same "trust this folder" / "Enter to confirm" / "Esc to cancel"
     # substrings that classifier greps for.

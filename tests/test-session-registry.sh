@@ -6,12 +6,12 @@ REG="$HERE/../scripts/session-registry.sh"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test
 # isolation". session-registry.sh gained the overlay config loader (and the
 # prefix-recognition block) in the same change that added CRSS_SESSION_PREFIX/
-# CRSS_LEGACY_PREFIXES; this host's real shape is prefix "ah", legacy
-# "agenthost" (see examples/crss-overlay/README.md) — set explicitly so the
+# CRSS_LEGACY_PREFIXES; the fixture shape is prefix "ah", legacy
+# "oldhost" (see examples/crss-overlay/README.md) — set explicitly so the
 # "ah_"-prefixed fixtures below keep pinning today's host behaviour.
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+export CRSS_LEGACY_PREFIXES=oldhost
 pass=0; fail=0
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
