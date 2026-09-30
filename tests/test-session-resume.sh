@@ -19,6 +19,9 @@ not_has(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 T="$(mktemp -d)"
+# Per-run unique suffix for remote names and transcript UUIDs: session-resume's
+# liveness checks pgrep host-wide, so concurrent runs must not share fixture names.
+UID12="$(printf '%012x' $$)"
 cleanup() { pkill -f -- "$T/" 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 export CRSS_CLAUDE_HOME="$T/claude" CRSS_UNIT_DIR="$T/units" CRSS_SESSIONS_DIR="$T/sessions"
@@ -112,13 +115,13 @@ SCRIPT
   proj="$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$wt" | sed 's/[^A-Za-z0-9]/-/g')"
   mkdir -p "$proj"
   if [ "${2:-}" != one ]; then
-    echo '{}' > "$proj/11111111-1111-4111-8111-111111111111.jsonl"; touch -d '2 days ago' "$proj/11111111-1111-4111-8111-111111111111.jsonl"
+    echo '{}' > "$proj/11111111-1111-4111-8111-$UID12.jsonl"; touch -d '2 days ago' "$proj/11111111-1111-4111-8111-$UID12.jsonl"
   fi
-  echo '{}' > "$proj/22222222-2222-4222-8222-222222222222.jsonl"
+  echo '{}' > "$proj/22222222-2222-4222-8222-$UID12.jsonl"
   echo "$wt" > "$STUB_STATE/rundir"
 }
-NEW=22222222-2222-4222-8222-222222222222
-OLD=11111111-1111-4111-8111-111111111111
+NEW=22222222-2222-4222-8222-$UID12
+OLD=11111111-1111-4111-8111-$UID12
 
 # 1. usage validation
 bash "$SR" >/dev/null 2>&1; ok "no-args-exit2" "$?" 2
@@ -130,8 +133,8 @@ has "no-unit-message" "$out" "no unit file"
 
 # 2. dry-run on the dead fixture (ONE transcript -> auto-picked): resolves it, plans the
 # patch + unit start with the script's own flags, changes nothing.
-R=px-rsm-a; mk_session "$R" one; SC="$T/scripts/$R-start.sh"; cp "$SC" "$T/orig-a.sh"
-out="$(bash "$SR" px_rsm-a --dry-run 2>&1)"; rc=$?
+R=px-rsm$$-a; mk_session "$R" one; SC="$T/scripts/$R-start.sh"; cp "$SC" "$T/orig-a.sh"
+out="$(bash "$SR" px_rsm$$-a --dry-run 2>&1)"; rc=$?
 ok  "dry-run-exit0" "$rc" 0
 has "dry-run-uuid-sole" "$out" "resume uuid:  $NEW"
 has "dry-run-rundir-own-wt" "$out" "run dir:      $CRSS_CLAUDE_HOME/worktrees/$R"
@@ -144,33 +147,33 @@ ok  "dry-run-no-start" "$(grep -cE '^(start|enable)' "$STUB_STATE/systemctl.log"
 
 # 3. refusals — each holder alone is enough.
 touch "$STUB_STATE/tmux-live"
-out="$(bash "$SR" px_rsm-a --dry-run 2>&1)"; ok "refuse-tmux-exit1" "$?" 1
-has "refuse-tmux" "$out" "REFUSE: live: tmux session px_rsm-a exists"
+out="$(bash "$SR" px_rsm$$-a --dry-run 2>&1)"; ok "refuse-tmux-exit1" "$?" 1
+has "refuse-tmux" "$out" "REFUSE: live: tmux session px_rsm$$-a exists"
 not_has "refuse-tmux-no-dryrun-ok" "$out" "dry-run: nothing changed"
 rm -f "$STUB_STATE/tmux-live"
 echo active > "$STUB_STATE/$R.service.active"
-out="$(bash "$SR" px_rsm-a 2>&1)"; ok "refuse-unit-active-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-a 2>&1)"; ok "refuse-unit-active-exit1" "$?" 1
 has "refuse-unit-active" "$out" "REFUSE: live: unit $R.service is active"
 rm -f "$STUB_STATE/$R.service.active"
 ( exec -a "holder --remote-control $R" sleep 30 ) & hp=$!
 sleep 0.3
-out="$(bash "$SR" px_rsm-a --dry-run 2>&1)"; ok "refuse-remote-holder-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-a --dry-run 2>&1)"; ok "refuse-remote-holder-exit1" "$?" 1
 has "refuse-remote-holder" "$out" "already run --remote-control $R"
 kill "$hp" 2>/dev/null; wait "$hp" 2>/dev/null
 printf '{"pid": %s, "sessionId": "%s"}\n' "$$" "$NEW" > "$CRSS_CLAUDE_HOME/sessions/$$.json"
-out="$(bash "$SR" px_rsm-a --dry-run 2>&1)"; ok "refuse-uuid-open-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-a --dry-run 2>&1)"; ok "refuse-uuid-open-exit1" "$?" 1
 has "refuse-uuid-open" "$out" "has transcript $NEW open"
 rm -f "$CRSS_CLAUDE_HOME/sessions/$$.json"
-out="$(bash "$SR" px_rsm-a --dry-run --uuid 33333333-3333-4333-8333-333333333333 2>&1)"; ok "refuse-foreign-uuid-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-a --dry-run --uuid 33333333-3333-4333-8333-$UID12 2>&1)"; ok "refuse-foreign-uuid-exit1" "$?" 1
 has "refuse-foreign-uuid" "$out" "is not under"
 # Refusal in the real (non-dry) path must also change nothing.
-touch "$STUB_STATE/tmux-live"; bash "$SR" px_rsm-a >/dev/null 2>&1; rm -f "$STUB_STATE/tmux-live"
+touch "$STUB_STATE/tmux-live"; bash "$SR" px_rsm$$-a >/dev/null 2>&1; rm -f "$STUB_STATE/tmux-live"
 cmp -s "$SC" "$T/orig-a.sh"; ok "refuse-script-untouched" "$?" 0
 
 # 4. real run: patches the loop once, pins the uuid, starts the unit, and the
 # relaunched claude carries the ORIGINAL flags plus --resume <uuid>.
 : > "$STUB_STATE/systemctl.log"
-out="$(bash "$SR" px_rsm-a --uuid "$NEW" 2>&1)"; rc=$?
+out="$(bash "$SR" px_rsm$$-a --uuid "$NEW" 2>&1)"; rc=$?
 ok  "run-exit0" "$rc" 0
 has "run-ok-line" "$out" "OK: pid"
 ok  "run-argv" "$(cat "$ARGV_LOG" 2>/dev/null)" "--dangerously-skip-permissions --model claude-opus-5-5 --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $NEW"
@@ -186,41 +189,41 @@ rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
 
 # 5. second resume of the now pin-aware script: no re-patch, still resumes.
 cp "$SC" "$T/patched-a.sh"
-out="$(bash "$SR" px_rsm-a --dry-run 2>&1)"
+out="$(bash "$SR" px_rsm$$-a --dry-run 2>&1)"
 not_has "repeat-no-repatch" "$out" "supervisor loop to honour"
-out="$(bash "$SR" px_rsm-a 2>&1)"; ok "repeat-run-exit0" "$?" 0
+out="$(bash "$SR" px_rsm$$-a 2>&1)"; ok "repeat-run-exit0" "$?" 0
 cmp -s "$SC" "$T/patched-a.sh"; ok "repeat-script-unchanged" "$?" 0
 has "repeat-argv-resume" "$(cat "$ARGV_LOG")" "--remote-control $R --resume $NEW"
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
 
 # 6. --model rewrites MODEL= and every --model "..." — nothing else.
-R=px-rsm-b; mk_session "$R" one; SC="$T/scripts/$R-start.sh"
-out="$(bash "$SR" px_rsm-b --model sonnet 2>&1)"; ok "model-run-exit0" "$?" 0
+R=px-rsm$$-b; mk_session "$R" one; SC="$T/scripts/$R-start.sh"
+out="$(bash "$SR" px_rsm$$-b --model sonnet 2>&1)"; ok "model-run-exit0" "$?" 0
 ok  "model-argv" "$(cat "$ARGV_LOG")" "--dangerously-skip-permissions --model sonnet --exclude-dynamic-system-prompt-sections --settings $T/claude/rc-firstparty.settings.json --remote-control $R --resume $NEW"
 has "model-field" "$(cat "$SC")" 'MODEL="sonnet"'
 not_has "model-no-old-id" "$(cat "$SC")" "claude-opus-5-5"
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
 
 # 7. no transcript for the cwd -> refuse (nothing to resume).
-R=px-rsm-c; mk_session "$R"
+R=px-rsm$$-c; mk_session "$R"
 rm -f "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')"/*.jsonl
-out="$(bash "$SR" px_rsm-c --dry-run 2>&1)"; ok "no-transcript-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-c --dry-run 2>&1)"; ok "no-transcript-exit1" "$?" 1
 has "no-transcript-refuse" "$out" "nothing to resume"
 
 # 7b. a configured LEGACY prefix maps <legacy>_x -> <legacy>-x -> its unit file;
 # an unconfigured prefix is refused as unsafe (no literal prefix in the script).
-R=px-rsm-l; mk_session "$R"; cp "$CRSS_UNIT_DIR/$R.service" "$CRSS_UNIT_DIR/oldhost-rsm-l.service"
-out="$(bash "$SR" oldhost_rsm-l --dry-run 2>&1)"
-has "legacy-prefix-reads-unit" "$out" "remote-control name: px-rsm-l"
+R=px-rsm$$-l; mk_session "$R"; cp "$CRSS_UNIT_DIR/$R.service" "$CRSS_UNIT_DIR/oldhost-rsm$$-l.service"
+out="$(bash "$SR" oldhost_rsm$$-l --dry-run 2>&1)"
+has "legacy-prefix-reads-unit" "$out" "remote-control name: px-rsm$$-l"
 not_has "legacy-prefix-maps-to-unit" "$out" "no unit file"
 not_has "legacy-prefix-not-unsafe" "$out" "unsafe session name"
-out="$(bash "$SR" zzz_rsm-l --dry-run 2>&1)"; ok "unknown-prefix-exit2" "$?" 2
+out="$(bash "$SR" zzz_rsm$$-l --dry-run 2>&1)"; ok "unknown-prefix-exit2" "$?" 2
 has "unknown-prefix-unsafe" "$out" "unsafe session name"
-out="$(CRSS_LEGACY_PREFIXES='' bash "$SR" oldhost_rsm-l --dry-run 2>&1)"; ok "legacy-unset-exit2" "$?" 2
+out="$(CRSS_LEGACY_PREFIXES='' bash "$SR" oldhost_rsm$$-l --dry-run 2>&1)"; ok "legacy-unset-exit2" "$?" 2
 
 # 8. codex-backend unit -> refused (its loop has no resume path).
-R=px-rsm-d; mk_session "$R"; sed -i 's/^PROFILE=.*/&\nBACKEND=codex/' "$T/scripts/$R-start.sh"
-out="$(bash "$SR" px_rsm-d --dry-run 2>&1)"; ok "codex-exit1" "$?" 1
+R=px-rsm$$-d; mk_session "$R"; sed -i 's/^PROFILE=.*/&\nBACKEND=codex/' "$T/scripts/$R-start.sh"
+out="$(bash "$SR" px_rsm$$-d --dry-run 2>&1)"; ok "codex-exit1" "$?" 1
 has "codex-refused" "$out" "backend 'codex' is not supported"
 
 # 9. new-session now GENERATES the pin-aware loop (session-resume sees nothing
@@ -252,48 +255,48 @@ fi
 
 # 10. canonical run dir held by ANOTHER live session's git-prep lock -> refuse
 # (git-prep would start this one in a new worktree, away from its transcript).
-R=px-rsm-e; CAN="$T/canon-e"; mkdir -p "$CAN"; git init -q -b main "$CAN"; git -C "$CAN" commit -q --allow-empty -m i
+R=px-rsm$$-e; CAN="$T/canon-e"; mkdir -p "$CAN"; git init -q -b main "$CAN"; git -C "$CAN" commit -q --allow-empty -m i
 mk_session "$R"; SC="$T/scripts/$R-start.sh"
 sed -i "s#^WORKDIR=.*#WORKDIR=\"$CAN\"#" "$SC"; git -C "$T/repo-$R" worktree remove --force "$CRSS_CLAUDE_HOME/worktrees/$R"
-echo "[2026-01-01T01:01:02Z] session=px_rsm-e rundir=$CAN" >> "$CRSS_SESSIONS_DIR/session-starts.log"
+echo "[2026-01-01T01:01:02Z] session=px_rsm$$-e rundir=$CAN" >> "$CRSS_SESSIONS_DIR/session-starts.log"
 mkdir -p "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')"
 echo '{}' > "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CAN" | sed 's/[^A-Za-z0-9]/-/g')/$NEW.jsonl"
 # A CLEAN canonical tree is not "dirty" (empty git status must not match).
-out="$(bash "$SR" px_rsm-e --dry-run 2>&1)"; ok "canon-free-exit0" "$?" 0
+out="$(bash "$SR" px_rsm$$-e --dry-run 2>&1)"; ok "canon-free-exit0" "$?" 0
 not_has "canon-clean-not-dirty" "$out" "is dirty"
 mkdir -p "$CRSS_CLAUDE_HOME/session-locks"
 echo px_other > "$CRSS_CLAUDE_HOME/session-locks/$(printf '%s' "$CAN" | tr '/ ' '__')_$(printf '%s' "$CAN" | cksum | cut -d' ' -f1).owner"
 touch "$STUB_STATE/tmux-live"   # stub: every has-session succeeds, incl. px_other...
-out="$(bash "$SR" px_rsm-e --dry-run 2>&1)"; rm -f "$STUB_STATE/tmux-live"
+out="$(bash "$SR" px_rsm$$-e --dry-run 2>&1)"; rm -f "$STUB_STATE/tmux-live"
 has "canon-locked-refuse" "$out" "live session px_other holds the canonical tree"
 
 # 11. unit starts but the process never shows up -> exit 3 (something may be
 # running), distinct from a pre-start refusal's exit 1.
-R=px-rsm-f; mk_session "$R" one
+R=px-rsm$$-f; mk_session "$R" one
 sed -i 's#^ExecStart=.*#ExecStart=/bin/true#' "$CRSS_UNIT_DIR/$R.service"
 cp "$T/scripts/$R-start.sh" "$T/f.sh"; printf '[Unit]\n[Service]\nExecStart=%s\n' "$T/f.sh" > "$CRSS_UNIT_DIR/$R.service"
-sed -i 's#tmux send-keys -t "px_rsm-f" .LOG_FILE#tmux send-keys -t "px_rsm-f" \x27exit 0\nLOG_FILE#' "$T/f.sh"
-out="$(CRSS_RESUME_WAIT=2 bash "$SR" px_rsm-f 2>&1)"; ok "unverified-exit3" "$?" 3
+sed -i "s#tmux send-keys -t \"px_rsm$$-f\" .LOG_FILE#tmux send-keys -t \"px_rsm$$-f\" \x27exit 0\nLOG_FILE#" "$T/f.sh"
+out="$(CRSS_RESUME_WAIT=2 bash "$SR" px_rsm$$-f 2>&1)"; ok "unverified-exit3" "$?" 3
 has "unverified-fail-line" "$out" "FAIL: no process running"
 
 # 12. several transcripts, no --uuid -> refuse and list them, even when one is
 # clearly newest (a fresh transcript from a bad restart sits over the real one,
 # as after a bad restart); --uuid names the one to resume.
-R=px-rsm-g; mk_session "$R"
-out="$(bash "$SR" px_rsm-g --dry-run 2>&1)"; ok "multi-transcript-exit1" "$?" 1
+R=px-rsm$$-g; mk_session "$R"
+out="$(bash "$SR" px_rsm$$-g --dry-run 2>&1)"; ok "multi-transcript-exit1" "$?" 1
 has "multi-transcript-refuse" "$out" "pass --uuid"
 has "multi-transcript-lists-newest" "$out" "$NEW"
 has "multi-transcript-lists-old" "$out" "$OLD"
 not_has "multi-transcript-no-resume-uuid" "$out" "resume uuid:  $NEW"
-out="$(bash "$SR" px_rsm-g --dry-run --uuid "$OLD" 2>&1)"; ok "multi-transcript-with-uuid-exit0" "$?" 0
+out="$(bash "$SR" px_rsm$$-g --dry-run --uuid "$OLD" 2>&1)"; ok "multi-transcript-with-uuid-exit0" "$?" 0
 has "multi-transcript-uuid-honoured" "$out" "resume uuid:  $OLD"
 touch "$CRSS_CLAUDE_HOME/projects/$(printf '%s' "$CRSS_CLAUDE_HOME/worktrees/$R" | sed 's/[^A-Za-z0-9]/-/g')/$OLD.jsonl"
-out="$(bash "$SR" px_rsm-g --dry-run 2>&1)"; ok "multi-transcript-same-minute-exit1" "$?" 1
+out="$(bash "$SR" px_rsm$$-g --dry-run 2>&1)"; ok "multi-transcript-same-minute-exit1" "$?" 1
 
 # 13. registry never confirms the sessionId -> WARN + exit 3, never OK; the pin
 # stays (only a confirmed run, or the loop after 30s, clears it).
-R=px-rsm-h; mk_session "$R" one
-out="$(FAKE_CLAUDE_NOREG=1 CRSS_RESUME_REG_WAIT=2 bash "$SR" px_rsm-h 2>&1)"; ok "noreg-exit3" "$?" 3
+R=px-rsm$$-h; mk_session "$R" one
+out="$(FAKE_CLAUDE_NOREG=1 CRSS_RESUME_REG_WAIT=2 bash "$SR" px_rsm$$-h 2>&1)"; ok "noreg-exit3" "$?" 3
 has "noreg-warn" "$out" "WARN:"
 has "noreg-not-confirmed" "$out" "NOT confirmed"
 not_has "noreg-no-ok-line" "$out" "OK: pid"
@@ -323,8 +326,8 @@ has "ns-long-run-resumed" "$(cat "$ARGV_LOG")" "--resume $NEW"
 ok  "ns-long-run-pin-cleared" "$([ -s "$PINF" ] && echo kept || echo gone)" gone
 
 # 15. a pre-pin script patched by session-resume gets the same keep-until-30s loop.
-has "patched-loop-pinned-flag" "$(cat "$T/scripts/px-rsm-a-start.sh")" 'PINNED=1'
-has "patched-loop-pin-cleared-after-run" "$(cat "$T/scripts/px-rsm-a-start.sh")" 'if [ "$PINNED" = 1 ] && [ "$RUNTIME" -ge 30 ]; then rm -f "$RESUME_PIN"; fi'
-not_has "patched-loop-no-early-rm" "$(cat "$T/scripts/px-rsm-a-start.sh")" 'PINNED=1; rm'
+has "patched-loop-pinned-flag" "$(cat "$T/scripts/px-rsm$$-a-start.sh")" 'PINNED=1'
+has "patched-loop-pin-cleared-after-run" "$(cat "$T/scripts/px-rsm$$-a-start.sh")" 'if [ "$PINNED" = 1 ] && [ "$RUNTIME" -ge 30 ]; then rm -f "$RESUME_PIN"; fi'
+not_has "patched-loop-no-early-rm" "$(cat "$T/scripts/px-rsm$$-a-start.sh")" 'PINNED=1; rm'
 
 echo "session-resume: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
