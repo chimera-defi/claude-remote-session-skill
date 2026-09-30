@@ -21,7 +21,7 @@ A change is done when **all** of these are true — not before:
    denylist (your own project/handle vocabulary — never checked into this repo) for a
    stricter local pass:
    ```bash
-   CRSS_LEAK_DENYLIST="$CRSS_HOME/leak-denylist.txt" bash tests/test-no-host-leaks.sh
+   CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
    PR, `shell-tests` is green, and it's merged. Never push to `main`; never self-approve.

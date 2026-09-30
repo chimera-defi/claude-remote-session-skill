@@ -137,7 +137,7 @@
 #CRSS_JUNK_RE_EXTRA=mytool-cache|\.mytoolstate
 
 # CRSS_HEALTH_SNAPSHOT_DIR — where fleet-status.sh looks for the latest
-# server-health-audit JSON snapshot (a directory of UTC-timestamped run
+# host health snapshot writer's JSON snapshot (a directory of UTC-timestamped run
 # dirs, each containing summary.json). fleet-status degrades gracefully
 # with a "no snapshot found" note if this doesn't exist or nothing has ever
 # written to it — it is not a hard dependency.

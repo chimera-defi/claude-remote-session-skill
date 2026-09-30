@@ -142,7 +142,7 @@ the generic defaults in those two files. The parts that matter most for a fresh 
   <parent-session> --file <f>` — a numbered list with your recommended option. Decide
   defaults yourself when there's a normal recommended answer; report them afterwards."*
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
-  domain ("don't branch from local `main`", "no orders without `EXECUTION_APPROVED_HUMAN=1`").
+  domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
 - **Delegate every independent slice.** Research, per-file edits, and verification each go
   to their own subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
@@ -264,7 +264,7 @@ in this repo:
 
 | File | Holds | Read by |
 |---|---|---|
-| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | every crss script |
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | the scripts that load it (`new-session`, `session-doctor`, `session-handoff`, `session-preserve`, `session-registry`, `session-alias`, `fleet-status`, telemetry scripts); not `session-compact`, `session-git-prep`, `session-resume`, `session-send` |
 | `local.md` | host prose: operator handle, escalation channel, project index, routing | agents, via a tiny user rules file that `@`-imports it |
 | `leak-denylist.txt` | host-private terms that must never reach this repo | `tests/test-no-host-leaks.sh`, only when `CRSS_LEAK_DENYLIST` is set |
 
