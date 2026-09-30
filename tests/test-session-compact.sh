@@ -203,7 +203,7 @@ ok "docompact-no-double-issue-single-send" "$sendcount" "1"
 # ============================================================================
 # Bug B: _do_compact must detect completion from the TRANSCRIPT — ground
 # truth, independent of pane text — not just from observed pane state. Real
-# bug, confirmed 2026-09-11 against two live sessions: a genuinely-completed
+# bug, confirmed against live sessions: a genuinely-completed
 # compact ("Compacted (ctrl+o to see full summary)" visibly on the pane) was
 # reported "timeout" by this function, because the pane-state path requires
 # observing `busy` at least once before accepting `ready`, and `busy` was

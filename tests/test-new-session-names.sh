@@ -3,11 +3,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
+export CRSS_LEGACY_PREFIXES=oldhost
 NS="$HERE/../scripts/new-session.sh"
 # Expose the helper as `session-alias` (no .sh) via a throwaway bin dir on PATH,
 # so new-session's `command -v session-alias` resolves it — WITHOUT polluting the
@@ -20,25 +20,25 @@ pass=0; fail=0
 has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
 ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
-# Name-first, date last: ah-<alias>-<MMDD-HHMM>.
+# Name-first, date last: px-<alias>-<MMDD-HHMM>.
 out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
-has "remote-alias-id" "$out" 'REMOTE_NAME=ah-svlpn-[0-9]\{4\}-[0-9]\{4\}'
-has "tmux-underscore" "$out" 'SESSION=ah_svlpn-[0-9]\{4\}-[0-9]\{4\}'
-has "service-name"    "$out" 'SERVICE=.*/ah-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service'
+has "remote-alias-id" "$out" 'REMOTE_NAME=px-svlpn-[0-9]\{4\}-[0-9]\{4\}'
+has "tmux-underscore" "$out" 'SESSION=px_svlpn-[0-9]\{4\}-[0-9]\{4\}'
+has "service-name"    "$out" 'SERVICE=.*/px-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service'
 out2="$(bash "$NS" --dry-run some-proj --alias myproj 2>/dev/null)"
-has "explicit-alias"  "$out2" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
+has "explicit-alias"  "$out2" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
 # this repo's folder contains "claude-remote" but is NOT alias-protected (only
 # names matching a host's CRSS_ALIAS_PROTECT_NAMES are); it shortens to its
 # acronym like any long dev folder.
 out3="$(bash "$NS" --dry-run claude-remote-session-skill 2>/dev/null)"
-has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=ah-crss-[0-9]\{4\}-[0-9]\{4\}'
+has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=px-crss-[0-9]\{4\}-[0-9]\{4\}'
 # regression: a folder literally named `sessions`/`workspace`/`auto` must be
 # spawnable — the type keyword is only a TYPE as the SECOND positional.
 out4="$(bash "$NS" --dry-run sessions 2>/dev/null)"
-has "folder-named-sessions" "$out4" 'REMOTE_NAME=ah-sessions-[0-9]\{4\}-[0-9]\{4\}'
+has "folder-named-sessions" "$out4" 'REMOTE_NAME=px-sessions-[0-9]\{4\}-[0-9]\{4\}'
 # and the type positional still works after the folder
 out5="$(bash "$NS" --dry-run myproj workspace 2>/dev/null)"
-has "type-positional-after-folder" "$out5" 'REMOTE_NAME=ah-myproj-[0-9]\{4\}-[0-9]\{4\}'
+has "type-positional-after-folder" "$out5" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
 
 # Regression: spawning the same folder twice inside the same clock-minute must
 # NOT collide on SESSION/REMOTE_NAME. Simulate the collision with a live tmux
@@ -69,7 +69,7 @@ DATEEOF
   tmux kill-session -t "$first_session" 2>/dev/null || true
   rm -rf "$DATESTUB"
   if [ "$first_session" != "$second_session" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: same-minute collision — got identical SESSION '$second_session' twice"; fi
-  has "same-minute-collision-suffixed" "$second_session" '^ah_cft-0101-0000-2$'
+  has "same-minute-collision-suffixed" "$second_session" '^px_cft-0101-0000-2$'
 fi
 
 # Regression: a name whose tmux session is DEAD but whose worktree is still
@@ -89,10 +89,10 @@ esac
 DATEEOF
 chmod +x "$DATESTUB2/date"
 WTHOME="$(mktemp -d)"
-mkdir -p "$WTHOME/.claude/worktrees/ah-retained-wt-test-0101-0000"
+mkdir -p "$WTHOME/.claude/worktrees/px-retained-wt-test-0101-0000"
 retained="$(HOME="$WTHOME" PATH="$DATESTUB2:$PATH" bash "$NS" --dry-run retained-wt-test 2>/dev/null)"
 rm -rf "$DATESTUB2" "$WTHOME"
-has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=ah-retained-wt-test-0101-0000-2'
+has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=px-retained-wt-test-0101-0000-2'
 
 # ── Real (non-dry-run) collision suffix must also be "-2", not "-3" ──────────
 # (found by Codex review on this PR): the bounded mkdir-lock loop added above
@@ -124,20 +124,20 @@ CTLEOF
   # Base candidate for a 18-char-or-under folder is the folder name as-is
   # (see the short-passthrough rule), so the pre-existing live session's name
   # is deterministic without needing a --dry-run probe first.
-  tmux new-session -d -s ah_collide-real-test-0101-0000 2>/dev/null
+  tmux new-session -d -s px_collide-real-test-0101-0000 2>/dev/null
   RSTORE="$(mktemp -u)"
   rout="$(PATH="$RSTUBBIN:$PATH" HOME="$RLOCKHOME" SESSION_ALIAS_STORE="$RSTORE" bash "$NS" collide-real-test 2>&1)"
-  tmux kill-session -t ah_collide-real-test-0101-0000 2>/dev/null || true
+  tmux kill-session -t px_collide-real-test-0101-0000 2>/dev/null || true
   rm -rf "$RLOCKHOME" "$RSTUBBIN"
-  has "real-collision-suffixed-minus-2" "$rout" 'ah-collide-real-test-0101-0000-2'
+  has "real-collision-suffixed-minus-2" "$rout" 'px-collide-real-test-0101-0000-2'
   if printf '%s' "$rout" | grep -q -- '-0101-0000-3'; then fail=$((fail+1)); echo "FAIL: real-collision-skipped-minus-2 — got -3 instead of -2"; else pass=$((pass+1)); fi
 fi
 
 # ── Spawn profile switch + per-role model default (CLAUDE_SESSION_PROFILE) ────
 # A profile selects BOTH the tool footprint AND a default model. builder/
 # copywriter use a bare alias so those role defaults auto-track the latest
-# release for their tier; orchestrator is pinned to claude-opus-5-5 (2026-09-24,
-# see scripts/new-session.sh's Model selection comment for why). An explicit
+# release for their tier; orchestrator is pinned to claude-opus-5-5
+# (see scripts/new-session.sh's Model selection comment for why). An explicit
 # CLAUDE_SESSION_MODEL always overrides. Unknown profile → orchestrator + warning.
 outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
 has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
@@ -175,7 +175,7 @@ has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
 erru="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>&1 1>/dev/null)"
 has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
 
-# ── --dry-run must bypass the preflight capacity gate (found in nightly review) ──
+# ── --dry-run must bypass the preflight capacity gate (found in review) ──
 # --dry-run is documented as a pure, side-effect-free preview ("print the
 # resolved names and exit — no session spawned, store untouched"), but the
 # capacity gate ran unconditionally before DRYRUN was consulted, so a --dry-run
@@ -184,7 +184,7 @@ has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
 # defeating the "check what this would resolve to" use case --dry-run exists
 # for. A dry-run spawns nothing and consumes no RAM, so it never needs this gate.
 outcap="$(NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run 2>/dev/null)"
-has "dry-run-bypasses-capacity-gate" "$outcap" 'REMOTE_NAME=ah-capacity-dry-run-'
+has "dry-run-bypasses-capacity-gate" "$outcap" 'REMOTE_NAME=px-capacity-dry-run-'
 capexit=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" --dry-run capacity-dry-run >/dev/null 2>&1 || capexit=$?
 ok "dry-run-bypasses-capacity-gate-exit0" "$capexit" "0"
 # Sanity: a real (non-dry-run) spawn on the same low-memory condition must
@@ -193,13 +193,13 @@ capexit2=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" capacity-real-run-test
 ok "non-dry-run-capacity-gate-still-refuses" "$capexit2" "1"
 
 # ── Unknown TYPE positional must warn and fall back, not silently redirect ──
-# (found in nightly review): only "auto" and "workspace" were explicitly
+# (found in review): only "auto" and "workspace" were explicitly
 # checked; any other value (e.g. a typo like `workspce`) fell straight into
 # the `else` branch and was silently treated as `sessions`, redirecting a
 # repo-intended spawn into .sessions/ with zero diagnostic — inconsistent with
 # how CLAUDE_SESSION_PROFILE validates unknown values (warn + fall back).
 outty="$(bash "$NS" --dry-run type-typo-test workspce 2>/dev/null)"
-has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/ah-type-typo-test-'
+has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/px-type-typo-test-'
 erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1 1>/dev/null)"
 has "unknown-type-warns" "$erty" "unknown session type 'workspce'"
 # A recognized TYPE must NOT warn (no false positive on the new validation).
@@ -207,7 +207,7 @@ ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1 1>/dev/null)"
 if printf '%s' "$ertyok" | grep -q 'unknown session type'; then fail=$((fail+1)); echo "FAIL: known-type-should-not-warn"; else pass=$((pass+1)); fi
 
 # ── Session-name lock loop must not hang forever on a persistent mkdir failure ──
-# (found in nightly review): the mkdir-based same-minute-collision lock had no
+# (found in review): the mkdir-based same-minute-collision lock had no
 # bound — a persistent (non-transient) mkdir failure (LOCKROOT on a read-only/
 # full filesystem, or a plain file occupying that path) made every iteration
 # fail identically forever, spinning with no sleep, no cap, and no diagnostic.
@@ -232,8 +232,8 @@ fi
 # broken" rather than "never allowlisted", with no error and no warning.
 #
 # This already regressed once and was caught only in production: the DEPLOYED
-# ~/.local/bin/new-session was hand-patched to re-add `advisor` (2026-08-27,
-# cf. its .pre-advisor-readd backup) but the fix was never landed back here, so
+# ~/.local/bin/new-session was hand-patched to re-add `advisor`
+# but the fix was never landed back here, so
 # the repo stayed wrong and any redeploy-from-source would silently undo it.
 # Nothing tested the allowlist, which is why the drift survived. It does now.
 builder_tools_line="$(grep -m1 '^BUILDER_TOOLS=' "$NS")"
@@ -243,7 +243,7 @@ ok "builder-tools-comment-not-stale" \
   "$(grep -c 'SendUserFile, advisor, ReportFindings' "$NS")" "0"
 
 # ── `new-session --alias` must NOT mutate the folder's stored default ─────────
-# Operator directive 2026-09-03, after clearing 11 drifted entries: --alias is
+# Policy: --alias is
 # PER-SPAWN; persisting is opt-in via --set-default-alias.
 #
 # Testing this through --dry-run would be VACUOUS: --dry-run already passes

@@ -27,7 +27,7 @@ cat > "$GOOD/config.sh" <<'EOF'
 CRSS_PROTECT_NAMES=claude-remote|goodtest
 EOF
 cat > "$GOOD/rules/crss-host.md" <<'EOF'
-This host runs crss. @~/.config/crss/local.md
+A host running crss. @~/.config/crss/local.md
 EOF
 touch "$GOOD/local.md"
 out="$(CRSS_HOME="$GOOD" CRSS_CLAUDE_HOME="$GOOD" bash "$DOCTOR" overlay 2>&1)"; rc=$?
@@ -65,7 +65,7 @@ has "protect-from-config-file" "$protect_out" "PROTECT=[claude-remote|goodtest]"
 
 # ── overlay section is folded into the default `report` output too ─────────
 # Checked statically (grep on the source), not by running `report` mode: a
-# live `report` run touches this HOST's real tmux sessions and the live
+# live `report` run touches the HOST's real tmux sessions and the live
 # Anthropic registry (see test-session-doctor.sh's registry-stale tests for
 # why that needs a fake HOME + stubbed curl) — overkill just to confirm the
 # call site exists.

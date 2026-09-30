@@ -13,11 +13,11 @@ DOCTOR="$HERE/../scripts/session-doctor.sh"
 # Isolation: never read the operator's real overlay (sourcing session-doctor.sh
 # below runs its config loader immediately) — see CLAUDE.md "Test isolation".
 export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# This host's real shape: current prefix "ah", legacy "agenthost" — see
+# Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "ah_"/"ah-" literal to a generic-default shape).
-export CRSS_SESSION_PREFIX=ah
-export CRSS_LEGACY_PREFIXES=agenthost
+# than converting every "px_"/"px-" literal to a generic-default shape).
+export CRSS_SESSION_PREFIX=px
+export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
 pass=0; fail=0
@@ -98,24 +98,24 @@ def row(id, days_ago, status, title, conn="disconnected"):
     return {"id": id, "updated_at": t+"Z", "created_at": t+"Z",
             "connection_status": conn, "session_status": status, "title": title}
 rows = [
-    row("sess_old_normal", 40, "idle", "ah-old-normal-0101-0100"),
-    row("sess_old_hermes", 40, "idle", "ah-hermes-bridge-0101-0100"),
-    row("sess_old_clauderemote", 40, "idle", "Agenthost Direct Claude Remote"),
-    row("sess_old_livetmux", 40, "idle", "ah-livetmux-0101-0100"),
-    row("sess_reqaction_fresh", 40, "requires_action", "ah-reqaction-fresh-0101-0100"),
-    row("sess_reqaction_old", 70, "requires_action", "ah-reqaction-old-0101-0100"),
-    row("sess_too_fresh", 10, "idle", "ah-too-fresh-0101-0100"),
-    row("sess_connected_old", 90, "idle", "ah-connectedold-0101-0100", "connected"),
+    row("sess_old_normal", 40, "idle", "px-old-normal-0101-0100"),
+    row("sess_old_thirdbot", 40, "idle", "px-thirdbot-bridge-0101-0100"),
+    row("sess_old_clauderemote", 40, "idle", "Legacy Direct Claude Remote"),
+    row("sess_old_livetmux", 40, "idle", "px-livetmux-0101-0100"),
+    row("sess_reqaction_fresh", 40, "requires_action", "px-reqaction-fresh-0101-0100"),
+    row("sess_reqaction_old", 70, "requires_action", "px-reqaction-old-0101-0100"),
+    row("sess_too_fresh", 10, "idle", "px-too-fresh-0101-0100"),
+    row("sess_connected_old", 90, "idle", "px-connectedold-0101-0100", "connected"),
 ]
 json.dump(rows, open(sys.argv[1], "w"))
 PYEOF
 
 RUN() {  # RUN <mode-and-args...> — common env for every registry-prune call below
   # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
-  # this host's overlay adds hermes via CRSS_PROTECT_NAMES — set it explicitly
-  # to exercise that config-driven path, matching the "sess_old_hermes" fixture.
+  # a host overlay adds thirdbot via CRSS_PROTECT_NAMES — set it explicitly
+  # to exercise that config-driven path, matching the "sess_old_thirdbot" fixture.
   FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REG" FAKE_DELETE_CODES="${DELETE_CODES:-}" \
-    CRSS_PROTECT_NAMES='claude-remote|hermes' \
+    CRSS_PROTECT_NAMES='claude-remote|thirdbot' \
     PATH="$STUBBIN:$PATH" HOME="$FIXHOME" bash "$DOCTOR" "$@"
 }
 
@@ -126,7 +126,7 @@ dry_out="$(RUN registry-prune 2>&1)"; dry_rc=$?
 ok  "dryrun-exit0"                 "$dry_rc" "0"
 hasnt "dryrun-no-delete-calls"     "$(cat "$CURL_LOG")" "DELETE"
 has "dryrun-would-delete-normal"   "$dry_out" "sess_old_normal"
-has "dryrun-skips-hermes"          "$dry_out" "sess_old_hermes"
+has "dryrun-skips-thirdbot"          "$dry_out" "sess_old_thirdbot"
 has "dryrun-skips-clauderemote"    "$dry_out" "sess_old_clauderemote"
 has "dryrun-skips-reqaction-fresh" "$dry_out" "sess_reqaction_fresh"
 has "dryrun-flags-reqaction-old"   "$dry_out" "sess_reqaction_old"
@@ -134,11 +134,11 @@ hasnt "dryrun-omits-too-fresh"     "$dry_out" "sess_too_fresh"
 hasnt "dryrun-omits-connected-old" "$dry_out" "sess_connected_old"
 hasnt "dryrun-no-token-leak"       "$dry_out" "$FAKE_TOKEN"
 
-# hermes/claude-remote-title/reqaction rows must never appear as "would-delete"
+# thirdbot/claude-remote-title/reqaction rows must never appear as "would-delete"
 # (they're skip reasons, not deletion candidates) — check the exact row, not
 # just substring presence of the id anywhere in the output.
-has "dryrun-hermes-is-skipped-not-would-delete" \
-  "$(printf '%s' "$dry_out" | grep -F 'sess_old_hermes')" "skipped"
+has "dryrun-thirdbot-is-skipped-not-would-delete" \
+  "$(printf '%s' "$dry_out" | grep -F 'sess_old_thirdbot')" "skipped"
 has "dryrun-clauderemote-is-skipped-not-would-delete" \
   "$(printf '%s' "$dry_out" | grep -F 'sess_old_clauderemote')" "skipped"
 has "dryrun-reqaction-old-not-deleted-outcome" \
@@ -147,10 +147,10 @@ has "dryrun-reqaction-old-not-deleted-outcome" \
 # ── live-tmux protection: a candidate whose title matches a currently-live
 # tmux session must be skipped, --apply or not ───────────────────────────
 if command -v tmux >/dev/null 2>&1; then
-  tmux new-session -d -s ah_livetmux-0101-0100 -c "$FIXHOME" 'sleep 60' 2>/dev/null
+  tmux new-session -d -s px_livetmux-0101-0100 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
   lt_out="$(RUN registry-prune --apply 2>&1)"
-  tmux kill-session -t ah_livetmux-0101-0100 2>/dev/null || true
+  tmux kill-session -t px_livetmux-0101-0100 2>/dev/null || true
   has "livetmux-skipped" "$(printf '%s' "$lt_out" | grep -F 'sess_old_livetmux')" "skipped"
   hasnt "livetmux-no-delete-call" "$(cat "$CURL_LOG")" "sessions/sess_old_livetmux"
 fi
@@ -160,7 +160,7 @@ CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
 apply_out="$(RUN registry-prune --apply 2>&1)"; apply_rc=$?
 ok  "apply-exit0" "$apply_rc" "0"
 has "apply-deletes-normal-call"     "$(cat "$CURL_LOG")" "DELETE https://api.anthropic.com/v1/sessions/sess_old_normal"
-hasnt "apply-no-delete-hermes"      "$(cat "$CURL_LOG")" "sessions/sess_old_hermes"
+hasnt "apply-no-delete-thirdbot"      "$(cat "$CURL_LOG")" "sessions/sess_old_thirdbot"
 hasnt "apply-no-delete-clauderemote" "$(cat "$CURL_LOG")" "sessions/sess_old_clauderemote"
 hasnt "apply-no-delete-reqaction-fresh" "$(cat "$CURL_LOG")" "sessions/sess_reqaction_fresh"
 hasnt "apply-no-delete-reqaction-old"   "$(cat "$CURL_LOG")" "sessions/sess_reqaction_old"
@@ -181,7 +181,7 @@ def row(id, days_ago, status, title):
     t = ts(days_ago)
     return {"id": id, "updated_at": t+"Z", "created_at": t+"Z",
             "connection_status": "disconnected", "session_status": status, "title": title}
-rows = [row("sess_ok", 40, "idle", "ah-ok-0101-0100"), row("sess_bad", 40, "idle", "ah-bad-0101-0100")]
+rows = [row("sess_ok", 40, "idle", "px-ok-0101-0100"), row("sess_bad", 40, "idle", "px-bad-0101-0100")]
 json.dump(rows, open(sys.argv[1], "w"))
 PYEOF
 DC="$(mktemp -d)/codes.txt"; echo "sess_bad 500" > "$DC"
@@ -204,13 +204,13 @@ hasnt "noregistry-no-traceback" "$noreg_out" "Traceback"
 # `reap` — see PROTECT there), so neither higher-level path can exercise the
 # helper's own guard; call it directly (it's a sourced shell function).
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
-prot_del_out="$(FAKE_CURL_LOG="$CURL_LOG" HOME="$FIXHOME" PATH="$STUBBIN:$PATH" _registry_delete_one sess_x "Agenthost Direct Claude Remote" 2>&1)"; prot_del_rc=$?
+prot_del_out="$(FAKE_CURL_LOG="$CURL_LOG" HOME="$FIXHOME" PATH="$STUBBIN:$PATH" _registry_delete_one sess_x "Legacy Direct Claude Remote" 2>&1)"; prot_del_rc=$?
 ok  "helper-protects-clauderemote-exit0" "$prot_del_rc" "0"
 has "helper-protects-clauderemote-msg"   "$prot_del_out" "skipped(protected)"
 hasnt "helper-protects-clauderemote-no-delete-call" "$(cat "$CURL_LOG")" "DELETE"
 
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
-unprot_del_out="$(FAKE_CURL_LOG="$CURL_LOG" HOME="$FIXHOME" PATH="$STUBBIN:$PATH" _registry_delete_one sess_y "ah-not-protected-0101-0100" 2>&1)"; unprot_del_rc=$?
+unprot_del_out="$(FAKE_CURL_LOG="$CURL_LOG" HOME="$FIXHOME" PATH="$STUBBIN:$PATH" _registry_delete_one sess_y "px-not-protected-0101-0100" 2>&1)"; unprot_del_rc=$?
 ok  "helper-deletes-unprotected-exit0" "$unprot_del_rc" "0"
 has "helper-deletes-unprotected-msg"   "$unprot_del_out" "deleted"
 has "helper-delete-call-logged" "$(cat "$CURL_LOG")" "DELETE https://api.anthropic.com/v1/sessions/sess_y"
@@ -234,35 +234,35 @@ import json, sys, datetime
 t = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 rows = [{"id": "sess_reapme", "updated_at": t+"Z", "created_at": t+"Z",
          "connection_status": "connected", "session_status": "idle",
-         "title": "ah-reaptest-0101-0900"}]
+         "title": "px-reaptest-0101-0900"}]
 json.dump(rows, open(sys.argv[1], "w"))
 PYEOF
-  tmux new-session -d -s ah_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
+  tmux new-session -d -s px_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
-  reap_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REAPREG" PATH="$RSTUB:$PATH" HOME="$FIXHOME" bash "$DOCTOR" reap ah_reaptest-0101-0900 --force 2>&1)"
-  tmux kill-session -t ah_reaptest-0101-0900 2>/dev/null || true
-  has "reap-still-tears-down"        "$reap_out" "reaped 'ah_reaptest-0101-0900'"
+  reap_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REAPREG" PATH="$RSTUB:$PATH" HOME="$FIXHOME" bash "$DOCTOR" reap px_reaptest-0101-0900 --force 2>&1)"
+  tmux kill-session -t px_reaptest-0101-0900 2>/dev/null || true
+  has "reap-still-tears-down"        "$reap_out" "reaped 'px_reaptest-0101-0900'"
   has "reap-deletes-registry-entry"  "$(cat "$CURL_LOG")" "DELETE https://api.anthropic.com/v1/sessions/sess_reapme"
   has "reap-registry-delete-message" "$reap_out" "sess_reapme"
   hasnt "reap-no-token-leak"         "$reap_out" "$FAKE_TOKEN"
 
   # 2. --keep-registry => no registry call of any kind for a matching entry.
-  tmux new-session -d -s ah_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
+  tmux new-session -d -s px_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
-  keep_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REAPREG" PATH="$RSTUB:$PATH" HOME="$FIXHOME" bash "$DOCTOR" reap ah_reaptest-0101-0900 --force --keep-registry 2>&1)"
-  tmux kill-session -t ah_reaptest-0101-0900 2>/dev/null || true
-  has   "reap-keepregistry-still-tears-down" "$keep_out" "reaped 'ah_reaptest-0101-0900'"
+  keep_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REAPREG" PATH="$RSTUB:$PATH" HOME="$FIXHOME" bash "$DOCTOR" reap px_reaptest-0101-0900 --force --keep-registry 2>&1)"
+  tmux kill-session -t px_reaptest-0101-0900 2>/dev/null || true
+  has   "reap-keepregistry-still-tears-down" "$keep_out" "reaped 'px_reaptest-0101-0900'"
   ok    "reap-keepregistry-no-curl-calls"    "$([ -s "$CURL_LOG" ] && echo called || echo none)" "none"
 
   # 3. Registry unreachable (no credentials at all) => fails soft: reap still
   # reports success (its own exit status), just notes the registry couldn't
   # be reached.
   BADHOME="$(mktemp -d)"
-  tmux new-session -d -s ah_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
-  softfail_out="$(PATH="$RSTUB:$PATH" HOME="$BADHOME" bash "$DOCTOR" reap ah_reaptest-0101-0900 --force 2>&1)"; softfail_rc=$?
-  tmux kill-session -t ah_reaptest-0101-0900 2>/dev/null || true
+  tmux new-session -d -s px_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
+  softfail_out="$(PATH="$RSTUB:$PATH" HOME="$BADHOME" bash "$DOCTOR" reap px_reaptest-0101-0900 --force 2>&1)"; softfail_rc=$?
+  tmux kill-session -t px_reaptest-0101-0900 2>/dev/null || true
   ok  "reap-softfail-exit0"   "$softfail_rc" "0"
-  has "reap-softfail-message" "$softfail_out" "reaped 'ah_reaptest-0101-0900'"
+  has "reap-softfail-message" "$softfail_out" "reaped 'px_reaptest-0101-0900'"
   hasnt "reap-softfail-no-traceback" "$softfail_out" "Traceback"
 
   rm -rf "$RSTUB"

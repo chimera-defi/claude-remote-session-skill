@@ -68,7 +68,7 @@ QUOTED_PANE='● Ready.
 # --- ANSI-preserving fixtures (tmux `capture-pane -p -e`) ---------------------
 # Claude Code renders an auto-suggested "next action" as dim (SGR 2) ghost
 # text sitting in an otherwise-empty input box — confirmed empirically against
-# live sessions on 2026-09-11. It is NOT a user draft, and _is_safe_to_inject
+# live sessions. It is NOT a user draft, and _is_safe_to_inject
 # must tell the two apart using the ANSI-preserving capture `ready` passes.
 ESC=$'\033'
 
