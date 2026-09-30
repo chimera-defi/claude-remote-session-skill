@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-session-handoff-locale-safe-match.sh — regression: session-handoff.sh's
 # prompt-glyph matching must never use a bracket character class containing
-# more than one multi-byte UTF-8 literal (e.g. `[❯›]`).
+# any multi-byte prompt glyph (e.g. `[❯›]`).
 #
 # Concrete bug this guards (found in nightly review, 2026-09-29): the Codex
 # backend PR added Codex's `›` prompt alongside Claude's `❯` by writing
@@ -21,28 +21,35 @@
 # session-handoff's --wait-ready gate and session-compact's busy/idle check
 # fleet-wide on any host running a non-UTF-8 locale (verified: LC_ALL=C, no
 # LANG set). Root cause + fix are documented at each call site; this test
-# pins the fix at the source level so a future edit re-adding a multi-char
+# pins the fix at the source level so a future edit re-adding a prompt-glyph
 # bracket class here fails loudly instead of silently reintroducing the bug.
 #
-# tests/test-session-handoff-codex.sh and tests/test-session-handoff-ready.sh
-# already exercise the functional behavior (and would have caught this bug
-# had they been run under LC_ALL=C); this test is a cheap, locale-independent
-# static guard against the specific pattern shape that caused it.
+# Exercise the real functions under byte and UTF-8 locales as well as
+# guarding the source against unsafe bracket expressions.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SH="$HERE/../scripts/session-handoff.sh"
+# shellcheck disable=SC1090
+source "$SH"   # source-guarded: must NOT run dispatch
 pass=0; fail=0
+ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
-# A bracket expression containing BOTH glyphs (in either order, negated or
-# not) is exactly the shape that decomposes into bytes and false-matches.
-# Restricted to non-comment lines: the fix's own explanatory comments quote
-# the bad pattern verbatim as a warning, which would otherwise self-trigger.
-if grep -vE '^\s*#' "$SH" | grep -qE '\[\^?(❯›|›❯)\]'; then
+has_glyph_bracket() {
+  # Ignore comment-only lines. Match whole glyph literals, even in LC_ALL=C.
+  grep -vE '^[[:space:]]*#' | grep -E '\[\^?\]?([^]]|\[:[^]]*:\])*(❯|›)[^]]*\]' >/dev/null
+}
+
+# Even a single glyph inside a bracket expression decomposes into bytes.
+if has_glyph_bracket < "$SH"; then
   fail=$((fail+1))
-  echo "FAIL: no-multi-glyph-bracket-class — found a [❯›]-shaped bracket expression in $SH; use alternation (❯|›) instead (see _input_region's comment)"
+  echo "FAIL: no-prompt-glyph-bracket-class — found a bracket expression containing ❯ or › in $SH"
 else
   pass=$((pass+1))
 fi
+for pattern in '[❯]' '[›]' '[ ❯›]' '[^❯›]' '[[:space:]❯]' '[]❯]' '[^]›]'; do
+  ok "guard-rejects-$pattern" "$(printf '%s\n' "$pattern" | has_glyph_bracket && echo yes || echo no)" yes
+done
+ok guard-ignores-comment "$(printf '%s\n' '# [❯]' | has_glyph_bracket && echo yes || echo no)" no
 
 # Sanity: the alternation form this was fixed to use is actually present, so
 # this guard isn't just checking a pattern that no longer exists at all.
@@ -52,6 +59,46 @@ else
   fail=$((fail+1))
   echo "FAIL: alternation-form-present — expected an alternation (❯|›) in $SH; has the Codex prompt-glyph support been restructured?"
 fi
+
+# Select every available requested UTF-8 locale; never silently skip both.
+locales=(C)
+for candidate in C.UTF-8 en_US.UTF-8; do
+  if [ "$(LC_ALL="$candidate" locale charmap 2>/dev/null)" = UTF-8 ]; then
+    locales+=("$candidate")
+  fi
+done
+ok utf8-locale-available "$([ "${#locales[@]}" -gt 1 ] && echo yes || echo no)" yes
+
+# A shell function selects the awk implementation for all sourced helpers.
+# Subshells keep locale and function overrides out of the parent test shell.
+for awk_impl in awk gawk mawk; do
+  command -v "$awk_impl" >/dev/null 2>&1 || continue
+  awk_path="$(command -v "$awk_impl")"
+  for test_locale in "${locales[@]}"; do
+    if (
+      export LC_ALL="$test_locale"
+      awk() { "$awk_path" "$@"; }
+      pass=0; fail=0
+      for prompt in '❯ ' '❯ explain ›' '› foo' '❯ hi' '› explain ❯' '❯ explain ❯'; do
+        expected=draft-in-input-box; empty=no
+        if [ "$prompt" = '❯ ' ]; then expected=safe; empty=yes; fi
+        ok "$prompt empty" "$(_input_box_empty "$prompt" && echo yes || echo no)" "$empty"
+        ok "$prompt safety" "$(_safety_reason "$prompt")" "$expected"
+      done
+      pane=$'❯ \n────────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+      ok status-empty "$(_input_box_empty "$pane" && echo yes || echo no)" yes
+      ok status-safe "$(_safety_reason "$pane")" safe
+      pane=$'❯ \n  real draft\n────────────────'
+      ok multiline-draft "$(_safety_reason "$pane")" draft-in-input-box
+      echo "  $awk_impl / $test_locale: pass=$pass fail=$fail"
+      [ "$fail" -eq 0 ]
+    ); then
+      pass=$((pass+1))
+    else
+      fail=$((fail+1))
+    fi
+  done
+done
 
 echo "session-handoff-locale-safe-match: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
