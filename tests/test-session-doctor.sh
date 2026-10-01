@@ -160,7 +160,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   has "worktree-stale-payload-remove-chains-archive" "$(rmline "$b")" "session-doctor archive-ignored $WT_PAY && git -C"
   has "worktree-stale-payload-remove-still-there" "$(rmline "$b")" 'worktree remove --force'
   b="$(blk "$out" "$WTD/px-wtnopay-0101-0900")"
-  ok "worktree-stale-nopayload-row-listed" "$([ -n "$b" ] && echo yes || echo no)" yes
+  ok "worktree-stale-nopayload-row-listed" "$(yn test -n "$b")" yes
   hasnt "worktree-stale-nopayload-no-note" "$b" gitignored
   hasnt "worktree-stale-nopayload-remove-not-chained" "$b" archive-ignored
   b="$(blk "$out" "$WT_DEAD")"
@@ -295,7 +295,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   isdir "wstale-dirty-pasted-cmd-kept-worktree" "$WT_DY"
   isfile "wstale-dirty-pasted-cmd-kept-untracked" "$WT_DY/scratch.txt"
   ok "wstale-dirty-pasted-cmd-kept-modified" "$(grep -cx edit "$WT_DY/a.txt")" 1
-  ok "wstale-dirty-pasted-cmd-kept-branch" "$(git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/px-lcdirtyyes-0101-0900 && echo yes || echo no)" yes
+  ok "wstale-dirty-pasted-cmd-kept-branch" "$(yn git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/px-lcdirtyyes-0101-0900)" yes
   hasnt "wstale-dirty-no-no-force" "$(rmline "$b_dn")" --force
   hasnt "wstale-dirty-no-no-branch-D" "$b_dn" 'branch -D'
   has "wstale-dirty-no-dirty-note" "$b_dn" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DN status --ignored)"

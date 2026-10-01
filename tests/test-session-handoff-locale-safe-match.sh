@@ -99,20 +99,20 @@ for awk_impl in awk gawk mawk; do
       for prompt in '❯ ' '❯ explain ›' '› foo' '❯ hi' '› explain ❯' '❯ explain ❯'; do
         expected=draft-in-input-box; empty=no
         if [ "$prompt" = '❯ ' ]; then expected=safe; empty=yes; fi
-        ok "$prompt empty" "$(_input_box_empty "$prompt" && echo yes || echo no)" "$empty"
+        ok "$prompt empty" "$(yn _input_box_empty "$prompt")" "$empty"
         ok "$prompt safety" "$(_safety_reason "$prompt")" "$expected"
       done
       pane=$'❯ \n────────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)'
-      ok status-empty "$(_input_box_empty "$pane" && echo yes || echo no)" yes
+      ok status-empty "$(yn _input_box_empty "$pane")" yes
       ok status-safe "$(_safety_reason "$pane")" safe
       pane=$'❯ \n  real draft\n────────────────'
       ok multiline-draft "$(_safety_reason "$pane")" draft-in-input-box
       # _is_working: a spinner glyph class must not false-match the bytes of
       # an ordinary ellipsis ("…" = E2 80 A6; A6 is a byte of "✦" = E2 9C A6).
-      ok "working-spinner" "$(_is_working '✽ Crafting…' && echo yes || echo no)" yes
-      ok "working-esc" "$(_is_working 'x (esc to interrupt)' && echo yes || echo no)" yes
-      ok "idle-two-ellipses" "$(_is_working 'Reading… done…' && echo yes || echo no)" no
-      ok "idle-see-foo" "$(_is_working 'see foo… bar…' && echo yes || echo no)" no
+      ok "working-spinner" "$(yn _is_working '✽ Crafting…')" yes
+      ok "working-esc" "$(yn _is_working 'x (esc to interrupt)')" yes
+      ok "idle-two-ellipses" "$(yn _is_working 'Reading… done…')" no
+      ok "idle-see-foo" "$(yn _is_working 'see foo… bar…')" no
       echo "  $awk_impl / $test_locale: pass=$pass fail=$fail"
       [ "$fail" -eq 0 ]
     ); then

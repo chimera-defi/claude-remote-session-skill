@@ -127,7 +127,7 @@ send2_out="$(bash "$NEW_HANDOFF" send "$S2" 'echo pwned $(id) `whoami`' 2>&1)"; 
 has "sleep-send-refuses"       "$send2_out" "claude not running in pane (sleep)"
 ok  "sleep-send-exit2"         "$send2_rc" "2"
 after="$(tmux capture-pane -p -t "$S2")"
-ok "sleep-pane-untouched" "$([ "$before" = "$after" ] && echo yes || echo no)" "yes"
+ok "sleep-pane-untouched" "$(yn test "$before" = "$after")" "yes"
 has "sleep-pane-no-injection" "$after" "sleep 300"
 if printf '%s' "$after" | grep -q "pwned"; then
   fail=$((fail+1)); echo "FAIL: sleep-pane-no-injection — payload text leaked into the pane"

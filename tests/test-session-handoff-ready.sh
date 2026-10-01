@@ -153,9 +153,9 @@ ok "reason-busy"        "$(_safety_reason "$BUSY_PANE")"       "busy"
 # Claude's API-retry status line has no parentheses; it must still read busy.
 RETRY_PANE='● Working on the survey…
 ✢ Retrying · next try in 5s · attempt 2 · esc to interrupt'
-ok "working-retry-line" "$(_is_working "$RETRY_PANE" && echo yes || echo no)" "yes"
+ok "working-retry-line" "$(yn _is_working "$RETRY_PANE")" "yes"
 # Collapsed paste: spinner glyph + word… with no "esc to interrupt" yet.
-ok "working-glyph-only" "$(_is_working '✽ Crafting…' && echo yes || echo no)" "yes"
+ok "working-glyph-only" "$(yn _is_working '✽ Crafting…')" "yes"
 ok "reason-draft"       "$(_safety_reason "$DRAFT_PANE")"      "draft-in-input-box"
 ok "reason-menu"        "$(_safety_reason "$MENU_PANE")"       "menu"
 ok "reason-no-prompt"   "$(_safety_reason "$STARTING_PANE")"   "no-prompt"
@@ -171,68 +171,68 @@ ok "reason-dim-plus-menu"         "$(_safety_reason "$DIM_PLACEHOLDER_PLUS_MENU_
 ok "reason-fake-escape-text"      "$(_safety_reason "$FAKE_ESCAPE_TEXT_DRAFT_PANE")"        "draft-in-input-box"
 
 # --- _is_safe_to_inject: exit-status predicate, no echo ------------------------
-ok "safe-ready"     "$(_is_safe_to_inject "$READY_PANE"     && echo yes || echo no)" "yes"
-ok "safe-busy"      "$(_is_safe_to_inject "$BUSY_PANE"      && echo yes || echo no)" "no"
-ok "safe-draft"     "$(_is_safe_to_inject "$DRAFT_PANE"     && echo yes || echo no)" "no"
-ok "safe-menu"      "$(_is_safe_to_inject "$MENU_PANE"      && echo yes || echo no)" "no"
-ok "safe-no-prompt" "$(_is_safe_to_inject "$STARTING_PANE"  && echo yes || echo no)" "no"
-ok "safe-quoted"    "$(_is_safe_to_inject "$QUOTED_PANE"    && echo yes || echo no)" "no"
-ok "safe-empty"     "$(_is_safe_to_inject "$EMPTY_CAP"      && echo yes || echo no)" "no"
-ok "safe-whitespace" "$(_is_safe_to_inject "$WHITESPACE_CAP" && echo yes || echo no)" "no"
-ok "safe-dim-placeholder"      "$(_is_safe_to_inject "$DIM_PLACEHOLDER_PANE"             && echo yes || echo no)" "yes"
-ok "safe-dim-cursor-split"     "$(_is_safe_to_inject "$DIM_PLACEHOLDER_CURSOR_SPLIT_PANE" && echo yes || echo no)" "yes"
-ok "safe-non-dim-styled-draft" "$(_is_safe_to_inject "$NON_DIM_STYLED_DRAFT_PANE"         && echo yes || echo no)" "no"
-ok "safe-dim-plus-menu"        "$(_is_safe_to_inject "$DIM_PLACEHOLDER_PLUS_MENU_PANE"    && echo yes || echo no)" "no"
-ok "safe-fake-escape-text"     "$(_is_safe_to_inject "$FAKE_ESCAPE_TEXT_DRAFT_PANE"       && echo yes || echo no)" "no"
+ok "safe-ready"     "$(yn _is_safe_to_inject "$READY_PANE")" "yes"
+ok "safe-busy"      "$(yn _is_safe_to_inject "$BUSY_PANE")" "no"
+ok "safe-draft"     "$(yn _is_safe_to_inject "$DRAFT_PANE")" "no"
+ok "safe-menu"      "$(yn _is_safe_to_inject "$MENU_PANE")" "no"
+ok "safe-no-prompt" "$(yn _is_safe_to_inject "$STARTING_PANE")" "no"
+ok "safe-quoted"    "$(yn _is_safe_to_inject "$QUOTED_PANE")" "no"
+ok "safe-empty"     "$(yn _is_safe_to_inject "$EMPTY_CAP")" "no"
+ok "safe-whitespace" "$(yn _is_safe_to_inject "$WHITESPACE_CAP")" "no"
+ok "safe-dim-placeholder"      "$(yn _is_safe_to_inject "$DIM_PLACEHOLDER_PANE")" "yes"
+ok "safe-dim-cursor-split"     "$(yn _is_safe_to_inject "$DIM_PLACEHOLDER_CURSOR_SPLIT_PANE")" "yes"
+ok "safe-non-dim-styled-draft" "$(yn _is_safe_to_inject "$NON_DIM_STYLED_DRAFT_PANE")" "no"
+ok "safe-dim-plus-menu"        "$(yn _is_safe_to_inject "$DIM_PLACEHOLDER_PLUS_MENU_PANE")" "no"
+ok "safe-fake-escape-text"     "$(yn _is_safe_to_inject "$FAKE_ESCAPE_TEXT_DRAFT_PANE")" "no"
 
 # --- _is_on_menu: false-positive proofing ---------------------------------------
 # "navigate" alone must not trip the menu detector; only the full distinctive hint strings do
-ok "menu-false-positive-word"  "$(_is_on_menu "$QUOTED_PANE" && echo yes || echo no)" "no"
-ok "menu-false-positive-draft" "$(_is_on_menu "$DRAFT_PANE"  && echo yes || echo no)" "no"
-ok "menu-true-positive"        "$(_is_on_menu "$MENU_PANE"   && echo yes || echo no)" "yes"
+ok "menu-false-positive-word"  "$(yn _is_on_menu "$QUOTED_PANE")" "no"
+ok "menu-false-positive-draft" "$(yn _is_on_menu "$DRAFT_PANE")" "no"
+ok "menu-true-positive"        "$(yn _is_on_menu "$MENU_PANE")" "yes"
 
 # --- _input_box_empty: direct coverage of the empty/draft split ---------------
-ok "inputbox-empty-on-ready" "$(_input_box_empty "$READY_PANE" && echo yes || echo no)" "yes"
-ok "inputbox-empty-on-draft" "$(_input_box_empty "$DRAFT_PANE" && echo yes || echo no)" "no"
-ok "inputbox-empty-on-quoted" "$(_input_box_empty "$QUOTED_PANE" && echo yes || echo no)" "no"
-ok "inputbox-empty-on-dim" "$(_input_box_empty "$DIM_PLACEHOLDER_PANE" && echo yes || echo no)" "yes"
-ok "inputbox-empty-on-empty-cap" "$(_input_box_empty "$EMPTY_CAP" && echo yes || echo no)" "yes"
-ok "inputbox-empty-on-whitespace-cap" "$(_input_box_empty "$WHITESPACE_CAP" && echo yes || echo no)" "yes"
+ok "inputbox-empty-on-ready" "$(yn _input_box_empty "$READY_PANE")" "yes"
+ok "inputbox-empty-on-draft" "$(yn _input_box_empty "$DRAFT_PANE")" "no"
+ok "inputbox-empty-on-quoted" "$(yn _input_box_empty "$QUOTED_PANE")" "no"
+ok "inputbox-empty-on-dim" "$(yn _input_box_empty "$DIM_PLACEHOLDER_PANE")" "yes"
+ok "inputbox-empty-on-empty-cap" "$(yn _input_box_empty "$EMPTY_CAP")" "yes"
+ok "inputbox-empty-on-whitespace-cap" "$(yn _input_box_empty "$WHITESPACE_CAP")" "yes"
 
 # (fixtures above explain each)
 ok "inputbox-not-empty-on-blank-first-line-draft" \
-  "$(_input_box_empty "$BLANK_FIRST_LINE_DRAFT_PANE" && echo yes || echo no)" "no"
+  "$(yn _input_box_empty "$BLANK_FIRST_LINE_DRAFT_PANE")" "no"
 ok "reason-blank-first-line-draft" \
   "$(_safety_reason "$BLANK_FIRST_LINE_DRAFT_PANE")" "draft-in-input-box"
 ok "safe-blank-first-line-draft" \
-  "$(_is_safe_to_inject "$BLANK_FIRST_LINE_DRAFT_PANE" && echo yes || echo no)" "no"
+  "$(yn _is_safe_to_inject "$BLANK_FIRST_LINE_DRAFT_PANE")" "no"
 
 ok "inputbox-not-empty-on-multiline-line1-draft" \
-  "$(_input_box_empty "$MULTI_LINE_DRAFT_LINE1_PANE" && echo yes || echo no)" "no"
+  "$(yn _input_box_empty "$MULTI_LINE_DRAFT_LINE1_PANE")" "no"
 ok "reason-multiline-line1-draft" \
   "$(_safety_reason "$MULTI_LINE_DRAFT_LINE1_PANE")" "draft-in-input-box"
 
 ok "inputbox-empty-on-multiline-whitespace-only" \
-  "$(_input_box_empty "$MULTI_LINE_WHITESPACE_ONLY_PANE" && echo yes || echo no)" "yes"
+  "$(yn _input_box_empty "$MULTI_LINE_WHITESPACE_ONLY_PANE")" "yes"
 ok "reason-multiline-whitespace-only" \
   "$(_safety_reason "$MULTI_LINE_WHITESPACE_ONLY_PANE")" "safe"
 
 ok "inputbox-empty-on-dim-then-immediate-border" \
-  "$(_input_box_empty "$DIM_THEN_IMMEDIATE_BORDER_PANE" && echo yes || echo no)" "yes"
+  "$(yn _input_box_empty "$DIM_THEN_IMMEDIATE_BORDER_PANE")" "yes"
 ok "reason-dim-then-immediate-border" \
   "$(_safety_reason "$DIM_THEN_IMMEDIATE_BORDER_PANE")" "safe"
 
 ok "inputbox-not-empty-on-truncated-no-border" \
-  "$(_input_box_empty "$TRUNCATED_NO_BORDER_PANE" && echo yes || echo no)" "no"
+  "$(yn _input_box_empty "$TRUNCATED_NO_BORDER_PANE")" "no"
 ok "reason-truncated-no-border" \
   "$(_safety_reason "$TRUNCATED_NO_BORDER_PANE")" "draft-in-input-box"
 
 # --- _is_dim_span: direct coverage of the exact-opener matching ---------------
 # a 256-color code merely ending in 2 ("38;5;12m") is NOT dim
 NOT_DIM_COLOR_ONLY="${ESC}[38;5;12mcheck on the blue deployment please${ESC}[0m"
-ok "dimspan-true-plain"  "$(_is_dim_span "${ESC}[2mdelete the backup ref${ESC}[0m" && echo yes || echo no)" "yes"
-ok "dimspan-true-cursor" "$(_is_dim_span "${ESC}[7mc${ESC}[0;2mheck it${ESC}[0m"   && echo yes || echo no)" "yes"
-ok "dimspan-false-color" "$(_is_dim_span "$NOT_DIM_COLOR_ONLY" && echo yes || echo no)" "no"
+ok "dimspan-true-plain"  "$(yn _is_dim_span "${ESC}[2mdelete the backup ref${ESC}[0m")" "yes"
+ok "dimspan-true-cursor" "$(yn _is_dim_span "${ESC}[7mc${ESC}[0;2mheck it${ESC}[0m")" "yes"
+ok "dimspan-false-color" "$(yn _is_dim_span "$NOT_DIM_COLOR_ONLY")" "no"
 
 # --- `ready` CLI mode: real dispatch via a fake `tmux` shim (answers has-session/capture-pane from an env var) ---
 FAKE_TMUX_DIR="$(mktemp -d)"

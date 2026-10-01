@@ -49,7 +49,7 @@ STUB_EOF
   defbr_local_first="$(PATH="$GHSTUB2DIR:$PATH" _default_branch "$DBLREPO")"
   ok  "defbr-local-origin-head-wins-over-gh" "$defbr_local_first" "trunk-marker-branch"
   ok  "defbr-gh-not-invoked-when-local-ref-present" \
-    "$([ -f "$GH_INVOKED_MARKER" ] && echo yes || echo no)" "no"
+    "$(yn test -f "$GH_INVOKED_MARKER")" "no"
 
   rm -rf "$DBLBASE"
 fi

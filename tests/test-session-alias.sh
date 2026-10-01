@@ -32,7 +32,7 @@ ok "unprotected-by-default" "$(bash "$ALIAS" otherbot-autoresearch --alias oa2)"
 # a symbols-only folder name (> CAP chars) must never yield an empty alias (dangling-separator session name)
 long_symbolic='@@@@@@@@@@@@@@@@@@@@'
 out="$(bash "$ALIAS" "$long_symbolic")"
-ok "empty-normalize-nonempty" "$([ -n "$out" ] && echo yes || echo no)" "yes"
+ok "empty-normalize-nonempty" "$(yn test -n "$out")" "yes"
 ok "empty-normalize-safe-charset" "$(printf '%s' "$out" | grep -qE '^[a-z0-9-]+$' && echo yes || echo no)" "yes"
 # --no-save resolves (incl. inference) but must NEVER write the store (a --dry-run must not mutate state)
 NS_STORE="$(mktemp)"; rm -f "$NS_STORE"
@@ -146,13 +146,13 @@ ok "audit-does-not-mutate" "$(cat "$AS")" "$(printf 'sprint-2024\tsprint\nsprint
 TK="$(mktemp -u)"
 tabfolder=$'weird\tfolder'
 out_tab="$(SESSION_ALIAS_STORE="$TK" bash "$ALIAS" "$tabfolder" 2>/dev/null)"
-ok "tabkey-resolves"     "$([ -n "$out_tab" ] && echo yes || echo no)" "yes"
+ok "tabkey-resolves"     "$(yn test -n "$out_tab")" "yes"
 ok "tabkey-not-persisted" "$([ -f "$TK" ] && echo exists || echo absent)" "absent"
 
 NK="$(mktemp -u)"
 nlfolder=$'weird\nfolder'
 out_nl="$(SESSION_ALIAS_STORE="$NK" bash "$ALIAS" "$nlfolder" 2>/dev/null)"
-ok "newlinekey-resolves"     "$([ -n "$out_nl" ] && echo yes || echo no)" "yes"
+ok "newlinekey-resolves"     "$(yn test -n "$out_nl")" "yes"
 ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "absent"
 
 # CASE-INSENSITIVITY: the px-/px_ prefix check must catch `PX-foo-bar` (hand-edited store, no date to trip the digit checks).
