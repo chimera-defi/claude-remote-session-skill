@@ -2,7 +2,7 @@
 
 A [gstack](https://github.com/garrytan/gstack)-compatible Claude Code skill that creates persistent remote Claude sessions via tmux + systemd.
 
-Say "create a session for my-project" and Claude will spin up a session you can connect to from any device — iPhone, desktop, or browser — via the Claude Code remote control feature.
+Say "create a session for my-project" and Claude spins up a session you can connect to from any device (iPhone, desktop, browser) via Claude Code remote control.
 
 ## What it does
 
@@ -11,7 +11,7 @@ Say "create a session for my-project" and Claude will spin up a session you can 
 - Uses `--dangerously-skip-permissions` so sessions never block on tool approval prompts
 - Sentinel file + `--continue` so sessions resume conversation context after restarts
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
-- Per-role default model via `CLAUDE_SESSION_PROFILE` — orchestrator→`claude-opus-5-5` (pinned), builder→sonnet, copywriter→haiku (the latter two are bare aliases that auto-track the latest release); override with `CLAUDE_SESSION_MODEL=<model>`
+- Per-role default model via `CLAUDE_SESSION_PROFILE`; override with `CLAUDE_SESSION_MODEL=<model>` (see "Model default")
 
 ## Requirements
 
@@ -38,7 +38,7 @@ In any Claude Code session, type:
 /gstack-session-spawn
 ```
 
-Then tell Claude which project to create a session for. It will generate the scripts, enable the systemd service, and tell you the remote-control name to connect with.
+Then tell Claude which project to create a session for. It generates the scripts, enables the systemd service, and tells you the remote-control name to connect with.
 
 ## Use the script directly
 
@@ -52,7 +52,7 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-The session will appear in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, configurable via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0101-0630`), where `<alias>` is `my-project` as-is if short, or a persisted acronym/explicit alias if long — see "Naming convention" below.
+The session appears in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs` — e.g. `cs-my-project-0101-0630`); see "Naming convention". Full flag list and recipe: `SKILL.md`.
 
 ## Model default
 
@@ -65,12 +65,11 @@ The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per ro
 | `copywriter` | lightweight doc/copy work | `haiku` (bare alias) |
 
 builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
-latest release for that tier, so spawns pick up a newer Sonnet/Haiku with no edit here.
-orchestrator is **pinned** to an exact id rather than left on the bare `opus` alias, which
-has been observed resolving to different releases across spawns. See
-`scripts/new-session.sh`'s Model selection comment for the current pin, its history, and the
-checks to run before bumping it. Opus 5.x has no `advisor` tool (Sonnet does), which is why
-implementation subagents are pinned to Sonnet — see `agents/builder.md`.
+latest release for that tier. orchestrator is **pinned** to an exact id because the bare
+`opus` alias has been observed resolving to different releases across spawns. See
+`scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
+before bumping it. Opus 5.x has no `advisor` tool (Sonnet does), which is why implementation
+subagents are pinned to Sonnet — see `agents/builder.md`.
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -81,9 +80,8 @@ CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pin
 ```
 
 Use a **bare alias for defaults you want to auto-upgrade**; **pin an exact id only when a
-specific spawn must be reproducible** (which is why orchestrator is pinned). `new-session`
-prints a moving-alias warning only when you pass a bare alias *explicitly* — never for a role
-default (that drift is the point for builder/copywriter).
+specific spawn must be reproducible**. `new-session` prints a moving-alias warning only when
+you pass a bare alias *explicitly* — never for a role default.
 
 ## Naming convention
 
@@ -94,17 +92,12 @@ default (that drift is the point for builder/copywriter).
 | start script | `~/.local/bin/<prefix>-<alias>-<MMDD-HHMM>-start.sh` |
 | systemd service | `~/.config/systemd/user/<prefix>-<alias>-<MMDD-HHMM>.service` |
 
-Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside the
-mobile-list window while reading naturally and grouping by project. `<alias>`
-is the folder name as-is when short, otherwise a short inferred/persisted acronym (or
-an explicit `--alias`) — see `SKILL.md` for the resolution rules. `<prefix>` defaults to
-`cs`, configurable per host via `CRSS_SESSION_PREFIX`; a host that changes its prefix
-can list the old one(s) in `CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising
-sessions from before the change — see `examples/crss-overlay/config.sh.example`.
+Alias resolution, prefix (`CRSS_SESSION_PREFIX`, `CRSS_LEGACY_PREFIXES`) and the rest of the
+naming rules: `SKILL.md` "Naming".
 
 ## How to connect
 
-Once running: open Claude Code on any device → Remote sessions → look for `<prefix>-<alias>-<MMDD-HHMM>`. The session keeps your conversation context across restarts via `--continue`. The systemd user service survives reboots.
+Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`. Context survives restarts (`--continue`) and reboots (systemd user service).
 
 ## Agent instructions in this repo
 
