@@ -16,6 +16,7 @@ same bare `.sessions/` workdir), not inferred.
 | MCP tools | 0 (deferred) | 0 | 0 |
 
 - Builder saves 11.4k (-32%), all from System tools 19.5k -> 8.2k. MCP schemas cost 0 upfront.
+  Measured points: base builder = 8.2k; +Workflow = 16.0k; +advisor+SendUserFile+Artifact = 11.1k.
 - Orchestrator equals baseline: `--exclude-dynamic-system-prompt-sections` is token-neutral.
   It moves cwd/env/git-status out of the cached system prompt into the first user message
   (a prompt-cache win). Do not claim a token saving for the orchestrator profile.
