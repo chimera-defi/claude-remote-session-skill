@@ -61,10 +61,11 @@ The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per ro
 | Profile | Role | Default model |
 |---|---|---|
 | `orchestrator` (default) | thinking / multi-agent fan-out | `claude-opus-5-5` (pinned) |
+| `owner` | long-lived campaign/lane owner (full tools, fans out to builders) | `sonnet` (bare alias) |
 | `builder` | hands-on implementation | `sonnet` (bare alias) |
 | `copywriter` | lightweight doc/copy work | `haiku` (bare alias) |
 
-builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
+owner/builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
@@ -75,6 +76,7 @@ Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — p
 
 ```bash
 CLAUDE_SESSION_PROFILE=copywriter new-session my-docs-pass sessions        # role default: haiku
+CLAUDE_SESSION_PROFILE=owner      new-session my-lane-owner sessions       # role default: sonnet, full tools
 CLAUDE_SESSION_MODEL=opus         new-session my-orchestrator sessions     # bare alias: still auto-tracks latest
 CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned: one reproducible spawn
 ```

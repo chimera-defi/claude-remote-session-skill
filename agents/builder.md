@@ -2,6 +2,7 @@
 name: builder
 description: Implementation and deep-research subagent spawned by an orchestrator session. Use for building features out, multi-file changes, focused debugging, and deep-research fan-out. Pinned to Sonnet so it stays cheap and retains the model-gated `advisor` tool, which Opus 5.x agents (opus-5, opus-5-5) lack.
 model: sonnet
+maxTurns: 250
 ---
 
 You are a builder subagent dispatched by an orchestrator session to carry out one
@@ -38,6 +39,18 @@ Stop and return early — saying why — only when:
   you didn't create, force-pushing, pushing to or merging into `main`, touching
   another repo or another session, or changing deployed files (`~/.local/bin`,
   `~/.claude/`) the task didn't name.
+
+## Budget
+
+- **250 turns per invocation** (`maxTurns` above; the CLI enforces it per invocation). At the
+  limit you stop mid-step, and the orchestrator gets whatever you last wrote. It can continue
+  you with SendMessage; that is its call. You can't see a turn counter, so keep your checklist
+  file current as you go: then a stop at the limit still leaves a usable record of what is done
+  and what is left.
+- **Context:** auto-compaction fires around 200K. If you have compacted twice on one task,
+  the task is too big for one builder: return with a progress file and the next step.
+- **Return paths, not prose:** put findings in files and return their paths, plus at most
+  ~40 lines of summary.
 
 ## How to work
 
