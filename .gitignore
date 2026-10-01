@@ -6,3 +6,6 @@ artifacts/
 
 # Bytecode left by running tests/test-eval-hillclimb-decision.py.
 __pycache__/
+
+# Publish-registry metadata; per-host, not source content.
+_meta.json
