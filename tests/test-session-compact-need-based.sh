@@ -23,7 +23,6 @@ SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-lacks(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
 # ============================================================================
 # Fixture plumbing (mirrors test-session-compact-sweep.sh)
@@ -203,7 +202,7 @@ row() { printf '%s' "$out" | grep "^$1 "; }
 # --- 1. idle 90min + context 10% -> skip: context too small -----------------
 has "ctxsmall-verdict" "$(row ctxsmallsess)" "skip: context too small"
 has "ctxsmall-shows-pct" "$(row ctxsmallsess)" " 10 "
-lacks "ctxsmall-not-would-compact" "$(row ctxsmallsess)" "would-compact"
+hasnt "ctxsmall-not-would-compact" "$(row ctxsmallsess)" "would-compact"
 
 # --- 2. idle 90min + context 50% -> would-compact: idle ---------------------
 has "idleok-verdict" "$(row idleoksess)" "would-compact: idle"
@@ -217,30 +216,30 @@ has "ctxtrigger-shows-pct" "$(row ctxtriggersess)" " 90 "
 # the model/table --------------------------------------------------------
 has "ctxunknown-verdict"   "$(row ctxunknownsess)" "skip: context unknown"
 has "ctxunknown-loud-note" "$(row ctxunknownsess)" "_model_window_for"
-lacks "ctxunknown-not-would-compact" "$(row ctxunknownsess)" "would-compact"
+hasnt "ctxunknown-not-would-compact" "$(row ctxunknownsess)" "would-compact"
 
 # --- 5. idle 90min + context 50% + already-compacted -> still skips (loop
 # guard intact, fires before the context floor is even consulted) ----------
 has   "compacted-still-skips"       "$(row compactedsess)" "skip: compacted"
-lacks "compacted-not-would-compact" "$(row compactedsess)" "would-compact"
+hasnt "compacted-not-would-compact" "$(row compactedsess)" "would-compact"
 
 # --- 6. boundary: exactly 40% compacts, exactly 39% skips --------------------
 has   "atfloor-compacts"        "$(row atfloorsess)"    "would-compact: idle"
 has   "underfloor-skips"        "$(row underfloorsess)" "skip: context too small"
-lacks "underfloor-not-compact"  "$(row underfloorsess)" "would-compact"
+hasnt "underfloor-not-compact"  "$(row underfloorsess)" "would-compact"
 
 # --- 7. fleet trigger remains 80%: 50% and 49% both stay below it ----------
 has   "ctxb50-under-thresholds" "$(row ctxb50sess)" "skip: under thresholds"
 has   "ctxb50-shows-pct" "$(row ctxb50sess)" " 50 "
 has   "ctxb49-under-thresholds" "$(row ctxb49sess)" "skip: under thresholds"
 has   "ctxb49-shows-pct" "$(row ctxb49sess)" " 49 "
-lacks "ctxb50-not-compact"      "$(row ctxb50sess)" "would-compact"
-lacks "ctxb49-not-compact"      "$(row ctxb49sess)" "would-compact"
+hasnt "ctxb50-not-compact"      "$(row ctxb50sess)" "would-compact"
+hasnt "ctxb49-not-compact"      "$(row ctxb49sess)" "would-compact"
 
 # --- 8. discovered gap: trigger B, unknown context, idle under 60m ---------
 has   "ctxbunknown-verdict"   "$(row ctxbunknownsess)" "skip: context unknown"
 has   "ctxbunknown-loud-note" "$(row ctxbunknownsess)" "_model_window_for"
-lacks "ctxbunknown-not-compact" "$(row ctxbunknownsess)" "would-compact"
+hasnt "ctxbunknown-not-compact" "$(row ctxbunknownsess)" "would-compact"
 # --- 9. managed-only trigger is lower: 50% fires, 49% skips ----------------
 ALLOW_FILE="$(mktemp)"
 printf 'ctxb50sess

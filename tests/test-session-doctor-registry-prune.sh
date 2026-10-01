@@ -182,7 +182,7 @@ PYEOF
 DC="$(mktemp -d)/codes.txt"; echo "sess_bad 500" > "$DC"
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
 fail_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$FAILREG" FAKE_DELETE_CODES="$DC" PATH="$STUBBIN:$PATH" HOME="$FIXHOME" bash "$DOCTOR" registry-prune --apply 2>&1)"; fail_rc=$?
-ok  "faildelete-exit-nonzero" "$([ "$fail_rc" -ne 0 ] && echo yes || echo no)" "yes"
+ok  "faildelete-exit-nonzero" "$(yn test "$fail_rc" -ne 0)" "yes"
 has "faildelete-reports-failed-code" "$fail_out" "failed(500)"
 has "faildelete-still-deletes-ok-row" "$fail_out" "deleted"
 has "faildelete-ok-row-was-called" "$(cat "$CURL_LOG")" "DELETE https://api.anthropic.com/v1/sessions/sess_ok"

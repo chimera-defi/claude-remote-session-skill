@@ -19,7 +19,6 @@ SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
 # ============================================================================
 # Fixture plumbing
@@ -173,12 +172,12 @@ has "idle-trigger-shows-pct" "$(row idlesess)" " 45 "
 # through the REAL session-handoff.sh -> real tmux capture-pane stub) ->
 # skip: busy, overriding BOTH triggers ---------------------------------------
 has   "busy-overrides-both-triggers" "$(row busysess)" "skip: busy"
-lacks "busy-is-not-would-compact"    "$(row busysess)" "would-compact"
+hasnt "busy-is-not-would-compact"    "$(row busysess)" "would-compact"
 
 # --- 4. protected, idle=7200m (5 days), context=99% -> protected wins,
 # regardless of how hard both triggers would otherwise fire ------------------
 has   "protected-wins" "$(row protsess)" "skip: protected"
-lacks "protected-is-not-would-compact" "$(row protsess)" "would-compact"
+hasnt "protected-is-not-would-compact" "$(row protsess)" "would-compact"
 
 # --- 5. unparseable transcript, idle=10m: under the 60m idle trigger but
 # over the context trigger's 5m floor, so this reaches the context-path
