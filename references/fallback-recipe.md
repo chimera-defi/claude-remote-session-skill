@@ -75,7 +75,7 @@ _fr_poisoned "$ALIAS" && ALIAS=""
 SESSION="${CRSS_SESSION_PREFIX}_${ALIAS}-${ID}"
 REMOTE_NAME="${CRSS_SESSION_PREFIX}-${ALIAS}-${ID}"
 # Mirrors new-session.sh's default (orchestrator profile, claude-opus-5-5). No
-# CLAUDE_SESSION_PROFILE here: pass CLAUDE_SESSION_MODEL for a builder/copywriter model.
+# CLAUDE_SESSION_PROFILE here: pass CLAUDE_SESSION_MODEL for an owner/builder/copywriter model.
 MODEL="${CLAUDE_SESSION_MODEL:-claude-opus-5-5}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
