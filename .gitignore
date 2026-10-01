@@ -3,3 +3,6 @@
 # (REPO_ROOT defaults to the deployed clone's toplevel) but is per-host
 # operational data, not source content, and must never be committed.
 artifacts/
+
+# Bytecode left by running tests/test-eval-hillclimb-decision.py.
+__pycache__/
