@@ -5,68 +5,81 @@ or re-litigate something an earlier run already found, fixed, or rejected.
 
 ## last_run
 
-- date: 2026-09-29
+- date: 2026-10-01
 - status: completed
 - gh_mode: mcp (gh binary absent; mcp__github__ tools used for the whole run)
-- pr: PR #110 of this repo
-- branch: nightly-review-2026-09-29
+- pr: PR #122 of this repo
+- branch: nightly-review-2026-10-01
 
 ## PHASE 0 gate note
 
-No open `nightly-review-*` PR existed at run start. One unrelated open PR
-existed (#107, `fix/reap-archive-unit`, author-driven, not a nightly-review
-artifact) — no overlap with this run's files, left untouched. Open
-`diag: nightly-review YYYY-MM-DD - no changes` issues accumulate as a backlog with no
-cleanup mechanism in this routine's scope.
-
-`main` had moved by 9 merged PRs since the last full review-state snapshot
-(2026-09-23/PR #77) that hadn't been covered by any prior nightly pass:
-#101 (kickoff-templates docs), #102 (host-local CRSS_HOME overlay config),
-#103 (move host-ops tooling out), #104 (configurable session-name prefix),
-#105 (remove host specifics + CI leak check), #106 (overlay-followups docs),
-#107 (open, unrelated), #108 (Codex backend support), #109 (eval hillclimb
-budget protocol). All merged 2026-09-28, after that night's own nightly
-review (#100, created 01:16 UTC) had already run, so none had been reviewed
-by any nightly pass before tonight.
+No open `nightly-review-*` PR existed at run start (the prior one, #110, was
+merged). `main` had moved by 8 merged PRs since the last full review-state
+snapshot (2026-09-29/PR #110, itself merged after that snapshot was written):
+#111 (Codex backend review findings), #112 (new `session-resume.sh` feature),
+#115 (docs genericization), #116 (genericize host-specific script names +
+locale fix), #117/#118 (test fixture genericization, host-leak scan
+tightening), #120/#121 (small docs/comment fixes). Two throwaway PRs (#114,
+#119, titled "tmp: ... (do not merge)") were opened and closed unmerged by a
+prior run or the operator — not reviewed, not relevant.
 
 ## findings_reported
 
-- **Real, currently-failing regression on `main`** (not merely a
-  theoretical risk — 6 of 32 `tests/test-*.sh` files were red before this
-  run's fix): PR #108 (Codex backend) added Codex's `›` prompt glyph
-  alongside Claude's `❯` in `scripts/session-handoff.sh` by writing
-  `[❯›]`/`[^❯›]` **bracket character classes** in `_input_region`,
-  `_transcript_region`, `_has_prompt`, and the input-box prefix strip in
-  `_input_box_empty`. Under a POSIX/C locale (`LC_ALL=C`, no `LANG` set —
-  this sandbox's actual locale, and the exact class of host this file's own
-  existing comments already document as a support target, re: the
-  `_input_box_empty` border-line `─+` mawk/POSIX-locale bug), grep/awk/sed
-  treat a bracket class as a set of raw BYTES rather than atomic
-  characters: a multi-byte UTF-8 char inside `[...]` decomposes into its
-  individual bytes as separate class members. `❯` (E2 9D AF) and `›`
-  (E2 80 BA) share lead byte E2 with nearly every other symbol the
-  Claude/Codex TUIs print (`✢✻✽⏵…`), so `[❯›]` false-matched on ANY line
-  containing one of those — e.g. the routine `"⏵⏵ bypass permissions on
-  (shift+tab to cycle)"` status line under an otherwise-READY pane — which
-  collapsed `_input_region` to the buffer's tail and made `_safety_reason`
-  misreport every idle Claude pane as `draft-in-input-box` instead of
-  `safe`. This broke `session-handoff`'s ready gate and
-  `session-compact`'s busy/idle check fleet-wide on any non-UTF-8-locale
-  host. Confirmed by direct reproduction
-  (`echo '⏵⏵ x' | grep -qE '[❯›]'` matches under `LC_ALL=C`) and by the
-  failing test files themselves
-  (`test-session-handoff.sh`, `test-session-handoff-ready.sh`,
-  `test-session-handoff-pane-guard.sh`, `test-session-handoff-paste-race.sh`,
-  `test-session-compact-need-based.sh`, `test-session-compact-sweep.sh`,
-  plus partial failures in 2 more compact tests).
-  **Fix**: replaced each bracket-class site with alternation (`❯|›`), which
-  compares each branch as a whole literal byte string and is
-  locale-independent. Added `tests/test-session-handoff-locale-safe-match.sh`
-  as a static guard so a future edit can't silently reintroduce a
-  multi-glyph bracket class here (verified the guard actually catches the
-  bug by reintroducing it in a scratch copy). PR #110, not yet merged as of
-  this run's end; CI was still pending (0 statuses) when the PR was opened —
-  subscribed to PR activity rather than blocking on `gh pr checks --watch`.
+- **Reproducible test-hygiene bug, not a production-code bug**:
+  `tests/test-session-resume.sh` leaks background processes. Every real
+  (non-dry-run) `session-resume.sh` invocation in this test backgrounds a
+  stubbed systemd unit's supervisor loop via
+  `setsid timeout N bash -c "$payload" &`, then cleans up between test cases
+  with `pkill -f <pattern>`. `pkill -f` only signals the one PID whose own
+  argv matches — it does not reach a child the loop has ALREADY forked (the
+  fake-claude stub's `sleep`, or the loop's own `sleep 300` exit backoff) if
+  that child is running at the moment of the kill. That child is immediately
+  orphaned and keeps running to completion (up to 5 minutes), untouched by
+  anything else in the test.
+  **Reproduced directly** (not inferred): running this one test file
+  standalone (not inside the aggregate `for t in tests/test-*.sh` loop, which
+  masks the bug by redirecting each test's output to a FILE rather than a
+  pipe — the for-loop doesn't wait on an orphan holding a file descriptor
+  open) hung past a 100s `timeout` with its own pass/fail summary never
+  printed, and left live `sleep 20`/`sleep 300` processes system-wide,
+  confirmed via `ps aux` (`bash -c "...while true...sleep 300...done"` still
+  running, its own `sleep 300` child still running, both well after the test
+  invocation that spawned them should have finished).
+  **Fix**: every `setsid` launch site (4 of them in this one file) now
+  records its session leader's pid — the SAME pid survives through setsid's
+  own `exec`, by construction, so `$!` captured right after backgrounding is
+  reliable — to `$STUB_STATE/all.sids` (appended, never overwritten: several
+  fixtures reuse the same unit name across test cases). The test's `EXIT`
+  trap now also signals each recorded session with `pkill -s <sid>`, which
+  reaches the loop AND every descendant it forked regardless of which one
+  happens to be currently running, instead of only the one PID a pattern
+  happens to match.
+  **Second issue surfaced by fixing the first**: this sandbox's pid 1 does
+  not reap orphaned zombies, so a just-killed fake-claude stub can sit as a
+  zombie (`ps` showed `Z ... <defunct>`, reparented to pid 1) that STILL
+  answers `kill -0` as alive (POSIX: signal 0 to a zombie succeeds). Once the
+  first fix made the test reach this point reliably every run (previously it
+  rarely got this far without hanging first), `session-resume.sh`'s own
+  liveness check — correct behavior for real production use — read the
+  zombie's still-existing pid as "this transcript is still open" and refused
+  a later resume of the same fixture (`FAIL: repeat-run-exit0 — got '1' want
+  '0'`, reproduced identically across 2 separate runs before the second fix).
+  Confirmed root cause directly: added temporary debug output, captured
+  `ps -p $jpid` for the refusing pid, saw `Z [bash] <defunct>`. Fix: the test
+  now drops its own stale PID-keyed registry entry
+  (`rm -f "$CRSS_CLAUDE_HOME"/sessions/*.json`) at each of the 4 points it
+  already kills a resumed session, so the next real run in the same file
+  never trips over a zombie pid from an earlier one. This is a test-only
+  workaround for a sandbox quirk (no reaping init), not a change to
+  `session-resume.sh`'s own (correct) liveness-check logic.
+  **Verified**: 3 consecutive standalone runs, pass=87 fail=0 each, ~17s
+  wall-clock each (vs. hanging indefinitely / past a 100s timeout before any
+  fix). Full `tests/test-*.sh` suite green both before and after. shellcheck
+  clean both before and after. `ps aux` checked clean (no leftover
+  sleep/supervisor processes) after every run of the fixed test, including 3
+  back-to-back. PR #122, CI was still pending (0 statuses) when the PR was
+  opened; subscribed to PR activity rather than blocking on
+  `gh pr checks --watch`.
 
 ## findings_rejected
 
@@ -74,104 +87,109 @@ by any nightly pass before tonight.
 
 ## verified_already_fixed (not re-reported, not re-litigated)
 
-- **session-alias poisoning guard**: NOT re-checked this run (budget went
-  entirely to the session-handoff regression above, which was higher-
-  severity — currently failing on `main`, not a latent risk). Confirmed
-  solid on 2026-09-25 through 2026-09-28 (four consecutive nights); no
-  reason to suspect regression since `scripts/session-alias.sh` was not
-  touched by any of the 9 PRs reviewed tonight. Re-verify fully next run if
-  this note is still the most recent confirmation.
-- `scripts/fleet-status.sh`, host-ops health scripts, `session-doctor.sh`'s
-  worktree-stale/reap paths: confirmed solid as of 2026-09-28 (#100); not
-  touched by tonight's 9 PRs except `session-doctor.sh`'s `backend_of`/
-  `proc_alive`/`_state_of` additions (PR #108, see "New surface" below —
-  spot-checked, not exhaustively re-verified against the pre-existing
-  worktree-stale/reap logic since that logic itself wasn't touched).
+- **session-alias poisoning guard** (`scripts/session-alias.sh`): re-read in
+  full this run (the prior 3 runs' notes flagged it as only
+  confirmed-by-inference, not re-read line-by-line, since #104/#121 touched
+  only comments/the prefix mechanism, not the guard logic itself). Read
+  `looks_like_session_name`, `has_mmdd_group`, `desessionify`, `infer`,
+  `store_upsert`'s write-path refusal, and the read-path self-heal (rule 2 in
+  the resolution order) end to end. Still solid: write path refuses to
+  persist a session-name-shaped alias (store_upsert), read path discards and
+  re-infers a poisoned stored value. Ran its own test file directly:
+  `tests/test-session-alias.sh` — 81/81 assertions pass. No changes needed;
+  this guard has now been independently re-verified 5 nights running.
 
 ## New surface this run (reviewed to varying depth — see notes)
 
-- **`scripts/session-handoff.sh`'s Codex pane-classifier additions** (PR
-  #108): the bracket-class bug above is fixed and covered by both the
-  existing functional fixtures (`tests/test-session-handoff-codex.sh`,
-  now-passing `tests/test-session-handoff-ready.sh`) and the new static
-  guard. The REST of the Codex classifier logic (`_is_working`,
-  `_is_on_menu`, `_is_collapsed_paste_in_input`'s new Codex-menu patterns)
-  was read but not adversarially fuzzed beyond the fixtures PR #108 shipped
-  — those fixtures are derived from real Codex CLI 0.158.0 captures per
-  their own header comment, which is reasonable but unverified independently
-  this run.
-- **`scripts/new-session.sh` / `scripts/session-doctor.sh`'s Codex backend
-  plumbing** (PR #108): `--backend codex`, `CRSS_CODEX_BIN`/`CRSS_CODEX_ARGS`,
-  the generated start-script branching (Claude-only sections skipped for
-  Codex), `backend_of`/`proc_alive`/`_state_of` backend-awareness in both
-  `session-doctor.sh` and `session-handoff.sh`. Read in full; has its own
-  dedicated test file (`tests/test-new-session-backend.sh`, 94 lines,
-  spawns a stubbed Codex binary and inspects the generated start script).
-  `CRSS_CODEX_ARGS` is interpolated unquoted into the generated start
-  script by design (mirrors the pre-existing `CRSS_CLAUDE_BIN` pattern, so
-  word-splitting happens intentionally — see the file's own comment on why
-  per-profile flags are baked as a literal rather than kept as a runtime
-  var) and is host-owned config from `$CRSS_HOME/config.sh`, not
-  session-spawn-time user input, so this is not a new injection surface.
-  No bug found here this run, but this is new enough (one PR old) to be
-  worth a second, more adversarial look in a future run rather than being
-  marked fully settled.
-- **PR #102 (host-local `CRSS_HOME` overlay config)**: read in full via the
-  diff; the parse-never-source pattern (`_crss_load_config`) predates this
-  PR and was already reviewed in earlier cycles. Not independently
-  re-audited line-by-line this run.
-- **PR #109 (eval hillclimb budget protocol)**: NOT reviewed this run
-  (budget went to the higher-severity regression above). Worth a first pass
-  next run.
-- **PR #104 (configurable `CRSS_SESSION_PREFIX`/`CRSS_LEGACY_PREFIXES`)**:
-  the resulting `_crss_prefix_re` construction was read as part of
-  `scripts/session-alias.sh` (see that file's own extensive inline
-  rationale) while investigating the alias-poisoning guard's current state;
-  looked correct (validates each token against `^[a-z][a-z0-9]{0,15}$`,
-  fails closed to `cs` / drops the whole legacy list on any invalid
-  element). Not independently re-audited beyond that read.
-- **PR #103 (move host-ops tooling out), #105 (remove host specifics + CI
-  leak check), #106 (overlay-followups docs), #101 (kickoff-templates
-  docs)**: not reviewed this run — lower risk (chore/docs), and budget went
-  to the regression above. Worth inclusion in a future doc-drift pass.
+- **`scripts/session-resume.sh`** (PR #112, new, 438 lines, not reviewed by
+  any prior nightly pass): read in full. Brings a dead session back on its
+  OWN systemd unit, resuming its OWN transcript by explicit uuid — a
+  deliberately conservative tool (refuses rather than guesses whenever
+  anything is ambiguous: multiple transcripts with no `--uuid`, a dirty
+  canonical worktree with no own worktree, an unrecognised start-script
+  shape, a non-claude backend). Validates `--uuid`/`--model`/the target name
+  before using them; uses `python3 -c 'shlex.split(...)'` to read start-script
+  fields rather than fragile sed/regex extraction (same pattern PR #111 added
+  elsewhere); the python patch step that rewrites a pre-pin script's
+  supervisor loop validates its own output with `bash -n` before replacing
+  the original, and keeps a timestamped backup. No production-code
+  correctness bug found. Well covered by `tests/test-session-resume.sh`
+  (87 assertions after this run's fix) — see findings_reported above for the
+  test-hygiene bug found IN that test file, not in the script itself.
+- **PR #111 (Codex backend review findings)**: read the full diff. Fixes a
+  real shell-injection-shaped issue the previous nightly pass had explicitly
+  (and, in hindsight, too charitably) waved off as "host-owned config, not a
+  new injection surface" — `CRSS_CODEX_ARGS` is now split and `%q`-escaped
+  into a proper bash array (`_shell_words_literal`, `_shell_quote`) instead
+  of being interpolated unquoted into the generated start script. Also adds
+  `_is_codex_selection_widget` (a rate-limit/model-switch TUI menu
+  classifier) and a `start_script_field`/`_start_script_field` helper
+  (shlex-based field extraction) duplicated into both
+  `scripts/session-doctor.sh` and `scripts/session-handoff.sh` — same
+  pattern as `session-resume.sh`'s own `field()`, not yet factored into one
+  shared location, but each copy is correct and independently tested
+  (`tests/test-new-session-backend.sh` includes a malicious-argv injection
+  test that asserts no command substitution executes; `bash -n` on the
+  generated script; grouped-quoting-preserved test). No bug found.
+- **PR #108's Codex backend plumbing**: NOT given a second adversarial pass
+  this run (the prior run's note asked for one) — budget went to the
+  test-hygiene bug above, which was reproducible and in-scope as "regression
+  coverage for bugs found." PR #111 already closes the one issue the first
+  pass had flagged as worth a second look (the unquoted `CRSS_CODEX_ARGS`
+  interpolation), so this is lower-priority now than when it was first
+  flagged.
+- **#115/#116/#117/#118 (genericization + host-leak-scan tightening)**: not
+  independently re-audited line-by-line this run; their own purpose (removing
+  host-specific identifiers, tightening the leak scanner) is exactly what
+  `tests/test-no-host-leaks.sh` pins, and that test passes generically (0
+  hits) as of this run.
+- **#120/#121 (small docs/comment fixes)**: not reviewed — trivial,
+  self-evidently low-risk from their titles/diff size.
 
 ## attempt_counts
 
-- Full suite: ran all 32 `tests/test-*.sh` files on `main` (5d46635) before
-  making any change — 6 files failed (see findings_reported for the list
-  and failure counts). After the fix: 32/32 green, plus the new guard test
-  (33rd file) also green.
-- `shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh` (installed
-  fresh this run via apt-get; not present in the sandbox by default):
-  clean before and after (shellcheck itself doesn't flag the bracket-class
-  locale bug — this is a correctness issue, not a shellcheck-detectable
-  pattern).
-- Files read this run: `.routine-state/review-state.md` (this file, prior
-  version), commit history/PR list since 2026-09-23, PRs #102/#108's full
-  diffs, `scripts/session-alias.sh` (full, re-confirming the poisoning
-  guard's current shape), `scripts/session-handoff.sh` (full, both before
-  and after the fix), `scripts/new-session.sh` (Codex backend sections),
-  `scripts/session-doctor.sh` (backend-awareness additions only, grepped),
-  all `tests/test-*.sh` file names + the 3 new Codex-related test files in
-  full.
-- PR CI: checked `get_status` once right after opening PR #110 (0 statuses
-  yet, `state: pending`) rather than a bare blocking watch; subscribed to
-  the PR's activity so CI/review events arrive as they land instead of
-  being polled for.
+- Full suite: ran all 32 `tests/test-*.sh` files on `main` (03421bc) before
+  making any change — all green (the test-hygiene bug does not make
+  `tests/test-session-resume.sh` FAIL; it only hangs/leaks when run in
+  isolation outside the aggregate loop, which is exactly why it had escaped
+  notice). After the fix: still 32/32 green, plus verified the fixed file
+  standalone 3x in a row (pass=87 fail=0 each time, no hang, no leftover
+  processes).
+- `shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh`: clean before and
+  after this run's change.
+- `tests/test-no-host-leaks.sh` (generic mode, no `CRSS_LEAK_DENYLIST` set on
+  this host): PASS, 0 hits, matches CI.
+- Files read in full this run: this file (prior version), `git log`/PR list
+  since 2026-09-29, PR #111's full diff, `scripts/session-alias.sh` (full,
+  re-confirming the poisoning guard), `scripts/session-resume.sh` (full, 438
+  lines), `tests/test-session-resume.sh` (full, both before and after the
+  fix, plus iterative debug instrumentation to confirm both root causes
+  directly rather than by inference).
+- PR CI: checked `get_status` once right after opening PR #122 (0 statuses
+  yet, `state: pending`) rather than a blocking watch; subscribed to the
+  PR's activity so CI/review events arrive as they land instead of being
+  polled for.
 
 ## Notes for future runs
 
-- The 18 open `diag: nightly-review YYYY-MM-DD - no changes` issues
-  (#52-#100) are still an accumulating backlog with no cleanup mechanism in
-  this routine's scope — carried over from the 2026-09-23 note, still not
-  acted on.
-- PR #109 (eval hillclimb budget protocol) and PR #103/#105/#106/#101
-  (host-ops move, leak-check CI, docs) are this cycle's least-scrutinized
-  surfaces — good starting points for the next run's dedicated read
-  budget, alongside a second, more adversarial pass at PR #108's Codex
-  backend plumbing (new-session.sh generated-script branching,
-  session-doctor.sh backend-awareness) now that the handoff-side
-  regression is fixed.
-- Re-verify the session-alias poisoning guard fully next run — it was only
-  confirmed-by-inference this run (untouched by tonight's PRs), not
-  re-read line-by-line.
+- PR #109 (eval hillclimb budget protocol) is now the longest-standing
+  unreviewed item — flagged 2 nights running, still not reviewed, each time
+  because a higher-severity, reproducible issue took the run's budget
+  instead. Worth deliberately prioritizing next time nothing more urgent
+  turns up first.
+- #103/#105/#106/#101 (host-ops move, leak-check CI, docs) remain the
+  least-scrutinized chore/docs surface — still fine to leave for a dedicated
+  doc-drift pass rather than nightly budget.
+- The `shared setsid-session-leak` pattern this run found and fixed in
+  `tests/test-session-resume.sh` (backgrounding a supervisor loop, cleaning
+  up by `pkill -f <pattern>` instead of by session/group) is specific to that
+  one file in this repo as of this run — no other test file backgrounds a
+  long-running stub this way (checked: `grep -rn 'setsid' tests/` matched
+  only this file). Worth a quick grep-check in a future run if a new test
+  adds a similar stubbed-supervisor-loop pattern, to catch the same mistake
+  before it ships rather than after.
+- The open `diag: nightly-review YYYY-MM-DD - no changes` issues (#52-#100,
+  18 of them as of the 2026-09-29 note) are still an accumulating backlog
+  with no cleanup mechanism in this routine's scope — carried over,
+  still not acted on. Not relevant this run since a PR was opened (no
+  heartbeat issue needed).
