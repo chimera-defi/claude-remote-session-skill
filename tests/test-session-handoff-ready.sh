@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Plain-bash tests for the _is_safe_to_inject / _safety_reason positive
-# readiness predicate. No live tmux needed: like test-session-handoff.sh, the
-# logic is factored into pure functions that take a captured-pane string, so
-# it can be tested against realistic fixtures.
+# _is_safe_to_inject / _safety_reason readiness predicate: pure functions over a captured-pane string, no live tmux.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"   # source-guarded: must NOT run dispatch
 
-# --- realistic claude-TUI captures (trimmed from live panes) ------------------
+# --- realistic claude-TUI captures (trimmed from live panes) ---
 
 # clean ready pane, empty input box -> SAFE
 READY_PANE='● Ready.
@@ -27,8 +24,7 @@ BUSY_PANE='● Working on the survey…
 ────────────────────────────────────────────────────────
   [Opus 4.8] my-project'
 
-# headline case: unsubmitted, multi-word draft sitting in the input box ->
-# not safe, reason=draft-in-input-box
+# unsubmitted multi-word draft in the input box -> draft-in-input-box
 DRAFT_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ can you check the deployment logs and tell me why it failed
@@ -53,21 +49,15 @@ STARTING_PANE='Starting Claude Code…
 Loading session state…
 '
 
-# a draft that merely MENTIONS "navigate" and contains a literal ❯ character
-# in quoted text — must NOT be misclassified as a menu, and the embedded ❯
-# must not confuse the input-box split. Should still be draft-in-input-box
-# (there is real unsubmitted text on the prompt line).
+# a draft that merely MENTIONS "navigate" and contains a literal ❯ is NOT a menu and the ❯ must not confuse the
+# input-box split -> draft-in-input-box
 QUOTED_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ remind me to navigate to settings and check how the ❯ char renders
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718'
 
-# --- ANSI-preserving fixtures (tmux `capture-pane -p -e`) ---------------------
-# Claude Code renders an auto-suggested "next action" as dim (SGR 2) ghost
-# text sitting in an otherwise-empty input box — confirmed empirically against
-# live sessions. It is NOT a user draft, and _is_safe_to_inject
-# must tell the two apart using the ANSI-preserving capture `ready` passes.
+# --- ANSI-preserving fixtures (capture-pane -e): Claude's dim (SGR 2) ghost "next action" text is NOT a draft ---
 ESC=$'\033'
 
 # dim ghost "suggested next action" placeholder, no real draft -> SAFE
@@ -77,28 +67,22 @@ ${ESC}[39m❯ ${ESC}[2mdelete the backup ref${ESC}[0m
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718"
 
-# same, but the terminal cursor sits on the ghost text's first character,
-# splitting the dim run into a reverse-video glyph + a resumed dim tail
-# (observed live: `ESC[7mc ESC[0;2mheck that the deployed hook is stable`) ->
-# still SAFE — this is the same ghost text, just cursor-highlighted.
+# cursor on the ghost text's first char (reverse-video glyph + resumed dim tail) -> still SAFE
 DIM_PLACEHOLDER_CURSOR_SPLIT_PANE="● Ready.
 ────────────────────────────────────────────────────────
 ${ESC}[39m❯ ${ESC}[7mc${ESC}[0;2mheck that the deployed hook is stable${ESC}[0m
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718"
 
-# real draft, but styled (a plain foreground color, NOT the dim attribute) ->
-# still NOT safe, reason=draft-in-input-box. Also proves the dim-opener match
-# is exact (`2m`/`0;2m`), not a `2m`-suffix wildcard that would misfire on an
-# ordinary 256-color code like `38;5;12m` (ends in "2m" but isn't dim).
+# real draft in a plain foreground color (not dim) -> NOT safe; also proves the dim opener match is exact
+# (`2m`/`0;2m`), not a `2m` suffix wildcard (256-color `38;5;12m` is not dim)
 NON_DIM_STYLED_DRAFT_PANE="● Ready.
 ────────────────────────────────────────────────────────
 ${ESC}[39m❯ ${ESC}[38;5;12mcheck on the blue deployment please${ESC}[0m
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718"
 
-# dim placeholder ghost text PLUS a menu widget on screen at the same time ->
-# NOT safe, reason=menu — menu must win over the dim-placeholder allowance.
+# dim ghost text PLUS a menu widget -> NOT safe, reason=menu (menu wins)
 DIM_PLACEHOLDER_PLUS_MENU_PANE="● Where should I point the next iteration?
 
   1. [ ] Fix the auth flow
@@ -110,9 +94,7 @@ ${ESC}[39m❯ ${ESC}[2mall good?${ESC}[0m
 ────────────────────────────────────────────────────────
   [Opus 4.8] my-project"
 
-# a real draft that happens to contain the literal characters "[2m" as text,
-# with no actual ESC byte in front of it -> must still be NOT safe. Proves
-# the matcher requires a genuine SGR escape, not a "[2m" substring.
+# a draft containing the literal text "[2m" with no ESC byte -> NOT safe (needs a real SGR escape)
 FAKE_ESCAPE_TEXT_DRAFT_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ my draft literally contains [2m as text, not an escape code
@@ -125,13 +107,10 @@ WHITESPACE_CAP='
 
    '
 
-# --- multi-line input-box fixtures (regression: _input_box_empty must look
-# at the WHOLE box, not just the first captured line) ------------------------
+# --- multi-line input-box fixtures (regression: _input_box_empty must look at the WHOLE box) ---
 
-# headline repro: shift+enter (or a paste starting with a newline) leaves a
-# BLANK first line with the real draft text on line 2. Reading only line 1
-# (the pre-fix behavior) sees nothing and reports SAFE — the dangerous
-# direction: `ready`/`send` would then paste onto this unsent draft.
+# shift+enter / newline-leading paste leaves a BLANK line 1 with the draft on line 2; reading only line 1 said SAFE
+# and `ready`/`send` would paste onto the unsent draft
 BLANK_FIRST_LINE_DRAFT_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯
@@ -139,9 +118,7 @@ BLANK_FIRST_LINE_DRAFT_PANE='● Ready.
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718'
 
-# multi-line draft with real text on line 1 AND line 2 — must also be caught
-# (this one was already caught pre-fix via the line-1 check; kept as a
-# regression guard that the box-wide rewrite didn't break the easy case).
+# multi-line draft with text on lines 1 and 2 (guards that the box-wide rewrite kept the easy case)
 MULTI_LINE_DRAFT_LINE1_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ please look into this
@@ -149,10 +126,7 @@ MULTI_LINE_DRAFT_LINE1_PANE='● Ready.
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718'
 
-# multi-line box where every line past the ❯ line is only whitespace/NBSP
-# padding (tmux pads box rows to terminal width) — no real draft anywhere in
-# the box -> must still read SAFE, not be misclassified as a draft just
-# because the box spans more than one line.
+# lines past the ❯ line are only whitespace/NBSP padding (tmux pads rows) -> SAFE, not a draft
 NBSP=$'\xc2\xa0'
 MULTI_LINE_WHITESPACE_ONLY_PANE="● Ready.
 ────────────────────────────────────────────────────────
@@ -161,20 +135,14 @@ MULTI_LINE_WHITESPACE_ONLY_PANE="● Ready.
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718"
 
-# single dim ghost line immediately followed by the border row — boundary
-# case for the nbound scan (border is the very next line after content, not
-# several lines down) -> still SAFE, same as DIM_PLACEHOLDER_PANE, and must
-# not sweep the border/status line into the box.
+# single dim ghost line directly followed by the border row (nbound boundary) -> SAFE; border must not join the box
 DIM_THEN_IMMEDIATE_BORDER_PANE="● Ready.
 ────────────────────────────────────────────────────────
 ${ESC}[39m❯ ${ESC}[2mdelete the backup ref${ESC}[0m
 ────────────────────────────────────────────────────────
   [Sonnet 5] session-launcher-0718"
 
-# truncated capture: a ❯ line with trailing text but NO border row at all
-# (e.g. tmux capture-pane returned a partial pane mid-resize) — must not
-# crash, and with no border found the box runs to the end of the capture, so
-# the visible draft text still correctly reads as NOT empty.
+# truncated capture: ❯ line with text but NO border row -> must not crash; box runs to end, draft reads NOT empty
 TRUNCATED_NO_BORDER_PANE='● Ready.
 ────────────────────────────────────────────────────────
 ❯ some text with no trailing border'
@@ -218,8 +186,7 @@ ok "safe-dim-plus-menu"        "$(_is_safe_to_inject "$DIM_PLACEHOLDER_PLUS_MENU
 ok "safe-fake-escape-text"     "$(_is_safe_to_inject "$FAKE_ESCAPE_TEXT_DRAFT_PANE"       && echo yes || echo no)" "no"
 
 # --- _is_on_menu: false-positive proofing ---------------------------------------
-# "navigate" alone (no arrows, no "Enter to select"/"Esc to cancel") must not
-# trip the menu detector — only the full distinctive hint strings should.
+# "navigate" alone must not trip the menu detector; only the full distinctive hint strings do
 ok "menu-false-positive-word"  "$(_is_on_menu "$QUOTED_PANE" && echo yes || echo no)" "no"
 ok "menu-false-positive-draft" "$(_is_on_menu "$DRAFT_PANE"  && echo yes || echo no)" "no"
 ok "menu-true-positive"        "$(_is_on_menu "$MENU_PANE"   && echo yes || echo no)" "yes"
@@ -232,8 +199,7 @@ ok "inputbox-empty-on-dim" "$(_input_box_empty "$DIM_PLACEHOLDER_PANE" && echo y
 ok "inputbox-empty-on-empty-cap" "$(_input_box_empty "$EMPTY_CAP" && echo yes || echo no)" "yes"
 ok "inputbox-empty-on-whitespace-cap" "$(_input_box_empty "$WHITESPACE_CAP" && echo yes || echo no)" "yes"
 
-# --- _input_box_empty / _safety_reason: multi-line input-box regressions ------
-# (see fixture block above for why each of these matters)
+# (fixtures above explain each)
 ok "inputbox-not-empty-on-blank-first-line-draft" \
   "$(_input_box_empty "$BLANK_FIRST_LINE_DRAFT_PANE" && echo yes || echo no)" "no"
 ok "reason-blank-first-line-draft" \
@@ -262,18 +228,13 @@ ok "reason-truncated-no-border" \
   "$(_safety_reason "$TRUNCATED_NO_BORDER_PANE")" "draft-in-input-box"
 
 # --- _is_dim_span: direct coverage of the exact-opener matching ---------------
-# The false-positive-proofing case that matters most: a 256-color code that
-# merely ends in digit 2 (e.g. "38;5;12m") is NOT the dim attribute and must
-# not be treated as one.
+# a 256-color code merely ending in 2 ("38;5;12m") is NOT dim
 NOT_DIM_COLOR_ONLY="${ESC}[38;5;12mcheck on the blue deployment please${ESC}[0m"
 ok "dimspan-true-plain"  "$(_is_dim_span "${ESC}[2mdelete the backup ref${ESC}[0m" && echo yes || echo no)" "yes"
 ok "dimspan-true-cursor" "$(_is_dim_span "${ESC}[7mc${ESC}[0;2mheck it${ESC}[0m"   && echo yes || echo no)" "yes"
 ok "dimspan-false-color" "$(_is_dim_span "$NOT_DIM_COLOR_ONLY" && echo yes || echo no)" "no"
 
-# --- `ready` CLI mode: exercise the real dispatch via a fake `tmux` shim ------
-# No real tmux session is touched: `tmux` on PATH is a throwaway script that
-# answers has-session/capture-pane from an env var, so the actual CLI code
-# path in session-handoff.sh (not a hand-built string) is what gets checked.
+# --- `ready` CLI mode: real dispatch via a fake `tmux` shim (answers has-session/capture-pane from an env var) ---
 FAKE_TMUX_DIR="$(mktemp -d)"
 trap 'rm -rf "$FAKE_TMUX_DIR"' EXIT
 cat > "$FAKE_TMUX_DIR/tmux" <<'EOS'
