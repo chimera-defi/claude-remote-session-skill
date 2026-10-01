@@ -1,8 +1,7 @@
 # Eval and hillclimb protocol
 
-Use this for model, prompt, harness, or agent-loop improvement campaigns. The goal is to
-preserve creative discovery while making repeated eval/model/poll loops prove they are
-worth their cost.
+For model, prompt, harness or agent-loop improvement campaigns: keep creative discovery while
+making repeated eval/model/poll loops prove they are worth their cost.
 
 ## Campaign preflight
 
@@ -91,12 +90,12 @@ Minimal shape:
 }
 ```
 
-The tool is generic by design. It does not grade outputs, inspect examples, call models, or
-know any domain-specific evaluator.
+Generic by design: it does not grade outputs, inspect examples, call models, or know any
+domain evaluator. Pinned by `tests/test-eval-hillclimb-decision.py`.
 
 ## Grounding
-This protocol adapts the 2026-09-28 Claude.dev guidance on automated eval design and
-hillclimbing, and Anthropic's agent-eval guidance on outcome-based grading and tracking
-tokens/latency. It deliberately adds a separate aggregate-only validation gate, untouched
-final holdout, novelty reserve, and explicit token/call budgets for long-running multi-agent
-campaigns.
+
+Adapts the 2026-09-28 Claude.dev guidance on automated eval design and hillclimbing and
+Anthropic's agent-eval guidance (outcome-based grading, tracking tokens/latency), adding a
+separate aggregate-only validation gate, untouched final holdout, novelty reserve and explicit
+token/call budgets for long multi-agent campaigns.
