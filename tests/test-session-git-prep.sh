@@ -37,10 +37,10 @@ echo "uncommitted" > "$R2/dirty.txt"
 out="$(bash "$SGP" "$R2" sess-dirty remote-dirty 2>/dev/null)"
 ok "dirty-isolated-path" "$out" "$HOME/.claude/worktrees/remote-dirty"
 ok "dirty-worktree-branch" "$(git -C "$out" rev-parse --abbrev-ref HEAD 2>/dev/null)" "session/remote-dirty"
-ok "dirty-canonical-untouched" "$([ -f "$R2/dirty.txt" ] && echo yes || echo no)" "yes"
+isfile "dirty-canonical-untouched" "$R2/dirty.txt"
 ok "dirty-canonical-branch-unchanged" "$(git -C "$R2" rev-parse --abbrev-ref HEAD)" "main"
 LOCK_KEY2=$(lock_key "$R2")
-ok "dirty-canonical-not-locked" "$([ -f "$HOME/.claude/session-locks/${LOCK_KEY2}.owner" ] && echo yes || echo no)" "no"
+nofile "dirty-canonical-not-locked" "$HOME/.claude/session-locks/${LOCK_KEY2}.owner"
 
 # 4. Changes confined to .claude/ and .sessions-init-* sentinels must NOT count as
 # dirty (the spawn skill's own housekeeping) — regression for the exclusion filter.
@@ -86,7 +86,7 @@ git -C "$R6" checkout --quiet -b feature-branch
 git -C "$R6" rm --quiet marker.txt; git -C "$R6" commit --quiet -m "remove marker on feature"
 echo "still-dirty" > "$R6/other.txt"
 out="$(bash "$SGP" "$R6" sess-base remote-base 2>/dev/null)"
-ok "worktree-based-on-default-not-current" "$([ -f "$out/marker.txt" ] && echo yes || echo no)" "yes"
+isfile "worktree-based-on-default-not-current" "$out/marker.txt"
 
 # 8. With an 'origin' remote, the canonical tree ff-merges the latest origin/<default>
 # instead of just checking out whatever the local branch already had.
@@ -101,7 +101,7 @@ git -C "$SRC" commit --quiet -m "add sync marker"
 git -C "$SRC" push --quiet "$ORIGIN_BARE" main:main
 out="$(bash "$SGP" "$R7" sess-sync remote-sync 2>/dev/null)"
 ok "origin-emits-repo" "$out" "$R7"
-ok "origin-ff-merge-pulls-latest" "$([ -f "$R7/sync.txt" ] && echo yes || echo no)" "yes"
+isfile "origin-ff-merge-pulls-latest" "$R7/sync.txt"
 
 # 9. Two distinct repo paths that flatten to the SAME string under a bare
 # tr '/ ' '__' (e.g. .../foo_bar and .../foo/bar both -> "..._foo_bar") must
@@ -149,7 +149,7 @@ out1="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
 echo "in-progress work" > "$out1/wip.txt"
 out2="$(bash "$SGP" "$R9" sess-restart remote-restart 2>/dev/null)"
 ok "restart-reuses-same-worktree" "$out2" "$out1"
-ok "restart-keeps-wip-file" "$([ -f "$out2/wip.txt" ] && echo yes || echo no)" "yes"
+isfile "restart-keeps-wip-file" "$out2/wip.txt"
 ok "restart-no-orphan-worktree" "$(git -C "$R9" worktree list | wc -l | tr -d ' ')" "2"
 
 # 12. The reuse check must match the COMPLETE worktree-list line, not just a

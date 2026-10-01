@@ -24,7 +24,7 @@ source "$HERE/lib.sh"
 CMD="$HERE/../.claude/commands/create-session.md"
 has(){ if grep -qF "$2" "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found in $3: $2"; fi; }
 
-ok "command-file-exists" "$([ -f "$CMD" ] && echo yes || echo no)" "yes"
+isfile "command-file-exists" "$CMD"
 
 # It must delegate to the script, and name the ONE sanctioned manual fallback.
 has "delegates-to-new-session"     'new-session "$FOLDERNAME"' "$CMD"

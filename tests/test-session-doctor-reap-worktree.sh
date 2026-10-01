@@ -74,19 +74,19 @@ EOF
 
 # ── 1. a clean worktree is removed and its branch is kept ─────────────────
 out1="$(_reap_remove_worktree px-rwclean-0101-0900 no)"
-ok "clean-removed-dir-gone" "$([ -d "$WT_CLEAN" ] && echo yes || echo no)" "no"
+nodir "clean-removed-dir-gone" "$WT_CLEAN"
 ok "clean-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwclean-0101-0900 && echo yes || echo no)" "yes"
 has "clean-removed-message" "$out1" "worktree removed"
 
 # ── 2. a dirty one is kept with a message (no --force) ─────────────────────
 out2="$(_reap_remove_worktree px-rwdirty-0101-0900 no)"
-ok "dirty-kept-dir-present" "$([ -d "$WT_DIRTY" ] && echo yes || echo no)" "yes"
+isdir "dirty-kept-dir-present" "$WT_DIRTY"
 has "dirty-kept-message" "$out2" "kept"
 
 # same dirty worktree, but under reap's own --force => --force is passed
 # through to `git worktree remove` and it actually goes, branch still kept.
 out2f="$(_reap_remove_worktree px-rwdirty-0101-0900 yes)"
-ok "dirty-force-removed" "$([ -d "$WT_DIRTY" ] && echo yes || echo no)" "no"
+nodir "dirty-force-removed" "$WT_DIRTY"
 ok "dirty-force-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwdirty-0101-0900 && echo yes || echo no)" "yes"
 has "dirty-force-removed-message" "$out2f" "worktree removed"
 
@@ -96,12 +96,12 @@ has "dirty-force-removed-message" "$out2f" "worktree removed"
 
 # ── 4. unit-reference guard: a WorkingDirectory hit keeps the worktree ─────
 out4="$(_reap_remove_worktree px-rwworkdir-0101-0900 no)"
-ok "workdir-guard-kept" "$([ -d "$WT_WORKDIR" ] && echo yes || echo no)" "yes"
+isdir "workdir-guard-kept" "$WT_WORKDIR"
 has "workdir-guard-message" "$out4" "in use by unit some-other-bus-unit.service"
 
 # ── 5. unit-reference guard: a drop-in ExecStart hit keeps the worktree ────
 out5="$(_reap_remove_worktree px-rwdropin-0101-0900 no)"
-ok "dropin-guard-kept" "$([ -d "$WT_DROPIN" ] && echo yes || echo no)" "yes"
+isdir "dropin-guard-kept" "$WT_DROPIN"
 has "dropin-guard-message" "$out5" "in use by unit another-bus-unit.service"
 
 # ── 5b. unit-reference guard: a drop-in referencing the worktree only via
@@ -117,13 +117,13 @@ ExecStart=
 ExecStart=/usr/bin/python3 bus.py --state-dir=%h/.claude/worktrees/px-rwpcth-0101-0900
 EOF
 out5b="$(_reap_remove_worktree px-rwpcth-0101-0900 no)"
-ok "pcth-guard-kept" "$([ -d "$WT_PCTH" ] && echo yes || echo no)" "yes"
+isdir "pcth-guard-kept" "$WT_PCTH"
 has "pcth-guard-message" "$out5b" "in use by unit pcth-bus-unit.service"
 
 # ── 6. the guard excludes the session's OWN unit (own WorkingDirectory match
 # must not block removal of its own worktree) ─────────────────────────────
 out6="$(_reap_remove_worktree px-rwownunit-0101-0900 no)"
-ok "ownunit-not-self-blocked" "$([ -d "$WT_OWNUNIT" ] && echo yes || echo no)" "no"
+nodir "ownunit-not-self-blocked" "$WT_OWNUNIT"
 has "ownunit-removed-message" "$out6" "worktree removed"
 
 # ── 7. a primary checkout (the resolved path IS itself a repo root, not a
@@ -134,7 +134,7 @@ git -C "$PRIMARY" init -q -b main
 git -C "$PRIMARY" config user.email t@t.com; git -C "$PRIMARY" config user.name t
 git -C "$PRIMARY" commit -q --allow-empty -m init
 out7="$(_reap_remove_worktree px-rwprimary-0101-0900 no)"
-ok "primary-checkout-kept" "$([ -d "$PRIMARY" ] && echo yes || echo no)" "yes"
+isdir "primary-checkout-kept" "$PRIMARY"
 has "primary-checkout-message" "$out7" "primary checkout"
 
 # ── 8. no worktree at all for a base -> "(ok)", not an error ──────────────
@@ -145,7 +145,7 @@ has "missing-worktree-ok" "$out8" "none found"
 WT_CWD="$TESTHOME/.claude/worktrees/px-rwcwd-0101-0900"
 git -C "$REPO" worktree add -q -b session/px-rwcwd-0101-0900 "$WT_CWD" main >/dev/null 2>&1
 out9="$(cd "$WT_CWD" && _reap_remove_worktree px-rwcwd-0101-0900 no)"
-ok "callercwd-kept" "$([ -d "$WT_CWD" ] && echo yes || echo no)" "yes"
+isdir "callercwd-kept" "$WT_CWD"
 has "callercwd-message" "$out9" "caller's own working directory"
 
 # ── 10. PID-suffix collision: session-git-prep.sh suffixes the worktree
@@ -158,7 +158,7 @@ has "callercwd-message" "$out9" "caller's own working directory"
 WT_PIDSUFFIX="$TESTHOME/.claude/worktrees/px-rwpidsfx-0101-0900-88888"
 git -C "$REPO" worktree add -q -b session/px-rwpidsfx-0101-0900 "$WT_PIDSUFFIX" main >/dev/null 2>&1
 out10="$(_reap_remove_worktree px-rwpidsfx-0101-0900 no)"
-ok "pidsuffix-found-and-removed" "$([ -d "$WT_PIDSUFFIX" ] && echo yes || echo no)" "no"
+nodir "pidsuffix-found-and-removed" "$WT_PIDSUFFIX"
 ok "pidsuffix-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwpidsfx-0101-0900 && echo yes || echo no)" "yes"
 has "pidsuffix-removed-message" "$out10" "worktree removed"
 
@@ -199,7 +199,7 @@ STUB_EOF
   WT_DISPATCH1="$TESTHOME/.claude/worktrees/px-rwdispatch1-0101-0900"
   git -C "$DISPATCHREPO" worktree add -q -b session/px-rwdispatch1-0101-0900 "$WT_DISPATCH1" main >/dev/null 2>&1
   disp1_out="$(PATH="$RSTUB:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap px_rwdispatch1-0101-0900 --force 2>&1)"
-  ok "dispatch-force-worktree-removed" "$([ -d "$WT_DISPATCH1" ] && echo yes || echo no)" "no"
+  nodir "dispatch-force-worktree-removed" "$WT_DISPATCH1"
   has "dispatch-force-reap-message" "$disp1_out" "reaped 'px_rwdispatch1-0101-0900'"
   has "dispatch-force-worktree-message" "$disp1_out" "worktree removed"
 
@@ -207,7 +207,7 @@ STUB_EOF
   WT_DISPATCH2="$TESTHOME/.claude/worktrees/px-rwdispatch2-0101-0900"
   git -C "$DISPATCHREPO" worktree add -q -b session/px-rwdispatch2-0101-0900 "$WT_DISPATCH2" main >/dev/null 2>&1
   disp2_out="$(PATH="$RSTUB:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap px_rwdispatch2-0101-0900 --force --keep-worktree 2>&1)"
-  ok "dispatch-keepworktree-still-present" "$([ -d "$WT_DISPATCH2" ] && echo yes || echo no)" "yes"
+  isdir "dispatch-keepworktree-still-present" "$WT_DISPATCH2"
   has "dispatch-keepworktree-reap-message" "$disp2_out" "reaped 'px_rwdispatch2-0101-0900'"
   ok "dispatch-keepworktree-no-worktree-line" "$(printf '%s' "$disp2_out" | grep -c 'worktree removed\|worktree: kept\|worktree: none found')" "0"
 
@@ -231,8 +231,8 @@ trav_arch_before="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1
 trav_out="$(PATH="$RSTUB_TRAV:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap 'px_/../../x' --force 2>&1)"; rc_trav=$?
 ok "traversal-reap-exit-nonzero" "$([ "$rc_trav" -ne 0 ] && echo yes || echo no)" "yes"
 has "traversal-reap-refuses-base" "$trav_out" "unsafe derived session base"
-ok "traversal-unit-sentinel-kept" "$([ -f "$TESTHOME/.config/systemd/x.service" ] && echo yes || echo no)" "yes"
-ok "traversal-script-sentinel-kept" "$([ -f "$TESTHOME/.local/x-start.sh" ] && echo yes || echo no)" "yes"
+isfile "traversal-unit-sentinel-kept" "$TESTHOME/.config/systemd/x.service"
+isfile "traversal-script-sentinel-kept" "$TESTHOME/.local/x-start.sh"
 trav_arch_after="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
 ok "traversal-no-archive-created" "$trav_arch_after" "$trav_arch_before"
 rm -rf "$RSTUB_TRAV"
@@ -287,12 +287,12 @@ ok "payload-results-bytes-identical" "$(cmp -s "$WTTMP/orig-results.tsv" "$ARCH_
 ok "payload-blob-bytes-identical" "$(cmp -s "$WTTMP/orig-blob.bin" "$ARCH_A/worktree/artifacts/sub/blob.bin" && echo yes || echo no)" "yes"
 ok "payload-manifest-has-sha-size-path" "$(grep -cF "$(sha256sum < "$WTTMP/orig-results.tsv" | cut -d' ' -f1)"$'\t'"$(stat -c %s "$WTTMP/orig-results.tsv")"$'\t'"worktree/artifacts/results.tsv" "$ARCH_A/MANIFEST")" "1"
 ok "payload-manifest-lists-both-files" "$(wc -l < "$ARCH_A/MANIFEST" | tr -d ' ')" "2"
-ok "payload-denylisted-not-archived" "$([ -e "$ARCH_A/worktree/node_modules" ] && echo yes || echo no)" "no"
+gone "payload-denylisted-not-archived" "$ARCH_A/worktree/node_modules"
 ok "payload-archive-dir-private" "$(stat -c %a "$ARCH_A")" "700"
 has "payload-archived-message" "$out13a" "archived 2 ignored file(s)"
 has "payload-archived-message-dest" "$out13a" "$ARCH_A"
 has "payload-removed-message" "$out13a" "worktree removed"
-ok "payload-worktree-removed" "$([ -d "$WT_PAY" ] && echo yes || echo no)" "no"
+nodir "payload-worktree-removed" "$WT_PAY"
 ok "payload-branch-kept" "$(git -C "$IGNREPO" show-ref --verify --quiet refs/heads/session/px-rwpayload-0101-0900 && echo yes || echo no)" "yes"
 
 # 13b. only deny-listed / scaffolding ignored content (node_modules, .venv,
@@ -311,7 +311,7 @@ ln -s /nonexistent "$WT_DENY/.claude/skills"; echo a > "$WT_DENY/.sessions-init-
 mkdir -p "$WT_DENY/frontend/coverage/lcov-report"; echo a > "$WT_DENY/frontend/coverage/lcov-report/base.css"
 echo a > "$WT_DENY/frontend/tsconfig.tsbuildinfo"; echo a > "$WT_DENY/frontend/next-env.d.ts"
 out13b="$(_reap_remove_worktree px-rwdeny-0101-0900 no)"
-ok "denylist-worktree-removed" "$([ -d "$WT_DENY" ] && echo yes || echo no)" "no"
+nodir "denylist-worktree-removed" "$WT_DENY"
 ok "denylist-no-archive" "$(archives_of px-rwdeny-0101-0900 | wc -l | tr -d ' ')" "0"
 ok "denylist-no-archived-line" "$(printf '%s' "$out13b" | grep -c 'archived')" "0"
 has "denylist-removed-message" "$out13b" "worktree removed"
@@ -323,13 +323,13 @@ mkwt px-rwcap-0101-0900
 WT_CAP="$TESTHOME/.claude/worktrees/px-rwcap-0101-0900"
 mkdir -p "$WT_CAP/artifacts"; head -c 500 /dev/urandom > "$WT_CAP/artifacts/big.bin"
 out13c="$(SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES=100 _reap_remove_worktree px-rwcap-0101-0900 yes)"
-ok "cap-worktree-kept" "$([ -f "$WT_CAP/artifacts/big.bin" ] && echo yes || echo no)" "yes"
+isfile "cap-worktree-kept" "$WT_CAP/artifacts/big.bin"
 has "cap-kept-message" "$out13c" "worktree: kept (gitignored files not archived"
 has "cap-names-cap" "$out13c" "SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES"
 ok "cap-no-archive-dir" "$(archives_of px-rwcap-0101-0900 | wc -l | tr -d ' ')" "0"
 # ...and the same payload under the default cap (2 GB) is archived + removed.
 out13c2="$(_reap_remove_worktree px-rwcap-0101-0900 no)"
-ok "cap-default-archives-and-removes" "$([ -d "$WT_CAP" ] && echo yes || echo no)" "no"
+nodir "cap-default-archives-and-removes" "$WT_CAP"
 has "cap-default-archived-message" "$out13c2" "archived 1 ignored file(s)"
 
 # 13d. archive location unwritable (a regular FILE where ~/backups should be)
@@ -340,7 +340,7 @@ mkdir -p "$WT_UNWR/artifacts"; echo data > "$WT_UNWR/artifacts/results.tsv"
 mv "$TESTHOME/backups" "$TESTHOME/backups.real"; : > "$TESTHOME/backups"
 out13d="$(_reap_remove_worktree px-rwunwr-0101-0900 yes)"
 rm -f "$TESTHOME/backups"; mv "$TESTHOME/backups.real" "$TESTHOME/backups"
-ok "unwritable-worktree-kept" "$([ -f "$WT_UNWR/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+isfile "unwritable-worktree-kept" "$WT_UNWR/artifacts/results.tsv"
 has "unwritable-kept-message" "$out13d" "worktree: kept (gitignored files not archived"
 
 # 13e. payload guard is per-helper and independent of reap's other guards:
@@ -405,7 +405,7 @@ mkwt px-rwcorrupt-0101-0900
 WT_CORR="$TESTHOME/.claude/worktrees/px-rwcorrupt-0101-0900"
 mkdir -p "$WT_CORR/artifacts"; echo data > "$WT_CORR/artifacts/results.tsv"
 out13i="$(PYTHONPATH="$CORRUPT" _reap_remove_worktree px-rwcorrupt-0101-0900 yes)"
-ok "verify-corrupt-copy-worktree-kept" "$([ -f "$WT_CORR/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+isfile "verify-corrupt-copy-worktree-kept" "$WT_CORR/artifacts/results.tsv"
 has "verify-corrupt-copy-message" "$out13i" "gitignored files not archived"
 has "verify-corrupt-copy-says-verify" "$out13i" "verify failed"
 ok "verify-corrupt-copy-partial-archive-removed" "$(archives_of px-rwcorrupt-0101-0900 | wc -l | tr -d ' ')" "0"
@@ -417,7 +417,7 @@ if [ "$(id -u)" -ne 0 ]; then
   mkdir -p "$WT_UR/artifacts"; echo data > "$WT_UR/artifacts/results.tsv"; echo more > "$WT_UR/artifacts/secret.bin"; chmod 000 "$WT_UR/artifacts/secret.bin"
   out13j="$(_reap_remove_worktree px-rwunread-0101-0900 yes)"
   chmod 600 "$WT_UR/artifacts/secret.bin"
-  ok "unreadable-worktree-kept" "$([ -f "$WT_UR/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  isfile "unreadable-worktree-kept" "$WT_UR/artifacts/results.tsv"
   has "unreadable-kept-message" "$out13j" "gitignored files not archived"
   ok "unreadable-partial-archive-removed" "$(archives_of px-rwunread-0101-0900 | wc -l | tr -d ' ')" "0"
 fi
@@ -433,7 +433,7 @@ if [ "$(id -u)" -ne 0 ]; then
   ok "helper-unreadable-dir-rc2" "$rc13k" "2"
   out13k="$(_reap_remove_worktree px-rwlocked-0101-0900 yes)"
   chmod 755 "$WT_LK/artifacts/locked"
-  ok "unreadable-dir-worktree-kept" "$([ -f "$WT_LK/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  isfile "unreadable-dir-worktree-kept" "$WT_LK/artifacts/results.tsv"
   has "unreadable-dir-kept-message" "$out13k" "could not list the gitignored files"
   ok "unreadable-dir-no-archive" "$(archives_of px-rwlocked-0101-0900 | wc -l | tr -d ' ')" "0"
 fi
@@ -451,7 +451,7 @@ if command -v tmux >/dev/null 2>&1; then
   ok "dispatch-cap-exit0" "$rc_dc" "0"
   has "dispatch-cap-teardown-continues" "$d_cap" "reaped 'px_rwdcap-0101-0900'"
   has "dispatch-cap-kept-message" "$d_cap" "worktree: kept (gitignored files not archived"
-  ok "dispatch-cap-worktree-kept" "$([ -f "$WT_DC/artifacts/big.bin" ] && echo yes || echo no)" "yes"
+  isfile "dispatch-cap-worktree-kept" "$WT_DC/artifacts/big.bin"
 
   mkwt px-rwdunw-0101-0900; WT_DU="$TESTHOME/.claude/worktrees/px-rwdunw-0101-0900"
   mkdir -p "$WT_DU/artifacts"; echo data > "$WT_DU/artifacts/results.tsv"
@@ -460,13 +460,13 @@ if command -v tmux >/dev/null 2>&1; then
   rm -f "$TESTHOME/backups"; mv "$TESTHOME/backups.real" "$TESTHOME/backups"
   ok "dispatch-unwritable-exit0" "$rc_du" "0"
   has "dispatch-unwritable-teardown-continues" "$d_unw" "reaped 'px_rwdunw-0101-0900'"
-  ok "dispatch-unwritable-worktree-kept" "$([ -f "$WT_DU/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  isfile "dispatch-unwritable-worktree-kept" "$WT_DU/artifacts/results.tsv"
 
   mkwt px-rwdkeep-0101-0900; WT_DK="$TESTHOME/.claude/worktrees/px-rwdkeep-0101-0900"
   mkdir -p "$WT_DK/artifacts"; echo data > "$WT_DK/artifacts/results.tsv"
   d_keep="$(reapd px_rwdkeep-0101-0900 --force --keep-worktree)"
   ARCH_DK="$(archives_of px-rwdkeep-0101-0900 | head -1)"
-  ok "dispatch-keep-worktree-present" "$([ -f "$WT_DK/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  isfile "dispatch-keep-worktree-present" "$WT_DK/artifacts/results.tsv"
   ok "dispatch-keep-worktree-unit-archive-dir" "$([ -n "$ARCH_DK" ] && [ -d "$ARCH_DK" ] && echo yes || echo no)" "yes"
   ok "dispatch-keep-worktree-no-ignored-archive-line" "$(printf '%s' "$d_keep" | grep -c 'ignored file(s)\|worktree removed\|worktree: kept')" "0"
 
@@ -474,7 +474,7 @@ if command -v tmux >/dev/null 2>&1; then
   mkdir -p "$WT_DO/artifacts"; echo data > "$WT_DO/artifacts/results.tsv"
   d_ok="$(reapd px_rwdok-0101-0900 --force)"
   has "dispatch-archived-message" "$d_ok" "archived 1 ignored file(s)"
-  ok "dispatch-archived-and-removed" "$([ -d "$WT_DO" ] && echo yes || echo no)" "no"
+  nodir "dispatch-archived-and-removed" "$WT_DO"
   ok "dispatch-archived-copy-exists" "$(archives_of px-rwdok-0101-0900 | head -1 | xargs -I{} test -f {}/worktree/artifacts/results.tsv && echo yes || echo no)" "yes"
 
   # 13l. A unit/start-script artifact and an ignored worktree payload with the
@@ -499,7 +499,7 @@ if command -v tmux >/dev/null 2>&1; then
   s_out="$(HOME="$TESTHOME" bash "$DOCTOR" archive-ignored "$WT_S" 2>&1)"; rc_s=$?
   ok "subcmd-archive-rc0" "$rc_s" "0"
   has "subcmd-archive-message" "$s_out" "archived 1 ignored file(s)"
-  ok "subcmd-leaves-worktree-alone" "$([ -f "$WT_S/artifacts/results.tsv" ] && echo yes || echo no)" "yes"
+  isfile "subcmd-leaves-worktree-alone" "$WT_S/artifacts/results.tsv"
   s_out2="$(HOME="$TESTHOME" bash "$DOCTOR" archive-ignored "$WT_DENY" 2>&1)"; rc_s2=$?   # removed dir -> not a worktree
   ok "subcmd-nonworktree-rc2" "$rc_s2" "2"
   has "subcmd-nonworktree-message" "$s_out2" "not the top of a git worktree"
