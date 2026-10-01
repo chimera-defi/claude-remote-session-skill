@@ -27,7 +27,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 NS="$HERE/../scripts/new-session.sh"
 FAKE_HANDOFF="$HERE/fake-handoff-sequence.sh"
 pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 WORK="$(mktemp -d)"
