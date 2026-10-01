@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
-# Tests for reap's worktree-removal step: _reap_remove_worktree and its guard
-# helpers (_is_caller_cwd, _wt_used_by_other_unit). Exercised directly as
-# sourced shell functions (same pattern test-session-doctor-registry-prune.sh
-# uses for _registry_delete_one) rather than only through the full `reap`
-# dispatch — a dirty-worktree case would otherwise never reach the worktree-
-# removal step at all, because session-preserve's own safety gate (exercised
-# separately in test-session-doctor.sh) already refuses a dirty session
-# before `reap` gets this far. No real HOME, no real systemd unit, no
-# network: everything lives under a throwaway HOME with a fake systemd
-# --user dir, and $HOME/$UD (the globals session-doctor.sh's functions read
-# directly) are pointed at that fixture for the rest of this process.
+# reap's worktree-removal step: _reap_remove_worktree and its guards (_is_caller_cwd, _wt_used_by_other_unit),
+# called as sourced functions (a dirty worktree never reaches this step via `reap`: the preserve gate refuses first).
+# Everything lives under a throwaway HOME with a fake systemd --user dir.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 isolate_overlay
-# Fixture shape: configured prefix "px", legacy "oldhost" — see
-# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "px_"/"px-" literal to a generic-default shape).
+# Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
@@ -33,9 +23,7 @@ echo hi > "$REPO/a.txt"; git -C "$REPO" add a.txt; git -C "$REPO" commit -q -m i
 
 TESTHOME="$WTTMP/home"
 mkdir -p "$TESTHOME/.claude/worktrees" "$TESTHOME/.config/systemd/user"
-# _reap_remove_worktree/_wt_used_by_other_unit read $HOME and $UD directly
-# (globals) — point both at this fixture for the rest of this process, the
-# same as re-invoking `bash session-doctor.sh reap ...` with that HOME would.
+# the functions read $HOME and $UD globals: point both at the fixture
 export HOME="$TESTHOME"
 UD="$TESTHOME/.config/systemd/user"
 UDIR="$UD"
@@ -83,16 +71,13 @@ out2="$(_reap_remove_worktree px-rwdirty-0101-0900 no)"
 isdir "dirty-kept-dir-present" "$WT_DIRTY"
 has "dirty-kept-message" "$out2" "kept"
 
-# same dirty worktree, but under reap's own --force => --force is passed
-# through to `git worktree remove` and it actually goes, branch still kept.
+# same dirty worktree under reap --force: --force reaches `git worktree remove`; branch still kept.
 out2f="$(_reap_remove_worktree px-rwdirty-0101-0900 yes)"
 nodir "dirty-force-removed" "$WT_DIRTY"
 ok "dirty-force-branch-kept" "$(yn git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwdirty-0101-0900)" yes
 has "dirty-force-removed-message" "$out2f" "worktree removed"
 
-# (--keep-worktree itself is covered end-to-end in case 12b below, through
-# the real `reap` dispatch — see its comment for why that, not a direct
-# _reap_remove_worktree call, is the meaningful test of the flag.)
+# (--keep-worktree is covered end-to-end in 12b)
 
 # ── 4. unit-reference guard: a WorkingDirectory hit keeps the worktree ─────
 out4="$(_reap_remove_worktree px-rwworkdir-0101-0900 no)"
@@ -104,10 +89,7 @@ out5="$(_reap_remove_worktree px-rwdropin-0101-0900 no)"
 isdir "dropin-guard-kept" "$WT_DROPIN"
 has "dropin-guard-message" "$out5" "in use by unit another-bus-unit.service"
 
-# ── 5b. unit-reference guard: a drop-in referencing the worktree only via
-# systemd's %h specifier (= $HOME) must still be caught — real case:
-# a service.d/state-dir.conf drop-in spells the path
-# %h/.claude/worktrees/<name>/... instead of $HOME/.claude/worktrees/... ────
+# ── 5b. a drop-in referencing the worktree only via %h (= $HOME) must still be caught ──
 WT_PCTH="$TESTHOME/.claude/worktrees/px-rwpcth-0101-0900"
 git -C "$REPO" worktree add -q -b session/px-rwpcth-0101-0900 "$WT_PCTH" main >/dev/null 2>&1
 mkdir -p "$UDIR/pcth-bus-unit.service.d"
@@ -120,14 +102,12 @@ out5b="$(_reap_remove_worktree px-rwpcth-0101-0900 no)"
 isdir "pcth-guard-kept" "$WT_PCTH"
 has "pcth-guard-message" "$out5b" "in use by unit pcth-bus-unit.service"
 
-# ── 6. the guard excludes the session's OWN unit (own WorkingDirectory match
-# must not block removal of its own worktree) ─────────────────────────────
+# ── 6. the guard excludes the session's OWN unit ──
 out6="$(_reap_remove_worktree px-rwownunit-0101-0900 no)"
 nodir "ownunit-not-self-blocked" "$WT_OWNUNIT"
 has "ownunit-removed-message" "$out6" "worktree removed"
 
-# ── 7. a primary checkout (the resolved path IS itself a repo root, not a
-# linked worktree of some other repo) is never removed ────────────────────
+# ── 7. a primary checkout (a repo root, not a linked worktree) is never removed ──
 PRIMARY="$TESTHOME/.claude/worktrees/px-rwprimary-0101-0900"
 mkdir -p "$PRIMARY"
 git -C "$PRIMARY" init -q -b main
@@ -148,13 +128,8 @@ out9="$(cd "$WT_CWD" && _reap_remove_worktree px-rwcwd-0101-0900 no)"
 isdir "callercwd-kept" "$WT_CWD"
 has "callercwd-message" "$out9" "caller's own working directory"
 
-# ── 10. PID-suffix collision: session-git-prep.sh suffixes the worktree
-# DIRECTORY with -$$ on a path collision while leaving the BRANCH
-# (session/<base>) unsuffixed (see session-doctor.sh worktree-stale and
-# session-preserve.sh's worktree_of(), which special-case this the same
-# way). A naive "$HOME/.claude/worktrees/$base" path join would miss this
-# directory entirely and silently leave it behind forever — confirm
-# _reap_remove_worktree finds and removes it via the branch match instead.
+# ── 10. PID-suffix collision: the worktree DIR gets -$$ on collision while the BRANCH stays session/<base>;
+# a plain path join would miss it, so _reap_remove_worktree must find it via the branch ──
 WT_PIDSUFFIX="$TESTHOME/.claude/worktrees/px-rwpidsfx-0101-0900-88888"
 git -C "$REPO" worktree add -q -b session/px-rwpidsfx-0101-0900 "$WT_PIDSUFFIX" main >/dev/null 2>&1
 out10="$(_reap_remove_worktree px-rwpidsfx-0101-0900 no)"
@@ -162,8 +137,7 @@ nodir "pidsuffix-found-and-removed" "$WT_PIDSUFFIX"
 ok "pidsuffix-branch-kept" "$(yn git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwpidsfx-0101-0900)" yes
 has "pidsuffix-removed-message" "$out10" "worktree removed"
 
-# ── 11. `git worktree prune` ran afterward: no stale registrations left for
-# worktrees actually removed above, but a kept one is still registered ─────
+# ── 11. `git worktree prune` ran: no stale registrations, a kept one stays registered ──
 list_out="$(git -C "$REPO" worktree list --porcelain)"
 ok "prune-clean-gone-from-list"      "$(printf '%s' "$list_out" | grep -c "$WT_CLEAN")" "0"
 ok "prune-dirtyforce-gone-from-list" "$(printf '%s' "$list_out" | grep -c "$WT_DIRTY")" "0"
@@ -171,17 +145,8 @@ ok "prune-ownunit-gone-from-list"    "$(printf '%s' "$list_out" | grep -c "$WT_O
 ok "prune-pidsuffix-gone-from-list"  "$(printf '%s' "$list_out" | grep -c "$WT_PIDSUFFIX")" "0"
 ok "prune-kept-still-listed"         "$(printf '%s' "$list_out" | grep -c "$WT_DROPIN")" "1"
 
-# ── 12. full `reap` DISPATCH (not just the helper directly): a real `bash
-# session-doctor.sh reap <name> --force` call, with a worktree fixture
-# actually present at ~/.claude/worktrees/<base>, wires KEEP_WORKTREE/base
-# through correctly end-to-end — the direct-helper calls above never
-# exercise the `if [ "$KEEP_WORKTREE" != yes ] && [ -n "$base" ]` gate in the
-# `reap)` case block itself, nor flag parsing for --keep-worktree. Mirrors
-# test-session-doctor-registry-prune.sh's own end-to-end reap coverage for
-# --keep-registry. --force skips the session-preserve gate (same as every
-# other throwaway-session reap test in this repo) so only the worktree step
-# is under test; HOME has no credentials, so the registry step fails soft
-# and never touches the network.
+# ── 12. full `reap` dispatch (--force skips the preserve gate, so only the worktree step is under test):
+# covers the KEEP_WORKTREE gate and --keep-worktree parsing the direct-helper calls above never reach ──
 if command -v tmux >/dev/null 2>&1; then
   RSTUB="$(mktemp -d)"
   cat > "$RSTUB/systemctl" <<'STUB_EOF'
@@ -214,10 +179,7 @@ STUB_EOF
   rm -rf "$RSTUB"
 fi
 
-# ── 12c. full `reap` must reject an unsafe derived base BEFORE any filesystem
-# cleanup. `tmux_to_base px_/../../x` used to derive `px-/../../x`, which let
-# the unit/start-script archive+rm paths escape ~/.config/systemd/user and
-# ~/.local/bin. A reject here must be non-zero and delete nothing.
+# ── 12c. reap must reject an unsafe derived base (`px_/../../x`) BEFORE any cleanup; non-zero, deletes nothing ──
 RSTUB_TRAV="$(mktemp -d)"
 cat > "$RSTUB_TRAV/systemctl" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -237,13 +199,9 @@ trav_arch_after="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1 
 ok "traversal-no-archive-created" "$trav_arch_after" "$trav_arch_before"
 rm -rf "$RSTUB_TRAV"
 
-# ── 13. gitignored payload: `git worktree remove` (with or without --force)
-# silently deletes gitignored files, and _wt_dirty / session-preserve both
-# ignore them, so a "clean" worktree can hold a whole campaign's results
-# (a real data loss). reap must ARCHIVE the non-regenerable ones before
-# removing, and keep the worktree if it cannot. The fixture repo ignores the
-# same scaffolding paths the host's global git ignore does, so the deny-list
-# (not git) is what has to keep those out of the payload.
+# ── 13. gitignored payload: `git worktree remove` silently deletes ignored files that _wt_dirty ignores, so reap
+# must ARCHIVE non-regenerable ones first and keep the worktree if it cannot. The deny-list (not git) must
+# keep scaffolding out of the payload. ──
 IGNREPO="$WTTMP/ign-repo"; mkdir -p "$IGNREPO"
 git -C "$IGNREPO" init -q -b main
 git -C "$IGNREPO" config user.email t@t.com; git -C "$IGNREPO" config user.name t
@@ -316,9 +274,7 @@ ok "denylist-no-archive" "$(archives_of px-rwdeny-0101-0900 | wc -l | tr -d ' ')
 ok "denylist-no-archived-line" "$(printf '%s' "$out13b" | grep -c 'archived')" "0"
 has "denylist-removed-message" "$out13b" "worktree removed"
 
-# 13c. payload over the cap -> worktree KEPT with a reason naming the cap; no
-# archive left behind. (--force does not bypass this: it is the ignored files
-# the operator never sees that this guard exists for.)
+# 13c. payload over the cap -> worktree KEPT naming the cap, no archive left (--force does not bypass).
 mkwt px-rwcap-0101-0900
 WT_CAP="$TESTHOME/.claude/worktrees/px-rwcap-0101-0900"
 mkdir -p "$WT_CAP/artifacts"; head -c 500 /dev/urandom > "$WT_CAP/artifacts/big.bin"
@@ -357,10 +313,8 @@ out13e="$(_reap_remove_worktree px-rwpayunit-0101-0900 no)"
 has "payload-unit-guard-message" "$out13e" "in use by unit payload-bus.service"
 ok "payload-unit-guard-no-archive" "$(archives_of px-rwpayunit-0101-0900 | wc -l | tr -d ' ')" "0"
 
-# 13f. _wt_ignored_payload directly: counts file-level (not the collapsed
-# `artifacts/` entry), reports bytes + examples, keeps a bare `artifacts/`
-# OUT of the deny-list (a deny-list entry for it would recreate the incident),
-# and copes with awkward file names and symlinks.
+# 13f. _wt_ignored_payload: counts files (not the collapsed `artifacts/`), keeps bare `artifacts/` OUT of the deny-list,
+# copes with odd file names and symlinks.
 mkwt px-rwhelper-0101-0900
 WT_H="$TESTHOME/.claude/worktrees/px-rwhelper-0101-0900"
 mkdir -p "$WT_H/artifacts/a b" "$WT_H/artifacts/token-reduction"
@@ -386,10 +340,8 @@ _wt_ignored_payload "$TESTHOME/.claude/worktrees/px-rwhelper2-0101-0900" "$plist
 ok "helper-empty-rc1" "$rc13g" "1"
 ok "helper-empty-count0" "$_WTI_COUNT" "0"
 
-# 13i. the copy is VERIFIED, and any archive failure fails closed: a test-only
-# sitecustomize (on PYTHONPATH, so no hook lives in the script) makes
-# shutil.copy2 append a byte to every copy. The verify step must catch it, keep
-# the worktree, and remove its own partial archive.
+# 13i. the copy is VERIFIED; any archive failure fails closed (a test-only sitecustomize corrupts every copy:
+# verify must catch it, keep the worktree, remove its partial archive).
 CORRUPT="$WTTMP/corrupt-py"; mkdir -p "$CORRUPT"
 cat > "$CORRUPT/sitecustomize.py" <<'PYEOF'
 import shutil
@@ -422,9 +374,7 @@ if [ "$(id -u)" -ne 0 ]; then
   ok "unreadable-partial-archive-removed" "$(archives_of px-rwunread-0101-0900 | wc -l | tr -d ' ')" "0"
 fi
 
-# 13k. enumeration failure fails CLOSED: an unreadable directory inside the
-# payload means the list is incomplete, so the helper returns 2 (never "empty"),
-# reap keeps the worktree, and nothing is archived (skipped as root).
+# 13k. enumeration failure fails CLOSED: unreadable dir -> helper returns 2, reap keeps the worktree, nothing archived (skipped as root).
 if [ "$(id -u)" -ne 0 ]; then
   mkwt px-rwlocked-0101-0900
   WT_LK="$TESTHOME/.claude/worktrees/px-rwlocked-0101-0900"
@@ -438,9 +388,7 @@ if [ "$(id -u)" -ne 0 ]; then
   ok "unreadable-dir-no-archive" "$(archives_of px-rwlocked-0101-0900 | wc -l | tr -d ' ')" "0"
 fi
 
-# 13g. full `reap` dispatch: cap / unwritable / --keep-worktree, end-to-end.
-# Teardown must continue past a kept worktree (exit 0, "reaped" printed), and
-# --keep-worktree must not archive anything.
+# 13g. full `reap`: cap / unwritable / --keep-worktree end-to-end; teardown continues past a kept worktree, --keep-worktree archives nothing.
 if command -v tmux >/dev/null 2>&1; then
   RSTUB2="$(mktemp -d)"; printf '#!/usr/bin/env bash\nexit 0\n' > "$RSTUB2/systemctl"; chmod +x "$RSTUB2/systemctl"
   reapd(){ PATH="$RSTUB2:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap "$@" 2>&1; }
@@ -477,9 +425,7 @@ if command -v tmux >/dev/null 2>&1; then
   nodir "dispatch-archived-and-removed" "$WT_DO"
   ok "dispatch-archived-copy-exists" "$(archives_of px-rwdok-0101-0900 | head -1 | xargs -I{} test -f {}/worktree/artifacts/results.tsv && echo yes || echo no)" "yes"
 
-  # 13l. A unit/start-script artifact and an ignored worktree payload with the
-  # same relative path must not share one archive destination. Keep them in
-  # separate archive subtrees so the worktree copy cannot overwrite the unit.
+  # 13l. a unit artifact and a worktree payload with the same relative path must not share an archive destination.
   mkwt px-rwdcollide-0101-0900; WT_COL="$TESTHOME/.claude/worktrees/px-rwdcollide-0101-0900"
   mkdir -p "$TESTHOME/.config/systemd/user" "$WT_COL/.config/systemd/user"
   printf 'unit bytes\n' > "$TESTHOME/.config/systemd/user/px-rwdcollide-0101-0900.service"
