@@ -219,8 +219,6 @@ a broken repo.
 
 Both: `references/session-lifecycle.md`. Host-specific ops tooling lives outside this repo.
 
-Host-specific ops tooling lives outside this repo.
-
 Runbooks (compaction, recycling, hook-wedged and stuck-menu sessions):
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping,
 registry expiry: [`references/session-lifecycle.md`](references/session-lifecycle.md).
