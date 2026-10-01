@@ -112,6 +112,12 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
 - ChatGPT is reached, if at all, through a project-specific relay subagent (not a standalone
   session), defined in that project's own `.claude/agents/` and roles table — don't copy its
   call-out details here. `$CRSS_HOME/local.md` says which projects have one.
+- The order of second opinions is overlay-configurable: `$CRSS_HOME/local.md` may name which
+  reviewer goes first (for example a cheaper strong model), which gives a different-family
+  cross-check, and which expensive reviewer goes last. Whatever the order, a review that gates
+  a merge or an operator-facing decision never rests on a single model family; if only one
+  family is available, pause and report rather than approving on one family's say-so. An
+  orchestrator's own sanity check (the Fable bullet above) is not that review.
 
 ## Writing the kickoff task
 
@@ -130,6 +136,11 @@ generic defaults in those two files. What matters most for a fresh spawn:
   *through what*: a question left only in the child's own pane is a stall, not an
   escalation. Default wording (via `session-send <parent-session> --file <f>`, numbered list
   with a recommended option): [`handoff/references/massaging.md`](handoff/references/massaging.md).
+  A permission denial or a plain-text question in the child's pane does **not** raise an
+  `AskUserQuestion` notification, so the operator never sees it. A blocked child therefore
+  `session-send`s its launcher the exact command or decision needed. Launchers sweep their
+  children's panes read-only for such stalls and alert the operator; they never answer a
+  permission denial on the operator's behalf.
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
