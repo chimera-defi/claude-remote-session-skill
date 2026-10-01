@@ -96,11 +96,13 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
 - One Bash call for the whole recipe — `new-session` is one command; don't split it into manual steps
 - The *generated* start scripts and units are local-only (`~/.local/bin/`, `~/.config/systemd/user/`) — never commit them to any repo
 - Git-aware run dir: a git workdir starts on the **default branch** (or a fresh worktree off it), never a stale feature branch — see below
-- Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
+- Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
 - `agents/builder.md` caps a builder at 250 turns per invocation (`maxTurns`). The CLI stops it
   mid-step. On an "Agent stopped at its 250-turn limit" result, run `git status` /
   `git diff --stat` in its worktree before deciding anything. Then continue it with SendMessage,
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
+- Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
+  consult contract in [`references/hub-opus-consult.md`](references/hub-opus-consult.md).
 - The Opus orchestrator has no `advisor` (Sonnet-only). For a second opinion it spawns a
   Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
   deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
@@ -131,6 +133,9 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
+- **Builders: Codex first.** For hands-on implementation, spawn Codex builders first
+  (`new-session --backend codex`, or `codex exec` for one-shot local work); use Sonnet as
+  the fallback when Codex cannot run the task, and record the model that actually ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
   verification each go to their own subagent (`subagent_type: builder` or `model: "sonnet"`,
   which keeps `advisor`); brief each completely — only the prompt string crosses over — and
