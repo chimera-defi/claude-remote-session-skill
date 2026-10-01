@@ -21,8 +21,13 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
 1. **Target.** `session-handoff targets` lists live sessions with state + model. Route to an
    existing one, or spawn via `new-session <folder> [workspace|sessions]` (handles alias
    anti-poisoning + the model-pin warning). The default `orchestrator` profile gives Opus; pass
-   `CLAUDE_SESSION_MODEL=<model>` or `CLAUDE_SESSION_PROFILE=builder|copywriter` only for a
-   different tier.
+   `CLAUDE_SESSION_MODEL=<model>` or `CLAUDE_SESSION_PROFILE=owner|builder|copywriter` only for a
+   different tier. `CLAUDE_SESSION_PROFILE=owner` (full tools, Sonnet) is for long-lived
+   campaign/lane owners in an operator-approved Sonnet-owner trial: name the trial lanes,
+   and track their outcomes (commits landed, review pass rate, `models_ran`) before you
+   widen it. Other new owners keep their host's default (see `$CRSS_HOME/local.md`). Give
+   every long-lived owner a `CAMPAIGN_CHECKPOINT.md` from
+   [`references/campaign-checkpoint.md`](references/campaign-checkpoint.md).
    - **Check size and staleness before routing to an existing session, not just topic match.**
      `tmux capture-pane -p -t <session>`: look for a `/clear to save NNNk tokens` hint (six
      figures = bloated) and idle time. Neither `session-handoff` nor `session-preserve`

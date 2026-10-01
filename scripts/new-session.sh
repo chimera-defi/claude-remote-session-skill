@@ -154,8 +154,8 @@ Environment:
                                 model/sandbox/approval flags here.
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
-                                (pinned) for orchestrator; sonnet/haiku for
-                                builder/copywriter — bare aliases that
+                                (pinned) for orchestrator; sonnet/sonnet/haiku
+                                for owner/builder/copywriter — bare aliases that
                                 auto-track the latest release for their tier.
                                 Set it to override: a bare alias tracks latest,
                                 or pass an exact id (e.g. claude-opus-4-8) to
@@ -165,6 +165,12 @@ Environment:
                                 orchestrator — full built-in tool set; needed for
                                   multi-agent fan-out (Workflow/Agent/…).
                                   Default model: claude-opus-5-5 (pinned).
+                                owner        — same full tool set as orchestrator,
+                                  for a long-lived campaign/lane owner that fans
+                                  out to builders. Default model: sonnet (Sonnet
+                                  owners keep the native advisor and cost less per
+                                  resident turn; use orchestrator, or an explicit
+                                  CLAUDE_SESSION_MODEL, when Opus is approved).
                                 builder      — trimmed --tools allowlist; drops the
                                   orchestration-only schemas to reclaim ~10.3k of the
                                   ~19.5k System-tools context. Hands-on
@@ -178,6 +184,7 @@ Environment:
 
 Examples:
   new-session my-project                                                     # orchestrator + claude-opus-5-5 (pinned)
+  CLAUDE_SESSION_PROFILE=owner new-session my-lane-owner sessions            # full tools + sonnet
   new-session my-project workspace
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
@@ -316,8 +323,8 @@ if [ "$BACKEND" = claude ]; then
   # the default model for the spawned Claude session.
   PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
   case "$PROFILE" in
-    orchestrator|builder|copywriter) ;;
-    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|builder|copywriter" >&2
+    orchestrator|owner|builder|copywriter) ;;
+    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|builder|copywriter" >&2
        PROFILE="orchestrator" ;;
   esac
 
@@ -326,6 +333,7 @@ if [ "$BACKEND" = claude ]; then
   else
     case "$PROFILE" in
       orchestrator) MODEL=claude-opus-5-5 ;;
+      owner)        MODEL=sonnet ;;
       builder)      MODEL=sonnet ;;
       copywriter)   MODEL=haiku ;;
     esac
