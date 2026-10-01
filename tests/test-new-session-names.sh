@@ -123,6 +123,15 @@ has "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynami
 errw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>&1 1>/dev/null)"
 if printf '%s' "$errw" | grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE'; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
 
+outh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>/dev/null)"
+has "profile-hub"                  "$outh" 'PROFILE=hub'
+has "hub-default-model-sonnet"     "$outh" '^MODEL=sonnet$'
+has "hub-model-src-profile"        "$outh" '^MODEL_SRC=profile-default$'
+has "hub-has-consult-prompt-flag"  "$outh" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
+has "hub-keeps-full-tool-set"      "$outh" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections --append-system-prompt '
+errh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>&1 1>/dev/null)"
+if printf '%s' "$errh" | grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE'; then fail=$((fail+1)); echo "FAIL: hub-profile-should-not-warn"; else pass=$((pass+1)); fi
+
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
 has "profile-builder"               "$outb" 'PROFILE=builder'
 has "builder-default-model-sonnet"  "$outb" '^MODEL=sonnet$'
@@ -137,6 +146,9 @@ has "copywriter-has-tools-allowlist" "$outc" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,
 outo="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-override 2>/dev/null)"
 has "explicit-model-overrides-default" "$outo" '^MODEL=claude-opus-4-8$'
 has "explicit-model-src-explicit"      "$outo" '^MODEL_SRC=explicit$'
+outho="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub-override 2>/dev/null)"
+has "hub-explicit-model-overrides-default" "$outho" '^MODEL=claude-opus-4-8$'
+has "hub-explicit-keeps-consult-prompt"    "$outho" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
 erro="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 bash "$NS" --dry-run profile-override 2>&1 1>/dev/null)"
 if printf '%s' "$erro" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: pinned-id-should-not-warn"; else pass=$((pass+1)); fi
 # an EXPLICIT bare alias (one-off spawn) SHOULD warn
@@ -148,6 +160,50 @@ outu="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>/dev/n
 has "unknown-profile-falls-back"   "$outu" 'PROFILE=orchestrator'
 erru="$(CLAUDE_SESSION_PROFILE=bogus bash "$NS" --dry-run profile-bogus 2>&1 1>/dev/null)"
 has "unknown-profile-warns"        "$erru" 'unknown CLAUDE_SESSION_PROFILE'
+
+# Hub launchers must carry the consult prompt in every Claude path: pinned resume,
+# --continue relaunch, and fresh launch. Owner/orchestrator keep their existing
+# full-tool flag shape and do not inherit the hub append prompt.
+GEN_HOME="$(mktemp -d)"
+GEN_BIN="$(mktemp -d)"
+cat > "$GEN_BIN/date" <<'DATEEOF'
+#!/usr/bin/env bash
+case "$1" in
+  +%m%d-%H%M) echo "0101-0000" ;;
+  *) exec /usr/bin/env date "$@" ;;
+esac
+DATEEOF
+cat > "$GEN_BIN/systemctl" <<'CTLEOF'
+#!/usr/bin/env bash
+exit 0
+CTLEOF
+chmod +x "$GEN_BIN/date" "$GEN_BIN/systemctl"
+GEN_STORE="$(mktemp -u)"
+gen_out="$(HOME="$GEN_HOME" PATH="$GEN_BIN:$PATH" SESSION_ALIAS_STORE="$GEN_STORE" CLAUDE_SESSION_PROFILE=hub bash "$NS" hub-script sessions --alias hubscript 2>&1)"
+has "hub-script-spawn-created" "$gen_out" 'Session created: px-hubscript-0101-0000'
+hub_script="$GEN_HOME/.local/bin/px-hubscript-0101-0000-start.sh"
+isfile "hub-start-script-created" "$hub_script"
+hub_script_text="$(cat "$hub_script" 2>/dev/null)"
+has "hub-script-records-profile" "$hub_script_text" 'PROFILE=hub'
+has "hub-script-records-model" "$hub_script_text" 'MODEL=sonnet'
+ok "hub-script-has-append-in-three-claude-invocations" "$(printf '%s\n' "$hub_script_text" | grep -c -- '--append-system-prompt')" "3"
+ok "hub-script-has-resume-append" "$(printf '%s\n' "$hub_script_text" | grep -- '--resume "$RESUME_ID"' | grep -c -- '--append-system-prompt')" "1"
+ok "hub-script-has-continue-append" "$(printf '%s\n' "$hub_script_text" | grep -- '--continue' | grep -c -- '--append-system-prompt')" "1"
+ok "hub-script-has-fresh-append" "$(printf '%s\n' "$hub_script_text" | grep -v -- '--resume' | grep -v -- '--continue' | grep -c -- '--append-system-prompt')" "1"
+has "hub-prompt-written-next-to-script" "$(ls "$GEN_HOME/.local/bin" 2>/dev/null)" 'px-hubscript-0101-0000-start-hub-consult-prompt.txt'
+
+GEN_STORE_OWNER="$(mktemp -u)"
+owner_gen="$(HOME="$GEN_HOME" PATH="$GEN_BIN:$PATH" SESSION_ALIAS_STORE="$GEN_STORE_OWNER" CLAUDE_SESSION_PROFILE=owner bash "$NS" owner-script sessions --alias ownerscript 2>&1)"
+has "owner-script-spawn-created" "$owner_gen" 'Session created: px-ownerscript-0101-0000'
+owner_script_text="$(cat "$GEN_HOME/.local/bin/px-ownerscript-0101-0000-start.sh" 2>/dev/null)"
+hasnt "owner-script-no-hub-prompt" "$owner_script_text" '--append-system-prompt'
+
+GEN_STORE_ORCH="$(mktemp -u)"
+orch_gen="$(HOME="$GEN_HOME" PATH="$GEN_BIN:$PATH" SESSION_ALIAS_STORE="$GEN_STORE_ORCH" bash "$NS" orch-script sessions --alias orchscript 2>&1)"
+has "orchestrator-script-spawn-created" "$orch_gen" 'Session created: px-orchscript-0101-0000'
+orch_script_text="$(cat "$GEN_HOME/.local/bin/px-orchscript-0101-0000-start.sh" 2>/dev/null)"
+hasnt "orchestrator-script-no-hub-prompt" "$orch_script_text" '--append-system-prompt'
+rm -rf "$GEN_HOME" "$GEN_BIN"
 
 # ── --dry-run must bypass the preflight capacity gate (found in review) ──
 # ── --dry-run must bypass the capacity gate (review): a pure preview was hard-refusing on a low-memory host

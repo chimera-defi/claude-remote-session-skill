@@ -42,6 +42,9 @@ Rules:
   so keep that set small.
 - `models_ran` holds what actually ran, not what was planned. A fallback (GPT → Sonnet, etc.) gets
   its own row.
+- For builder work, record the Codex-first attempt and any Sonnet fallback as separate rows. Include
+  one-shot consults too (`hub-opus-consult`, `advisor`, reviewer, etc.) so later owners can see which
+  judgment path actually contributed to the decision.
 - On a **Claude** 429 or spend-limit error, set `state: paused` and stop there. Send the exact error
   to the launcher and spawn no fallback Claude model (Sonnet, Fable and Opus drain the same cap).
   If a *different* provider is exhausted (e.g. GPT), falling back to a Sonnet builder is fine
