@@ -28,7 +28,6 @@ SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-lacks(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 row_in(){ printf '%s' "$1" | grep "^$2 "; }   # row_in <output> <session> -> that row's line
 
 # ============================================================================
@@ -147,11 +146,11 @@ out1="$(SESSION_COMPACT_MANAGED_FILE="$MISSING_FILE" _run sweep --dry-run --mana
 ok    "missing-file-exit0"                      "$rc1" "0"
 has   "missing-file-zero-in-scope"              "$out1" "0 sessions in scope"
 has   "missing-file-refuses-fleetwide-language" "$out1" "Refusing to fall back to fleet-wide"
-lacks "missing-file-no-sessa"                   "$out1" "sessa"
-lacks "missing-file-no-sessb"                   "$out1" "sessb"
-lacks "missing-file-no-sessc"                   "$out1" "sessc"
-lacks "missing-file-no-sessd"                   "$out1" "sessd"
-lacks "missing-file-no-would-compact"           "$out1" "would-compact"
+hasnt "missing-file-no-sessa"                   "$out1" "sessa"
+hasnt "missing-file-no-sessb"                   "$out1" "sessb"
+hasnt "missing-file-no-sessc"                   "$out1" "sessc"
+hasnt "missing-file-no-sessd"                   "$out1" "sessd"
+hasnt "missing-file-no-would-compact"           "$out1" "would-compact"
 
 # ============================================================================
 # 2. Empty / comments-only allowlist -> ZERO in scope, same as missing.
@@ -161,8 +160,8 @@ printf '# just a comment\n\n   \n# another\n' > "$EMPTY_FILE"
 out2="$(SESSION_COMPACT_MANAGED_FILE="$EMPTY_FILE" _run sweep --dry-run --managed-only)"; rc2=$?
 ok    "empty-file-exit0"            "$rc2" "0"
 has   "empty-file-zero-in-scope"    "$out2" "0 sessions in scope"
-lacks "empty-file-no-sessa"         "$out2" "sessa"
-lacks "empty-file-no-would-compact" "$out2" "would-compact"
+hasnt "empty-file-no-sessa"         "$out2" "sessa"
+hasnt "empty-file-no-would-compact" "$out2" "would-compact"
 
 # ============================================================================
 # 3. 2 of 4 live sessions allowlisted -> only those 2 are evaluated; the
@@ -175,8 +174,8 @@ out3="$(SESSION_COMPACT_MANAGED_FILE="$TWOOF4_FILE" _run sweep --dry-run --manag
 ok    "twoof4-exit0"               "$rc3" "0"
 has   "twoof4-sessa-would-compact" "$(row_in "$out3" sessa)" "would-compact: idle"
 has   "twoof4-sessb-would-compact" "$(row_in "$out3" sessb)" "would-compact: idle"
-lacks "twoof4-sessc-absent"        "$out3" "sessc"
-lacks "twoof4-sessd-absent"        "$out3" "sessd"
+hasnt "twoof4-sessc-absent"        "$out3" "sessc"
+hasnt "twoof4-sessd-absent"        "$out3" "sessd"
 has   "twoof4-counts-reported"     "$out3" "2 managed, 2 live"
 has   "twoof4-scanned-count"       "$out3" "--- 2 session(s) scanned."
 
@@ -189,7 +188,7 @@ printf 'sessa\ndeadsess\n' > "$STALE_FILE"
 out4="$(SESSION_COMPACT_MANAGED_FILE="$STALE_FILE" _run sweep --dry-run --managed-only)"; rc4=$?
 ok    "stale-exit0"           "$rc4" "0"
 has   "stale-sessa-present"   "$(row_in "$out4" sessa)" "would-compact: idle"
-lacks "stale-deadsess-absent" "$out4" "deadsess"
+hasnt "stale-deadsess-absent" "$out4" "deadsess"
 has   "stale-counts-reported" "$out4" "2 managed, 1 live"
 has   "stale-scanned-count"   "$out4" "--- 1 session(s) scanned."
 
@@ -209,11 +208,11 @@ printf 'deadsess\nanotherdeadsess\n' > "$ALLSTALE_FILE"
 out5s="$(SESSION_COMPACT_MANAGED_FILE="$ALLSTALE_FILE" _run sweep --dry-run --managed-only)"; rc5s=$?
 ok    "allstale-exit0"            "$rc5s" "0"
 has   "allstale-counts-reported"  "$out5s" "2 managed, 0 live"
-lacks "allstale-no-sessa"         "$out5s" "sessa"
-lacks "allstale-no-sessb"         "$out5s" "sessb"
-lacks "allstale-no-sessc"         "$out5s" "sessc"
-lacks "allstale-no-sessd"         "$out5s" "sessd"
-lacks "allstale-no-would-compact" "$out5s" "would-compact"
+hasnt "allstale-no-sessa"         "$out5s" "sessa"
+hasnt "allstale-no-sessb"         "$out5s" "sessb"
+hasnt "allstale-no-sessc"         "$out5s" "sessc"
+hasnt "allstale-no-sessd"         "$out5s" "sessd"
+hasnt "allstale-no-would-compact" "$out5s" "would-compact"
 has   "allstale-scanned-count"    "$out5s" "--- 0 session(s) scanned."
 
 # ============================================================================
@@ -229,7 +228,7 @@ has   "nomanaged-sessa"         "$out5" "sessa"
 has   "nomanaged-sessb"         "$out5" "sessb"
 has   "nomanaged-sessc"         "$out5" "sessc"
 has   "nomanaged-sessd"         "$out5" "sessd"
-lacks "nomanaged-no-scope-text" "$out5" "scope:"
+hasnt "nomanaged-no-scope-text" "$out5" "scope:"
 has   "nomanaged-scanned-count" "$out5" "--- 4 session(s) scanned."
 
 

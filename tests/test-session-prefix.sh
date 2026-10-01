@@ -16,7 +16,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 REPO="$HERE/.."
-lacks() { hasnt "$@"; }
 
 ISO_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 
@@ -103,7 +102,7 @@ out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost
 ")"
 has "reap-local-enumerates-current-prefix" "$out" "px-foo-0101-0900.service"
 has "reap-local-enumerates-legacy-prefix"  "$out" "oldhost-bar-0101-0900.service"
-lacks "reap-local-skips-foreign-unit" "$out" "codexhost-baz.service"
+hasnt "reap-local-skips-foreign-unit" "$out" "codexhost-baz.service"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. session-alias.sh — looks_like_session_name / desessionify (exercised via
@@ -183,7 +182,7 @@ if command -v tmux >/dev/null 2>&1; then
   out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost bash "$REPO/scripts/session-preserve.sh" --all 2>&1)"
   has "preserve-all-includes-current-prefix" "$out" "$T1"
   has "preserve-all-includes-legacy-prefix"  "$out" "$T2"
-  lacks "preserve-all-skips-foreign"          "$out" "$T3"
+  hasnt "preserve-all-skips-foreign"          "$out" "$T3"
   for s in "$T1" "$T2" "$T3"; do tmux kill-session -t "$s" 2>/dev/null || true; done
 else
   echo "session-preserve --all: SKIP (no tmux)"
@@ -241,11 +240,11 @@ if command -v tmux >/dev/null 2>&1; then
   out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
   has "registry-includes-current-prefix" "$out" "$R1"
   has "registry-includes-legacy-prefix"  "$out" "$R2"
-  lacks "registry-skips-foreign"          "$out" "$R3"
+  hasnt "registry-skips-foreign"          "$out" "$R3"
   # generic default: none of the px_/oldhost_ test sessions show up.
   out2="$(CRSS_HOME="$ISO_HOME" HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
-  lacks "registry-generic-default-skips-px" "$out2" "$R1"
-  lacks "registry-generic-default-skips-oldhost" "$out2" "$R2"
+  hasnt "registry-generic-default-skips-px" "$out2" "$R1"
+  hasnt "registry-generic-default-skips-oldhost" "$out2" "$R2"
   rm -rf "$NOHOME"
   for s in "$R1" "$R2" "$R3"; do tmux kill-session -t "$s" 2>/dev/null || true; done
 else

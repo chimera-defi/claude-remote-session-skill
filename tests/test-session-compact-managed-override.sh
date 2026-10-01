@@ -27,7 +27,6 @@ SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-lacks(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 row_in(){ printf '%s' "$1" | grep "^$2 "; }   # row_in <output> <session> -> that row's line
 
 # ============================================================================
@@ -166,13 +165,13 @@ has "landedclean-would-compact"   "$(row_in "$out_mo" mo_landedclean)"    "would
 has "ctxlandedclean-would-compact" "$(row_in "$out_mo" mo_ctxlandedclean)" "would-compact: context"
 
 has   "compacted-still-skips"       "$(row_in "$out_mo" mo_compacted)" "skip: compacted"
-lacks "compacted-not-would-compact" "$(row_in "$out_mo" mo_compacted)" "would-compact"
+hasnt "compacted-not-would-compact" "$(row_in "$out_mo" mo_compacted)" "would-compact"
 
 has   "protected-still-skips"       "$(row_in "$out_mo" mo_protected)" "skip: protected"
-lacks "protected-not-would-compact" "$(row_in "$out_mo" mo_protected)" "would-compact"
+hasnt "protected-not-would-compact" "$(row_in "$out_mo" mo_protected)" "would-compact"
 
 has   "busy-still-skips"       "$(row_in "$out_mo" mo_busy)" "skip: busy"
-lacks "busy-not-would-compact" "$(row_in "$out_mo" mo_busy)" "would-compact"
+hasnt "busy-not-would-compact" "$(row_in "$out_mo" mo_busy)" "would-compact"
 
 # ============================================================================
 # Group 2 (brief scenario 2): backward-compat guard. SAME rows.tsv, SAME
@@ -183,8 +182,8 @@ lacks "busy-not-would-compact" "$(row_in "$out_mo" mo_busy)" "would-compact"
 out_plain="$(SESSION_COMPACT_MANAGED_FILE="$ALLOW_FILE" _run sweep --dry-run)"; rc_plain=$?
 ok    "noflag-exit0"                   "$rc_plain" "0"
 has   "noflag-landedclean-still-skips" "$(row_in "$out_plain" mo_landedclean)" "skip: landed+clean"
-lacks "noflag-landedclean-not-would-compact" "$(row_in "$out_plain" mo_landedclean)" "would-compact"
-lacks "noflag-no-scope-text"           "$out_plain" "scope:"
+hasnt "noflag-landedclean-not-would-compact" "$(row_in "$out_plain" mo_landedclean)" "would-compact"
+hasnt "noflag-no-scope-text"           "$out_plain" "scope:"
 
 # ============================================================================
 # Group 3 (brief scenario 6): the five relabelled skip causes each report

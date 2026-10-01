@@ -75,7 +75,7 @@ EOF
 # ── 1. a clean worktree is removed and its branch is kept ─────────────────
 out1="$(_reap_remove_worktree px-rwclean-0101-0900 no)"
 nodir "clean-removed-dir-gone" "$WT_CLEAN"
-ok "clean-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwclean-0101-0900 && echo yes || echo no)" "yes"
+ok "clean-branch-kept" "$(yn git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwclean-0101-0900)" yes
 has "clean-removed-message" "$out1" "worktree removed"
 
 # ── 2. a dirty one is kept with a message (no --force) ─────────────────────
@@ -87,7 +87,7 @@ has "dirty-kept-message" "$out2" "kept"
 # through to `git worktree remove` and it actually goes, branch still kept.
 out2f="$(_reap_remove_worktree px-rwdirty-0101-0900 yes)"
 nodir "dirty-force-removed" "$WT_DIRTY"
-ok "dirty-force-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwdirty-0101-0900 && echo yes || echo no)" "yes"
+ok "dirty-force-branch-kept" "$(yn git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwdirty-0101-0900)" yes
 has "dirty-force-removed-message" "$out2f" "worktree removed"
 
 # (--keep-worktree itself is covered end-to-end in case 12b below, through
@@ -159,7 +159,7 @@ WT_PIDSUFFIX="$TESTHOME/.claude/worktrees/px-rwpidsfx-0101-0900-88888"
 git -C "$REPO" worktree add -q -b session/px-rwpidsfx-0101-0900 "$WT_PIDSUFFIX" main >/dev/null 2>&1
 out10="$(_reap_remove_worktree px-rwpidsfx-0101-0900 no)"
 nodir "pidsuffix-found-and-removed" "$WT_PIDSUFFIX"
-ok "pidsuffix-branch-kept" "$(git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwpidsfx-0101-0900 && echo yes || echo no)" "yes"
+ok "pidsuffix-branch-kept" "$(yn git -C "$REPO" show-ref --verify --quiet refs/heads/session/px-rwpidsfx-0101-0900)" yes
 has "pidsuffix-removed-message" "$out10" "worktree removed"
 
 # ── 11. `git worktree prune` ran afterward: no stale registrations left for
@@ -229,7 +229,7 @@ printf 'keep unit\n' > "$TESTHOME/.config/systemd/x.service"
 printf 'keep script\n' > "$TESTHOME/.local/x-start.sh"
 trav_arch_before="$(find "$TESTHOME/backups/reaped-worktree-ignored" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
 trav_out="$(PATH="$RSTUB_TRAV:$PATH" HOME="$TESTHOME" bash "$DOCTOR" reap 'px_/../../x' --force 2>&1)"; rc_trav=$?
-ok "traversal-reap-exit-nonzero" "$([ "$rc_trav" -ne 0 ] && echo yes || echo no)" "yes"
+ok "traversal-reap-exit-nonzero" "$(yn test "$rc_trav" -ne 0)" "yes"
 has "traversal-reap-refuses-base" "$trav_out" "unsafe derived session base"
 isfile "traversal-unit-sentinel-kept" "$TESTHOME/.config/systemd/x.service"
 isfile "traversal-script-sentinel-kept" "$TESTHOME/.local/x-start.sh"
@@ -283,8 +283,8 @@ cp "$WT_PAY/artifacts/results.tsv" "$WTTMP/orig-results.tsv"; cp "$WT_PAY/artifa
 out13a="$(_reap_remove_worktree px-rwpayload-0101-0900 no)"
 ARCH_A="$(archives_of px-rwpayload-0101-0900 | head -1)"
 ok "payload-archive-dir-exists" "$([ -n "$ARCH_A" ] && [ -d "$ARCH_A" ] && echo yes || echo no)" "yes"
-ok "payload-results-bytes-identical" "$(cmp -s "$WTTMP/orig-results.tsv" "$ARCH_A/worktree/artifacts/results.tsv" && echo yes || echo no)" "yes"
-ok "payload-blob-bytes-identical" "$(cmp -s "$WTTMP/orig-blob.bin" "$ARCH_A/worktree/artifacts/sub/blob.bin" && echo yes || echo no)" "yes"
+ok "payload-results-bytes-identical" "$(yn cmp -s "$WTTMP/orig-results.tsv" "$ARCH_A/worktree/artifacts/results.tsv")" yes
+ok "payload-blob-bytes-identical" "$(yn cmp -s "$WTTMP/orig-blob.bin" "$ARCH_A/worktree/artifacts/sub/blob.bin")" yes
 ok "payload-manifest-has-sha-size-path" "$(grep -cF "$(sha256sum < "$WTTMP/orig-results.tsv" | cut -d' ' -f1)"$'\t'"$(stat -c %s "$WTTMP/orig-results.tsv")"$'\t'"worktree/artifacts/results.tsv" "$ARCH_A/MANIFEST")" "1"
 ok "payload-manifest-lists-both-files" "$(wc -l < "$ARCH_A/MANIFEST" | tr -d ' ')" "2"
 gone "payload-denylisted-not-archived" "$ARCH_A/worktree/node_modules"
@@ -293,7 +293,7 @@ has "payload-archived-message" "$out13a" "archived 2 ignored file(s)"
 has "payload-archived-message-dest" "$out13a" "$ARCH_A"
 has "payload-removed-message" "$out13a" "worktree removed"
 nodir "payload-worktree-removed" "$WT_PAY"
-ok "payload-branch-kept" "$(git -C "$IGNREPO" show-ref --verify --quiet refs/heads/session/px-rwpayload-0101-0900 && echo yes || echo no)" "yes"
+ok "payload-branch-kept" "$(yn git -C "$IGNREPO" show-ref --verify --quiet refs/heads/session/px-rwpayload-0101-0900)" yes
 
 # 13b. only deny-listed / scaffolding ignored content (node_modules, .venv,
 # the spawner's .claude/skills symlink + sentinels, token-reduction telemetry)
@@ -378,7 +378,7 @@ out13f="$(_wt_archive_ignored "$WT_H")"; rc13f2=$?
 ARCH_H="$(archives_of px-rwhelper-0101-0900 | head -1)"
 ok "helper-archive-rc0" "$rc13f2" "0"
 has "helper-archive-message" "$out13f" "archived 3 ignored file(s)"
-ok "helper-archive-spaced-name-bytes" "$(cmp -s "$WT_H/artifacts/a b/spaced name.txt" "$ARCH_H/worktree/artifacts/a b/spaced name.txt" && echo yes || echo no)" "yes"
+ok "helper-archive-spaced-name-bytes" "$(yn cmp -s "$WT_H/artifacts/a b/spaced name.txt" "$ARCH_H/worktree/artifacts/a b/spaced name.txt")" yes
 ok "helper-archive-symlink-kept-as-link" "$(readlink "$ARCH_H/worktree/artifacts/link")" "results.tsv"
 # an empty payload returns 1 and leaves the list empty
 mkwt px-rwhelper2-0101-0900
