@@ -15,5 +15,12 @@ hasnt() { if grep -qF -- "$3" <<<"$2"; then fail=$((fail+1)); echo "FAIL: $1 —
 hasre() { if grep -qE -- "$3" <<<"$2"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 # yn CMD...: prints yes/no for a command's success (for ok "label" "$(yn test -d X)" yes).
 yn() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
+# isdir/nodir/isfile/nofile/exists/gone LABEL PATH: filesystem state checks (-d, -f, -e).
+isdir()  { ok "$1" "$([ -d "$2" ] && echo yes || echo no)" yes; }
+nodir()  { ok "$1" "$([ -d "$2" ] && echo yes || echo no)" no; }
+isfile() { ok "$1" "$([ -f "$2" ] && echo yes || echo no)" yes; }
+nofile() { ok "$1" "$([ -f "$2" ] && echo yes || echo no)" no; }
+exists() { ok "$1" "$([ -e "$2" ] && echo yes || echo no)" yes; }
+gone()   { ok "$1" "$([ -e "$2" ] && echo yes || echo no)" no; }
 # finish NAME: print the summary line; exit status is the suite's verdict.
 finish() { echo "$1: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]; }
