@@ -18,13 +18,11 @@
 # session, no real /compact anywhere in this file.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
 # ============================================================================
@@ -255,5 +253,4 @@ has "managed-50-compacts" "$(row_mo ctxb50sess)" "would-compact: context"
 has "managed-49-skips" "$(row_mo ctxb49sess)" "skip: under thresholds"
 has "managed-banner-50" "$out_mo" "context >= 50%"
 
-echo "session-compact-need-based: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-compact-need-based"

@@ -4,17 +4,14 @@
 # Previously untested despite deciding whether commits/files are safe to lose.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 SP="$HERE/../scripts/session-preserve.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 command -v tmux >/dev/null 2>&1 || { echo "session-preserve: SKIP (no tmux)"; exit 0; }
 
@@ -339,5 +336,4 @@ has "decoy-not-safe"                  "$out" "NOT-SAFE-TO-REAP"
 has "decoy-reason"                    "$out" "untracked-files"
 ok  "decoy-exit1"                     "$rc" "1"
 
-echo "session-preserve: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-preserve"

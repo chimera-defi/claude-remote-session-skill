@@ -3,16 +3,15 @@
 # captures. Keep these host-path-free; test-no-host-leaks scans tracked files.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 # Keep the `px_*` metadata fixtures below independent of the operator's overlay
 # and CI's generic defaults.
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"
 
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 CODEX_READY='  >_ OpenAI Codex (v0.158.0)
      /tmp/example-codex-workdir
@@ -170,5 +169,4 @@ ok "start-meta-new-backend" "$(HOME="$META_HOME" _backend_of px_newmeta-0101-000
 ok "start-meta-new-model" "$(HOME="$META_HOME" _model_of px_newmeta-0101-0001)" "gpt-5.5"
 ok "start-meta-percentq-model" "$(HOME="$META_HOME" _model_of px_quotedmeta-0101-0002)" "gpt 5.5"
 
-echo "session-handoff-codex: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-codex"

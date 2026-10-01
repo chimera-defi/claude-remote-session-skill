@@ -6,10 +6,8 @@
 # deployed layout (flat copy on PATH, .sh dropped).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SEND="$HERE/../scripts/session-send.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # 1. No such tmux session -> forwarded error + exit code from session-handoff,
 # not a session-send-specific message (proves it's a real passthrough).
@@ -107,5 +105,4 @@ if command -v tmux >/dev/null 2>&1; then
   tmux kill-session -t "$S2" 2>/dev/null || true
 fi
 
-echo "session-send: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-send"

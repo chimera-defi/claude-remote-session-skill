@@ -14,21 +14,13 @@
 # No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 REPO="$HERE/.."
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
+lacks() { hasnt "$@"; }
 
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
 ISO_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
 
-# ONE cleanup trap for the whole file (rather than one per section, which
-# would silently overwrite each other): kills every tmux session this file
-# created (all named with a "-$$-" or "_$$" PID marker, never a bare/shared
-# name) and removes every temp dir this file created. Individual sections
-# also clean up eagerly at the end of their own block; this is the safety
-# net for an early exit/failure mid-file.
+# One cleanup trap for the whole file: kills tmux sessions carrying this PID's marker, removes temp dirs.
 _CLEANUP_DIRS=()
 _crss_test_cleanup() {
   tmux ls -F '#{session_name}' 2>/dev/null | grep -F -- "-$$-" | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done
@@ -286,5 +278,4 @@ has "new-session-invalid-prefix-warns" "$out" "CRSS_SESSION_PREFIX '.*' is inval
 
 rm -f "$STORE"
 
-echo "test-session-prefix: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "test-session-prefix"

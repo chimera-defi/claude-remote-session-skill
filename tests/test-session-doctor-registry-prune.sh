@@ -9,10 +9,9 @@
 # a real one. No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -20,10 +19,6 @@ export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-hasnt(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern unexpectedly present: $3"; else pass=$((pass+1)); fi; }
 
 FAKE_TOKEN="FAKE-TOKEN-DO-NOT-LEAK-9f8e7d6c"
 
@@ -269,4 +264,4 @@ PYEOF
 fi
 
 rm -rf "$FIXHOME" "$STUBBIN"
-echo "session-doctor-registry-prune: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "session-doctor-registry-prune"

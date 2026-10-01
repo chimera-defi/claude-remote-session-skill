@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -11,9 +10,6 @@ export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run report (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 ok "legacy tmux->base" "$(tmux_to_base oldhost_foo-20260101-0900)" "oldhost-foo-20260101-0900"
 ok "new tmux->base"    "$(tmux_to_base px_0101-0900-foo)"            "px-0101-0900-foo"
@@ -27,7 +23,7 @@ ok "new svc->tmux"     "$(svc_to_tmux px-0101-0900-foo)"            "px_0101-090
 NOHOME="$(mktemp -d)"; trap 'rm -rf "$NOHOME"' EXIT
 out="$(HOME="$NOHOME" bash "$HERE/../scripts/session-doctor.sh" registry-stale 2>&1)"
 ok "registry-stale-no-traceback" "$(printf '%s' "$out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
-ok "registry-stale-graceful-msg" "$(printf '%s' "$out" | grep -qF '(registry unavailable)' && echo yes || echo no)" "yes"
+has "registry-stale-graceful-msg" "$out" '(registry unavailable)'
 
 # --days is spliced verbatim into an embedded Python snippet as a bare identifier
 # (DAYS=$DAYS) — an unvalidated non-numeric value is live Python there, not data,
@@ -36,13 +32,13 @@ ok "registry-stale-graceful-msg" "$(printf '%s' "$out" | grep -qF '(registry una
 days_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days abc 2>&1)"; days_rc=$?
 ok "days-nonnumeric-rejected"   "$days_rc" "2"
 ok "days-nonnumeric-no-traceback" "$(printf '%s' "$days_out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
-ok "days-nonnumeric-clean-msg"  "$(printf '%s' "$days_out" | grep -qF -- "--days requires a non-negative integer" && echo yes || echo no)" "yes"
+has "days-nonnumeric-clean-msg" "$days_out" "--days requires a non-negative integer"
 # Exit code for a *valid* --days still depends on registry/credential availability
 # (unrelated to this validation), so assert on behavior, not a specific exit code:
 # no rejection message, and the same graceful degradation as the no-credentials
 # case above.
 numeric_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 30 2>&1)"
-ok "days-numeric-not-rejected"  "$(printf '%s' "$numeric_out" | grep -qF -- "requires a non-negative integer" && echo yes || echo no)" "no"
+hasnt "days-numeric-not-rejected" "$numeric_out" "requires a non-negative integer"
 ok "days-numeric-no-traceback"  "$(printf '%s' "$numeric_out" | grep -qi 'Traceback' && echo yes || echo no)" "no"
 
 # A digit-only --days can still crash the embedded Python: a LEADING ZERO (e.g.
@@ -52,7 +48,7 @@ ok "days-numeric-no-traceback"  "$(printf '%s' "$numeric_out" | grep -qi 'Traceb
 # digit-validated.
 leadzero_out="$(bash "$HERE/../scripts/session-doctor.sh" registry-stale --days 08 2>&1)"
 ok "days-leadingzero-no-traceback" "$(printf '%s' "$leadzero_out" | grep -qi 'Traceback\|SyntaxError' && echo yes || echo no)" "no"
-ok "days-leadingzero-normalized"   "$(printf '%s' "$leadzero_out" | grep -qF '> 8d' && echo yes || echo no)" "yes"
+has "days-leadingzero-normalized" "$leadzero_out" '> 8d'
 
 META_HOME="$(mktemp -d)"
 META_STUB="$(mktemp -d)"
@@ -102,7 +98,7 @@ TESTCFG="$(mktemp -d)"; mkdir -p "$TESTCFG/systemd/user"
 touch "$TESTCFG/systemd/user/px-test-orphan-0101-0100.service"
 TESTHOME="$(mktemp -d)"
 orphan_out="$(PATH="$STUBBIN:$PATH" XDG_CONFIG_HOME="$TESTCFG" HOME="$TESTHOME" bash "$HERE/../scripts/session-doctor.sh" reap-local 2>&1)"
-ok "reap-local-ignores-is-active" "$(printf '%s' "$orphan_out" | grep -qF 'ORPHAN unit (no tmux): px-test-orphan-0101-0100.service' && echo yes || echo no)" "yes"
+has "reap-local-ignores-is-active" "$orphan_out" 'ORPHAN unit (no tmux): px-test-orphan-0101-0100.service'
 rm -rf "$STUBBIN" "$TESTCFG" "$TESTHOME"
 
 # worktree-stale: a worktree under ~/.claude/worktrees/ whose owning tmux session
@@ -133,10 +129,10 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   wtout="$(HOME="$WTHOME" CRSS_PROTECT_NAMES='claude-remote|thirdbot' bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   tmux kill-session -t px_wtlive-0101-0900 2>/dev/null || true
 
-  ok "worktree-stale-lists-dead"     "$(printf '%s' "$wtout" | grep -qF "$WT_DEAD" && echo yes || echo no)" "yes"
-  ok "worktree-stale-skips-live"     "$(printf '%s' "$wtout" | grep -qF "$WT_LIVE" && echo yes || echo no)" "no"
-  ok "worktree-stale-skips-protected" "$(printf '%s' "$wtout" | grep -qF "$WT_PROT" && echo yes || echo no)" "no"
-  ok "worktree-stale-prints-removal-cmd" "$(printf '%s' "$wtout" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
+  has "worktree-stale-lists-dead" "$wtout" "$WT_DEAD"
+  hasnt "worktree-stale-skips-live" "$wtout" "$WT_LIVE"
+  hasnt "worktree-stale-skips-protected" "$wtout" "$WT_PROT"
+  has "worktree-stale-prints-removal-cmd" "$wtout" 'worktree remove --force'
 
   # PID-suffixed directory (session-git-prep's collision fallback: the WORKTREE dir
   # gets a -$$ suffix but the BRANCH — and so the real tmux session — stays
@@ -148,7 +144,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   tmux new-session -d -s px_wtpidlive-0101-0900 -c "$WT_PIDLIVE" 'sleep 60'
   wtout2="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
   tmux kill-session -t px_wtpidlive-0101-0900 2>/dev/null || true
-  ok "worktree-stale-skips-pidsuffixed-live" "$(printf '%s' "$wtout2" | grep -qF "$WT_PIDLIVE" && echo yes || echo no)" "no"
+  hasnt "worktree-stale-skips-pidsuffixed-live" "$wtout2" "$WT_PIDLIVE"
 
   # A dead worktree whose session switched off its session/<remote> branch onto
   # something else must NOT suggest `branch -D` on that (possibly unmerged,
@@ -157,7 +153,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$REPO" worktree add -q -b session/px-wtswitched-0101-0900 "$WT_SWITCHED" main >/dev/null 2>&1
   git -C "$WT_SWITCHED" checkout -q -b feature/unrelated >/dev/null 2>&1
   wtout3="$(HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
-  ok "worktree-stale-lists-switched-branch" "$(printf '%s' "$wtout3" | grep -qF "$WT_SWITCHED" && echo yes || echo no)" "yes"
+  has "worktree-stale-lists-switched-branch" "$wtout3" "$WT_SWITCHED"
   ok "worktree-stale-no-branch-D-on-switched" "$(printf '%s' "$wtout3" | grep -A1 -F "$WT_SWITCHED" | grep -qF 'branch -D' && echo yes || echo no)" "no"
   # A CLEAN switched-branch row keeps --force (clean rows are unchanged).
   ok "worktree-stale-clean-switched-keeps-force" "$(printf '%s' "$wtout3" | grep -A1 -F "$WT_SWITCHED" | grep -F 'remove:' | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
@@ -215,11 +211,11 @@ ExecStart=/bin/true
 EOF
 
   wtout5="$(XDG_CONFIG_HOME="$WTHOME/.config" HOME="$WTHOME" bash "$HERE/../scripts/session-doctor.sh" worktree-stale)"
-  ok "worktree-stale-unit-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_UNIT" && echo yes || echo no)" "yes"
+  has "worktree-stale-unit-ref-still-listed" "$wtout5" "$WT_UNIT"
   ok "worktree-stale-unit-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_UNIT" && echo yes || echo no)" "no"
   ok "worktree-stale-unit-ref-no-branch-D"     "$(printf '%s' "$wtout5" | grep -F 'branch -D' | grep -qF 'px-wtunit-0101-0900' && echo yes || echo no)" "no"
   ok "worktree-stale-unit-ref-keep-names-unit" "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_UNIT" | grep -qF 'KEEP: in use by unit wtstale-bus.service — do not remove' && echo yes || echo no)" "yes"
-  ok "worktree-stale-dropin-ref-still-listed"    "$(printf '%s' "$wtout5" | grep -qF "$WT_DROP" && echo yes || echo no)" "yes"
+  has "worktree-stale-dropin-ref-still-listed" "$wtout5" "$WT_DROP"
   ok "worktree-stale-dropin-ref-no-remove-line"  "$(printf '%s' "$wtout5" | grep -F 'remove:' | grep -qF "$WT_DROP" && echo yes || echo no)" "no"
   ok "worktree-stale-dropin-ref-keep-names-unit" "$(printf '%s' "$wtout5" | grep -A1 -F "$WT_DROP" | grep -qF 'KEEP: in use by unit wtstale-reaper.service — do not remove' && echo yes || echo no)" "yes"
   # (c) the guard must not over-block: unreferenced dead worktrees (WT_DEAD, from
@@ -459,13 +455,13 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   blk_no="$(_test_wsblock "$wsout2" "$WT_UNLANDED")"
   blk_unk="$(_test_wsblock "$wsout2" "$WT_UNKNOWN")"
   ok "wstale-branchD-fixture-unknown" "$(printf '%s' "$blk_unk" | grep -oE 'landed=[a-z]+')" "landed=unknown"
-  ok "wstale-branchD-landed-yes-keeps-it"       "$(printf '%s' "$blk_yes" | grep -qF 'branch -D session/px-lclanded-0101-0900' && echo yes || echo no)" "yes"
-  ok "wstale-branchD-landed-yes-no-keep-note"   "$(printf '%s' "$blk_yes" | grep -qF 'not known-landed' && echo yes || echo no)" "no"
-  ok "wstale-branchD-landed-no-still-removes-wt" "$(printf '%s' "$blk_no" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
-  ok "wstale-branchD-landed-no-dropped"         "$(printf '%s' "$blk_no" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-branchD-landed-yes-keeps-it" "$blk_yes" 'branch -D session/px-lclanded-0101-0900'
+  hasnt "wstale-branchD-landed-yes-no-keep-note" "$blk_yes" 'not known-landed'
+  has "wstale-branchD-landed-no-still-removes-wt" "$blk_no" 'worktree remove --force'
+  hasnt "wstale-branchD-landed-no-dropped" "$blk_no" 'branch -D'
   has "wstale-branchD-landed-no-note" "$blk_no" "NOTE: branch session/px-lcunlanded-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
-  ok "wstale-branchD-unknown-still-removes-wt"  "$(printf '%s' "$blk_unk" | grep -qF 'worktree remove --force' && echo yes || echo no)" "yes"
-  ok "wstale-branchD-unknown-dropped"           "$(printf '%s' "$blk_unk" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  has "wstale-branchD-unknown-still-removes-wt" "$blk_unk" 'worktree remove --force'
+  hasnt "wstale-branchD-unknown-dropped" "$blk_unk" 'branch -D'
   has "wstale-branchD-unknown-note" "$blk_unk" "NOTE: branch session/px-lcunknown-0101-0900 is not known-landed — keep the ref; it is the only thing keeping its commits reachable"
 
   # A status=DIRTY row must not get a copy-paste line that discards its
@@ -490,9 +486,9 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # owned + landed=yes + DIRTY: plain remove only — no --force, no branch -D — plus the NOTE.
   ok "wstale-dirty-yes-still-offers-remove" "$(_test_rmline "$blk_dy" | grep -qF "worktree remove $WT_DIRTYY" && echo yes || echo no)" "yes"
   ok "wstale-dirty-yes-no-force"      "$(_test_rmline "$blk_dy" | grep -qF -- '--force' && echo yes || echo no)" "no"
-  ok "wstale-dirty-yes-no-branch-D"   "$(printf '%s' "$blk_dy" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  hasnt "wstale-dirty-yes-no-branch-D" "$blk_dy" 'branch -D'
   has "wstale-dirty-yes-note" "$blk_dy" "$DIRTY_NOTE_YES"
-  ok "wstale-dirty-yes-no-branch-note" "$(printf '%s' "$blk_dy" | grep -qF 'not known-landed' && echo yes || echo no)" "no"
+  hasnt "wstale-dirty-yes-no-branch-note" "$blk_dy" 'not known-landed'
   # The NOTE's own hint must surface git-ignored files — the one thing a paste could
   # still delete — so run it as printed and look under git's "Ignored files:" heading
   # (long-format `status --ignored`; the `!!` marker only exists in --short/--porcelain).
@@ -508,7 +504,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "wstale-dirty-pasted-cmd-kept-branch"    "$(git -C "$LCREPO" show-ref --verify --quiet refs/heads/session/px-lcdirtyyes-0101-0900 && echo yes || echo no)" "yes"
   # owned + landed=no + DIRTY: both NOTEs, no --force, no branch -D.
   ok "wstale-dirty-no-no-force"       "$(_test_rmline "$blk_dn" | grep -qF -- '--force' && echo yes || echo no)" "no"
-  ok "wstale-dirty-no-no-branch-D"    "$(printf '%s' "$blk_dn" | grep -qF 'branch -D' && echo yes || echo no)" "no"
+  hasnt "wstale-dirty-no-no-branch-D" "$blk_dn" 'branch -D'
   has "wstale-dirty-no-dirty-note"  "$blk_dn" "NOTE: worktree has uncommitted changes (status=DIRTY) — inspect it first (git -C $WT_DIRTYN status --ignored)"
   has "wstale-dirty-no-branch-note" "$blk_dn" "NOTE: branch session/px-lcdirtyno-0101-0900 is not known-landed"
   # switched off session/* + DIRTY: no --force, dirty NOTE, and the existing branch NOTE.
@@ -518,9 +514,9 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   # Clean rows are unchanged: still --force, still branch -D (landed=yes), no dirty NOTE.
   ok "wstale-clean-yes-keeps-force"   "$(_test_rmline "$blk_yes" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
   ok "wstale-clean-yes-keeps-branch-D" "$(_test_rmline "$blk_yes" | grep -qF 'branch -D session/px-lclanded-0101-0900' && echo yes || echo no)" "yes"
-  ok "wstale-clean-yes-no-dirty-note" "$(printf '%s' "$blk_yes" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
+  hasnt "wstale-clean-yes-no-dirty-note" "$blk_yes" 'uncommitted changes'
   ok "wstale-clean-no-keeps-force"    "$(_test_rmline "$blk_no" | grep -qF -- 'worktree remove --force' && echo yes || echo no)" "yes"
-  ok "wstale-clean-no-no-dirty-note"  "$(printf '%s' "$blk_no" | grep -qF 'uncommitted changes' && echo yes || echo no)" "no"
+  hasnt "wstale-clean-no-no-dirty-note" "$blk_no" 'uncommitted changes'
 
   # land-check: report-only (no mutation — both worktrees still exist after),
   # and unlike worktree-stale it must NOT filter by liveness — add a LIVE
@@ -657,4 +653,4 @@ EOF
   tmux kill-session -t "$RS" 2>/dev/null || true
 fi
 
-echo "session-doctor: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "session-doctor"

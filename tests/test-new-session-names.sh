@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -16,9 +16,7 @@ BIN="$(mktemp -d)"; trap 'rm -rf "$BIN"' EXIT
 ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 export PATH="$BIN:$PATH"
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
-pass=0; fail=0
 has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 # Name-first, date last: px-<alias>-<MMDD-HHMM>.
 out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
@@ -278,4 +276,4 @@ else pass=$((pass+1)); fi
 recB="$(rec_args_for --alias renamed --set-default-alias)"
 has "set-default-alias-forwards-flag" "$recB" 'set-default'
 
-echo "new-session names: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "new-session names"

@@ -6,9 +6,8 @@
 # and passes on a clean repo full of legitimate placeholders.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCANNER="$HERE/test-no-host-leaks.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # Fake `hostname` so the runtime-identity check is deterministic.
@@ -69,4 +68,4 @@ out="$(scan "$d")"; rc=$?
 ok "warn-tier-nonfatal" "$rc" "0"
 ok "warn-tier-printed" "$(printf '%s' "$out" | grep -c '^WARN:')" "2"
 
-echo "no-host-leaks patterns: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "no-host-leaks patterns"

@@ -2,18 +2,11 @@
 # Plain-bash assertions for session-registry. No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 REG="$HERE/../scripts/session-registry.sh"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test
-# isolation". session-registry.sh gained the overlay config loader (and the
-# prefix-recognition block) in the same change that added CRSS_SESSION_PREFIX/
-# CRSS_LEGACY_PREFIXES; the fixture shape is prefix "px", legacy
-# "oldhost" (see examples/crss-overlay/README.md) — set explicitly so the
-# "px_"-prefixed fixtures below keep pinning today's host behaviour.
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 # --older-than argument-parsing checks run FIRST and unconditionally: they only
 # exercise the flag parser (which exits before ever touching tmux), so they
@@ -42,9 +35,8 @@ ok "bad-trailing-junk-rejected" "$(bash "$REG" --older-than 3xd  >/dev/null 2>&1
 ok "bad-missing-unit-rejected"  "$(bash "$REG" --older-than 3    >/dev/null 2>&1; echo $?)" "2"
 
 if ! command -v tmux >/dev/null 2>&1; then
-  echo "session-registry: pass=$pass fail=$fail (tmux not available, remaining tests skipped)"
-  [ "$fail" -eq 0 ]
-  exit $?
+  echo "session-registry: tmux not available, remaining tests skipped"
+  finish "session-registry"; exit $?
 fi
 
 WORK="$(mktemp -d)"
@@ -77,14 +69,13 @@ tmux new-session -d -s px_test-new-0101-0100 2>/dev/null
 tmux new-session -d -s px_test-nolog-0101-0100 2>/dev/null
 
 out="$(bash "$REG" 2>&1)"
-ok "old-session-listed"    "$(printf '%s' "$out" | grep -qF 'px_test-old-0101-0100' && echo yes || echo no)" "yes"
+has "old-session-listed" "$out" 'px_test-old-0101-0100'
 ok "old-session-age-10d"   "$(printf '%s' "$out" | grep -F 'px_test-old-0101-0100' | grep -qF '(10d old)' && echo yes || echo no)" "yes"
 ok "new-session-age-0d"    "$(printf '%s' "$out" | grep -F 'px_test-new-0101-0100' | grep -qF '(0d old)' && echo yes || echo no)" "yes"
 ok "nolog-uses-tmux-fallback" "$(printf '%s' "$out" | grep -F 'px_test-nolog-0101-0100' | grep -qF 'tmux session_created' && echo yes || echo no)" "yes"
 
 filtered="$(bash "$REG" --older-than 3d 2>&1)"
-ok "older-than-includes-old" "$(printf '%s' "$filtered" | grep -qF 'px_test-old-0101-0100' && echo yes || echo no)" "yes"
-ok "older-than-excludes-new" "$(printf '%s' "$filtered" | grep -qF 'px_test-new-0101-0100' && echo yes || echo no)" "no"
+has "older-than-includes-old" "$filtered" 'px_test-old-0101-0100'
+hasnt "older-than-excludes-new" "$filtered" 'px_test-new-0101-0100'
 
-echo "session-registry: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-registry"

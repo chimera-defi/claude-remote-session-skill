@@ -2,15 +2,11 @@
 # Plain-bash assertions for session-alias. No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 ALIAS="$HERE/../scripts/session-alias.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
-# Isolation: never read the operator's real overlay — ALIAS_PROTECT's generic
-# default is empty (see session-alias.sh), so a real $CRSS_HOME/config.sh
-# would change which folders are protected out from under this test.
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -288,5 +284,4 @@ ok "inference-still-persists" \
   "$(awk -F'\t' '$1=="some-very-long-project-name"{print $2}' "$PS2")" "$inf_out"
 rm -f "$PS" "$PS2"
 
-echo "session-alias: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-alias"
