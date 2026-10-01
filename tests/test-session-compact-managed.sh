@@ -1,26 +1,11 @@
 #!/usr/bin/env bash
-# Tests for session-compact.sh's `sweep --managed-only` opt-in scope filter.
-# Same harness shape as tests/test-session-compact-sweep.sh: an isolated copy
-# of session-compact.sh, a REAL scripts/session-handoff.sh (not a stub of it)
-# talking to a fake `tmux` on PATH for pane-safety, and $SESSION_COMPACT_SENSOR
-# pointed at a fixture TSV. No real tmux, no real session, no real /compact
-# anywhere in this file.
-#
-# The filter under test operates purely on the sensor's tmux_session column
-# (c1), BEFORE _sweep_decide/_context_pct_for_row ever run, so context is not
-# what these tests are about. It still has to be a KNOWN, sufficient value
-# though: unknown context now makes the idle trigger skip (skip:context-
-# unknown — see _sweep_decide's own comment), so a nonexistent-cwd row can no
-# longer reach a deterministic "would-compact: idle" the way it used to. The
-# four live sessions below all get a real fixture transcript at 45% — clears
-# the idle trigger's context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without
-# approaching the separate 50% managed context-trigger threshold — purely so "did
-# this session get evaluated at all" stays unambiguous from the verdict
-# column; the context MATH itself is exercised in
-# tests/test-session-compact-sweep.sh, not here.
-#
-# $SESSION_COMPACT_MANAGED_FILE is used for EVERY invocation below — this file
-# never reads or writes the real $HOME/.claude/session-compact-managed.
+# session-compact.sh `sweep --managed-only` opt-in scope filter.
+# Harness: isolated copy of session-compact.sh, the REAL scripts/session-handoff.sh against a fake `tmux` on PATH,
+# $SESSION_COMPACT_SENSOR pointed at a fixture TSV. No real tmux, session or /compact. The filter works purely on the sensor's tmux_session
+# column BEFORE _sweep_decide runs, so context isn't the point, but it must be KNOWN and sufficient (unknown context
+# makes the idle trigger skip): the four live sessions get a 45% fixture transcript (over the idle floor, under the
+# 50% managed context trigger) so "was it evaluated" is unambiguous from the verdict column. Context math itself is in
+# test-session-compact-sweep.sh. $SESSION_COMPACT_MANAGED_FILE is set on EVERY invocation (never the real file).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
@@ -30,9 +15,7 @@ HANDOFF="$HERE/../scripts/session-handoff.sh"
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
 row_in(){ printf '%s' "$1" | grep "^$2 "; }   # row_in <output> <session> -> that row's line
 
-# ============================================================================
 # Fixture plumbing (mirrors test-session-compact-sweep.sh)
-# ============================================================================
 ISO="$(mktemp -d)"
 cp "$SCRIPT" "$ISO/session-compact.sh"
 cp "$HANDOFF" "$ISO/session-handoff.sh"   # co-located: _find_helper picks this
@@ -89,10 +72,7 @@ _row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"; }
 
 FAKE_HOME="$(mktemp -d)"
 
-# _fixture_transcript <cwd> <tokens> <model> — same helper as
-# test-session-compact-sweep.sh. Needed now (previously wasn't) because the
-# idle trigger requires a KNOWN context >= _SWEEP_IDLE_CONTEXT_FLOOR_PCT —
-# see the header comment above.
+# _fixture_transcript <cwd> <tokens> <model>: as in test-session-compact-sweep.sh (needed for the known-context requirement above)
 _fixture_transcript() {
   local cwd="$1" tokens="$2" model="$3" dir
   dir="$FAKE_HOME/.claude/projects/$(_encode_cwd "$cwd")"
@@ -106,17 +86,11 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with fixtures wire
     HOME="$FAKE_HOME" bash "$ISO/session-compact.sh" "$@"
 }
 
-# Four LIVE sessions (all present in tmux AND in the sensor's TSV), all idle
-# 90m (over the default 60m idle trigger), landed=no dirty=clean (never
-# landed-and-clean), compacted=no (never already-compacted), context=45%
-# (clears the idle trigger's context floor without approaching the separate
-# 50% managed context-trigger threshold) — so an IN-SCOPE row always reaches a clean
-# "would-compact: idle" verdict with nothing else masking it.
+# Four LIVE sessions (in tmux AND the sensor TSV), idle 90m, landed=no dirty=clean, compacted=no, context=45%, so an
+# IN-SCOPE row always reaches a clean "would-compact: idle".
 export STUB_TMUX_SESSIONS="sessa sessb sessc sessd"
 export STUB_TMUX_BUSY_SESSIONS=""
-# $FAKE_HOME-relative (not literal /nonexistent-cwd-*): _fixture_transcript's
-# `mkdir -p ... "$cwd"` needs somewhere writable to create the cwd dir itself
-# in, not a root-level path.
+# $FAKE_HOME-relative cwds (not /nonexistent-cwd-*): _fixture_transcript needs a writable place to mkdir the cwd
 SESSA_CWD="$FAKE_HOME/proj-sessa"
 SESSB_CWD="$FAKE_HOME/proj-sessb"
 SESSC_CWD="$FAKE_HOME/proj-sessc"
@@ -132,15 +106,9 @@ _fixture_transcript "$SESSD_CWD" 450000 claude-sonnet-4-6
   _row sessd remote 1 "$SESSD_CWD" 90 2026-01-01T00:00:00 no no unknown clean
 } > "$FIXTURE_DIR/rows.tsv"
 
-# `deadsess` is deliberately NOT in STUB_TMUX_SESSIONS and NOT in rows.tsv —
-# it stands in for "a session that used to be managed and has since exited"
-# (item 4 in the brief: normal, not an error, just reported in the counts).
+# `deadsess` is NOT in STUB_TMUX_SESSIONS or rows.tsv: a once-managed session that exited (normal, counted not errored)
 
-# ============================================================================
-# 1. Missing allowlist file + --managed-only -> ZERO sessions in scope, exit
-#    0, and — the load-bearing property — NEVER falls back to the fleet-wide
-#    4 sessions that ARE live and ARE in the sensor's TSV right now.
-# ============================================================================
+# 1. Missing allowlist + --managed-only -> ZERO in scope, exit 0, and (load-bearing) NEVER a fallback to the fleet-wide 4 live sessions.
 MISSING_FILE="$FAKE_HOME/.claude/session-compact-managed-does-not-exist"
 out1="$(SESSION_COMPACT_MANAGED_FILE="$MISSING_FILE" _run sweep --dry-run --managed-only)"; rc1=$?
 ok    "missing-file-exit0"                      "$rc1" "0"
@@ -152,9 +120,7 @@ hasnt "missing-file-no-sessc"                   "$out1" "sessc"
 hasnt "missing-file-no-sessd"                   "$out1" "sessd"
 hasnt "missing-file-no-would-compact"           "$out1" "would-compact"
 
-# ============================================================================
 # 2. Empty / comments-only allowlist -> ZERO in scope, same as missing.
-# ============================================================================
 EMPTY_FILE="$(mktemp)"
 printf '# just a comment\n\n   \n# another\n' > "$EMPTY_FILE"
 out2="$(SESSION_COMPACT_MANAGED_FILE="$EMPTY_FILE" _run sweep --dry-run --managed-only)"; rc2=$?
@@ -163,11 +129,7 @@ has   "empty-file-zero-in-scope"    "$out2" "0 sessions in scope"
 hasnt "empty-file-no-sessa"         "$out2" "sessa"
 hasnt "empty-file-no-would-compact" "$out2" "would-compact"
 
-# ============================================================================
-# 3. 2 of 4 live sessions allowlisted -> only those 2 are evaluated; the
-#    other 2 do NOT appear as skip: rows (they must not appear AT ALL — out
-#    of scope, not skipped).
-# ============================================================================
+# 3. 2 of 4 live sessions allowlisted -> only those 2 evaluated; the other 2 must not appear AT ALL (out of scope, not skipped).
 TWOOF4_FILE="$(mktemp)"
 printf 'sessa\nsessb\n' > "$TWOOF4_FILE"
 out3="$(SESSION_COMPACT_MANAGED_FILE="$TWOOF4_FILE" _run sweep --dry-run --managed-only)"; rc3=$?
@@ -179,10 +141,7 @@ hasnt "twoof4-sessd-absent"        "$out3" "sessd"
 has   "twoof4-counts-reported"     "$out3" "2 managed, 2 live"
 has   "twoof4-scanned-count"       "$out3" "--- 2 session(s) scanned."
 
-# ============================================================================
-# 4. Stale entry naming a dead session (not live, not in tmux, not in the
-#    sensor's TSV) -> ignored silently, but counted: 2 managed, 1 live.
-# ============================================================================
+# 4. Stale entry naming a dead session -> ignored silently but counted: 2 managed, 1 live.
 STALE_FILE="$(mktemp)"
 printf 'sessa\ndeadsess\n' > "$STALE_FILE"
 out4="$(SESSION_COMPACT_MANAGED_FILE="$STALE_FILE" _run sweep --dry-run --managed-only)"; rc4=$?
@@ -192,17 +151,9 @@ hasnt "stale-deadsess-absent" "$out4" "deadsess"
 has   "stale-counts-reported" "$out4" "2 managed, 1 live"
 has   "stale-scanned-count"   "$out4" "--- 1 session(s) scanned."
 
-# ============================================================================
-# 5. ALL managed entries stale (n_managed > 0, so the missing/empty early-exit
-#    from case 1/2 does NOT fire — this reaches the TSV-filtering step below
-#    with a non-empty allowlist whose every entry is dead) -> the filtered
-#    TSV must still end up EMPTY, not silently revert to the unfiltered
-#    fleet-wide fetch. This is the specific shape of bug a
-#    `TSV="${TSV_FILTERED:-$TSV}"`-style coalescing fallback would reintroduce
-#    (bash treats an empty-but-set string as "unset" for `:-` only when using
-#    that exact operator) — see the tamper-verification in this commit's
-#    message for proof this assertion is load-bearing.
-# ============================================================================
+# 5. ALL managed entries stale (n_managed > 0, so the case 1/2 early exit doesn't fire): the filtered TSV must still end
+# up EMPTY, not revert to the unfiltered fleet-wide fetch (the bug a `TSV="${TSV_FILTERED:-$TSV}"` coalescing fallback
+# would reintroduce, since `:-` treats an empty-but-set string as unset).
 ALLSTALE_FILE="$(mktemp)"
 printf 'deadsess\nanotherdeadsess\n' > "$ALLSTALE_FILE"
 out5s="$(SESSION_COMPACT_MANAGED_FILE="$ALLSTALE_FILE" _run sweep --dry-run --managed-only)"; rc5s=$?
@@ -215,13 +166,8 @@ hasnt "allstale-no-sessd"         "$out5s" "sessd"
 hasnt "allstale-no-would-compact" "$out5s" "would-compact"
 has   "allstale-scanned-count"    "$out5s" "--- 0 session(s) scanned."
 
-# ============================================================================
-# 6. Backward-compat guard: no --managed-only at all -> ALL 4 live sessions
-#    evaluated exactly as before, no "scope:" text anywhere in the header.
-#    $SESSION_COMPACT_MANAGED_FILE is set to the 2-of-4 file from test 3 to
-#    prove it is IGNORED entirely absent the flag — if the filter ever fired
-#    without --managed-only, this is what would catch it.
-# ============================================================================
+# 6. Backward-compat: no --managed-only -> ALL 4 evaluated, no "scope:" text; the managed file (2-of-4 from test 3) is
+# set to prove it is IGNORED without the flag.
 out5="$(SESSION_COMPACT_MANAGED_FILE="$TWOOF4_FILE" _run sweep --dry-run)"; rc5=$?
 ok    "nomanaged-exit0"         "$rc5" "0"
 has   "nomanaged-sessa"         "$out5" "sessa"

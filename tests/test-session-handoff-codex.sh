@@ -123,25 +123,25 @@ CODEX_REPLY_APPROVAL_WORD_READY='  >_ OpenAI Codex (v0.158.0)
 
   GPT-5.5 medium · /tmp/example-codex-workdir'
 
-ok "codex-working-busy" "$(_is_working "$CODEX_BUSY" && echo yes || echo no)" "yes"
-ok "codex-working-ready" "$(_is_working "$CODEX_READY" && echo yes || echo no)" "no"
-ok "codex-working-reply-ready" "$(_is_working "$CODEX_REPLY_WORKING_READY" && echo yes || echo no)" "no"
+ok "codex-working-busy" "$(yn _is_working "$CODEX_BUSY")" "yes"
+ok "codex-working-ready" "$(yn _is_working "$CODEX_READY")" "no"
+ok "codex-working-reply-ready" "$(yn _is_working "$CODEX_REPLY_WORKING_READY")" "no"
 
-ok "codex-trust-menu" "$(_is_on_menu "$CODEX_TRUST_MENU" && echo yes || echo no)" "yes"
-ok "codex-model-menu" "$(_is_on_menu "$CODEX_MODEL_MENU" && echo yes || echo no)" "yes"
-ok "codex-approval-menu" "$(_is_on_menu "$CODEX_APPROVAL_MENU" && echo yes || echo no)" "yes"
-ok "codex-rate-limit-menu" "$(_is_on_menu "$CODEX_RATE_LIMIT_MENU" && echo yes || echo no)" "yes"
-ok "codex-ready-not-menu" "$(_is_on_menu "$CODEX_READY" && echo yes || echo no)" "no"
-ok "codex-approval-word-reply-not-menu" "$(_is_on_menu "$CODEX_REPLY_APPROVAL_WORD_READY" && echo yes || echo no)" "no"
+ok "codex-trust-menu" "$(yn _is_on_menu "$CODEX_TRUST_MENU")" "yes"
+ok "codex-model-menu" "$(yn _is_on_menu "$CODEX_MODEL_MENU")" "yes"
+ok "codex-approval-menu" "$(yn _is_on_menu "$CODEX_APPROVAL_MENU")" "yes"
+ok "codex-rate-limit-menu" "$(yn _is_on_menu "$CODEX_RATE_LIMIT_MENU")" "yes"
+ok "codex-ready-not-menu" "$(yn _is_on_menu "$CODEX_READY")" "no"
+ok "codex-approval-word-reply-not-menu" "$(yn _is_on_menu "$CODEX_REPLY_APPROVAL_WORD_READY")" "no"
 
-ok "codex-has-prompt-ready" "$(_has_prompt "$CODEX_READY" && echo yes || echo no)" "yes"
+ok "codex-has-prompt-ready" "$(yn _has_prompt "$CODEX_READY")" "yes"
 ok "codex-working-reply-safe" "$(_safety_reason "$CODEX_REPLY_WORKING_READY")" "safe"
 ok "codex-approval-word-reply-safe" "$(_safety_reason "$CODEX_REPLY_APPROVAL_WORD_READY")" "safe"
 
 FRAG="Reply with exactly: MULTILINE-OK"
-ok "codex-oninput-buffered" "$(_on_input_line "$FRAG" "$CODEX_BUFFERED" && echo yes || echo no)" "yes"
-ok "codex-oninput-submitted" "$(_on_input_line "$FRAG" "$CODEX_SUBMITTED" && echo yes || echo no)" "no"
-ok "codex-transcript-submitted" "$(_in_transcript "$FRAG" "$CODEX_SUBMITTED" && echo yes || echo no)" "yes"
+ok "codex-oninput-buffered" "$(yn _on_input_line "$FRAG" "$CODEX_BUFFERED")" "yes"
+ok "codex-oninput-submitted" "$(yn _on_input_line "$FRAG" "$CODEX_SUBMITTED")" "no"
+ok "codex-transcript-submitted" "$(yn _in_transcript "$FRAG" "$CODEX_SUBMITTED")" "yes"
 ok "codex-verdict-buffered" "$(_verdict "$FRAG" "$CODEX_BUFFERED")" "buffered"
 ok "codex-verdict-landed" "$(_verdict "$FRAG" "$CODEX_SUBMITTED")" "landed"
 

@@ -40,9 +40,9 @@ SUBMITTED_PANE='● Goal: survey the $25k tranche candidates
   [Opus 4.8] my-project'
 
 # --- _is_working: working indicator present? ---------------------------------
-ok "working-busy"      "$(_is_working "$BUSY_PANE"      && echo yes || echo no)" "yes"
-ok "working-submitted" "$(_is_working "$SUBMITTED_PANE" && echo yes || echo no)" "yes"
-ok "working-ready"     "$(_is_working "$READY_PANE"     && echo yes || echo no)" "no"
+ok "working-busy"      "$(yn _is_working "$BUSY_PANE")" "yes"
+ok "working-submitted" "$(yn _is_working "$SUBMITTED_PANE")" "yes"
+ok "working-ready"     "$(yn _is_working "$READY_PANE")" "no"
 
 # --- _frag: distinctive single-line fragment of a (possibly multiline) msg ----
 ok "frag-firstline" "$(_frag "Goal: survey the \$25k tranche candidates
@@ -56,13 +56,13 @@ ok "frag-whitespace-only-empty" "$(_frag "
 
 # --- _on_input_line: is the fragment still buffered at the ❯ prompt? ----------
 FRAG="Goal: survey the \$25k tranche candidates"
-ok "oninput-buffered"  "$(_on_input_line "$FRAG" "$BUFFERED_PANE"  && echo yes || echo no)" "yes"
-ok "oninput-submitted" "$(_on_input_line "$FRAG" "$SUBMITTED_PANE" && echo yes || echo no)" "no"
-ok "oninput-ready"     "$(_on_input_line "$FRAG" "$READY_PANE"     && echo yes || echo no)" "no"
+ok "oninput-buffered"  "$(yn _on_input_line "$FRAG" "$BUFFERED_PANE")" "yes"
+ok "oninput-submitted" "$(yn _on_input_line "$FRAG" "$SUBMITTED_PANE")" "no"
+ok "oninput-ready"     "$(yn _on_input_line "$FRAG" "$READY_PANE")" "no"
 
 # --- _in_transcript: did the fragment reach the conversation (above input)? ---
-ok "transcript-submitted" "$(_in_transcript "$FRAG" "$SUBMITTED_PANE" && echo yes || echo no)" "yes"
-ok "transcript-buffered"  "$(_in_transcript "$FRAG" "$BUFFERED_PANE"  && echo yes || echo no)" "no"
+ok "transcript-submitted" "$(yn _in_transcript "$FRAG" "$SUBMITTED_PANE")" "yes"
+ok "transcript-buffered"  "$(yn _in_transcript "$FRAG" "$BUFFERED_PANE")" "no"
 
 # --- _verdict: combine the signals into landed / buffered / unverified --------
 # submitted transcript + working  -> landed
