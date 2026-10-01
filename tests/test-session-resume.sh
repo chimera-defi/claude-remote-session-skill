@@ -22,7 +22,26 @@ T="$(mktemp -d)"
 # Per-run unique suffix for remote names and transcript UUIDs: session-resume's
 # liveness checks pgrep host-wide, so concurrent runs must not share fixture names.
 UID12="$(printf '%012x' $$)"
-cleanup() { pkill -f -- "$T/" 2>/dev/null; rm -rf "$T"; }
+# Every backgrounded supervisor loop below records its setsid session leader's
+# pid to $STUB_STATE/all.sids (one per line, appended — several fixtures reuse
+# the same unit name across test cases, so this must never be overwritten).
+# `pkill -f <pattern>` below only matches CURRENTLY-ALIVE processes whose own
+# argv contains the pattern: killing the matched loop process does not reach a
+# child it has ALREADY forked (the fake-claude stub's sleep, or the loop's own
+# post-exit `sleep 300` backoff) if that child happens to be running at the
+# moment of the kill — that child is immediately orphaned and keeps running
+# to completion (up to 300s) with nothing left anywhere that will ever signal
+# it again. `pkill -s <sid>` instead signals every process in the recorded
+# session (leader + every descendant, regardless of which one is currently
+# running), which setsid guarantees stay in that one session since nothing
+# inside the loop calls setsid() again.
+cleanup() {
+  if [ -f "$STUB_STATE/all.sids" ]; then
+    while read -r sid; do [ -n "$sid" ] && pkill -s "$sid" 2>/dev/null; done < "$STUB_STATE/all.sids"
+  fi
+  pkill -f -- "$T/" 2>/dev/null
+  rm -rf "$T"
+}
 trap cleanup EXIT
 export CRSS_CLAUDE_HOME="$T/claude" CRSS_UNIT_DIR="$T/units" CRSS_SESSIONS_DIR="$T/sessions"
 export CRSS_RESUME_BACKUP_DIR="$T/backups" CRSS_RESUME_WAIT=10
@@ -67,7 +86,9 @@ case "$1" in
 s=open(sys.argv[1]).read()
 m=re.search(r"tmux send-keys -t \"[^\"]+\" \x27(.*?\ndone)\x27", s, re.S)
 print(m.group(1))' "$script")"
-    ( cd "$(cat "$STUB_STATE/rundir")" && setsid timeout 25 bash -c "$payload" >/dev/null 2>&1 & )
+    ( cd "$(cat "$STUB_STATE/rundir")" || exit 1
+      exec setsid timeout 25 bash -c "$payload" >/dev/null 2>&1 ) &
+    echo $! >> "$STUB_STATE/all.sids"
     echo active > "$STUB_STATE/$u.active" ;;
 esac
 EOF
@@ -186,6 +207,11 @@ bk="$(ls "$CRSS_RESUME_BACKUP_DIR"/"$R"-start.sh.* 2>/dev/null | head -1)"
 cmp -s "$bk" "$T/orig-a.sh"; ok "run-backup-is-original" "$?" 0
 pkill -f -- "--remote-control $R" 2>/dev/null; pkill -f -- "$T/scripts" 2>/dev/null
 rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
+# This sandbox's pid 1 does not reap orphaned zombies (the loop and the fake
+# claude it ran can die out of order), so the pid this test just killed can
+# still answer `kill -0` as alive. Drop the registry entry we know is stale
+# ourselves, or the next real run's own liveness check false-refuses on it.
+rm -f "$CRSS_CLAUDE_HOME"/sessions/*.json
 
 # 5. second resume of the now pin-aware script: no re-patch, still resumes.
 cp "$SC" "$T/patched-a.sh"
@@ -195,6 +221,7 @@ out="$(bash "$SR" px_rsm$$-a 2>&1)"; ok "repeat-run-exit0" "$?" 0
 cmp -s "$SC" "$T/patched-a.sh"; ok "repeat-script-unchanged" "$?" 0
 has "repeat-argv-resume" "$(cat "$ARGV_LOG")" "--remote-control $R --resume $NEW"
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
+rm -f "$CRSS_CLAUDE_HOME"/sessions/*.json  # see the stale-zombie-registry note above
 
 # 6. --model rewrites MODEL= and every --model "..." — nothing else.
 R=px-rsm$$-b; mk_session "$R" one; SC="$T/scripts/$R-start.sh"
@@ -203,6 +230,7 @@ ok  "model-argv" "$(cat "$ARGV_LOG")" "--dangerously-skip-permissions --model so
 has "model-field" "$(cat "$SC")" 'MODEL="sonnet"'
 not_has "model-no-old-id" "$(cat "$SC")" "claude-opus-5-5"
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
+rm -f "$CRSS_CLAUDE_HOME"/sessions/*.json  # see the stale-zombie-registry note above
 
 # 7. no transcript for the cwd -> refuse (nothing to resume).
 R=px-rsm$$-c; mk_session "$R"
@@ -240,7 +268,9 @@ payload="$(python3 -c 'import re,sys
 s=open(sys.argv[1]).read()
 print(re.search(r"tmux send-keys -t \"[^\"]+\" \x27(.*?\ndone)\x27", s, re.S).group(1))' "$NSC" 2>/dev/null)"
 FRESH="$T/fresh"; mkdir -p "$FRESH"; rm -f "$ARGV_LOG" "$ARGV_LOG.sentinel"
-( cd "$FRESH" && setsid timeout 5 bash -c "$payload" >/dev/null 2>&1 & )
+( cd "$FRESH" || exit 1
+  exec setsid timeout 5 bash -c "$payload" >/dev/null 2>&1 ) &
+echo $! >> "$STUB_STATE/all.sids"
 for _ in $(seq 1 30); do [ -f "$ARGV_LOG.sentinel" ] && break; sleep 0.2; done
 ok "ns-sentinel-before-first-launch" "$(cat "$ARGV_LOG.sentinel" 2>/dev/null)" yes
 not_has "ns-first-launch-fresh" "$(cat "$ARGV_LOG" 2>/dev/null)" "--continue"
@@ -302,6 +332,7 @@ has "noreg-not-confirmed" "$out" "NOT confirmed"
 not_has "noreg-no-ok-line" "$out" "OK: pid"
 ok "noreg-pin-kept" "$([ -s "$CRSS_SESSIONS_DIR/resume/$R.uuid" ] && echo kept || echo gone)" kept
 pkill -f -- "--remote-control $R" 2>/dev/null; rm -f "$STUB_STATE/$R.service.active"; sleep 0.3
+rm -f "$CRSS_CLAUDE_HOME"/sessions/*.json  # see the stale-zombie-registry note above
 rm -f "$CRSS_SESSIONS_DIR/resume/$R.uuid"
 
 # 14. the loop keeps the pin when claude exits at once (bad/corrupt transcript):
@@ -310,7 +341,9 @@ rm -f "$CRSS_SESSIONS_DIR/resume/$R.uuid"
 PINF="$(sed -n 's/^RESUME_PIN="\(.*\)"$/\1/p' "$NSC" | head -1)"
 mkdir -p "$(dirname "$PINF")"; printf '%s\n' "$NEW" > "$PINF"
 QK="$T/quick"; mkdir -p "$QK"; rm -f "$ARGV_LOG"
-( cd "$QK" && FAKE_CLAUDE_EXIT=1 setsid timeout 3 bash -c "$payload" >/dev/null 2>&1 & )
+( cd "$QK" || exit 1
+  exec env FAKE_CLAUDE_EXIT=1 setsid timeout 3 bash -c "$payload" >/dev/null 2>&1 ) &
+echo $! >> "$STUB_STATE/all.sids"
 for _ in $(seq 1 30); do [ -s "$ARGV_LOG" ] && break; sleep 0.2; done; sleep 1
 has "ns-quick-exit-resumed" "$(cat "$ARGV_LOG")" "--resume $NEW"
 ok  "ns-quick-exit-pin-kept" "$([ -s "$PINF" ] && echo kept || echo gone)" kept
@@ -320,7 +353,9 @@ ok  "ns-quick-exit-sentinel" "$(ls "$QK"/.sessions-init-* >/dev/null 2>&1 && ech
 LP="$(printf '%s' "$payload" | sed 's/"\$RUNTIME" -ge 30/"$RUNTIME" -ge 1/')"
 not_has "ns-threshold-patched" "$LP" '-ge 30'
 LK="$T/long"; mkdir -p "$LK"; rm -f "$ARGV_LOG"
-( cd "$LK" && FAKE_CLAUDE_SLEEP=2 setsid timeout 4 bash -c "$LP" >/dev/null 2>&1 & )
+( cd "$LK" || exit 1
+  exec env FAKE_CLAUDE_SLEEP=2 setsid timeout 4 bash -c "$LP" >/dev/null 2>&1 ) &
+echo $! >> "$STUB_STATE/all.sids"
 for _ in $(seq 1 40); do [ -s "$ARGV_LOG" ] && break; sleep 0.2; done; sleep 3
 has "ns-long-run-resumed" "$(cat "$ARGV_LOG")" "--resume $NEW"
 ok  "ns-long-run-pin-cleared" "$([ -s "$PINF" ] && echo kept || echo gone)" gone
