@@ -114,6 +114,15 @@ has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynam
 errp="$(bash "$NS" --dry-run profile-default 2>&1 1>/dev/null)"
 if printf '%s' "$errp" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: role-default-model-should-not-warn"; else pass=$((pass+1)); fi
 
+# owner: full tool set (no --tools allowlist, like orchestrator) but a Sonnet default, and no alias warning
+outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/null)"
+has "profile-owner"                 "$outw" 'PROFILE=owner'
+has "owner-default-model-sonnet"    "$outw" '^MODEL=sonnet$'
+has "owner-model-src-profile"       "$outw" '^MODEL_SRC=profile-default$'
+has "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+errw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>&1 1>/dev/null)"
+if printf '%s' "$errw" | grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE'; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
+
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
 has "profile-builder"               "$outb" 'PROFILE=builder'
 has "builder-default-model-sonnet"  "$outb" '^MODEL=sonnet$'
