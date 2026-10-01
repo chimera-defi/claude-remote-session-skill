@@ -23,13 +23,11 @@
 # never reads or writes the real $HOME/.claude/session-compact-managed.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 row_in(){ printf '%s' "$1" | grep "^$2 "; }   # row_in <output> <session> -> that row's line
 
@@ -256,5 +254,4 @@ echo '{broken' > "$FAKE_HOME/tasks-root/sid-active/bad.json"
 state="$(HOME="$FAKE_HOME" SESSION_COMPACT_TASKS_ROOT="$FAKE_HOME/tasks-root" _managed_task_state_for_cwd "$TASK_CWD")"
 ok "managed-task-malformed-fails-closed" "$state" "unknown"
 
-echo "session-compact-managed: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-compact-managed"

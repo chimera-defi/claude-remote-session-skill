@@ -7,8 +7,8 @@
 # for the TSV landed/dirty columns. No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -17,9 +17,6 @@ export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # ── flag parsing: --minutes/--days validation and mutual exclusion (no live
 # process needed — these fail before any scanning happens) ───────────────────
@@ -350,5 +347,4 @@ EOF
   has "days-mode-also-skips-compact-summary" "$arow" "2026-01-01T09:00:00Z"
 fi
 
-echo "session-doctor-tsv: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-doctor-tsv"

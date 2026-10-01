@@ -5,12 +5,9 @@
 # deterministic regardless of what's actually running on the box.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 FS="$HERE/../scripts/fleet-status.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
 
 # Fake HOME with no health dir at all, and no session-doctor on PATH, so every
@@ -83,5 +80,4 @@ out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" 2>&1)"
 has "default-has-sessions" "$out" "SESSIONS"
 has "default-has-host"     "$out" "HOST HEALTH"
 
-echo "fleet-status: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "fleet-status"

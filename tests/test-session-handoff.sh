@@ -4,10 +4,9 @@
 # take a captured-pane string, so it can be tested against realistic fixtures.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"   # source-guarded: must NOT run dispatch
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 # --- realistic claude-TUI captures (trimmed from live panes) ------------------
 READY_PANE='● Ready.
@@ -73,5 +72,4 @@ ok "verdict-buffered" "$(_verdict "$FRAG" "$BUFFERED_PANE")" "buffered"
 # gone from input, no transcript echo, not working -> unverified
 ok "verdict-unverified" "$(_verdict "$FRAG" "$READY_PANE")" "unverified"
 
-echo "session-handoff: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff"

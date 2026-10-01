@@ -3,9 +3,8 @@
 # for a worktree folder). No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 # Fixture shape: configured prefix "px", legacy "oldhost" — see
 # examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
 # than converting every "px_"/"px-" literal to a generic-default shape).
@@ -13,9 +12,6 @@ export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # ── _encode_cwd: pure string transform, order matters ('.' before '/') ───────
 ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/px-x-1")" "-home-youruser--claude-worktrees-px-x-1"
@@ -281,5 +277,4 @@ EOF
   rm -rf "$LBASE"
 fi
 
-echo "session-doctor-history: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-doctor-history"

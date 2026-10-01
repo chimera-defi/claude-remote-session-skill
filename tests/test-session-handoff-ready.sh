@@ -5,11 +5,9 @@
 # it can be tested against realistic fixtures.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"   # source-guarded: must NOT run dispatch
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # --- realistic claude-TUI captures (trimmed from live panes) ------------------
 
@@ -324,5 +322,4 @@ out="$(FAKE_NO_SESSION=1 FAKE_CAPTURE='' PATH="$FAKE_TMUX_DIR:$PATH" bash "$HERE
 ok "cli-ready-no-session-exit" "$rc" "2"
 has "cli-ready-no-session-msg" "$out" "no such tmux session"
 
-echo "session-handoff-ready: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-ready"

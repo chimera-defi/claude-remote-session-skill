@@ -5,10 +5,8 @@
 # No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
 
 # ── absent overlay: dir/config.sh/rules/local.md all missing, still exit 0 ──
@@ -82,5 +80,4 @@ rm -rf "$BADRE"
 
 rm -rf "$GOOD" "$BROKEN"
 
-echo "test-session-doctor-overlay: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "test-session-doctor-overlay"

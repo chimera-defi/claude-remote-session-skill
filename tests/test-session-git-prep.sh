@@ -4,9 +4,8 @@
 # owning git checkout/merge/worktree/locking side effects.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SGP="$HERE/../scripts/session-git-prep.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
@@ -188,4 +187,4 @@ out2="$(bash "$SGP" "$R11" sess-own remote-own 2>/dev/null)"
 ok "own-worktree-beats-clean-canonical" "$out2" "$out1"
 ok "own-worktree-canonical-not-claimed" "$([ -f "$HOME/.claude/session-locks/$(lock_key "$R11").owner" ] && echo yes || echo no)" "no"
 
-echo "session-git-prep: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "session-git-prep"

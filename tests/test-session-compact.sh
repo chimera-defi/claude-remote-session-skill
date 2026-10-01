@@ -11,12 +11,10 @@
 #      contract, still with zero tmux and zero I/O against anything real.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # source-guarded: must NOT run dispatch
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
 # ============================================================================
@@ -627,5 +625,4 @@ run_it install-timer --force >/dev/null 2>&1; rc3=$?
 ok  "cli-installtimer-force-overwrites-exit0" "$rc3" "0"
 ok  "cli-installtimer-force-no-systemctl-calls" "$(cat "$SYSTEMCTL_LOG")" ""
 
-echo "session-compact: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-compact"
