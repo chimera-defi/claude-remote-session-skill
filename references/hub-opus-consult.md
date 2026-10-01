@@ -56,3 +56,9 @@ Sonnet is the resident hub because it keeps the native `advisor`, has the full o
 tool surface, and costs less for long-running coordination. Opus is reserved for bounded
 consults where its judgment is most useful. Builders stay Codex-first (`new-session
 --backend codex` or `codex exec`), then Sonnet fallback when Codex cannot handle the work.
+
+## Cross-check ordering
+
+Per the host second-opinion ruling (2026-10-02): Opus first, then a GPT-5.5 cross-check via
+`codex exec` on the same packet, Fable last and only if the two disagree or the call is
+irreversible. Never close a fork on one model family alone.
