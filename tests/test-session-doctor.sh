@@ -35,6 +35,10 @@ out="$(bash "$SD" registry-stale --days abc 2>&1)"; rc=$?
 ok "days-nonnumeric-rejected" "$rc" 2
 hasnt "days-nonnumeric-no-traceback" "$out" Traceback
 has "days-nonnumeric-clean-msg" "$out" "--days requires a non-negative integer"
+# An unknown --flag must be rejected before any mode runs (reap <name> --dry-run once reaped for real).
+out="$(bash "$SD" reap px_nonexistent-0101-0900 --dry-run 2>&1)"; rc=$?
+ok "reap-unknown-flag-rejected" "$rc" 2
+has "reap-unknown-flag-msg" "$out" "unknown option '--dry-run'"
 for d in 30 08; do
   out="$(bash "$SD" registry-stale --days $d 2>&1)"
   hasnt "days-$d-not-rejected" "$out" "requires a non-negative integer"
