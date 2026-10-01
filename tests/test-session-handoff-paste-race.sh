@@ -18,11 +18,9 @@
 # each mode models and why.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 FIXTURE="$HERE/fake-claude-tui.py"
 NEW_HANDOFF="$HERE/../scripts/session-handoff.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 command -v tmux >/dev/null 2>&1    || { echo "session-handoff-paste-race: SKIP (no tmux)"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "session-handoff-paste-race: SKIP (no python3)"; exit 0; }
@@ -140,5 +138,4 @@ ok  "busy-after-send-one-paste" "$(grep -c '^PASTE '  "$WORK/$S3.log")" "1"
 ok  "busy-after-send-one-submit" "$(grep -c '^SUBMIT:' "$WORK/$S3.log")" "1"
 tmux kill-session -t "$S3" 2>/dev/null || true
 
-echo "session-handoff-paste-race: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-paste-race"

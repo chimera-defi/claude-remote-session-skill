@@ -3,16 +3,15 @@
 # captures. Keep these host-path-free; test-no-host-leaks scans tracked files.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 # Keep the `px_*` metadata fixtures below independent of the operator's overlay
 # and CI's generic defaults.
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-handoff.sh"
 
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 CODEX_READY='  >_ OpenAI Codex (v0.158.0)
      /tmp/example-codex-workdir
@@ -124,25 +123,25 @@ CODEX_REPLY_APPROVAL_WORD_READY='  >_ OpenAI Codex (v0.158.0)
 
   GPT-5.5 medium · /tmp/example-codex-workdir'
 
-ok "codex-working-busy" "$(_is_working "$CODEX_BUSY" && echo yes || echo no)" "yes"
-ok "codex-working-ready" "$(_is_working "$CODEX_READY" && echo yes || echo no)" "no"
-ok "codex-working-reply-ready" "$(_is_working "$CODEX_REPLY_WORKING_READY" && echo yes || echo no)" "no"
+ok "codex-working-busy" "$(yn _is_working "$CODEX_BUSY")" "yes"
+ok "codex-working-ready" "$(yn _is_working "$CODEX_READY")" "no"
+ok "codex-working-reply-ready" "$(yn _is_working "$CODEX_REPLY_WORKING_READY")" "no"
 
-ok "codex-trust-menu" "$(_is_on_menu "$CODEX_TRUST_MENU" && echo yes || echo no)" "yes"
-ok "codex-model-menu" "$(_is_on_menu "$CODEX_MODEL_MENU" && echo yes || echo no)" "yes"
-ok "codex-approval-menu" "$(_is_on_menu "$CODEX_APPROVAL_MENU" && echo yes || echo no)" "yes"
-ok "codex-rate-limit-menu" "$(_is_on_menu "$CODEX_RATE_LIMIT_MENU" && echo yes || echo no)" "yes"
-ok "codex-ready-not-menu" "$(_is_on_menu "$CODEX_READY" && echo yes || echo no)" "no"
-ok "codex-approval-word-reply-not-menu" "$(_is_on_menu "$CODEX_REPLY_APPROVAL_WORD_READY" && echo yes || echo no)" "no"
+ok "codex-trust-menu" "$(yn _is_on_menu "$CODEX_TRUST_MENU")" "yes"
+ok "codex-model-menu" "$(yn _is_on_menu "$CODEX_MODEL_MENU")" "yes"
+ok "codex-approval-menu" "$(yn _is_on_menu "$CODEX_APPROVAL_MENU")" "yes"
+ok "codex-rate-limit-menu" "$(yn _is_on_menu "$CODEX_RATE_LIMIT_MENU")" "yes"
+ok "codex-ready-not-menu" "$(yn _is_on_menu "$CODEX_READY")" "no"
+ok "codex-approval-word-reply-not-menu" "$(yn _is_on_menu "$CODEX_REPLY_APPROVAL_WORD_READY")" "no"
 
-ok "codex-has-prompt-ready" "$(_has_prompt "$CODEX_READY" && echo yes || echo no)" "yes"
+ok "codex-has-prompt-ready" "$(yn _has_prompt "$CODEX_READY")" "yes"
 ok "codex-working-reply-safe" "$(_safety_reason "$CODEX_REPLY_WORKING_READY")" "safe"
 ok "codex-approval-word-reply-safe" "$(_safety_reason "$CODEX_REPLY_APPROVAL_WORD_READY")" "safe"
 
 FRAG="Reply with exactly: MULTILINE-OK"
-ok "codex-oninput-buffered" "$(_on_input_line "$FRAG" "$CODEX_BUFFERED" && echo yes || echo no)" "yes"
-ok "codex-oninput-submitted" "$(_on_input_line "$FRAG" "$CODEX_SUBMITTED" && echo yes || echo no)" "no"
-ok "codex-transcript-submitted" "$(_in_transcript "$FRAG" "$CODEX_SUBMITTED" && echo yes || echo no)" "yes"
+ok "codex-oninput-buffered" "$(yn _on_input_line "$FRAG" "$CODEX_BUFFERED")" "yes"
+ok "codex-oninput-submitted" "$(yn _on_input_line "$FRAG" "$CODEX_SUBMITTED")" "no"
+ok "codex-transcript-submitted" "$(yn _in_transcript "$FRAG" "$CODEX_SUBMITTED")" "yes"
 ok "codex-verdict-buffered" "$(_verdict "$FRAG" "$CODEX_BUFFERED")" "buffered"
 ok "codex-verdict-landed" "$(_verdict "$FRAG" "$CODEX_SUBMITTED")" "landed"
 
@@ -170,5 +169,4 @@ ok "start-meta-new-backend" "$(HOME="$META_HOME" _backend_of px_newmeta-0101-000
 ok "start-meta-new-model" "$(HOME="$META_HOME" _model_of px_newmeta-0101-0001)" "gpt-5.5"
 ok "start-meta-percentq-model" "$(HOME="$META_HOME" _model_of px_quotedmeta-0101-0002)" "gpt 5.5"
 
-echo "session-handoff-codex: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-codex"

@@ -5,13 +5,9 @@
 # deterministic regardless of what's actually running on the box.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 FS="$HERE/../scripts/fleet-status.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
 
 # Fake HOME with no health dir at all, and no session-doctor on PATH, so every
 # test below is isolated from whatever is actually running.
@@ -28,13 +24,13 @@ ok  "bad-flag-exit2" "$rc" "2"
 # 2. --sessions prints the SESSIONS header, not HOST.
 out="$(HOME="$FAKE_HOME" bash "$FS" --sessions 2>&1)"
 has   "sessions-only-has-sessions" "$out" "SESSIONS"
-lacks "sessions-only-lacks-host"   "$out" "HOST HEALTH"
+hasnt "sessions-only-lacks-host"   "$out" "HOST HEALTH"
 
 # 3. --host prints the HOST header, not SESSIONS, and reports missing
 # session-doctor cleanly rather than crashing (no ~/.local/bin on PATH here).
 out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" --host 2>&1)"; rc=$?
 has   "host-only-has-host"       "$out" "HOST HEALTH"
-lacks "host-only-lacks-sessions" "$out" "SESSIONS"
+hasnt "host-only-lacks-sessions" "$out" "SESSIONS"
 ok    "host-only-exit0"          "$rc" "0"
 
 # 4. No health-audit snapshot at all (fresh fake HOME) -> graceful
@@ -69,7 +65,7 @@ printf '{"status":"ok","resources":{"disk_used_pct":1,"memory_used_pct":1,"load_
 mkdir -p "$RUNS/20260102T000000Z"   # newer dir, no summary.json yet
 out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" --host 2>&1)"
 has   "picks-newest-complete-run" "$out" "20260101T000000Z"
-lacks "skips-incomplete-run"      "$out" "snapshot: 20260102T000000Z"
+hasnt "skips-incomplete-run"      "$out" "snapshot: 20260102T000000Z"
 
 # 7. A complete newest run's fields are surfaced (status/resources/index),
 # proving the jq extraction actually runs end to end, not just the fallback
@@ -83,5 +79,4 @@ out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$FS" 2>&1)"
 has "default-has-sessions" "$out" "SESSIONS"
 has "default-has-host"     "$out" "HOST HEALTH"
 
-echo "fleet-status: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "fleet-status"

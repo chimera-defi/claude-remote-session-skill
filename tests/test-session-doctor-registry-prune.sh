@@ -1,29 +1,16 @@
 #!/usr/bin/env bash
-# Tests for session-doctor.sh's `registry-prune` mode and `reap`'s new
-# registry-cleanup step. Both talk to the real Anthropic session registry in
-# production, so nothing here may do that: `curl` is PATH-shimmed with a
-# fake (below) that logs every call and answers from a fixture JSON file / a
-# per-id HTTP-code map, and HOME points at a throwaway .claude/.credentials.json
-# + .claude.json so registry_json()'s token/org extraction (same mechanism as
-# registry-stale — see session-doctor.sh ~line 105) reads a fake token, never
-# a real one. No external test framework.
+# session-doctor.sh `registry-prune` mode and reap's registry-cleanup step. Nothing here may touch the real registry:
+# `curl` is PATH-shimmed (logs every call, answers from fixtures) and HOME holds fake credentials.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "px", legacy "oldhost" — see
-# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "px_"/"px-" literal to a generic-default shape).
+isolate_overlay
+# Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-hasnt(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern unexpectedly present: $3"; else pass=$((pass+1)); fi; }
 
 FAKE_TOKEN="FAKE-TOKEN-DO-NOT-LEAK-9f8e7d6c"
 
@@ -37,15 +24,9 @@ cat > "$FIXHOME/.claude.json" <<'EOF'
 {"oauthAccount":{"organizationUuid":"fake-org-uuid"}}
 EOF
 
-# ── fake curl: logs "METHOD URL" per call to $FAKE_CURL_LOG, answers GET
-# .../v1/sessions from $FAKE_REGISTRY_JSON, and DELETE .../v1/sessions/<id>
-# with the code from $FAKE_DELETE_CODES ("<id> <code>" per line; default 200
-# for an unlisted id) — mirrors curl -s -o /dev/null -w '%{http_code}' by
-# printing only the code, nothing else, on a DELETE. Also honors a GET's
-# -o <file> (registry_json() now paginates by writing each page to a file —
-# see registry_json's header comment in session-doctor.sh) by writing the
-# body there instead of stdout; every fixture here is a bare JSON array
-# (no has_more), so registry_json() always stops after this one page.
+# ── fake curl: logs "METHOD URL" to $FAKE_CURL_LOG; GET .../v1/sessions answers from $FAKE_REGISTRY_JSON; DELETE
+# .../v1/sessions/<id> prints only the code from $FAKE_DELETE_CODES ("<id> <code>" lines, default 200). Honors a GET's
+# -o <file>; fixtures are bare arrays (no has_more), so registry_json() stops after one page. ──
 STUBBIN="$(mktemp -d)"
 cat > "$STUBBIN/curl" <<'STUB_EOF'
 #!/usr/bin/env bash
@@ -83,10 +64,8 @@ if [ -n "$outfile" ]; then body > "$outfile"; else body; fi
 STUB_EOF
 chmod +x "$STUBBIN/curl"
 
-# ── fixture registry: covers every skip reason + a plain deletable candidate.
-# DAYS defaults to 30 (registry-prune, like registry-stale, is not idle-report
-# — see the per-mode DAYS default near the top of session-doctor.sh), so
-# 2xDAYS=60 for the requires_action-age cases below.
+# ── fixture registry: every skip reason + a plain deletable candidate. DAYS defaults to 30, so 2xDAYS=60 for the
+# requires_action-age cases. ──
 REG="$(mktemp -d)/registry.json"
 python3 - "$REG" <<'PYEOF'
 import json, sys, datetime
@@ -111,16 +90,13 @@ json.dump(rows, open(sys.argv[1], "w"))
 PYEOF
 
 RUN() {  # RUN <mode-and-args...> — common env for every registry-prune call below
-  # PROTECT's generic default is just "claude-remote" (see session-doctor.sh);
-  # a host overlay adds thirdbot via CRSS_PROTECT_NAMES — set it explicitly
-  # to exercise that config-driven path, matching the "sess_old_thirdbot" fixture.
+  # PROTECT's generic default is just "claude-remote"; set thirdbot via CRSS_PROTECT_NAMES to exercise the config path
   FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REG" FAKE_DELETE_CODES="${DELETE_CODES:-}" \
     CRSS_PROTECT_NAMES='claude-remote|thirdbot' \
     PATH="$STUBBIN:$PATH" HOME="$FIXHOME" bash "$DOCTOR" "$@"
 }
 
-# ── dry run: no --apply => zero DELETE calls, every non-skipped candidate
-# printed as would-delete ─────────────────────────────────────────────────
+# ── dry run: no --apply => zero DELETE calls, candidates printed as would-delete ──
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
 dry_out="$(RUN registry-prune 2>&1)"; dry_rc=$?
 ok  "dryrun-exit0"                 "$dry_rc" "0"
@@ -134,9 +110,7 @@ hasnt "dryrun-omits-too-fresh"     "$dry_out" "sess_too_fresh"
 hasnt "dryrun-omits-connected-old" "$dry_out" "sess_connected_old"
 hasnt "dryrun-no-token-leak"       "$dry_out" "$FAKE_TOKEN"
 
-# thirdbot/claude-remote-title/reqaction rows must never appear as "would-delete"
-# (they're skip reasons, not deletion candidates) — check the exact row, not
-# just substring presence of the id anywhere in the output.
+# skip-reason rows must not appear as "would-delete" (check the exact row, not id substring presence)
 has "dryrun-thirdbot-is-skipped-not-would-delete" \
   "$(printf '%s' "$dry_out" | grep -F 'sess_old_thirdbot')" "skipped"
 has "dryrun-clauderemote-is-skipped-not-would-delete" \
@@ -144,8 +118,7 @@ has "dryrun-clauderemote-is-skipped-not-would-delete" \
 has "dryrun-reqaction-old-not-deleted-outcome" \
   "$(printf '%s' "$dry_out" | grep -F 'sess_reqaction_old')" "skipped"
 
-# ── live-tmux protection: a candidate whose title matches a currently-live
-# tmux session must be skipped, --apply or not ───────────────────────────
+# ── live-tmux protection: a candidate matching a live tmux session is skipped, --apply or not ──
 if command -v tmux >/dev/null 2>&1; then
   tmux new-session -d -s px_livetmux-0101-0100 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
@@ -169,8 +142,7 @@ hasnt "apply-no-delete-connected-old"   "$(cat "$CURL_LOG")" "sessions/sess_conn
 has "apply-reports-deleted"         "$apply_out" "deleted"
 hasnt "apply-no-token-leak"         "$apply_out" "$FAKE_TOKEN"
 
-# ── failed delete: one row's DELETE comes back non-2xx => reported
-# failed(code), other rows still processed, and the whole run exits non-zero.
+# ── failed delete: non-2xx => failed(code), other rows still processed, run exits non-zero ──
 FAILREG="$(mktemp -d)/registry-fail.json"
 python3 - "$FAILREG" <<'PYEOF'
 import json, sys, datetime
@@ -187,7 +159,7 @@ PYEOF
 DC="$(mktemp -d)/codes.txt"; echo "sess_bad 500" > "$DC"
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
 fail_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$FAILREG" FAKE_DELETE_CODES="$DC" PATH="$STUBBIN:$PATH" HOME="$FIXHOME" bash "$DOCTOR" registry-prune --apply 2>&1)"; fail_rc=$?
-ok  "faildelete-exit-nonzero" "$([ "$fail_rc" -ne 0 ] && echo yes || echo no)" "yes"
+ok  "faildelete-exit-nonzero" "$(yn test "$fail_rc" -ne 0)" "yes"
 has "faildelete-reports-failed-code" "$fail_out" "failed(500)"
 has "faildelete-still-deletes-ok-row" "$fail_out" "deleted"
 has "faildelete-ok-row-was-called" "$(cat "$CURL_LOG")" "DELETE https://api.anthropic.com/v1/sessions/sess_ok"
@@ -197,12 +169,8 @@ BADHOME_RP="$(mktemp -d)"
 noreg_out="$(PATH="$STUBBIN:$PATH" HOME="$BADHOME_RP" bash "$DOCTOR" registry-prune 2>&1)"
 hasnt "noregistry-no-traceback" "$noreg_out" "Traceback"
 
-# ── _registry_delete_one: protect-check is defense-in-depth even when called
-# directly. registry-prune's loop already filters protected rows before ever
-# calling this helper, and reap's registry lookup can never produce a
-# protected title (NAME itself would already have been refused at the top of
-# `reap` — see PROTECT there), so neither higher-level path can exercise the
-# helper's own guard; call it directly (it's a sourced shell function).
+# ── _registry_delete_one: its protect-check is defense in depth; neither registry-prune (filters protected rows first)
+# nor reap (NAME refused up front) can reach it, so call the sourced function directly ──
 CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
 prot_del_out="$(FAKE_CURL_LOG="$CURL_LOG" HOME="$FIXHOME" PATH="$STUBBIN:$PATH" _registry_delete_one sess_x "Legacy Direct Claude Remote" 2>&1)"; prot_del_rc=$?
 ok  "helper-protects-clauderemote-exit0" "$prot_del_rc" "0"
@@ -225,9 +193,7 @@ STUB_EOF
   chmod +x "$RSTUB/systemctl"
   cp "$STUBBIN/curl" "$RSTUB/curl"
 
-  # 1. A live throwaway session whose registry title (base form) has a
-  # matching, non-protected entry => reap tears it down AND deletes the
-  # registry entry.
+  # 1. live throwaway session with a matching non-protected registry entry => torn down AND entry deleted
   REAPREG="$(mktemp -d)/reap-registry.json"
   python3 - "$REAPREG" <<'PYEOF'
 import json, sys, datetime
@@ -246,7 +212,7 @@ PYEOF
   has "reap-registry-delete-message" "$reap_out" "sess_reapme"
   hasnt "reap-no-token-leak"         "$reap_out" "$FAKE_TOKEN"
 
-  # 2. --keep-registry => no registry call of any kind for a matching entry.
+  # 2. --keep-registry => no registry call for a matching entry
   tmux new-session -d -s px_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   CURL_LOG="$(mktemp -d)/curl.log"; : > "$CURL_LOG"
   keep_out="$(FAKE_CURL_LOG="$CURL_LOG" FAKE_REGISTRY_JSON="$REAPREG" PATH="$RSTUB:$PATH" HOME="$FIXHOME" bash "$DOCTOR" reap px_reaptest-0101-0900 --force --keep-registry 2>&1)"
@@ -254,9 +220,7 @@ PYEOF
   has   "reap-keepregistry-still-tears-down" "$keep_out" "reaped 'px_reaptest-0101-0900'"
   ok    "reap-keepregistry-no-curl-calls"    "$([ -s "$CURL_LOG" ] && echo called || echo none)" "none"
 
-  # 3. Registry unreachable (no credentials at all) => fails soft: reap still
-  # reports success (its own exit status), just notes the registry couldn't
-  # be reached.
+  # 3. registry unreachable (no credentials) => fails soft: reap succeeds, notes the registry was unreachable
   BADHOME="$(mktemp -d)"
   tmux new-session -d -s px_reaptest-0101-0900 -c "$FIXHOME" 'sleep 60' 2>/dev/null
   softfail_out="$(PATH="$RSTUB:$PATH" HOME="$BADHOME" bash "$DOCTOR" reap px_reaptest-0101-0900 --force 2>&1)"; softfail_rc=$?
@@ -269,4 +233,4 @@ PYEOF
 fi
 
 rm -rf "$FIXHOME" "$STUBBIN"
-echo "session-doctor-registry-prune: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "session-doctor-registry-prune"

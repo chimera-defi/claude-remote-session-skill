@@ -1,58 +1,42 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+source "$HERE/lib.sh"
+isolate_overlay
 RECORD="$HERE/../scripts/record-spawn-telemetry.sh"
 REPORT="$HERE/../scripts/telemetry-report.sh"
-pass=0; fail=0
-has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
 
 TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
 mkdir -p "$TMPD/skills/foo" "$TMPD/skills/bar" "$TMPD/repo" "$TMPD/workdir/.claude"
 echo "some skill content" > "$TMPD/skills/foo/SKILL.md"
 echo "more skill content" > "$TMPD/skills/bar/SKILL.md"
 echo "project instructions" > "$TMPD/workdir/.claude/CLAUDE.md"
-
-# Basic event shape: one JSON line with the fields a report needs.
-CLAUDE_SKILLS_DIR="$TMPD/skills" TELEMETRY_ROOT="$TMPD/repo" \
-  bash "$RECORD" myproj myp px-myp-0101-0000 px_myp-0101-0000 workspace sonnet "$TMPD/workdir" >/dev/null
-
 EVENTS="$TMPD/repo/artifacts/telemetry/events.jsonl"
-[ -f "$EVENTS" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: events file created"; }
+
+# rec SKILLS_DIR ARGS...: record one spawn event; leaves its exit code in $rc.
+rec() { local sd=$1; shift; CLAUDE_SKILLS_DIR="$sd" TELEMETRY_ROOT="$TMPD/repo" bash "$RECORD" "$@" >/dev/null; rc=$?; }
+
+rec "$TMPD/skills" myproj myp px-myp-0101-0000 px_myp-0101-0000 workspace sonnet "$TMPD/workdir"
+ok "events-file-created" "$(yn test -f "$EVENTS")" yes
 line="$(cat "$EVENTS" 2>/dev/null)"
 has "skill-name"        "$line" '"skill": "gstack-session-spawn"'
 has "remote-name"       "$line" '"remote_name": "px-myp-0101-0000"'
 has "skills-count-two"  "$line" '"global_skills_count": 2'
 has "claude-md-nonzero" "$line" '"claude_md_bytes": 21'
 
-# A second spawn appends rather than overwrites.
-CLAUDE_SKILLS_DIR="$TMPD/skills" TELEMETRY_ROOT="$TMPD/repo" \
-  bash "$RECORD" myproj myp px-myp-0101-0001 px_myp-0101-0001 workspace sonnet "$TMPD/workdir" >/dev/null
-count="$(wc -l < "$EVENTS" | tr -d ' ')"
-has "appends-not-overwrites" "$count" '^2$'
+rec "$TMPD/skills" myproj myp px-myp-0101-0001 px_myp-0101-0001 workspace sonnet "$TMPD/workdir"
+ok "appends-not-overwrites" "$(wc -l < "$EVENTS" | tr -d ' ')" 2
 
-# Missing skills dir / workdir must not crash — best-effort, zeroed fields.
-CLAUDE_SKILLS_DIR="$TMPD/does-not-exist" TELEMETRY_ROOT="$TMPD/repo" \
-  bash "$RECORD" other o px-o-0101-0000 px_o-0101-0000 sessions sonnet "$TMPD/no-such-workdir" >/dev/null
-rc=$?
-has "missing-dirs-exit-zero" "$rc" '^0$'
-last_line="$(tail -1 "$EVENTS")"
-has "missing-dirs-zeroed" "$last_line" '"global_skills_count": 0'
+# Missing skills dir / workdir: best-effort, zeroed fields, exit 0.
+rec "$TMPD/does-not-exist" other o px-o-0101-0000 px_o-0101-0000 sessions sonnet "$TMPD/no-such-workdir"
+ok "missing-dirs-exit-zero" "$rc" 0
+has "missing-dirs-zeroed" "$(tail -1 "$EVENTS")" '"global_skills_count": 0'
 
-# An empty WORKDIR must never be treated as "probe filesystem root" —
-# "$WORKDIR/CLAUDE.md" with WORKDIR="" is the real path "/CLAUDE.md". Confirm
-# it degrades to the same zeroed/best-effort behavior as a missing workdir,
-# not a crash and not a lookup against "/" or "/.claude".
-CLAUDE_SKILLS_DIR="$TMPD/skills" TELEMETRY_ROOT="$TMPD/repo" \
-  bash "$RECORD" empty e px-e-0101-0000 px_e-0101-0000 sessions sonnet "" >/dev/null
-rc=$?
-has "empty-workdir-exit-zero" "$rc" '^0$'
-last_line="$(tail -1 "$EVENTS")"
-has "empty-workdir-zeroed-claude-md" "$last_line" '"claude_md_bytes": 0'
+# An empty WORKDIR must not probe "/CLAUDE.md": same zeroed behaviour as a missing workdir.
+rec "$TMPD/skills" empty e px-e-0101-0000 px_e-0101-0000 sessions sonnet ""
+ok "empty-workdir-exit-zero" "$rc" 0
+has "empty-workdir-zeroed-claude-md" "$(tail -1 "$EVENTS")" '"claude_md_bytes": 0'
 
-# Report runs against the file this test just built.
-report_out="$(TELEMETRY_ROOT="$TMPD/repo" bash "$REPORT")"
-has "report-counts-spawns" "$report_out" 'spawns recorded: 4'
+has "report-counts-spawns" "$(TELEMETRY_ROOT="$TMPD/repo" bash "$REPORT")" 'spawns recorded: 4'
 
-echo "spawn telemetry: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "spawn telemetry"

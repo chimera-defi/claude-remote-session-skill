@@ -1,52 +1,30 @@
 #!/usr/bin/env bash
-# Tests for session-doctor.sh's `idle-report --minutes/--tsv` extension:
-# minute-granularity threshold, machine-readable TSV output, the last-GENUINE-
-# user-turn fix (a /compact summary write must not itself count as activity —
-# see docs/idle-report.md and the idle-report case block comment for why),
-# the compacted_since_last_turn detection, and reuse of _wt_landed/_wt_dirty
-# for the TSV landed/dirty columns. No external test framework.
+# idle-report --minutes/--tsv: minute threshold, TSV output, last-GENUINE-user-turn (a /compact summary write is not
+# activity), compacted_since_last_turn, and _wt_landed/_wt_dirty reuse for the landed/dirty columns.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "px", legacy "oldhost" — see
-# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "px_"/"px-" literal to a generic-default shape).
+source "$HERE/lib.sh"
+isolate_overlay
+# Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
-# ── flag parsing: --minutes/--days validation and mutual exclusion (no live
-# process needed — these fail before any scanning happens) ───────────────────
+# ── flag parsing: --minutes/--days validation (fails before any scanning) ──
 mx_out="$(bash "$DOCTOR" idle-report --days 2 --minutes 5 2>&1)"; mx_rc=$?
 ok  "days-and-minutes-exit2"    "$mx_rc" "2"
 has "days-and-minutes-message"  "$mx_out" "mutually exclusive"
 
 nm_out="$(bash "$DOCTOR" idle-report --minutes abc 2>&1)"; nm_rc=$?
 ok  "minutes-nonnumeric-exit2"    "$nm_rc" "2"
-# NB: has()'s pattern arg goes straight to `grep -qF`, so a pattern starting
-# with "-" is misread as a flag (see test-session-doctor-history.sh's same
-# note) — trimmed to not start with "--minutes".
+# has() needle must not start with "-" (grep -F would read it as a flag)
 has "minutes-nonnumeric-message"  "$nm_out" "requires a non-negative integer, got 'abc'"
 
-# ── _default_branch: local origin/HEAD must be tried BEFORE ever shelling out
-# to `gh` (perf fix — idle-report --tsv, via _wt_landed, is about to run
-# unattended on an hourly timer across every worktree's main repo; an
-# up-to-5s `gh repo view` network round-trip per DISTINCT repo per run no
-# longer scales). A fixture reusing a hermetic non-github origin (like the
-# defbr-clone-origin-head fixture in test-session-doctor.sh) would pass on
-# BOTH the old gh-first code and the new local-first code, since the
-# github.com gate keeps gh untried either way — proving nothing about
-# ordering. This fixture uses a REAL github.com origin URL (never dialed —
-# `gh` is stubbed) with a DISTINCTIVE branch name on origin/HEAD (not main/
-# master, so a hardcoded-fallback bug can't coincidentally match) so the
-# assertions below can only pass if the local ref was actually consulted
-# first, not gh.
+# ── _default_branch: local origin/HEAD must be tried BEFORE `gh` (avoids a network round-trip per repo on the hourly
+# timer). Uses a github.com origin URL (never dialed, gh is stubbed) and a distinctive origin/HEAD branch name, so a
+# hermetic non-github origin or a hardcoded main/master fallback cannot pass by accident. ──
 if command -v git >/dev/null 2>&1; then
   DBLBASE="$(mktemp -d)"
   DBLREPO="$DBLBASE/repo"; mkdir -p "$DBLREPO"
@@ -54,15 +32,10 @@ if command -v git >/dev/null 2>&1; then
   git -C "$DBLREPO" config user.email t@t.com; git -C "$DBLREPO" config user.name t
   git -C "$DBLREPO" commit -q --allow-empty -m init
   git -C "$DBLREPO" remote add origin https://github.com/fakeorg/fakerepo.git
-  # Point origin/HEAD at a distinctive, never-otherwise-used branch name; the
-  # symref target need not resolve to a real ref for `git symbolic-ref
-  # --quiet` to read it back (verified: dangling-target read-back works).
+  # distinctive origin/HEAD branch (symref target need not resolve)
   git -C "$DBLREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk-marker-branch
 
-  # `gh` stub: records every invocation to a marker file AND answers with a
-  # DIFFERENT branch than the local ref, so either assertion below (the
-  # resolved value, or the invocation marker) independently catches a
-  # regression back to gh-first ordering.
+  # gh stub: logs invocations and answers with a DIFFERENT branch, so the resolved value or the log catches gh-first
   GHSTUB2DIR="$DBLBASE/ghstub"; mkdir -p "$GHSTUB2DIR"
   GH_INVOKED_MARKER="$DBLBASE/gh-was-invoked"
   cat > "$GHSTUB2DIR/gh" <<STUB_EOF
@@ -76,19 +49,13 @@ STUB_EOF
   defbr_local_first="$(PATH="$GHSTUB2DIR:$PATH" _default_branch "$DBLREPO")"
   ok  "defbr-local-origin-head-wins-over-gh" "$defbr_local_first" "trunk-marker-branch"
   ok  "defbr-gh-not-invoked-when-local-ref-present" \
-    "$([ -f "$GH_INVOKED_MARKER" ] && echo yes || echo no)" "no"
+    "$(yn test -f "$GH_INVOKED_MARKER")" "no"
 
   rm -rf "$DBLBASE"
 fi
 
-# ── _tsv_git_status: reuse of _wt_landed/_wt_dirty (not reimplemented),
-# no-worktree/unknown for a missing or non-git path, and per-cwd caching
-# (mirrors the _DEFBR_CACHE idiom above _default_branch). The function sets
-# globals _TSV_LANDED/_TSV_DIRTY rather than printing a value — see its own
-# comment for why a `$(...)`-capturing call site would silently defeat the
-# cache (the array write happens inside the forked subshell and is discarded
-# when it exits) — so these tests call it directly too, exactly like the real
-# idle-report --tsv call site now does, not via command substitution.
+# ── _tsv_git_status: reuses _wt_landed/_wt_dirty, no-worktree/unknown for a missing/non-git path, per-cwd caching.
+# It sets globals _TSV_LANDED/_TSV_DIRTY (a `$(...)` call would defeat the cache), so call it directly. ──
 if command -v git >/dev/null 2>&1; then
   GSBASE="$(mktemp -d)"
   GSREPO="$GSBASE/repo"; mkdir -p "$GSREPO"
@@ -101,10 +68,7 @@ if command -v git >/dev/null 2>&1; then
   ok "tsv-git-status-dirty"  "$_TSV_DIRTY"  "clean"
   first_landed="$_TSV_LANDED"; first_dirty="$_TSV_DIRTY"
 
-  # Caching: a repeated cwd must not re-shell git — delete the directory,
-  # call again for the SAME cwd (directly, in this same shell — no `$(...)`),
-  # and confirm it still returns the FIRST (cached) answer rather than
-  # flipping to no-worktree/unknown once the directory is actually gone.
+  # caching: after deleting the dir, the SAME cwd must still return the first (cached) answer
   rm -rf "$GSREPO"
   _tsv_git_status "$GSREPO"
   ok "tsv-git-status-cached-landed" "$_TSV_LANDED" "$first_landed"
@@ -124,17 +88,8 @@ if command -v git >/dev/null 2>&1; then
   rm -rf "$GSBASE"
 fi
 
-# ── end-to-end: live sessions + synthetic transcripts, through the real
-# `idle-report --tsv` dispatch (HOME override so this never reads the
-# operator's real transcripts — same convention worktree-stale/land-check/
-# history already use). A real background process per scenario (argv[0]
-# renamed to "claude" via `exec -a`, "--remote-control <name>" appended as
-# literal trailing argv) so pgrep -af's exact match/basename-filter/readlink
-# path idle-report already uses picks each one up for real, no mocking — same
-# technique test-session-doctor-history.sh already validates works. `gh` is
-# stubbed to fail fast so _default_branch's real-default-branch lookup (used
-# by the reused _wt_landed) never makes a network call here, keeping this
-# hermetic and fast regardless of the host's `gh` auth state.
+# ── end-to-end through `idle-report --tsv`: HOME override, one real background process per scenario (`exec -a claude`,
+# `--remote-control <name>`) so the pgrep path is exercised for real; gh stubbed to fail fast (hermetic) ──
 if command -v git >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
   TB="$(mktemp -d)"
   TESTHOME="$TB/home"; mkdir -p "$TESTHOME/.claude/projects"
@@ -162,9 +117,7 @@ STUB_EOF
     PIDS+=("$!")
   }
 
-  # A: headline case — newest type:user entry is a /compact summary
-  # (isCompactSummary:true); idle must be measured from the PRIOR genuine
-  # turn, not this one.
+  # A: newest type:user entry is a /compact summary: idle is measured from the PRIOR genuine turn
   WT_A="$TB/wt-a"; spawn "$WT_A" "px-tsv-compactsum-0101-0100"
   WT_A="$(cd "$WT_A" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_A")"
@@ -174,8 +127,7 @@ STUB_EOF
 {"type":"user","timestamp":"2026-01-05T12:00:00.000Z","isCompactSummary":true}
 EOF
 
-  # B: compact_boundary AFTER the last genuine turn -> col8=yes. Also a real
-  # LANDED worktree (straight off main, no new commits) -> col9=yes, col10=clean.
+  # B: compact_boundary AFTER the last genuine turn -> col8=yes; LANDED worktree -> col9=yes, col10=clean
   GREPO="$TB/grepo"; mkdir -p "$GREPO"
   git -C "$GREPO" init -q -b main
   git -C "$GREPO" config user.email t@t.com; git -C "$GREPO" config user.name t
@@ -190,8 +142,7 @@ EOF
 {"type":"system","subtype":"compact_boundary","timestamp":"2026-01-01T09:30:00.000Z","version":"2.1.206"}
 EOF
 
-  # C: no compact_boundary, version-bearing (aware build) -> col8=no. Also an
-  # UNLANDED worktree (one commit not on main) -> col9=no.
+  # C: no compact_boundary, version-bearing build -> col8=no; UNLANDED worktree -> col9=no
   WT_C="$TB/wt-c"
   git -C "$GREPO" worktree add -q -b session/px-tsv-noboundary-0101-0300 "$WT_C" main >/dev/null 2>&1
   git -C "$WT_C" config user.email t@t.com; git -C "$WT_C" config user.name t
@@ -203,9 +154,7 @@ EOF
 {"type":"user","timestamp":"2026-01-01T09:00:00.000Z","version":"2.1.206"}
 EOF
 
-  # D: no version evidence anywhere in the transcript -> col8=unknown. Plain
-  # non-git directory -> col9/10 also no-worktree/unknown (covers "not a
-  # worktree", alongside F's "gone from disk" below).
+  # D: no version evidence -> col8=unknown; plain non-git dir -> col9/10 no-worktree/unknown
   WT_D="$TB/wt-d"; spawn "$WT_D" "px-tsv-noversion-0101-0400"
   WT_D="$(cd "$WT_D" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_D")"
@@ -213,10 +162,7 @@ EOF
 {"type":"user","timestamp":"2026-01-01T09:00:00.000Z"}
 EOF
 
-  # E: a STALE compact_boundary from BEFORE the last genuine turn (session was
-  # compacted once, then kept working) -> col8 must be "no", not "yes" —
-  # proves this is a "later than the last genuine turn" comparison, not "any
-  # compact_boundary exists anywhere".
+  # E: STALE compact_boundary from before the last genuine turn -> col8=no (a "later than" comparison, not "any boundary")
   WT_E="$TB/wt-e"; spawn "$WT_E" "px-tsv-staleboundary-0101-0500"
   WT_E="$(cd "$WT_E" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_E")"
@@ -225,27 +171,21 @@ EOF
 {"type":"user","timestamp":"2026-01-01T09:00:00.000Z","version":"2.1.206"}
 EOF
 
-  # F: cwd removed from disk AFTER the process cd'ed into it — the common
-  # "transcript outlives the worktree" case — -> col9/10 no-worktree/unknown,
-  # row still has all 10 columns.
+  # F: cwd removed from disk after the process cd'ed in -> col9/10 no-worktree/unknown, still 10 columns
   WT_F="$TB/wt-f"; mkdir -p "$WT_F"; WT_F="$(cd "$WT_F" && pwd -P)"
   ( cd "$WT_F" && exec -a claude bash -c 'trap : TERM; sleep 30' ignored --remote-control px-tsv-gonecwd-0101-0600 ) &
   PIDS+=("$!")
   sleep 0.3
   rmdir "$WT_F" 2>/dev/null || true
 
-  # G: a FRESH genuine turn (timestamp = now) -> must be FILTERED OUT under a
-  # tight --minutes threshold (proves --minutes actually filters, not just
-  # parses).
+  # G: fresh genuine turn must be FILTERED OUT by a tight --minutes
   WT_G="$TB/wt-g"; spawn "$WT_G" "px-tsv-freshts-0101-0700"
   WT_G="$(cd "$WT_G" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_G")"
   NOWTS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
   printf '{"type":"user","timestamp":"%s"}\n' "$NOWTS" > "$PROJB/$(_encode_cwd "$WT_G")/sess.jsonl"
 
-  # H: a version OLDER than the one build empirically verified to emit
-  # compact_boundary, no compact_boundary present -> col8=unknown (a real
-  # absence-of-evidence case, not just "no version field at all" like D).
+  # H: version older than the first compact_boundary-emitting build -> col8=unknown (absence of evidence)
   WT_H="$TB/wt-h"; spawn "$WT_H" "px-tsv-oldversion-0101-0800"
   WT_H="$(cd "$WT_H" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_H")"
@@ -253,20 +193,9 @@ EOF
 {"type":"user","timestamp":"2026-01-01T09:00:00.000Z","version":"2.0.50"}
 EOF
 
-  # I: Bug A regression — the FULL real-world /compact noise cascade (all four
-  # artifacts observed across live sweep --apply
-  # runs: the bare '/compact' trigger, the isMeta caveat, the command-name
-  # echo, and the local-command-stdout 'Compacted' line — see session-doctor.sh's
-  # comment above the exclusion block for why each one is here and why the
-  # match on each is scoped the way it is). All four carry a RECENT timestamp;
-  # the one truly-genuine turn is old. Before this fix, the newest of the four
-  # (local-command-stdout, which lands latest in real captures) dominated
-  # genuine_mx and made a session idle 8+ days look idle ~0 minutes — exactly
-  # the bug observed live. Also includes a real compact_boundary entry so
-  # col8 (compacted_since_last_turn) is exercised end-to-end: it must read
-  # 'yes' once genuine_mx correctly falls back to the old turn (compact_mx is
-  # then necessarily newer than genuine_mx — no separate col8 code path
-  # needed, this is the same yes/no/unknown comparison already tested above).
+  # I: Bug A regression: the full /compact noise cascade (bare '/compact', isMeta caveat, command-name echo,
+  # local-command-stdout 'Compacted') all carry RECENT timestamps; the one genuine turn is old. Pre-fix the newest noise
+  # line made an 8-day-idle session look ~0 minutes idle. Includes a compact_boundary so col8 is checked end to end.
   WT_I="$TB/wt-i"; spawn "$WT_I" "px-tsv-compactnoise-0101-0900"
   WT_I="$(cd "$WT_I" && pwd -P)"
   mkdir -p "$PROJB/$(_encode_cwd "$WT_I")"
@@ -294,16 +223,9 @@ EOF
   rowI="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-compactnoise-0101-0900')"
 
   ok "tsv-a-idle-from-genuine-turn" "$(printf '%s' "$rowA" | awk -F'\t' '{print $6}')" "2026-01-01T09:00:00Z"
-  # Bug A regression: idle must be measured from the pre-compact genuine turn
-  # (2026-01-01), NOT from any of the four /compact noise artifacts (all dated
-  # 2026-01-08) — and, in particular, not from the local-command-stdout line,
-  # which carries the LATEST timestamp of the four and is what actually broke
-  # this pre-fix (see the fixture's own comment above for the full mechanism).
+  # Bug A: idle comes from the pre-compact genuine turn (2026-01-01), not the noise artifacts (2026-01-08)
   ok "tsv-i-idle-from-pre-compact-genuine-turn" "$(printf '%s' "$rowI" | awk -F'\t' '{print $6}')" "2026-01-01T09:00:00Z"
-  # And column 8 must correctly read 'yes': with genuine_mx correctly pinned to
-  # the old turn, the real compact_boundary entry (2026-01-08T12:00:03) is
-  # necessarily newer than it — this is the "no separate col8 fix needed"
-  # claim, exercised end to end rather than just asserted.
+  # col8 reads 'yes': the compact_boundary is newer than the pinned genuine turn
   ok "tsv-i-compacted-since-last-turn-yes" "$(printf '%s' "$rowI" | awk -F'\t' '{print $8}')" "yes"
   ok "tsv-b-compacted-yes"          "$(printf '%s' "$rowB" | awk -F'\t' '{print $8}')" "yes"
   ok "tsv-b-landed-yes"             "$(printf '%s' "$rowB" | awk -F'\t' '{print $9}')" "yes"
@@ -319,36 +241,28 @@ EOF
   ok "tsv-f-gone-cwd-10-cols"       "$(printf '%s' "$rowF" | awk -F'\t' '{print NF}')" "10"
   ok "tsv-h-old-version-unknown"    "$(printf '%s' "$rowH" | awk -F'\t' '{print $8}')" "unknown"
 
-  # idle_minutes is numeric for a real timestamp (the literal 'never' is only
-  # for true never-messaged sessions — not exercised by name here, this just
-  # confirms the format contract on a real row).
+  # idle_minutes is numeric for a real timestamp
   ok "tsv-d-idle-minutes-numeric" "$(printf '%s' "$rowD" | awk -F'\t' '{print $5}' | grep -qE '^[0-9]+$' && echo yes || echo no)" "yes"
 
-  # Every row present must have exactly 10 tab-separated columns — no ragged
-  # rows, including the noisy real-host rows this scan also picks up (pgrep
-  # is host-wide, not scoped by the HOME override).
+  # exactly 10 tab-separated columns per row (pgrep is host-wide, so noisy host rows too)
   badcols="$(printf '%s\n' "$tsvout" | awk -F'\t' 'NF!=10{print NR": "NF" cols"}')"
   ok "tsv-all-rows-10-cols" "$badcols" ""
 
-  # No header, no banner, no summary/footer lines with --tsv — only data rows.
+  # --tsv: data rows only
   ok "tsv-no-banner"         "$(printf '%s\n' "$tsvout" | grep -c '^===')"          "0"
   ok "tsv-no-column-header"  "$(printf '%s\n' "$tsvout" | grep -c 'tmux_session')"  "0"
   ok "tsv-no-summary-footer" "$(printf '%s\n' "$tsvout" | grep -c 'idle session(s)')" "0"
 
-  # --minutes actually filters (not just parses): a tight window must exclude
-  # G's fresh turn but still include D's ancient one.
+  # --minutes filters: excludes G's fresh turn, includes D's ancient one
   tightout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report --minutes 45 --tsv 2>&1)"
   ok  "tsv-minutes-excludes-fresh" "$(printf '%s\n' "$tightout" | grep -c 'px-tsv-freshts-0101-0700')" "0"
   has "tsv-minutes-includes-old"   "$tightout" "px-tsv-noversion-0101-0400"
 
-  # --days behavior unchanged: default (no --minutes) still uses the
-  # day-granularity header text verbatim, and the last-genuine-turn fix
-  # applies to the human format too, not just --tsv.
+  # default (no --minutes) keeps the day-granularity header; the genuine-turn fix applies to the human format too
   daysout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report 2>&1)"
   has "days-default-header-unchanged"     "$daysout" "NO type:user message in the last 2 day(s)"
   arow="$(printf '%s\n' "$daysout" | grep -F 'px_tsv-compactsum-0101-0100')"
   has "days-mode-also-skips-compact-summary" "$arow" "2026-01-01T09:00:00Z"
 fi
 
-echo "session-doctor-tsv: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-doctor-tsv"

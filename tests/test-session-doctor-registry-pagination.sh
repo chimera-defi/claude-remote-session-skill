@@ -1,33 +1,15 @@
 #!/usr/bin/env bash
-# Tests for session-doctor.sh's registry_json() pagination.
-#
-# Bug: registry_json() fetched only the FIRST page of
-# GET https://api.anthropic.com/v1/sessions. Live-API evidence: a bare GET
-# returns {data, first_id, has_more, last_id}; has_more=true once the
-# registry holds more than one page (page size 200 in production, confirmed
-# by a live two-page walk with after_id=<last_id> — zero id overlap between
-# pages, has_more flips to false once exhausted). Because registry_json()
-# never followed has_more/after_id, registry-stale, registry-prune, report's
-# registry summary, and reap's title lookup all silently saw only the first
-# page — this is what made `registry-prune --apply` need 6 repeated passes
-# to exhaust a real stale backlog.
-#
-# This test stubs curl to serve exactly 2 pages (page 1: has_more=true +
-# last_id; page 2, requested via ?after_id=<page1 last_id>: has_more=false)
-# and asserts that BOTH pages' stale entries surface via `registry-stale`.
-# Talks only to a fake curl on $PATH — never the real registry.
+# registry_json() pagination. Bug: only the FIRST page of GET /v1/sessions was fetched (has_more/after_id never
+# followed), so registry-stale, registry-prune, report and reap's title lookup saw one page; `registry-prune --apply`
+# needed 6 passes on a real backlog. A fake curl serves 2 pages (page 1 has_more=true + last_id; page 2 via
+# ?after_id=<page1 last_id>) and BOTH pages' stale entries must surface via `registry-stale`. Never the real registry.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-hasnt(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern unexpectedly present: $3"; else pass=$((pass+1)); fi; }
 
 FAKE_TOKEN="FAKE-TOKEN-DO-NOT-LEAK-9f8e7d6c"
 
@@ -41,9 +23,7 @@ cat > "$FIXHOME/.claude.json" <<'EOF'
 {"oauthAccount":{"organizationUuid":"fake-org-uuid"}}
 EOF
 
-# ── page fixtures: 2 pages, disjoint ids, page1.has_more=true + last_id
-# pointing at the id that must appear as ?after_id=<id> on the next GET;
-# page2.has_more=false so a correct implementation stops after 2 calls.
+# ── page fixtures: 2 pages, disjoint ids; page1.has_more=true + last_id (the next ?after_id), page2.has_more=false ──
 PAGEDIR="$(mktemp -d)"
 cat > "$PAGEDIR/page1.json" <<'EOF'
 {"first_id":"sess_p1_stale","has_more":true,"last_id":"sess_p1_last",
@@ -58,15 +38,10 @@ cat > "$PAGEDIR/page2.json" <<'EOF'
    {"id":"sess_p2_stale","updated_at":"2020-01-01T00:00:00Z","created_at":"2020-01-01T00:00:00Z","connection_status":"disconnected","session_status":"idle","title":"px-p2-stale-0101-0100"}
  ]}
 EOF
-# ages above are far in the past (well beyond any --days window) so both
-# stale rows are unambiguous candidates regardless of "now" at test time.
+# ages are far in the past, so both rows are stale candidates regardless of "now"
 
-# ── fake curl: logs "METHOD URL" per call to $FAKE_CURL_LOG; a GET whose URL
-# contains "after_id=sess_p1_last" gets page2, any other GET gets page1. A
-# GET with an unrecognized after_id (implementation bug) gets an empty page
-# so a broken loop degrades to "missing data" rather than looping forever.
-# Must honor -o <file> (registry_json() writes each page to a file, unlike
-# a plain unredirected curl call) — write the body there, not to stdout.
+# ── fake curl: logs "METHOD URL" to $FAKE_CURL_LOG; a GET with after_id=sess_p1_last gets page2, any other GET page1;
+# an unrecognized after_id (implementation bug) gets an empty page so a broken loop can't spin. Honors -o <file>. ──
 STUBBIN="$(mktemp -d)"
 cat > "$STUBBIN/curl" <<STUB_EOF
 #!/usr/bin/env bash
@@ -101,10 +76,7 @@ has  "page2-stale-entry-present" "$out" "sess_p2_stale"
 has  "second-curl-call-made"     "$(cat "$CURL_LOG")" "after_id=sess_p1_last"
 hasnt "no-token-leak"            "$out" "$FAKE_TOKEN"
 
-# ── registry_json() directly: merged output must carry both pages' entries
-# and stay in the {sessions|data: [...]}-or-bare-list shape every caller
-# already parses (arr=arr if isinstance(arr,list) else arr.get('sessions',
-# arr.get('data',[]))).
+# ── registry_json() directly: merged output carries both pages' entries in the shape callers already parse ──
 json_out="$(FAKE_CURL_LOG="$CURL_LOG" PATH="$STUBBIN:$PATH" HOME="$FIXHOME" registry_json)"
 count="$(printf '%s' "$json_out" | python3 -c "
 import json,sys
@@ -116,11 +88,8 @@ ok "registry_json-merges-both-pages-count" "$count" "3"
 
 rm -rf "$STUBBIN" "$PAGEDIR"
 
-# ── MAX_PAGES hard cap: an adversarial/malformed registry that always
-# answers has_more:true must not loop forever. Each GET returns exactly one
-# new entry and a fresh last_id, so a correctly-capped registry_json() stops
-# at exactly MAX_PAGES (50) calls/entries instead of hanging or growing
-# without bound.
+# ── MAX_PAGES cap: a registry that always answers has_more:true (one new entry + fresh last_id per GET) must stop at
+# exactly MAX_PAGES (50) calls/entries ──
 CAPSTUB="$(mktemp -d)"
 CAPCOUNTER="$(mktemp -d)/counter"; echo 0 > "$CAPCOUNTER"
 cat > "$CAPSTUB/curl" <<STUB_EOF
@@ -154,11 +123,7 @@ except Exception:
 ok "maxpages-returns-collected-50-entries" "$cap_count" "50"
 rm -rf "$CAPSTUB"
 
-# ── page 2+ fetch/parse failure: registry_json() must not discard page 1's
-# already-fetched entries just because a later page came back empty/broken —
-# it returns everything successfully collected rather than erroring the
-# whole call (only a page-1 failure is total, matching credentials-missing
-# behavior above).
+# ── page 2+ failure must not discard page 1's entries (only a page-1 failure is total, like missing credentials) ──
 PF_PAGEDIR="$(mktemp -d)"
 cat > "$PF_PAGEDIR/page1.json" <<'EOF'
 {"first_id":"sess_pf1_a","has_more":true,"last_id":"sess_pf1_a",
@@ -191,4 +156,4 @@ has "page2fail-keeps-page1-entry" "$pf_out" "sess_pf1_a"
 rm -rf "$PFSTUB" "$PF_PAGEDIR"
 
 rm -rf "$FIXHOME"
-echo "session-doctor-registry-pagination: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "session-doctor-registry-pagination"

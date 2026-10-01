@@ -15,10 +15,9 @@
 # primary script no longer has.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 NS="$HERE/../scripts/new-session.sh"
 FB="$HERE/../references/fallback-recipe.md"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if grep -qF "$2" "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found in $3: $2"; fi; }
 
 # Both scripts wait for the pane's interactive shell before typing into it.
@@ -106,5 +105,4 @@ has "fallback-uses-crss-claude-bin"     '${CRSS_CLAUDE_BIN}'  "$FB"
 ok "new-session-no-hardcoded-home" "$(grep -cE '/home/[a-z_][a-z0-9_-]*' "$NS")" "0"
 ok "fallback-no-hardcoded-home"    "$(grep -cE '/home/[a-z_][a-z0-9_-]*' "$FB")" "0"
 
-echo "fallback-recipe-sync: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "fallback-recipe-sync"

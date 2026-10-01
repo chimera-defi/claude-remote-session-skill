@@ -17,9 +17,8 @@
 # still being hardcoded under the hood.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOC="$HERE/../references/fallback-recipe.md"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 
 # Pull the CRSS_SESSION_PREFIX default-resolution line and the
 # _fr_has_mmdd_group()/_fr_poisoned() function bodies out of the fenced bash
@@ -90,5 +89,4 @@ ok "multi-pair-later-real-timestamp" "$(poisoned project-2024-2025-0715-2359)" "
 # Same class, three digit-pairs instead of two (extra coverage, found in review).
 ok "multi-pair-three-candidates" "$(poisoned release-2024-2025-x-0715-0630-copy)" "POISONED"
 
-echo "fallback-recipe guard: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "fallback-recipe guard"

@@ -1,27 +1,15 @@
 #!/usr/bin/env bash
-# Tests for session-compact.sh's `sweep` context-aware trigger, end-to-end
-# through a REAL scripts/session-handoff.sh (not a stub of it) talking to a
-# fake `tmux` on PATH. tests/test-session-compact.sh already covers sweep's
-# CLI contract (flags, exit codes, the idle-trigger path) via a stubbed
-# session-handoff — that harness has no way to produce a real token count
-# (no transcript on disk) or drive session-handoff's ACTUAL busy detector
-# (its own `tmux capture-pane` call). This file plugs both gaps: real
-# fixture *.jsonl transcripts under a fake $HOME/.claude/projects/<cwd>/, and
-# a real session-handoff.sh reading a stub tmux's capture-pane output — so
-# the spinner/"esc to interrupt" pattern _is_working actually implements is
-# what's under test, not a re-description of it in a mock.
-#
-# No real tmux, no real session, no real /compact anywhere in this file.
+# session-compact.sh `sweep` context-aware trigger end-to-end through the REAL scripts/session-handoff.sh against a fake
+# `tmux` on PATH. test-session-compact.sh covers the CLI contract with a stubbed handoff; this file adds real token counts
+# (fixture *.jsonl transcripts under a fake $HOME/.claude/projects/<cwd>/) and session-handoff's actual busy detector
+# (_is_working on a stub tmux's capture-pane output). No real tmux, session or /compact.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # for _encode_cwd only (source-guarded: must NOT run dispatch)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
 # ============================================================================
 # Fixture plumbing
@@ -33,15 +21,9 @@ cp "$HANDOFF" "$ISO/session-handoff.sh"   # co-located: _find_helper picks this
                                             # busy-detection runs for real.
 
 BIN="$(mktemp -d)"
-# Fake tmux — the ONLY live-process boundary in this file. Driven by two env
-# vars read at call time (so each `bash tmux ...` subprocess still sees them):
-#   STUB_TMUX_SESSIONS       - space-separated names that "exist" (has-session)
-#   STUB_TMUX_BUSY_SESSIONS  - subset of the above whose capture-pane shows the
-#                              actively-generating spinner ("esc to interrupt")
-# Every existing, non-busy session captures as a plain SAFE pane: a lone `❯ `
-# prompt line immediately followed by a border line of only `─`, which is
-# exactly the shape session-handoff.sh's _input_box_empty requires to read the
-# input box as empty (see its own comment for the parse).
+# Fake tmux (the only live-process boundary), driven by env at call time: STUB_TMUX_SESSIONS (names that exist),
+# STUB_TMUX_BUSY_SESSIONS (subset showing the spinner "esc to interrupt"). Other sessions capture as a SAFE pane: a lone
+# `❯ ` line followed by a `─` border, the shape _input_box_empty needs.
 cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 _name_arg() {  # scan "$@" for the value following a literal -t
@@ -91,11 +73,8 @@ _row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"; }
 
 FAKE_HOME="$(mktemp -d)"
 
-# _fixture_transcript <cwd> <tokens> <model> — writes ONE assistant message
-# with a real usage object into the transcript dir _context_snapshot will
-# scan for <cwd>, under $FAKE_HOME. All tokens go in input_tokens for
-# simplicity — _context_snapshot sums input+cache_read+cache_creation, so
-# where they land inside that sum doesn't matter for the total.
+# _fixture_transcript <cwd> <tokens> <model>: ONE assistant message with a usage object under $FAKE_HOME (all tokens in
+# input_tokens; _context_snapshot sums input+cache_read+cache_creation).
 _fixture_transcript() {
   local cwd="$1" tokens="$2" model="$3" dir
   dir="$FAKE_HOME/.claude/projects/$(_encode_cwd "$cwd")"
@@ -104,10 +83,8 @@ _fixture_transcript() {
     "$model" "$tokens" > "$dir/fixture.jsonl"
 }
 
-# _fixture_unparseable_transcript <cwd> — a transcript dir that EXISTS but
-# contains no line _context_snapshot's parser can use as an assistant+usage
-# entry (garbage JSON throughout) — the "cannot be found or parsed" case
-# rule 6 requires degrading gracefully from, not crashing or guessing.
+# _fixture_unparseable_transcript <cwd>: dir exists but holds only garbage JSON (the "cannot be parsed" case, which must
+# degrade gracefully, never crash or guess).
 _fixture_unparseable_transcript() {
   local cwd="$1" dir
   dir="$FAKE_HOME/.claude/projects/$(_encode_cwd "$cwd")"
@@ -124,11 +101,8 @@ export STUB_TMUX_SESSIONS="ctxsess idlesess busysess protsess unparsesess"
 export STUB_TMUX_BUSY_SESSIONS="busysess"
 
 # ============================================================================
-# Fixture rows — one session per required scenario (see brief's Commit 3
-# list). All use landed=no dirty=clean (valid vocabulary, and specifically
-# NOT landed=yes+dirty=clean, so the landed-and-clean skip never masks the
-# trigger this test is actually checking) and compacted=no (so the already-
-# compacted skip doesn't mask it either).
+# Fixture rows: one session per scenario, all landed=no dirty=clean compacted=no so neither the landed-and-clean nor the
+# already-compacted skip can mask the trigger under test.
 # ============================================================================
 CTX_CWD="$FAKE_HOME/proj-ctx"
 IDLE_CWD="$FAKE_HOME/proj-idle"
@@ -137,10 +111,8 @@ PROT_CWD="$FAKE_HOME/proj-prot"
 BAD_CWD="$FAKE_HOME/proj-bad"
 
 _fixture_transcript "$CTX_CWD"  850000 claude-sonnet-4-6   # 85% of 1,000,000
-# 45%: clears the idle trigger's own context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT
-# = 40 — idle alone is not need) while staying under the DIFFERENT 80%
-# fleet context-trigger threshold, so this row still isolates "idle trigger fires",
-# not "context trigger also would have fired".
+# 45%: clears the idle trigger's context floor (_SWEEP_IDLE_CONTEXT_FLOOR_PCT=40) but stays under the 80% context trigger,
+# isolating "idle trigger fires"
 _fixture_transcript "$IDLE_CWD" 450000 claude-sonnet-4-6   # 45%
 _fixture_transcript "$BUSY_CWD" 950000 claude-sonnet-4-6   # 95%
 _fixture_transcript "$PROT_CWD" 990000 claude-sonnet-4-6   # 99%
@@ -164,32 +136,23 @@ has "context-trigger-fires"     "$(row ctxsess)" "would-compact: context"
 has "context-trigger-shows-pct" "$(row ctxsess)" " 85 "
 has "context-trigger-shows-tokens" "$(row ctxsess)" "850000"
 
-# --- 2. context=45% (clears the idle trigger's context floor but not the
-# separate 80% fleet context-trigger threshold), idle=90m (over the idle trigger)
-# -> idle ---------------------------------------------------------------
+# --- 2. context=45% (clears the idle floor, under 80%), idle=90m -> idle ---
 has "idle-trigger-fires"  "$(row idlesess)" "would-compact: idle"
 has "idle-trigger-shows-pct" "$(row idlesess)" " 45 "
 
-# --- 3. THE IMPORTANT CASE: context=95% (would ALSO trigger) AND idle=90m
-# (would ALSO trigger via idle) but the pane is BUSY (real spinner text, read
-# through the REAL session-handoff.sh -> real tmux capture-pane stub) ->
-# skip: busy, overriding BOTH triggers ---------------------------------------
+# --- 3. IMPORTANT: context=95% AND idle=90m both trigger, but the pane is BUSY (real spinner via the real
+# session-handoff.sh) -> skip: busy, overriding BOTH triggers ---
 has   "busy-overrides-both-triggers" "$(row busysess)" "skip: busy"
-lacks "busy-is-not-would-compact"    "$(row busysess)" "would-compact"
+hasnt "busy-is-not-would-compact"    "$(row busysess)" "would-compact"
 
-# --- 4. protected, idle=7200m (5 days), context=99% -> protected wins,
-# regardless of how hard both triggers would otherwise fire ------------------
+# --- 4. protected, idle=7200m, context=99% -> protected wins ---
 has   "protected-wins" "$(row protsess)" "skip: protected"
-lacks "protected-is-not-would-compact" "$(row protsess)" "would-compact"
+hasnt "protected-is-not-would-compact" "$(row protsess)" "would-compact"
 
-# --- 5. unparseable transcript, idle=10m: under the 60m idle trigger but
-# over the context trigger's 5m floor, so this reaches the context-path
-# eligibility check with an unmeasurable percentage -> distinct, loud
-# skip:context-unknown (NOT a silent idle-only fallback, and NOT collapsed
-# into "skip: under thresholds") — never guesses a percentage (rule 6) ------
+# --- 5. unparseable transcript, idle=10m (under the 60m idle trigger, over the 5m context floor) -> distinct loud
+# skip:context-unknown (not an idle-only fallback, not "under thresholds"); never guesses a percentage ---
 has "unparseable-shows-na"      "$(row unparsesess)" "n/a"
 has "unparseable-verdict"       "$(row unparsesess)" "skip: context unknown"
 has "unparseable-loud-note"     "$(row unparsesess)" "_model_window_for"
 
-echo "session-compact-sweep: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-compact-sweep"

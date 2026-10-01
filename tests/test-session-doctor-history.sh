@@ -1,37 +1,26 @@
 #!/usr/bin/env bash
-# Plain-bash tests for session-doctor.sh's `history` mode (NOW + PAST report
-# for a worktree folder). No external test framework.
+# session-doctor.sh `history` mode (NOW + PAST report for a worktree folder).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay (sourcing session-doctor.sh
-# below runs its config loader immediately) — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "px", legacy "oldhost" — see
-# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "px_"/"px-" literal to a generic-default shape).
+source "$HERE/lib.sh"
+isolate_overlay
+# Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # ── _encode_cwd: pure string transform, order matters ('.' before '/') ───────
 ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/px-x-1")" "-home-youruser--claude-worktrees-px-x-1"
 ok "encode-no-path-required" "$(_encode_cwd "/does/not/exist.d/here")" "-does-not-exist-d-here"
 
 # ── _history_matches: pure logic over synthetic wt_base/proj_base dirs ───────
-# (function takes wt_base/proj_base as explicit params — this is the "HOME/
-# projects root overridable" seam: tests point straight at a tmpdir, no need
-# to fake a whole $HOME/.claude tree just to exercise the matching logic.)
+# (takes wt_base/proj_base as params, so tests point at a tmpdir instead of faking $HOME/.claude)
 MBASE="$(mktemp -d)"
 WTB="$MBASE/worktrees"; PROJB="$MBASE/projects"
 mkdir -p "$WTB/px-foo-0101-0100" "$WTB/px-bar-0101-0200" "$PROJB"
-# A worktree that's been removed from disk but still has transcript history —
-# the common PAST case. Recovered from proj_base by stripping the deterministic
-# encode(wt_base)+"-" prefix, so it's discoverable even though nothing exists
-# under $WTB for it.
+# A worktree removed from disk but with transcript history (the common PAST case) is recovered from proj_base by
+# stripping the encode(wt_base)+"-" prefix.
 GONE_PREFIX="$(_encode_cwd "$WTB")-"
 mkdir -p "$PROJB/${GONE_PREFIX}px-gone-0101-0300"
 
@@ -49,15 +38,9 @@ no_out="$(_history_matches "zzz-totally-unmatched" "$WTB" "$PROJB")"; no_rc=$?
 ok "match-none-empty-output" "$no_out" ""
 ok "match-none-nonzero-rc" "$no_rc" "1"
 
-# ── regression: a real path OUTSIDE wt_base must win over a same-basename-
-# substring decoy INSIDE wt_base (CONFIRMED bug: the old code discarded any
-# slash-containing query down to its bare basename BEFORE checking whether
-# the literal path existed, then only searched under wt_base — so a real
-# path outside wt_base got degraded into a substring search and hijacked by
-# any candidate whose name merely contains that basename). The decoy name
-# below mirrors the failing shape: a long-deleted "oldhost-<name>-<date>"
-# worktree whose basename contains the queried repo's basename as a
-# substring.
+# ── regression: a real path OUTSIDE wt_base must win over a same-basename substring decoy INSIDE it (the old code
+# reduced any slash-containing query to its basename first, so a decoy like a long-deleted "oldhost-<name>-<date>"
+# worktree hijacked it) ──
 EXT_DIR="$MBASE/external/claude-remote-session-skill"
 mkdir -p "$EXT_DIR"
 mkdir -p "$WTB/oldhost-some-repo-20260101-0101"
@@ -68,8 +51,7 @@ ok "match-real-outside-path-wins-over-decoy" \
 ok "match-real-outside-path-trailing-slash" \
   "$(_history_matches "$EXT_DIR/" "$WTB" "$PROJB")" "$EXT_CANON"
 
-# ── relative path with a slash, and bare "." — both must resolve via the
-# same authoritative real-directory short-circuit, canonicalized.
+# ── relative path with a slash, and bare ".": both resolve via the real-directory short-circuit, canonicalized ──
 RELCHILD="$MBASE/relbase/child"
 mkdir -p "$RELCHILD"
 RELCHILD_CANON="$(cd "$RELCHILD" && pwd)"
@@ -78,8 +60,7 @@ ok "match-relative-path-with-slash" \
 ok "match-bare-dot" \
   "$(cd "$RELCHILD" && _history_matches "." "$WTB" "$PROJB")" "$RELCHILD_CANON"
 
-# ── exact-name match must win outright over a substring decoy, not just
-# happen to be included among possibly-multiple substring hits.
+# ── an exact-name match wins outright over a substring decoy ──
 mkdir -p "$WTB/px-foo-0101-0100-plus"
 exact_out="$(_history_matches "px-foo-0101-0100" "$WTB" "$PROJB")"
 ok "match-exact-beats-substring-value"      "$exact_out" "$WTB/px-foo-0101-0100"
@@ -109,8 +90,7 @@ cat > "$PROJB_R/$ENC_R/$UUID_B.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-01-01T10:00:00.000Z"}
 EOF
 
-# Session with transcript lines but ZERO type:user entries — must not crash,
-# must report turns=0 and "(none)" rather than a bogus timestamp.
+# transcript lines but ZERO type:user entries: no crash, turns=0 and "(none)"
 UUID_C="cccccccc-0000-0000-0000-000000000003"
 cat > "$PROJB_R/$ENC_R/$UUID_C.jsonl" <<'EOF'
 {"type":"summary","summary":"nothing user-authored here"}
@@ -119,9 +99,7 @@ EOF
 
 rout="$(_history_report "$WT_R" "$PROJB_R")"
 
-# NB: has()'s pattern arg goes straight to `grep -qF`, so a pattern starting
-# with "-" is misread as a flag — every pattern below is chosen (or trimmed)
-# to not start with "-".
+# has() needle must not start with "-" (grep -F would read it as a flag)
 has "report-header" "$rout" "$WT_R ---"
 has "report-now-empty" "$rout" "(none)"   # no real process has this synthetic cwd
 has "report-past-count" "$rout" "3 past session(s), 0 live session(s)"
@@ -139,7 +117,7 @@ ok "report-nouser-shows-none" "$(printf '%s' "$rowC" | awk '{print $2}')" "(none
 # Ordering: sorted by last type:user ascending -> A's row must come BEFORE B's.
 lineA="$(printf '%s\n' "$rout" | grep -nF "${UUID_A:0:8}" | cut -d: -f1)"
 lineB="$(printf '%s\n' "$rout" | grep -nF "${UUID_B:0:8}" | cut -d: -f1)"
-ok "report-ordering-A-before-B" "$([ "$lineA" -lt "$lineB" ] && echo yes || echo no)" "yes"
+ok "report-ordering-A-before-B" "$(yn test "$lineA" -lt "$lineB")" "yes"
 
 rm -rf "$RBASE"
 
@@ -150,8 +128,7 @@ eout="$(_history_report "$WT_E" "$EBASE/no-such-projects-root")"
 has "report-no-transcript-dir" "$eout" "(no transcript directory"
 rm -rf "$EBASE"
 
-# ── _history_footer: worktree gone from disk vs. present (reuses _wt_dirty/
-# _wt_landed — not reimplemented) ─────────────────────────────────────────────
+# ── _history_footer: worktree gone vs. present (reuses _wt_dirty/_wt_landed) ──
 fout_gone="$(_history_footer "/definitely/not/a/real/worktree/path-$$")"
 has "footer-gone-worktree" "$fout_gone" "no longer exists on disk"
 
@@ -172,16 +149,12 @@ if command -v git >/dev/null 2>&1; then
   rm -rf "$FBASE"
 fi
 
-# ── end-to-end through the real mode dispatch (HOME override, like the
-# existing worktree-stale/land-check tests) — exercises argument parsing,
-# _history_matches + _history_report + _history_footer wired together, exit
-# codes, and the "worktree no longer exists on disk but has transcripts" path
-# through the FULL dispatch, not just the helper function in isolation.
+# ── end-to-end through the real mode dispatch (HOME override): arg parsing, matches+report+footer wired together,
+# exit codes, and the gone-from-disk-but-has-transcripts path ──
 E2EHOME="$(mktemp -d)"
 mkdir -p "$E2EHOME/.claude/worktrees" "$E2EHOME/.claude/projects"
 
-# Exact-folder match, worktree present and a real git repo (also exercises the
-# footer's landed/dirty path end-to-end).
+# Exact-folder match, real git worktree (also the footer's landed/dirty path).
 if command -v git >/dev/null 2>&1; then
   E2EREPO="$E2EHOME/srcrepo"; mkdir -p "$E2EREPO"
   git -C "$E2EREPO" init -q -b main
@@ -197,10 +170,7 @@ if command -v git >/dev/null 2>&1; then
   has "e2e-exact-landed"     "$exactout" "landed=yes"
 fi
 
-# Worktree removed from disk but transcripts remain (genuinely PAST session) —
-# exercised end-to-end: no directory under .claude/worktrees/, only a
-# transcript dir; exact-name lookup must still find it and the footer must say
-# it's gone, not crash trying to run git against a missing path.
+# Worktree removed from disk, transcripts remain: still found by exact name; footer says it's gone (no git on a missing path).
 WT_GONE_NAME="px-e2egone-0101-0700"
 WT_GONE_PATH="$E2EHOME/.claude/worktrees/$WT_GONE_NAME"
 ENC_GONE="$(_encode_cwd "$WT_GONE_PATH")"
@@ -214,12 +184,10 @@ goneout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history "$W
 ok  "e2e-gone-exit0"          "$gonerc" "0"
 has "e2e-gone-footer-message" "$goneout" "no longer exists on disk"
 has "e2e-gone-past-session"   "$goneout" "deadbeef"
-# Extract the TURNS field specifically (a bare `has ... "2"` would pass
-# trivially against the "2026-02-02" timestamps elsewhere in the same row).
+# extract the TURNS field (a bare `has ... "2"` would match the "2026-02-02" timestamps)
 ok "e2e-gone-turns" "$(printf '%s\n' "$goneout" | grep -F deadbeef | awk '{print $4}')" "2"
 
-# Substring/repo-name match: both the live and the gone worktree share the
-# "e2e" substring and must both be reported in one invocation.
+# substring/repo-name match: both the live and the gone worktree share "e2e"
 repoout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history e2e 2>&1)"; reporc=$?
 ok  "e2e-repo-exit0"        "$reporc" "0"
 has "e2e-repo-finds-live"   "$repoout" "px-e2elive-0101-0600"
@@ -233,14 +201,9 @@ has "e2e-nomatch-message" "$nomatchout" "no worktree matches"
 rm -rf "$E2EHOME"
 
 # ── live-session cross-reference: NOW and PAST must not double-count ─────────
-# A real background process (argv[0] renamed to "claude" via `exec -a`, cwd
-# set to the synthetic worktree, "--remote-control <name>" appended as literal
-# trailing argv) so pgrep -af's exact same match/basename-filter/readlink path
-# `_history_report` reuses from idle-report picks it up for real, no mocking.
-# (`trap : TERM; sleep N` — not a bare `sleep N` — because bash tail-call-
-# execs away a single simple last command in `bash -c SCRIPT`, which would
-# silently replace argv[0]/argv[1:] with sleep's own and lose the rename and
-# the injected --remote-control text; a trap keeps bash itself running.)
+# A real background process (`exec -a claude`, cwd = the synthetic worktree, `--remote-control <name>` as trailing argv)
+# so the pgrep path idle-report uses picks it up for real. `trap : TERM; sleep N` (not a bare `sleep N`) because bash
+# tail-call-execs a single last command, which would lose the argv rename.
 if command -v pgrep >/dev/null 2>&1; then
   LBASE="$(mktemp -d)"
   WT_L="$LBASE/wt"; mkdir -p "$WT_L"
@@ -254,17 +217,13 @@ if command -v pgrep >/dev/null 2>&1; then
 {"type":"user","timestamp":"2026-01-01T09:00:00.000Z"}
 {"type":"user","timestamp":"2026-01-01T09:05:00.000Z"}
 EOF
-  # This one gets the LATEST last-type:user timestamp -> the live process is
-  # assumed to be writing it, so it should be folded into NOW, not PAST.
+  # latest last-type:user timestamp: the live process is assumed to write it -> folded into NOW, not PAST
   UUID_NEW="22222222-0000-0000-0000-000000000002"
   cat > "$PROJB_L/$ENC_L/$UUID_NEW.jsonl" <<'EOF'
 {"type":"user","timestamp":"2026-01-01T10:00:00.000Z"}
 EOF
 
-  # `trap : TERM; sleep 15` (not a bare `sleep 15`) so bash itself stays
-  # resident instead of tail-call-execing away into sleep — see the comment
-  # above. That trap also means a plain `kill` (SIGTERM) is deliberately
-  # ignored by this process, so cleanup below uses SIGKILL, not SIGTERM.
+  # `trap : TERM; sleep 15` (see above); the trap ignores SIGTERM, so cleanup uses SIGKILL
   ( cd "$WT_L" && exec -a claude bash -c 'trap : TERM; sleep 15' ignored --remote-control px-histtest-live-0101-0800 ) &
   LIVEPID=$!
   sleep 0.3
@@ -281,5 +240,4 @@ EOF
   rm -rf "$LBASE"
 fi
 
-echo "session-doctor-history: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-doctor-history"
