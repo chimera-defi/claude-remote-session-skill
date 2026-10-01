@@ -1,36 +1,26 @@
 # Session lifecycle, reaping & expiry
 
-Remote-control sessions exist in **four independent layers**. Cleaning one does not
-clean the others — this is the #1 source of "I reaped everything but the session
-count is still high" confusion.
+Remote-control sessions live in **four independent layers**; cleaning one does not clean the
+others (the #1 cause of "I reaped everything but the count is still high").
 
 | Layer | Where | Lives until | Cleaned by |
 |-------|-------|-------------|------------|
 | **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
 | **systemd --user unit** | `~/.config/systemd/user/<prefix>-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
-| **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires on its own) | `session-doctor registry-prune --apply` (or `reap <name>`, which prunes its own entry) |
-| **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos — see `session-git-prep`) | `git worktree remove` (never expires on its own) | `session-doctor reap <name>` (prunes its own worktree; branch kept) — or manual removal via `worktree-stale` for a worktree left by an already-reaped session |
+| **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires) | `session-doctor registry-prune --apply` (or `reap <name>`, which prunes its own entry) |
+| **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos, see `session-git-prep`) | `git worktree remove` (never expires) | `session-doctor reap <name>` (prunes its own worktree; branch kept), or `worktree-stale` for one left by an already-reaped session |
 
-`<prefix>` is the configured `CRSS_SESSION_PREFIX` (generic default `cs`). A host that
-changed its prefix can list the old one(s) in `CRSS_LEGACY_PREFIXES` — `session-doctor`
-matches the configured prefix plus every legacy prefix, so old and new sessions are
-reaped identically. See `examples/crss-overlay/config.sh.example`.
+`<prefix>` is `CRSS_SESSION_PREFIX` (default `cs`); old prefixes go in `CRSS_LEGACY_PREFIXES`
+and `session-doctor` matches both (`examples/crss-overlay/config.sh.example`).
 
-**Key fact:** the registry is org-wide and effectively permanent. It accumulates:
-- **disconnected** entries (session ended, registration lingers), and
-- **zombies** — `connection_status: connected` but the real process died without a clean
-  disconnect (common after host reboots / OOM kills). These keep counting as "connected."
-
-Reaping local tmux/systemd does **not** remove registry entries, so it does little for
-any per-org session-count pressure. Registry hygiene is a separate, deliberate step.
-Reaping local tmux/systemd via `reap-local` (the DEAD-process sweep) also does **not**
-remove worktrees — a session that ran in an isolated worktree (because its canonical
-repo was dirty or already owned; see `session-git-prep`) leaves that worktree + branch
-behind if it's reaped that way. `reap <name>` (the named, ALIVE-session teardown) DOES
-remove that one session's own worktree by default — see `_reap_remove_worktree` in
-`scripts/session-doctor.sh` and `tests/test-session-doctor-reap-worktree.sh` for exactly
-what it checks before removing (never a dirty one, never one another systemd unit still
-uses, never the caller's own cwd, never a repo's primary checkout, never the branch).
+The registry is org-wide and effectively permanent. It accumulates **disconnected** entries
+and **zombies** (`connection_status: connected` but the process died without a clean
+disconnect, common after reboots/OOM kills). Reaping local tmux/systemd does not touch it, so
+registry hygiene is a separate, deliberate step. `reap-local` (the DEAD-process sweep) also
+leaves worktrees + branches behind; `reap <name>` (named, ALIVE-session teardown) removes that
+session's own worktree by default. Guards (never a dirty one, never one another unit uses,
+never the caller's cwd, never a primary checkout, never the branch): `_reap_remove_worktree`
+in `scripts/session-doctor.sh`, `tests/test-session-doctor-reap-worktree.sh`.
 
 ## The tool: `scripts/session-doctor.sh`
 
@@ -44,98 +34,79 @@ session-doctor.sh registry-stale --days 30   # list registry entries disconnecte
 session-doctor.sh registry-prune --days 30   # DRY-RUN: same candidates, would-delete/skip/report
 session-doctor.sh registry-prune --apply     # actually delete the non-protected candidates
 session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
-session-doctor.sh archive-ignored <worktree> # verified copy of its gitignored results → ~/backups/reaped-worktree-ignored/
-session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) ≥2d — report only
-session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold (list all)
+session-doctor.sh archive-ignored <worktree> # verified copy of its gitignored results -> ~/backups/reaped-worktree-ignored/
+session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) >=2d, report only
+session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold
 ```
 
 Safety guarantees:
-- Never touches protected plumbing: the built-in `claude-remote*` pattern, plus anything
-  matched by your host's `CRSS_PROTECT_NAMES` (see `examples/crss-overlay/config.sh.example`).
-- Only reaps local items whose `claude` process is genuinely gone.
-- `reap-local` is dry-run unless `--force` — so a control session merely inside a
-  supervisor restart window is never reaped by accident.
-- **`registry-stale` never deletes** — it prints candidates and the exact
-  `curl -X DELETE …` to run by hand. `registry-prune` is the automated form of the
-  same candidate set (dry-run by default, `--apply` to mutate) — see its own header
-  comment in `scripts/session-doctor.sh` for exactly what it always skips
-  (PROTECT-matching titles, a title matching a live tmux session, `requires_action`
-  rows) and its per-row deleted/skipped/failed outcome. `reap <name>` also prunes
-  that one session's own registry entry on success, unless `--keep-registry`.
-- **`reap <name>` also removes that one session's own worktree**, unless
-  `--keep-worktree`, and archives the session's local unit/start artifacts before
-  deleting them. The branch is never deleted. See the `reap` case,
-  `_reap_archive_unit_files`, `_reap_remove_worktree`, and `_wt_archive_ignored` in
-  `scripts/session-doctor.sh`, pinned by `tests/test-session-doctor.sh` and
-  `tests/test-session-doctor-reap-worktree.sh`, for the exact cleanup guards and
-  fail-safe behavior.
-- **Worktree removal for everything else is never automated.** `worktree-stale` prints
-  each remaining candidate's dirty/unpushed status and the exact `git worktree remove`
-  to run by hand (a `git branch -D` is appended only for a `landed=yes` row; otherwise a
-  `NOTE:` says to keep the ref) — for a worktree left by a session that was
-  `reap-local`'d (not `reap <name>`'d) or reaped before this existed, a dead session's
-  worktree may hold unpushed work, so this stays a review step. A worktree another
-  systemd unit still runs from gets a `KEEP:` line and no removal command, and a
-  `status=DIRTY` row gets the removal without `--force` or `branch -D` plus a `NOTE:`.
-  A row whose worktree holds non-regenerable gitignored files (a `clean` row can) gets a
-  `NOTE:` and `session-doctor archive-ignored <worktree> &&` chained ahead of its
-  `remove:` line. These rules are in the `worktree-stale)` case of
-  `scripts/session-doctor.sh`, pinned by `tests/test-session-doctor.sh`.
-- **`idle-report` is report-only** (like `registry-stale`): every row is a still-*alive*
-  proc, so `reap-local` won't touch it. It generates the "candidates to reap" list; you
-  then kill an idle-but-alive one by hand. It never kills anything itself.
+- Never touches protected plumbing: built-in `claude-remote*` plus `CRSS_PROTECT_NAMES`.
+- Only reaps local items whose `claude` process is genuinely gone; `reap-local` is dry-run
+  unless `--force`, so a control session inside a supervisor restart window isn't reaped.
+- **`registry-stale` never deletes**: it prints candidates and the exact `curl -X DELETE ...`.
+  `registry-prune` is the automated form (dry-run default, `--apply` mutates); it always skips
+  PROTECT-matching titles, a title matching a live tmux session, and `requires_action` rows
+  (header comment in `scripts/session-doctor.sh`). `reap <name>` prunes its own registry entry
+  unless `--keep-registry`.
+- **`reap <name>` removes that session's own worktree** unless `--keep-worktree`, archives its
+  unit/start artifacts first, and never deletes the branch. See the `reap` case,
+  `_reap_archive_unit_files`, `_reap_remove_worktree`, `_wt_archive_ignored`; pinned by
+  `tests/test-session-doctor.sh` and `tests/test-session-doctor-reap-worktree.sh`.
+- **Other worktree removal is never automated**: a dead session's worktree may hold unpushed
+  work. `worktree-stale` prints each candidate's dirty/unpushed status and the exact
+  `git worktree remove`; rules (`worktree-stale)` case, pinned by `tests/test-session-doctor.sh`):
+  `git branch -D` is appended only for `landed=yes` (else a `NOTE:` says keep the ref); a
+  worktree another unit runs from gets `KEEP:` and no command; `status=DIRTY` gets removal
+  without `--force`/`branch -D` plus a `NOTE:`; a worktree with non-regenerable gitignored
+  files gets a `NOTE:` and `session-doctor archive-ignored <worktree> &&` chained ahead of
+  `remove:`.
+- **`idle-report` is report-only** ([`docs/idle-report.md`](../docs/idle-report.md)): rows are
+  alive, so `reap-local` won't touch them; you reap by hand.
 
 ## Bringing a dead session back: `scripts/session-resume.sh`
 
-The inverse of `reap`. `session-resume <name> --dry-run` prints the unit, start script,
-exact launch line, the run directory, the transcript uuid it would resume, and every reason it
-would refuse. Pass `--uuid`: without it the tool auto-picks only when exactly one
-transcript exists in that cwd, and otherwise refuses and lists them (the newest is not
-necessarily the real conversation). Without `--dry-run`, it:
+The inverse of `reap`. `session-resume <name> --dry-run` prints the unit, start script, launch
+line, run directory, the transcript uuid it would resume, and every reason it would refuse.
+Pass `--uuid`: without it the tool auto-picks only when exactly one transcript exists in that
+cwd, else refuses and lists them (the newest isn't necessarily the real conversation). Without
+`--dry-run` it:
 
 1. writes a one-shot resume pin;
 2. runs `systemctl --user reset-failed`, `enable` and `start` on the unit;
-3. checks that the relaunched process has the same binary and flags plus `--resume <uuid>`,
-   and that Claude's own registry shows that sessionId. No registry entry is a WARN and
-   exit 3, not success. The pin is kept until claude has run 30s+ (or that confirmation),
-   so a uuid claude rejects is retried, never downgraded to `--continue`.
+3. checks the relaunched process has the same binary and flags plus `--resume <uuid>` and that
+   Claude's registry shows that sessionId (no entry = WARN, exit 3, not success). The pin is
+   kept until claude has run 30s+ (or that confirmation), so a uuid claude rejects is retried,
+   never downgraded to `--continue`.
 
-Start scripts generated before the pin loop are patched once, and a backup goes to
-`~/backups/session-resume/`. Codex-backend units are refused, because their loop has no
-resume path.
+Start scripts predating the pin loop are patched once (backup in `~/backups/session-resume/`).
+Codex-backend units are refused (their loop has no resume path).
 
-Why a tool: a session whose unit died and is relaunched by hand comes back without
-`--dangerously-skip-permissions`, possibly on a different CLI binary, and with no unit, so
-it stalls on approval prompts. A bare `systemctl start` of a session killed
-from outside started a *fresh* conversation, because the `--continue` sentinel was only
-written when claude exited on its own.
+Why a tool: a hand-relaunched session lacks `--dangerously-skip-permissions`, may run a
+different CLI binary, and has no unit, so it stalls on approval prompts; a bare
+`systemctl start` of an externally-killed session started a *fresh* conversation because the
+`--continue` sentinel was only written when claude exited on its own.
 
-## Recommended cadence (expiry policy)
+## Recommended cadence
 
-1. **Weekly:** `session-doctor.sh report`. If orphan units or dead tmux pile up,
+1. **Weekly:** `session-doctor.sh report`; if orphan units or dead tmux pile up,
    `reap-local --force`.
-2. **Weekly (idle sweep):** `session-doctor.sh idle-report`. This is the default,
-   reusable way to get the "candidates to reap" list — LIVE sessions no one has touched
-   in ≥2 days. Dead ones flow to `reap-local`; idle-but-*alive* ones (which `reap-local`
-   deliberately leaves running) you reap by name: `session-doctor reap <name>` (tmux +
-   unit + registry entry + worktree, all in one shot, after the session-preserve safety
-   check — `--force` to skip it). Rows flagged `[P]` are protected — never reap those.
-3. **Monthly:** `session-doctor.sh registry-prune --days 30` (dry-run), skim the
-   would-delete list, then `registry-prune --days 30 --apply`. `registry-stale` still
-   works for a manual spot-check of the same candidates.
-4. **Monthly:** `session-doctor.sh worktree-stale`. For each candidate, confirm its
-   work is merged/pushed or no longer needed, then run the printed removal command. This
-   is for LEFTOVER worktrees — from a session `reap-local` swept (not `reap <name>`), or
-   reaped before `reap <name>` removed worktrees itself — not for a fresh `reap <name>`.
-5. **After a host reboot:** expect zombies (registry says connected, process gone).
-   Respawn the sessions you still want; the old registry entries become deletable.
+2. **Weekly (idle sweep):** `session-doctor.sh idle-report` (LIVE sessions untouched >=2
+   days). Dead ones go to `reap-local`; idle-but-alive ones by name:
+   `session-doctor reap <name>` (tmux + unit + registry + worktree, after the session-preserve
+   check; `--force` skips it). `[P]` rows are protected, never reap.
+3. **Monthly:** `registry-prune --days 30` (dry-run), skim, then `--days 30 --apply`.
+   `registry-stale` spot-checks the same set.
+4. **Monthly:** `worktree-stale`; confirm each candidate's work is merged/pushed or
+   unneeded, then run the printed command. For LEFTOVER worktrees only (from `reap-local`, or
+   reaped before `reap <name>` removed worktrees), not a fresh `reap <name>`.
+5. **After a host reboot:** expect zombies. Respawn what you still want; the old registry
+   entries become deletable.
 
-## Why sessions stop registering (the 2026-07 regression)
+## Why sessions stop registering
 
-If a **new** session never appears on the phone, the usual cause is the remote-control
-bridge gate: the CLI only enables the bridge when `ANTHROPIC_BASE_URL` is absent or its
-host is `api.anthropic.com`. A proxy base URL (e.g. a local `127.0.0.1` proxy) silently
-disables registration. The launcher fixes this by forcing a first-party base URL via
-`--settings …/rc-firstparty.settings.json`. If you see a session live in `tmux` but
-absent/disconnected in `session-doctor report`'s registry section, check that its
-`claude` process carries that `--settings` flag.
+If a **new** session never appears on the phone: the remote-control bridge only enables when
+`ANTHROPIC_BASE_URL` is absent or its host is `api.anthropic.com`; a proxy base URL (e.g. a
+local `127.0.0.1` proxy) silently disables registration. The launcher forces a first-party URL
+via `--settings .../rc-firstparty.settings.json`. If a session is live in `tmux` but
+absent/disconnected in `session-doctor report`'s registry section, check its `claude` process
+carries that `--settings` flag.

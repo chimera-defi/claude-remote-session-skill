@@ -1,274 +1,196 @@
-# `session-compact` — compacting idle sessions without corrupting them
+# `session-compact`: compacting idle sessions without corrupting them
 
-`session-compact.sh` finds sessions whose context is worth reclaiming and issues
-`/compact` into them. It exists because "compact a stale session before you relay
-into it" was informal orchestrator practice that only happened when someone
-remembered; this makes it a checkable, testable operation.
+`session-compact.sh` finds sessions whose context is worth reclaiming and issues `/compact`
+into them, making "compact a stale session before you relay into it" a checkable, testable
+operation.
 
 ```
-session-compact.sh report                      # who is eligible, and why/why not — mutates nothing
+session-compact.sh report                      # who is eligible, and why/why not; mutates nothing
 session-compact.sh sweep --dry-run             # what the idle/high-context sweep WOULD compact
 session-compact.sh sweep --apply               # compact eligible idle/high-context sessions
 session-compact.sh before-relay <sess> <msg>   # compact IF stale, verify, then relay the message
 session-compact.sh install-timer               # write the systemd units (does NOT enable them)
 ```
 
-## The report/act boundary is preserved — `session-doctor` never mutates
+## Report/act boundary
 
-`session-doctor.sh` stays the **sensor** and stays report-only, per
-[`idle-report.md`](idle-report.md) ("the report/act separation is the safety
-property"). It gained `idle-report --minutes N --tsv` — minute granularity and a
-machine-readable format — and nothing else. **All mutation lives in
-`session-compact.sh`**, which shells out to the sensor and parses its TSV.
+`session-doctor.sh` stays the report-only **sensor** ([`idle-report.md`](idle-report.md));
+it only gained `idle-report --minutes N --tsv`. All mutation lives in `session-compact.sh`,
+which shells out to the sensor and parses its TSV. That is also why the actuator is
+testable: tests feed it synthetic TSV and assert on decisions with no tmux or live session.
 
-That split is also why the actuator is testable: tests feed it synthetic TSV and
-assert on decisions with no tmux and no live session anywhere.
+## Why compact: not the cache argument
 
-## What actually justifies compacting (the original cache rationale does not)
+The feature was scoped on "the prompt cache lasts ~1h, so a session idle 30-60min is past
+caring and compacting is free". The 1h premise is right; the conclusion is backwards.
 
-This feature was scoped around a cache argument: *the prompt cache boundary is
-~1h, so a session idle 30–60min is past the point of caring and compacting is
-free.* **The 1h premise is correct. The conclusion drawn from it is backwards.**
+Verified in the Claude Code v2.1.206 binary (`strings`, plus tracing where the `ttl` reaching
+`cache_control` is decided): Claude Code opts into the 1-hour TTL (not the API's 5-minute
+default) behind four gates: no `FORCE_PROMPT_CACHING_5M`, an OAuth-scope eligibility check,
+not on overage billing, and a remotely configurable `querySource` allowlist that defaults to
+including `repl_main_thread*` (ordinary interactive sessions). It sends the
+`extended-cache-ttl-2025-04-11` beta header. The TTL is a sliding window refreshed on every
+cache read, so "idle N minutes" = "N minutes since last refresh".
 
-Verified by inspecting the Claude Code v2.1.206 binary (`strings` + tracing the
-call graph to where the `ttl` reaching `cache_control` is decided, not just
-where `"1h"` appears). Claude Code **does** opt into the 1-hour TTL — it is not
-the API's bare 5-minute default — behind four gates: no `FORCE_PROMPT_CACHING_5M`,
-an OAuth-scope eligibility check, not on overage billing, and a remotely
-configurable `querySource` allowlist that **defaults to including
-`repl_main_thread*`**, i.e. ordinary interactive sessions. It also pushes the
-`extended-cache-ttl-2025-04-11` beta header when it does.
+- At 30-60min idle the cache is still alive; compacting then destroys a cache a resumer
+  would hit at ~0.1x cost. It is the most expensive moment; waste reaches zero only past 60min.
+- Compaction is not a total miss. Caching is tiered (`tools -> system -> messages`) and
+  compaction rewrites only the messages tier; the byte-stable system and tool tiers still hit.
+- The real trade is timing-independent: one summarization call plus one messages-tier miss,
+  repaid by smaller context on every future turn. The only question is "will this session
+  have future turns?", which is why the lazy path is primary.
+- Caveats: a host whose `ANTHROPIC_BASE_URL` points at a local proxy may not see the literal
+  wire bytes; no distinct `querySource` for `--remote-control` exists in the binary (shares
+  the interactive value; inferred, not confirmed).
 
-The TTL is a **sliding window refreshed on every cache read**, so "idle N minutes"
-and "N minutes since last refresh" are the same thing. Therefore:
-
-> At 30–60min idle the cache is **still alive**. Compacting there destroys a cache
-> a resumer would have hit at ~0.1× cost. The window isn't the cheapest moment to
-> compact — of the two readings it is the **most expensive** one.
-
-The waste shrinks as you approach 60min and only reaches zero past it. (Under the
-counterfactual 5-minute default the window is no better justified — merely
-arbitrary, since everything past 5min is equally "expired".)
-
-Two further corrections to the premise's mental model:
-
-- **Compaction is not a total cache miss.** Caching is tiered — `tools → system →
-  messages`. Compaction rewrites the *messages* tier only; the large, byte-stable
-  system-prompt and tool-definition tiers keep hitting cache. So the cost is one
-  tier missing, not the whole prefix.
-- **The real trade is timing-independent.** A compact costs one summarization call
-  plus a single messages-tier miss on the next turn, and pays back smaller context
-  on *every* future turn. Cache timing only adds a second-order, one-turn
-  correction, dwarfed by the recurring benefit for any session with more than a
-  couple of turns left.
-
-So the only question worth asking is *"will this session have future turns?"* —
-which is why the lazy path below is the primary one, and why no idle window is a
-good proxy for the answer.
-
-> Two caveats on the above, stated rather than smoothed over: a host whose
-> `ANTHROPIC_BASE_URL` points at a local proxy, so the described behaviour is
-> Claude Code's *intent* and may not be the literal wire bytes; and no distinct
-> `querySource` for `--remote-control` exists in the binary — it appears to share
-> the ordinary interactive value, which is strongly inferred, not confirmed.
-
-## Measured, not asserted
-
-Harness: spawned a disposable session (`<prefix>_compact-probe-0911-0556`), gave it real
-work until its context was non-trivial, drove `/context` and `/compact` through
-`session-handoff.sh send`, captured the pane and diffed the transcript.
-Claude Code **v2.1.206**.
+## Measured (CLI v2.1.206, disposable probe session, via `session-handoff.sh send`)
 
 | Measurement | Before | After |
 |---|---:|---:|
-| `compactMetadata` preTokens → postTokens | 91,726 | **18,542** |
+| `compactMetadata` preTokens -> postTokens | 91,726 | **18,542** |
 | `/context` Messages | 62.6k (6.5%) | **34.9k (3.6%)** |
 | `/context` total window | 86.8k / 967k (9%) | **59.1k / 967k (6%)** |
-| Wall-clock cost of the compact | — | ~101s |
+| Wall-clock cost of the compact | - | ~101s |
 
-The two token pairs measure different things (the engine's own pre/post accounting
-vs `/context`'s whole-window breakdown including system prompt/tools/skills) and
-are not meant to agree; both independently show a real reduction.
+The two pairs measure different things (engine pre/post accounting vs whole-window
+breakdown) and need not agree. **Transcript bytes are not tokens; never quote them as a
+saving.** On a real 30MB transcript the bytes/extracted-char ratio was 15x, 39% of the file
+was a duplicate `toolUseResult` field, and `thinking` blocks store an empty string plus an
+opaque signature; the transcript holds all history while live context holds only a suffix.
+The only ground truth for context occupancy is a live `/context` reading.
 
-> **Transcript bytes are not tokens — do not quote them as a saving.** Measured on
-> a real 30MB transcript: the bytes/extracted-char ratio is **15×**, **39%** of the
-> file is a duplicate `toolUseResult` field mirroring content already present, and
-> `thinking` blocks store an empty string plus an opaque signature (real bytes,
-> zero readable text). The transcript holds all history; the live context holds
-> only a suffix. **The only ground truth for context occupancy is a live
-> `/context` reading.**
+## How it works (verified; don't re-derive)
 
-## How it works (verified empirically — don't re-derive)
+1. **`/compact` goes through the normal `send` path.** `session-handoff.sh send <s> "/compact"`
+   returns `landed`. The `/`-pops-an-autocomplete-menu hazard does not apply: bracketed
+   paste (`load-buffer` + `paste-buffer -p -d`) delivers the string atomically (4 slash-command
+   sends, no menu).
+2. **Sent into a busy session it queues** (shown under `Press up to edit queued messages`)
+   and runs when the turn ends. Busy sessions are still skipped, because a queued compact
+   fires at an unpredictable point mid-workflow.
+3. **A completed compaction is visible in the transcript**: a `type:"system"` entry with
+   `"subtype":"compact_boundary"` plus a `compactMetadata` object, then a `type:"user"`
+   entry with `"isCompactSummary": true`. Idempotency keys off this (self-healing, no
+   marker to go stale when a session is recreated under the same name).
+4. **Version-gated**: those fields exist on v2.1.206; older builds lack them. When absent,
+   fall back to the marker file `~/.sessions/compact-markers/<session>.json` rather than
+   assuming "never compacted".
+5. **One `/compact` writes five `type:user` artifacts**; a naive idle calculation sees a
+   just-compacted session as fresh and re-compacts it ~30min later, forever. All five are
+   excluded so idle is measured from the last genuine turn. The list and scoping live only in
+   [`idle-report.md`](idle-report.md) (item 5), so the docs can't drift.
+6. **`type:user` includes tool-result turns**, so an autonomously looping agent counts as
+   active and is never compacted out from under itself.
+7. **`session-compact.sh` polls the transcript** (item 3's marker with a timestamp newer than
+   a pre-send baseline) for completion after sending, not pane text. Pane-state
+   (busy-then-ready) is a fallback only: relying on it alone gave a false "timeout" on two
+   successful compacts, because the pane never matched `_is_working`'s busy patterns and the
+   busy-before-ready guard never released.
 
-1. **`/compact` delivery works through the normal `send` path.** `session-handoff.sh
-   send <s> "/compact"` returns `landed`, exit 0. The `/`-pops-an-autocomplete-menu
-   hazard **does not apply**: bracketed paste (`load-buffer` + `paste-buffer -p -d`)
-   delivers the whole string atomically before per-keystroke autocomplete reacts.
-   Confirmed across 4 slash-command sends; no menu ever appeared.
-2. **Sent into a busy session it queues, it does not corrupt.** It appears under
-   `Press up to edit queued messages` and auto-runs when the in-flight turn ends.
-   We still skip busy sessions — not for safety, but because a queued compact fires
-   at an unpredictable point mid-workflow.
-3. **A completed compaction is detectable in the transcript.** It writes a
-   `type:"system"` entry with `"subtype":"compact_boundary"` plus a `compactMetadata`
-   object, and the next `type:"user"` entry carries `"isCompactSummary": true`.
-   Idempotency keys off this, so it is **self-healing** — no marker file to go stale
-   when a session is destroyed and recreated under the same name.
-4. **That detection is version-gated.** These fields exist on v2.1.206; transcripts
-   from older builds don't have them. When absent, fall back to the marker file at
-   `~/.sessions/compact-markers/<session>.json` rather than assuming "never compacted".
-5. **One `/compact` invocation writes FIVE `type:user` artifacts, not one**, so a
-   naive idle calculation sees a just-compacted session as freshly active and
-   re-compacts it ~30min later, forever. All five
-   are excluded; idle is computed from the last **genuine** user turn. The list of
-   five and why each exclusion is scoped where it is lives in one place —
-   [`idle-report.md`](idle-report.md)'s "Idle signal" item, backed by
-   `session-doctor.sh`'s idle-report scan — so the two docs can't drift on it.
-6. **`type:user` includes tool-result turns** (inherited from `idle-report`), so an
-   autonomously-looping agent counts as active and is never compacted out from under
-   itself. Intentional.
-7. **A completed compact is also the primary signal `session-compact.sh` itself polls
-   for** after sending `/compact` (point 3's `compact_boundary`/`isCompactSummary`
-   marker, checked for a timestamp newer than a pre-send baseline) — not pane text.
-   An earlier version relied solely on the pane going busy-then-ready, and that
-   produced a false "timeout" on two genuinely-successful real compacts: the pane
-   never visibly went `busy` (by `_is_working`'s patterns) even once across either
-   run, so the busy-before-ready guard never released. Pane-state is now a fallback
-   only, still gated the same way, for sessions/builds where the transcript signal
-   isn't available.
+## Injection hazard: why a positive readiness check exists
 
-## The injection hazard — why a positive readiness check exists
+`_is_working` detects *busy*, not "safe to type into". With an unsubmitted draft in the
+input box the pane shows no spinner, so a naive caller pastes onto the draft and submits
+corrupted text. During the probe, ghost text appeared that neither `Ctrl+U` nor `Escape`
+cleared.
 
-`_is_working` detects *busy*. It does **not** mean "safe to type into". If someone
-left an **unsubmitted draft** in the input box, the pane shows no spinner, so a
-naive caller pastes onto the end of their draft and presses Enter — submitting
-corrupted merged text and destroying the draft.
+`session-handoff.sh` therefore has a positive predicate, `_is_safe_to_inject` (CLI:
+`ready <session>`), requiring: not working, at a real `❯` prompt, input box free of a real
+draft, not on an interactive menu (the `↑/↓ to navigate` widget). It reports a named reason
+(`busy` / `draft-in-input-box` / `menu` / `no-prompt`) so a caller can tell "retry later"
+from "needs a human".
 
-This is not hypothetical. During the probe run, **un-typed ghost text appeared in
-the input box that neither `Ctrl+U` nor `Escape` would clear.**
-
-So `session-handoff.sh` gained a *positive* predicate, `_is_safe_to_inject` (plus a
-`ready <session>` CLI mode), requiring: not working, at a real `❯` prompt, **input
-box free of a real draft**, and not on an interactive menu (the `↑/↓ to navigate`
-widget from SKILL.md). It reports a named reason (`busy` / `draft-in-input-box` /
-`menu` / `no-prompt`) so a caller can tell "retry later" from "needs a human".
-
-### Not every line in the input box is a draft — check dimness, not emptiness
-
-The first cut of that predicate required the input box to be **empty**, and reported
-**0 of 29** live sessions safe. That was a false positive, and the reason matters:
-
-**Claude Code renders an auto-generated "suggested next action" as placeholder text
-inside the input box.** All 29 panes had contextually-different text at the same
-screen row ("delete the backup ref", "set a recurring mark cadence for the momentum
-book", …) while an actively-working session's box was empty. This is the same ghost
-text described above.
-
-`tmux capture-pane -p` strips ANSI, which makes a suggestion indistinguishable from a
-typed draft. `capture-pane -p -e` preserves it, and the suggestion is **dim** — SGR 2:
+**Check dimness, not emptiness.** The first cut required an empty box and reported 0 of 29
+live sessions safe. Claude Code renders an auto-generated "suggested next action" as
+placeholder text in the input box; `capture-pane -p` strips ANSI so it looks like a draft.
+`capture-pane -p -e` preserves it, and the suggestion is dim (SGR 2):
 
 ```
 ^[[39m❯ ^[[2mdelete the backup ref^[[0m
 ```
 
-So the rule is **dim ⇒ placeholder ⇒ safe to overwrite** (the probe confirmed a paste
-over one landed cleanly and `/compact` then ran normally); **non-dim ⇒ real
-unsubmitted draft ⇒ never overwrite**. Requiring an empty box instead is what turns a
-useful predicate into one that refuses every session forever.
+Rule: dim = placeholder = safe to overwrite (a paste over one landed and `/compact` ran);
+non-dim = real draft = never overwrite. The matcher keys on an actual SGR escape, not the
+substring `[2m`, so coloured draft text (`ESC[38;5;12m...`) is not mistaken for dim.
 
-Measured across a live fleet, before and after that fix:
-
-| `session-handoff ready` census | SAFE | `draft-in-input-box` | `busy` |
+| `session-handoff ready` census (live fleet) | SAFE | `draft-in-input-box` | `busy` |
 |---|---:|---:|---:|
 | empty-box rule | 0 | 29 | 0 |
 | dim-aware rule | **28** | 0 | 1 |
 
-Note the matcher keys on an actual SGR escape, not the substring `[2m`, so colored
-draft text (`ESC[38;5;12m…`) is not mistaken for dim. Run the census yourself with
-`for s in $(tmux ls -F '#{session_name}'); do session-handoff ready "$s"; done` — it
-only captures panes and is safe against live sessions.
+Census (only captures panes; safe on live sessions):
+`for s in $(tmux ls -F '#{session_name}'); do session-handoff ready "$s"; done`
 
-## Eligibility — all must hold
+## Eligibility: all must hold
 
 | Check | Why |
 |---|---|
-| ≥1 genuine `type:user` turn | a never-touched session has nothing to compact |
-| idle within the configured window | see the timing discussion above |
-| `_is_safe_to_inject` | never paste onto someone's draft or into a menu |
+| >=1 genuine `type:user` turn | a never-touched session has nothing to compact |
+| idle within the configured window | see the cache section |
+| `_is_safe_to_inject` | never paste onto a draft or into a menu |
 | not already compacted this idle window | `compact_boundary` after the last genuine turn |
-| not (`landed=yes` **and** git-clean) | finished + delivered: nothing will resume it |
-| not protected (`claude-remote` built-in, plus your host's `CRSS_PROTECT_NAMES`) | conservative default |
+| not (`landed=yes` **and** clean worktree) | finished + delivered: nothing will resume it |
+| not protected (`claude-remote` built-in, plus `CRSS_PROTECT_NAMES`) | conservative default |
 
-Note the protection list guards against *deletion* and is a poor fit for injection
-risk — it is reused here only as a conservative default, not as the real guard.
-`_is_safe_to_inject` is the real guard.
+The protection list guards against deletion and fits injection risk poorly; it is a
+conservative default only. `_is_safe_to_inject` is the real guard.
 
-## Two tiers, and why only one of them is automatic
+## Two tiers
 
-**Lazy (`before-relay`) — the primary path.** Compact only when someone is about to
-message a stale session. Zero speculative spend: you pay exactly when you know the
-session has a future turn. This is the path that reaches the real mass — measured on
-a real fleet, **most reclaimable idle transcript bytes sit in sessions idle >24h**,
-which a 30–60min window cannot touch by construction.
+**Lazy (`before-relay`), primary.** Compact only when someone is about to message a stale
+session: zero speculative spend. It reaches the real mass: most reclaimable idle transcript
+bytes sit in sessions idle >24h, which a 30-60min window cannot touch.
 
-**Eager (`sweep`) — shipped, but not automatic.** At the time of measurement the
-30–60min bucket held **0 sessions**, while >24h held most of them. A point-in-time snapshot
-*cannot* prove a timer would rarely fire — every one of those sessions transited the window
-earlier — so this is not evidence the timer is useless. It *is* evidence the timer
-can only ever be **forward hygiene** (stopping backlog accumulating), never a fix for
-the existing backlog.
+**Eager (`sweep`), shipped but not automatic.** At measurement time the 30-60min bucket held
+0 sessions and >24h held most. A snapshot can't prove a timer would rarely fire (every
+session transited the window earlier), but it shows the timer can only be forward hygiene,
+never a fix for the backlog. With the inverted cache premise and the injection hazard, no
+unattended timer types into ~30 live panes by default.
 
-Given that, plus an inverted cache premise and a real injection hazard, an unattended
-timer that types into ~30 live panes is not something this PR turns on.
+**Default window is 60min+.** `--min-idle` defaults to **60** and `--max-idle` to **0**
+(unbounded): below 60min the 1h cache is live, so 30-60min is the one window with evidence
+against it. The old window is `--min-idle 30 --max-idle 60`. `--timeout` defaults to 240s.
 
-### The default window is 60min+, not 30–60min
+## Activation (opt-in, report-only by default)
 
-`--min-idle` defaults to **60**, not 30, and `--max-idle` defaults to **0**
-(unbounded). This is a deliberate departure from the window this feature was
-originally scoped with, and it follows directly from the cache finding above: below
-60 minutes the 1h cache is still live, so 30–60min is the one window we now have
-evidence *against*. Waiting until past the TTL makes the incremental cache cost of
-compacting exactly zero.
-
-The original 30–60min window is still one flag away
-(`--min-idle 30 --max-idle 60`) if the operator disagrees with that reading.
-
-## Activation (opt-in, and report-only by default)
-
-Units are not committed — per SKILL.md's Key Rules, scripts and units are local-only.
-`install-timer` writes them, modeled on the existing `session-doctor-weekly` pair:
+Units are not committed (SKILL.md Key Rules: scripts and units are local-only).
+`install-timer` writes them, modeled on the `session-doctor-weekly` pair:
 
 ```
 session-compact.sh install-timer        # writes the .service/.timer; enables NOTHING
 systemctl --user enable --now session-compact-report.timer    # explicit opt-in
 ```
 
-**The unit `install-timer` generates runs `report` mode.** Nothing enables it for you; check with
-`systemctl --user is-enabled session-compact-report.timer`. Enabling it is safe: it logs who *would* be
-compacted to `~/.local/state/session-compact/report.log` and mutates nothing. That
-gives real data on how often the window is actually populated — the thing the
-snapshot above could not measure. Promoting it to `sweep --apply` is a deliberate,
-separate edit, and should not happen until the report log shows the window is worth
-sweeping and the cache question is settled.
+The generated unit runs `report` mode only. Check with
+`systemctl --user is-enabled session-compact-report.timer`. Enabled, it logs who *would* be
+compacted to `~/.local/state/session-compact/report.log` and mutates nothing, giving real
+data on how often the window is populated. Promoting it to `sweep --apply` is a separate,
+deliberate edit, not before the log shows the window is worth sweeping.
 
 ## Deliberately not shipped (fleet-wide)
 
-- An enabled timer that sends `/compact` unattended to the **whole fleet** (reasons
-  above). A host may run its own hand-deployed timer (not generated by `install-timer`)
-  for `session-compact sweep --apply --managed-only`, scoped to an allowlist of managed
-  orchestrators and governed by the two policies below; that wiring is host state and
-  belongs in the host overlay, not here.
-- An any-age backlog sweep over long-stale sessions, which hold most of the reclaimable
-  bytes. That is the higher-value follow-up, but it is a different feature with a
-  different risk profile, and `before-relay` already covers the case where one of
-  those sessions actually gets used again.
+- An enabled timer sending `/compact` unattended to the whole fleet. A host may run its own
+  hand-deployed timer for `sweep --apply --managed-only`, scoped to an allowlist of managed
+  orchestrators under the two policies below; that is host state, not documented here.
+- An any-age backlog sweep over long-stale sessions: a different feature with a different
+  risk profile; `before-relay` already covers one of them being used again.
 
-Cadence / where this fits: see [`references/session-lifecycle.md`](../references/session-lifecycle.md).
+Cadence: [`references/session-lifecycle.md`](../references/session-lifecycle.md).
 
 ## Managed-orchestrator high-context policy
 
-The fleet-wide high-context sweep trigger remains **80% of the model context window plus 5 minutes idle**. For allowlisted managed orchestrators invoked with --managed-only, the high-context trigger is deliberately lower at **50% plus 5 minutes idle**. The idle-window path still requires its separate 40% context floor. This keeps compaction out of active turns while ensuring persistent orchestrators checkpoint/compact well before context pressure becomes acute. Long-running orchestrators should additionally create a durable checkpoint and compact at major phase boundaries and at least once per active 24-hour period.
+Fleet-wide, the high-context sweep trigger is **80% of the model context window plus 5
+minutes idle**. For allowlisted managed orchestrators under `--managed-only` it is lower:
+**50% plus 5 minutes idle**. The idle-window path still needs its separate 40% context
+floor. The 5-minute floor keeps compaction out of active turns; the lower threshold makes
+persistent orchestrators compact well before pressure is acute. Long-running orchestrators
+should also checkpoint durably and compact at major phase boundaries and at least once per
+active 24-hour period. Code: `_SWEEP_CONTEXT_TRIGGER_PCT`, `_SWEEP_IDLE_CONTEXT_FLOOR_PCT`
+in `scripts/session-compact.sh`.
 
 ## Managed campaign-phase guard
 
-Managed-only automatic compaction also inspects the active Claude session task ledger. If the active transcript session has any task with status in_progress, compaction is skipped even when the tmux pane looks idle and the context threshold is exceeded. An unreadable task-state binding also skips fail-closed. The orchestrator checkpoints and completes the phase, compacts, then re-orients before opening the next phase.
+Managed-only compaction also reads the active Claude session task ledger. Any task with
+status `in_progress` skips compaction even if the pane looks idle and the threshold is
+exceeded; an unreadable task-state binding also skips (fail-closed). Checkpoint and finish
+the phase, compact, then re-orient before opening the next phase.

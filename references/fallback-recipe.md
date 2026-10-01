@@ -1,58 +1,42 @@
-# Fallback Recipe — manual session creation (ONE Bash call)
+# Fallback recipe: manual session creation (ONE Bash call)
 
-Use this when `~/.local/bin/new-session` is missing. Paste the entire block
-in one Bash call after setting `FOLDERNAME` and optionally `WORKDIR`.
+Use when `~/.local/bin/new-session` is missing. Set `FOLDERNAME` (and optionally
+`WORKDIR`), then paste the whole block in one Bash call. Prefer `scripts/new-session.sh`;
+this is a deliberately reduced last resort. Versus `new-session.sh` it:
 
-For the canonical approach, prefer `scripts/new-session.sh` directly. This is
-a deliberately reduced last resort: besides the store-lookup-only aliasing
-(no acronym inference for un-stored long folders), it also drops one fix
-`new-session.sh` carries — a same-minute collision lock (a second same-minute
-spawn of the same folder here can collide/no-op instead of getting a
-disambiguated name) — and does not implement `CLAUDE_SESSION_PROFILE` (no
-`builder`/`copywriter` `--tools` trimming), only a bare `CLAUDE_SESSION_MODEL`
-override, defaulting to the same model `new-session.sh`'s default
-`orchestrator` profile resolves to when neither is set (`claude-opus-5-5`,
-pinned — see `new-session.sh`'s Model selection comment).
+- looks aliases up in the store only (no acronym inference for un-stored long folders);
+- has no same-minute collision lock (a second same-minute spawn of the same folder can
+  collide/no-op);
+- has no `CLAUDE_SESSION_PROFILE` (no `builder`/`copywriter` `--tools` trimming), only a bare
+  `CLAUDE_SESSION_MODEL` override, defaulting to what `new-session.sh`'s default
+  `orchestrator` profile resolves to (`claude-opus-5-5`, see its Model selection comment);
+- reads `CRSS_*` from the environment only (no `$CRSS_HOME/config.sh` parsing) and ignores
+  `CRSS_LEGACY_PREFIXES` (it only generates under `CRSS_SESSION_PREFIX`).
 
-The kickoff-verification retry (wait for the pane's shell, then retry the
-launch `Enter` with verification) IS ported below, as is the universal
-`--exclude-dynamic-system-prompt-sections` flag `new-session.sh` adds for
-every profile (a prompt-cache-reuse win) — both kept in sync with
-`new-session.sh` by `tests/test-fallback-recipe-sync.sh`.
+Ported and kept in sync by `tests/test-fallback-recipe-sync.sh`: the kickoff-verification
+retry (wait for the pane's shell, retry the launch `Enter` with verification) and the
+universal `--exclude-dynamic-system-prompt-sections` flag. The alias guard is pinned by
+`tests/test-fallback-recipe-guard.sh`. Do not edit the block without running both.
 
 ```bash
-# Host-local overlay: same CRSS_* vars and defaults as new-session.sh (see
-# examples/crss-overlay/README.md). This recipe reads them from the environment
-# only — it does NOT parse $CRSS_HOME/config.sh itself (another documented
-# reduction vs. the installed script).
+# Same CRSS_* vars/defaults as new-session.sh (examples/crss-overlay/README.md); env only.
 : "${CRSS_WORKSPACE:=$HOME/workspace}"
 : "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
 : "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
 : "${CRSS_CLAUDE_BIN:=/usr/bin/claude}"
 : "${CRSS_SESSION_PREFIX:=cs}"
-# This recipe does NOT recognise CRSS_LEGACY_PREFIXES (another documented
-# reduction) — it only ever GENERATES under CRSS_SESSION_PREFIX, same as
-# new-session.sh; legacy-prefix parsing only matters to session-doctor/etc.,
-# not to spawning a new session.
+# CRSS_LEGACY_PREFIXES is not recognised: only matters to session-doctor, not to spawning.
 
 FOLDERNAME="<foldername>"
 WORKDIR="${CRSS_WORKSPACE}/${FOLDERNAME}"   # or ${CRSS_SESSIONS_DIR}/${FOLDERNAME}
-# Emergency path: store lookup only (no acronym/inference); may differ from
-# new-session for an un-stored long folder.
+# Store lookup only (no acronym inference); may differ from new-session for un-stored long folders.
 ID=$(date +%m%d-%H%M)
 ALIAS=$(awk -F'\t' -v f="$FOLDERNAME" '$1==f{print $2}' "${CRSS_CLAUDE_HOME}/session-aliases" 2>/dev/null)
-# Reject a poisoned stored alias (looks like a session name itself: the
-# configured prefix, a genuine MMDD-HHMM timestamp, a genuine trailing -MMDD
-# date, or a long numeric run PAIRED with a real MMDD date fragment) — same
-# DATE-VALIDATED guard as session-alias.sh's read path. Using it as-is would
-# double into <prefix>-<prefix>-...-MMDD-MMDD. The digits must validate as a
-# real date/time (month 01-12, day 01-31, hour 00-23, minute 00-59): a naive
-# "any 4 digits" match previously misfired on legitimate stored aliases like sprint-2024,
-# chain-8453, port-8080 or sprint-2024-2025, wrongly discarding them. The
-# long-numeric-run check is further gated on an actual calendar-plausible
-# MMDD elsewhere in the string so a legitimately stored alias that merely
-# contains a long number (a port, invoice/build id, ...) is not discarded
-# (mirrors has_mmdd_group() in session-alias.sh).
+# Reject a poisoned stored alias (it looks like a session name: configured prefix, real
+# MMDD-HHMM, real trailing -MMDD, or a long numeric run PAIRED with a real MMDD): using it
+# would double into <prefix>-<prefix>-...-MMDD-MMDD. Digits must validate as a real
+# date/time, else legit aliases (sprint-2024, chain-8453, port-8080) were wrongly discarded.
+# Mirrors has_mmdd_group() in session-alias.sh.
 _fr_has_mmdd_group() {
   local IFS='-' f mm dd
   for f in $1; do
@@ -66,21 +50,14 @@ _fr_has_mmdd_group() {
   return 1
 }
 _fr_poisoned() {
-  # Case-fold before the prefix check: a stored alias can carry any case (hand
-  # edit, external writer), and a mixed-case prefix (e.g. `<PREFIX>-foo-bar`,
-  # no embedded date, so none of the digit checks below would catch it either)
-  # must not bypass this guard and get embedded as
-  # `<prefix>-<PREFIX>-foo-bar-...` — same fix as session-alias.sh's
-  # looks_like_session_name (found via review, chatgpt-codex-connector, PR #34).
+  # Case-fold first: a mixed-case stored alias (e.g. `<PREFIX>-foo-bar`) must not bypass the
+  # prefix check (same fix as session-alias.sh's looks_like_session_name, PR #34).
   local v="$1" pair mm dd hh mi tail d
   v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
   case "$v" in "${CRSS_SESSION_PREFIX}"-*|"${CRSS_SESSION_PREFIX}"_*) return 0 ;; esac
   printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && _fr_has_mmdd_group "$v" && return 0
-  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
-  # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
-  # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, and only
-  # inspecting that first pair would never look at the genuinely poisoned
-  # "0715-2359" that follows). Any single matching pair is disqualifying.
+  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: `project-2024-2025-0715-2359` has a
+  # non-date pair before the real "0715-2359".
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
     mm=$((10#${pair:0:2})); dd=$((10#${pair:2:2})); hh=$((10#${pair:5:2})); mi=$((10#${pair:7:2}))
@@ -97,12 +74,8 @@ _fr_poisoned "$ALIAS" && ALIAS=""
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 SESSION="${CRSS_SESSION_PREFIX}_${ALIAS}-${ID}"
 REMOTE_NAME="${CRSS_SESSION_PREFIX}-${ALIAS}-${ID}"
-# Default mirrors new-session.sh's default (no CLAUDE_SESSION_PROFILE, no
-# CLAUDE_SESSION_MODEL): the orchestrator profile pinned to claude-opus-5-5 —
-# NOT the bare "sonnet" this fallback used before the per-role profile
-# default landed (new-session.sh commit 66d1e63 / cb733ec). This recipe has
-# no CLAUDE_SESSION_PROFILE support, so an operator who wants the builder/
-# copywriter default here must pass CLAUDE_SESSION_MODEL explicitly.
+# Mirrors new-session.sh's default (orchestrator profile, claude-opus-5-5). No
+# CLAUDE_SESSION_PROFILE here: pass CLAUDE_SESSION_MODEL for a builder/copywriter model.
 MODEL="${CLAUDE_SESSION_MODEL:-claude-opus-5-5}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
