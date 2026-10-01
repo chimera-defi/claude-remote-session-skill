@@ -14,13 +14,12 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 
 **Done** for a spawn means: `new-session` printed a `REMOTE_NAME`, the unit is active
 (`systemctl --user is-active <REMOTE_NAME>.service`), and — if you gave it a task —
-`--task` printed `Task sent … and verified landed.` The kickoff itself settles (several
-consecutive ready polls before the first paste) and refuses rather than pasting blind:
+`--task` printed `Task sent … and verified landed.` The kickoff settles first (several
+consecutive ready polls) and refuses rather than pasting blind:
 `trust dialog open (or another menu/dialog widget)` means answer it by hand first
 (`tmux send-keys -t <session> 1 Enter`); `claude not running in pane` means it isn't up
-yet — wait and resend. On plain `UNVERIFIED`, check the pane and resend with
-`session-send` — it happens often enough on first send that it isn't an edge case
-(one-line detail: [`references/troubleshooting.md`](references/troubleshooting.md)).
+yet — wait and resend. On plain `UNVERIFIED` (common on first send), check the pane and
+resend with `session-send` ([`references/troubleshooting.md`](references/troubleshooting.md)).
 Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `cs`,
 configurable via `CRSS_SESSION_PREFIX`).
 
@@ -41,10 +40,10 @@ new-session <foldername> --task "..."        # spawn AND kick off, in one shot
 new-session <foldername> --task-file <path>  # same, task text read from a file
 ```
 
-**Prefer `--task`/`--task-file` over typing the kickoff by hand** — hand-typing drops the
-Enter often enough to leave the session idle with no error, where the flags poll/send/verify
-instead (see "Done for a spawn" above). Mutually exclusive; an unreadable `--task-file` fails
-*before* anything spawns. How to *write* that task is its own section below.
+**Prefer `--task`/`--task-file` over typing the kickoff by hand** — hand-typing often drops
+the Enter and leaves the session idle with no error; the flags poll/send/verify instead.
+Mutually exclusive; an unreadable `--task-file` fails *before* anything spawns. How to
+*write* the task: "Writing the kickoff task" below.
 
 Relaying into an already-running session, and tearing one down:
 
@@ -61,44 +60,43 @@ session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
 included: do not type `claude --resume <uuid> …` into a new tmux pane and do not
 `systemctl --user start` the unit bare. A hand relaunch drops the unit's
 `--dangerously-skip-permissions` and binary, so the session stalls on approval prompts
-nobody sees. A bare unit start can open a fresh conversation instead of the old one.
+nobody sees; a bare unit start can open a fresh conversation instead of the old one.
 `session-resume` resumes the session's own transcript by uuid through its own unit, keeps
 the unit's launch flags, and refuses while anything still holds the session. Run
-`--dry-run` first. The steps are in its header comment in `scripts/session-resume.sh`,
-pinned by `tests/test-session-resume.sh`.
+`--dry-run` first. Steps: header comment of `scripts/session-resume.sh`, pinned by
+`tests/test-session-resume.sh`.
 
 `reap` refuses protected names outright, and refuses a session with unlanded/uncommitted
 work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`. It also
 removes that session's own `~/.claude/worktrees/<name>` git worktree by default (branch
-kept; `--keep-worktree` opts out) — see `references/session-lifecycle.md` for the guards.
+kept; `--keep-worktree` opts out); guards: `references/session-lifecycle.md`.
 
 ### Codex Backend
 
-`new-session --backend codex` uses the same session envelope as Claude: tmux session,
-systemd user unit, generated start script, alias/name parsing, telemetry, `--task`/
-`--task-file` kickoff, `session-send`/`session-handoff` landing verification, and
-`session-doctor reap` cleanup. The backend switch and Codex CLI command are in
-`scripts/new-session.sh`; pane-state detection is in `scripts/session-handoff.sh`.
+`new-session --backend codex` uses the same session envelope as Claude (tmux session,
+systemd user unit, start script, alias/name parsing, telemetry, `--task`/`--task-file`
+kickoff, `session-send`/`session-handoff` landing verification, `session-doctor reap`
+cleanup). The backend switch and Codex command are in `scripts/new-session.sh`; pane-state
+detection is in `scripts/session-handoff.sh`.
 
 Host defaults live in `$CRSS_HOME/config.sh`: `CRSS_SESSION_BACKEND=codex` changes the
-default, `CRSS_CODEX_BIN` selects the binary, and `CRSS_CODEX_ARGS` supplies model,
-sandbox, and approval flags. The generic default is still Claude. Check the installed
-`codex --help` before setting those args.
+default (generic default: Claude), `CRSS_CODEX_BIN` selects the binary, `CRSS_CODEX_ARGS`
+supplies model, sandbox, and approval flags. Check the installed `codex --help` before
+setting those args.
 
-Claude-only features do not apply to Codex sessions: Claude model/profile pinning,
-`BUILDER_TOOLS`, `advisor` availability, `--settings`, remote-control registration, and
-the global `.claude/skills` symlink/bootstrap are skipped. `session-doctor` local
-tmux/systemd/worktree/reap handling covers Codex sessions; Claude registry and transcript
-history remain Claude-specific.
+Claude-only features do not apply to Codex sessions: model/profile pinning,
+`BUILDER_TOOLS`, `advisor`, `--settings`, remote-control registration, and the global
+`.claude/skills` symlink/bootstrap are skipped. `session-doctor` tmux/systemd/worktree/reap
+handling covers Codex sessions; Claude registry and transcript history stay Claude-specific.
 
 Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
 
 **Deployed copies drift.** The skill dir and `/create-session` symlink into this repo's
-canonical checkout; `~/.local/bin/*` are real copies — after landing a fix, redeploy
+canonical checkout; `~/.local/bin/*` are real copies — redeploy after landing a fix
 (`install -m 755 scripts/<x>.sh ~/.local/bin/<x>`) or it stays inert, and **diff before
 overwriting** or you silently revert a deployed-only hand-patch (how `advisor` fell out of
-`BUILDER_TOOLS`).
+`BUILDER_TOOLS`). Full procedure: `CLAUDE.md` "Deploying".
 
 ## Key Rules
 
@@ -113,26 +111,25 @@ overwriting** or you silently revert a deployed-only hand-patch (how `advisor` f
   Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
   deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
   "fable"})` — not a Sonnet builder, which would just be Sonnet checking its own
-  reasoning. `model: fable` in an agent definition's frontmatter is a valid value on the
-  installed CLI: a probe agent with that frontmatter ran as a Fable model when spawned.
+  reasoning. `model: fable` is a valid agent-frontmatter value on the installed CLI (a probe
+  agent with it ran as a Fable model).
 - ChatGPT is reached, if at all, through a project-specific relay subagent (not a standalone
-  session) — if your project has one, it's defined in that project's own `.claude/agents/`
-  and roles table. How it calls out lives in that agent file; don't copy it here. See your
-  host's `$CRSS_HOME/local.md` for which projects have one.
+  session), defined in that project's own `.claude/agents/` and roles table — don't copy its
+  call-out details here. `$CRSS_HOME/local.md` says which projects have one.
 
 ## Writing the kickoff task
 
-A spawned session starts with none of your context, and it will work unattended for a long
-time. What makes it succeed is the shape of the first message, not how hard you tell it to
-try. The full contract lives in [`handoff/references/massaging.md`](handoff/references/massaging.md);
-a ready fill-in starting shape is [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md)
-template (a). Before writing, read `$CRSS_HOME/local.md` if it exists — it has this host's
-real escalation channel, project guardrail index, and delegate routing; absent overlay, use
-the generic defaults in those two files. The parts that matter most for a fresh spawn:
+A spawned session starts with none of your context and works unattended for a long time;
+the shape of the first message decides whether it succeeds, not how hard you tell it to try.
+Full contract: [`handoff/references/massaging.md`](handoff/references/massaging.md); fill-in
+starting shape: [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md)
+template (a). Before writing, read `$CRSS_HOME/local.md` if it exists — this host's real
+escalation channel, project guardrail index, and delegate routing; absent overlay, use the
+generic defaults in those two files. What matters most for a fresh spawn:
 
 - **A finish line, not an activity.** "PR merged with `shell-tests` green and the script
-  redeployed" — not "look into the compaction bug". Current models sustain long multi-step
-  work well *when they know what done looks like*; an open-ended ask is where they drift.
+  redeployed" — not "look into the compaction bug". Models sustain long multi-step work
+  *when they know what done looks like*; an open-ended ask is where they drift.
 - **A stop rule that names the channel.** Say when to keep going, when to stop and ask, and
   *through what*: a question left only in the child's own pane is a stall, not an
   escalation. Default wording: *"When a step doesn't need me, keep going and put status in
@@ -147,9 +144,8 @@ the generic defaults in those two files. The parts that matter most for a fresh 
 - **Delegate every independent slice.** Research, per-file edits, and verification each go
   to their own subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
   `advisor`); don't delegate a builder's own verification back to itself, and brief each one
-  completely — only the prompt string crosses over, nothing else. For a second opinion on
-  the orchestrator's own work, spawn Fable directly (`model: "fable"`), not a Sonnet
-  builder checking its own reasoning.
+  completely — only the prompt string crosses over. Second opinion on the orchestrator's own
+  work: Fable (see Key Rules).
 - **Context hygiene.** Have subagents write large research, logs, or diffs to files and
   return a short summary plus the file path, instead of dumping it inline.
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md
@@ -163,11 +159,11 @@ the generic defaults in those two files. The parts that matter most for a fresh 
   [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
   and the canonical protocol in
   [`handoff/references/eval-hillclimb-protocol.md`](handoff/references/eval-hillclimb-protocol.md).
-  It keeps eval splits, novelty reserve, budget, stop/revert, and
-  `scripts/eval-hillclimb-decision.py` decisions out of prose-only territory.
-- **Leave out "think carefully / step by step / ultrathink".** Current Claude models decide
-  how much to think on their own; those lines add length, not quality. Same for ALL-CAPS or
-  "MUST" — a reason attached to a rule holds up better than a rule shouted louder.
+  It covers eval splits, novelty reserve, budget, stop/revert, and
+  `scripts/eval-hillclimb-decision.py` decisions.
+- **Leave out "think carefully / step by step / ultrathink".** Models decide how much to
+  think on their own; those lines add length, not quality. Same for ALL-CAPS or "MUST" — a
+  reason attached to a rule holds up better than a rule shouted louder.
 
 While it runs, **add context with `session-send`** rather than killing and respawning — the
 session picks up a mid-run message without losing its work. When it reports done, **first
@@ -185,9 +181,9 @@ workdir (util):  $CRSS_SESSIONS_DIR/<foldername>  (default $HOME/.sessions)
 
 Name-first, date last; every spawn gets a unique name, so it never collides with a
 same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilities
-(managers, monitors, etc.). `<prefix>` defaults to `cs`, configurable via
-`CRSS_SESSION_PREFIX`; a host that changes prefix can list the old one(s) in
-`CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising older sessions too.
+(managers, monitors, etc.). `<prefix>` defaults to `cs` (`CRSS_SESSION_PREFIX`); a host that
+changes prefix can list the old one(s) in `CRSS_LEGACY_PREFIXES` so `session-doctor` keeps
+recognising older sessions.
 
 `<alias>` comes from the `session-alias` helper, persisted in `~/.claude/session-aliases`
 (`folder<TAB>alias` per line):
@@ -204,18 +200,18 @@ same-minute session. Use `workspace/` for repo sessions, `.sessions/` for utilit
   covers `claude-remote` bridge sessions — this repo's folder merely contains that string
   and still shortens normally.)
 - **Alias values are validated (anti-poisoning)** on read, write, and store upsert, so a
-  stored alias that looks like a full session name can't produce `<prefix>-<prefix>-…-MMDD-MMDD`. The
-  rules live in `scripts/session-alias.sh`, pinned by `tests/test-session-alias.sh` — read
-  those rather than restating them here.
+  stored alias that looks like a full session name can't produce
+  `<prefix>-<prefix>-…-MMDD-MMDD`. Rules: `scripts/session-alias.sh`, pinned by
+  `tests/test-session-alias.sh`.
 - `session-alias --audit-store` read-only-reports stored entries that fresh inference now
   disagrees with; it never rewrites. A human decides what to change.
 
 ## Git-aware run directory (RUNDIR)
 
-For a git workdir, the start script resolves where to actually run via `session-git-prep`:
-a free+clean canonical checkout gets used directly (on the default branch, never a stale
-feature branch); a dirty or already-owned one gets a fresh worktree instead. Full decision
-logic, locking, and worktree-reuse-on-restart: [`references/git-aware-rundir.md`](references/git-aware-rundir.md).
+For a git workdir, the start script resolves where to run via `session-git-prep`: a
+free+clean canonical checkout is used directly (on the default branch, never a stale feature
+branch); a dirty or already-owned one gets a fresh worktree. Decision logic, locking, and
+worktree reuse on restart: [`references/git-aware-rundir.md`](references/git-aware-rundir.md).
 
 **Check the folder is the repo you mean before spawning** — a project's *name* is not
 always its folder, and a same-named non-git stub can carry its own `CLAUDE.md`/`AGENTS.md`
@@ -247,18 +243,18 @@ Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu session
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
 registry expiry: [`references/session-lifecycle.md`](references/session-lifecycle.md).
 
-Two rules from those runbooks bite hardest, detailed in `references/troubleshooting.md`'s
-["Preserve before reaping"](references/troubleshooting.md#preserve-before-reaping-recycling-a-bloated-session)
-section: never use `git log @{u}..` to judge whether work is pushed (silent on a branch with
-no upstream — use `git log HEAD --not --remotes`, check `git remote` separately), and
-deleting a branch is the dangerous operation, not reaping. A respawn also starts fresh, not
-on the old session's branch — name the prior branch/transcript/progress in the kickoff, or
-the replacement re-derives it all at full cost.
+Two rules from those runbooks bite hardest
+(["Preserve before reaping"](references/troubleshooting.md#preserve-before-reaping-recycling-a-bloated-session)):
+never use `git log @{u}..` to judge whether work is pushed (silent on a branch with no
+upstream — use `git log HEAD --not --remotes`, check `git remote` separately), and deleting
+a branch is the dangerous operation, not reaping. A respawn also starts fresh, not on the old
+session's branch — name the prior branch/transcript/progress in the kickoff, or the
+replacement re-derives it all at full cost.
 
 ## Host-local overlay: where host facts go
 
 This repo is public and generic. Anything specific to one machine or operator (paths,
-which `claude` binary, protected session names, escalation channel, project index, private
+`claude` binary, protected session names, escalation channel, project index, private
 vocabulary) lives in the overlay directory `$CRSS_HOME` (default `~/.config/crss`), never
 in this repo:
 
@@ -279,9 +275,8 @@ reports whether the overlay is healthy.
 
 For durable facts other sessions should inherit, most hosts wire up a shared memory
 convention (a memory-store repo, a knowledge tool) through the user-level
-`~/.claude/CLAUDE.md` every session already loads — this skill doesn't restate that
-convention here. If your host has one, its details (root, namespace, sync command,
-citation format) are there or in your host's `$CRSS_HOME/local.md`.
+`~/.claude/CLAUDE.md` every session already loads; its details (root, namespace, sync
+command, citation format) are there or in `$CRSS_HOME/local.md`, not here.
 
 "Who else is working here right now" is a different question — use
 `session-doctor history`, which derives presence from live processes.
