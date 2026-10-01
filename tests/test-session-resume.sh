@@ -19,6 +19,11 @@ not_has(){ if printf '%s' "$2" | grep -qF -- "$3"; then fail=$((fail+1)); echo "
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 T="$(mktemp -d)"
+# Defined before the EXIT trap below (not alongside PATH/ARGV_LOG further down):
+# under `set -u`, a cleanup() that runs before that later export — e.g. this
+# script killed by a signal while still in setup — would abort on an unbound
+# $STUB_STATE and skip its own pkill/rm -rf entirely.
+export STUB_STATE="$T/state"
 # Per-run unique suffix for remote names and transcript UUIDs: session-resume's
 # liveness checks pgrep host-wide, so concurrent runs must not share fixture names.
 UID12="$(printf '%012x' $$)"
@@ -93,7 +98,7 @@ print(m.group(1))' "$script")"
 esac
 EOF
 chmod +x "$T/bin/"*
-export PATH="$T/bin:$PATH" STUB_STATE="$T/state" ARGV_LOG="$T/state/argv"
+export PATH="$T/bin:$PATH" ARGV_LOG="$T/state/argv"
 
 # ── fixture: a session whose unit died, after a crash ─────────────────────
 # Old (pre-pin) start-script shape, copied from a real generated script.
