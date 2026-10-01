@@ -112,9 +112,10 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   call-out details here. `$CRSS_HOME/local.md` says which projects have one.
 - The order of second opinions is overlay-configurable: `$CRSS_HOME/local.md` may name which
   reviewer goes first (for example a cheaper strong model), which gives a different-family
-  cross-check, and which expensive reviewer goes last. Whatever the order, never let a review
-  rest on a single model family. If only one family is available, pause and report rather than
-  approving on one family's say-so.
+  cross-check, and which expensive reviewer goes last. Whatever the order, a review that gates
+  a merge or an operator-facing decision never rests on a single model family; if only one
+  family is available, pause and report rather than approving on one family's say-so. An
+  orchestrator's own sanity check (the Fable bullet above) is not that review.
 
 ## Writing the kickoff task
 
