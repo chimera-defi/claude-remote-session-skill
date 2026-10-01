@@ -1,9 +1,7 @@
 # Troubleshooting & recycling runbooks
 
-Moved out of `SKILL.md` so the skill itself stays short. Each section is a
-diagnose → recover recipe for one failure shape. Three shapes look alike from outside
-(session "went silent") but have different causes and fixes — identify which one you have
-with `tmux capture-pane -p -t <session>` before acting:
+Each section is a diagnose -> recover recipe for one failure shape. Three shapes look alike
+(session "went silent"); identify which with `tmux capture-pane -p -t <session>` before acting:
 
 | Pane shows | Shape | Section |
 |---|---|---|
@@ -11,69 +9,56 @@ with `tmux capture-pane -p -t <session>` before acting:
 | repeated `UserPromptSubmit operation blocked by hook` | hook wedge | [Hook-wedged session](#detecting-a-hook-wedged-session-different-from-bloat) |
 | numbered options, `↑/↓ to navigate` | stuck on a menu | [Stuck-on-a-menu session](#detecting-a-stuck-on-a-menu-session-different-from-both-wedge-types-above) |
 
-A `--task`/`--task-file` kickoff that reports `trust dialog open` or `claude not running in
-pane` instead of landing is this same menu/not-ready detection firing during spawn, not a
-new failure shape — see SKILL.md's "Done for a spawn" note; pinned by
-`tests/test-new-session-settle-loop.sh` and `tests/test-session-handoff-paste-race.sh`.
+A `--task`/`--task-file` kickoff reporting `trust dialog open` or `claude not running in
+pane` is this same menu/not-ready detection firing during spawn, not a new shape (SKILL.md
+"Done for a spawn"; pinned by `tests/test-new-session-settle-loop.sh` and
+`tests/test-session-handoff-paste-race.sh`).
 
 ## Compact before relaying into an idle/stale session
 
-Relaying a follow-up into a session that's been sitting a while pays to reprocess its whole
-bloated transcript on every subsequent turn. Compact first — but use the one command, which
-does the staleness check, compacts, waits for completion, and only then relays:
+Relaying into a session that has sat a while pays to reprocess its whole bloated transcript
+on every later turn. Use the one command: it checks staleness, compacts, waits for
+completion, then relays.
 
 ```bash
 session-compact before-relay <name> "the actual task"   # or --file <path>
 ```
 
-It **fails closed**: if the compact can't be verified complete, the message is not sent, so
-you never land a task mid-summarization. Hand-rolling this (`session-send "/compact"`, eyeball
-`tmux capture-pane`, send the real task) is the fallback only if `session-compact` isn't
-deployed yet. Same staleness signal as the bloat-before-routing check — a status line reading
-`new task? /clear to save NNNk tokens`, or a long idle gap.
+It fails closed: if the compact can't be verified complete the message is not sent, so a
+task never lands mid-summarization. Hand-rolling (`session-send "/compact"`, eyeball
+`tmux capture-pane`, send the task) is only for hosts without `session-compact` deployed.
+Staleness signal: a status line `new task? /clear to save NNNk tokens`, or a long idle gap.
 
-**Don't compact a session idle under ~60 minutes** — its 1-hour prompt cache is still live,
-so that's the most expensive moment to compact, not the cheapest. `session-compact` defaults
-to `--min-idle 60` for this reason; the mechanism, measurements, and the managed-orchestrator
-exceptions are in [`docs/session-compaction.md`](../docs/session-compaction.md).
+**Don't compact a session idle under ~60 minutes**: its 1-hour prompt cache is still live,
+so that is the most expensive moment. `session-compact` defaults to `--min-idle 60`. Mechanism,
+measurements and managed-orchestrator exceptions: [`docs/session-compaction.md`](../docs/session-compaction.md).
 
-**Auto-compact reality check** (checked against the installed CLI, 2.1.280): auto-compaction is a real built-in
-feature and is on by default. `autoCompactEnabled` and `autoCompactWindow` **are** real
+**Auto-compact is real and on by default** (checked against CLI 2.1.280; `--autocompact` still
+in `claude --help` on 2.1.285). `autoCompactEnabled` and `autoCompactWindow` are real
 `settings.json`-schema fields. Evidence:
 
-- `autoCompactWindow` is causally confirmed, not just present in the schema: a throwaway
-  `claude -p ... --settings '{"autoCompactWindow": N}'` run produced the identical
-  `effectiveWindow` value in `-d config,settings,compact --debug-file <f>` output as the
-  equivalent `--autocompact N` CLI flag — for two distinct values on a 200k-context model
-  (`N=105000` → `effectiveWindow=85000` both ways; `N=500000` → `effectiveWindow=180000`
-  both ways, clamped to the model's window either way it was set).
-- `autoCompactEnabled` sits in the *identical* schema object as `autoCompactWindow`, not a
-  separate one — both field definitions were located on the same ~118KB minified schema
-  line, ~12.4KB apart, with no object-closing boundary between them, so this isn't the
-  global `~/.claude.json` interactive-preferences schema (which has its own separate
-  defaults blob elsewhere in the bundle, alongside keys like `theme`/`editorMode`) — it's
-  the same schema `autoCompactWindow` was causally confirmed in. Its own `.describe()`:
-  "Automatically compact conversation when context fills"; it also backs the interactive
-  `/config` "Auto-compact" toggle. Unlike `autoCompactWindow`, its read-from-`--settings`
-  behavior wasn't independently reproduced — the debug line for it didn't fire reliably in
-  a single-turn `-p` run, so treat this one as strong (same-object) but not causally
-  confirmed evidence.
+- `autoCompactWindow` is causally confirmed: `claude -p ... --settings '{"autoCompactWindow": N}'`
+  gave the same `effectiveWindow` in `-d config,settings,compact --debug-file <f>` output as
+  the `--autocompact N` flag (`N=105000` -> `85000`; `N=500000` -> `180000`, clamped to the
+  200k model window, both ways).
+- `autoCompactEnabled` sits in the same schema object as `autoCompactWindow` (both on the same
+  ~118KB minified schema line, ~12.4KB apart, no object boundary between), not in the global
+  `~/.claude.json` preferences schema. Its `.describe()`: "Automatically compact conversation
+  when context fills"; it also backs the `/config` "Auto-compact" toggle. Its read-from-
+  `--settings` behaviour was not reproduced (the debug line didn't fire in a single-turn `-p`
+  run): strong but not causally confirmed.
 
-Everything else here still holds: the launch-time `--autocompact <auto|tokens>` flag
-(verified in `claude --help`, 2.1.280), the in-session `/autocompact` dialog and `/config`,
-and env var `CLAUDE_CODE_DISABLE_1M_CONTEXT` are all real controls too. The window scales
-with the model's context size (Sonnet 5 on its full 1M window auto-compacts around ~967K
-tokens) — a session sitting at 200-300k uncompacted tokens is not evidence auto-compact is
-broken, it just hasn't neared its threshold yet. There is no `new-session` flag to make
-this more aggressive; the pre-compact-before-relay habit above is the actual lever for
-proactive cost control, not a spawn-time config toggle. Moral for next time: verify a
-specific claim yourself before repeating it, in either direction.
+Other controls: launch flag `--autocompact <auto|tokens>`, in-session `/autocompact` and
+`/config`, env `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window scales with model context (Sonnet 5
+on 1M auto-compacts near ~967K), so a session at 200-300k uncompacted tokens is not evidence
+it's broken. There is no `new-session` flag to make it more aggressive; compact-before-relay is
+the lever for proactive cost control. Lesson: verify a specific claim yourself before
+repeating it, in either direction.
 
 ## Preserve before reaping (recycling a bloated session)
 
-Long-lived sessions accumulate context until every turn is slow and expensive.
-Recycling one — kill it, spawn a fresh session on the same repo — is the fix.
-**Never reap before `session-preserve` says it is safe.**
+Long-lived sessions accumulate context until every turn is slow and expensive. Recycle: kill
+it, spawn a fresh one on the same repo. **Never reap before `session-preserve` says it is safe.**
 
 ```bash
 session-preserve <tmux-session>            # audit only. exit 0 = safe to reap
@@ -82,8 +67,6 @@ session-preserve <tmux-session> --wip      # + WIP-commit uncommitted tracked ch
 session-preserve --all                     # audit the whole fleet
 ```
 
-Recycle recipe:
-
 ```bash
 session-preserve <s> --rescue --wip        # must print SAFE-TO-REAP
 systemctl --user disable --now <base>.service
@@ -91,39 +74,31 @@ tmux kill-session -t <s>
 new-session <foldername> workspace --alias <new-alias>
 ```
 
-**Never use `git log @{u}..` to decide whether work is pushed.** It returns
-*nothing* when a branch has no upstream configured, so unpushed work reads as
-clean — silently enough to authorise a reap sweep across genuinely unpushed
-commits. Use `git log HEAD --not --remotes`, and check `git remote` separately
-— a repo with **no remote at all** cannot be pushed anywhere, so its branch
-refs are the only copy that exists. Pinned by `session-preserve.sh`'s own
-header comment and `tests/test-session-preserve.sh`'s "no-remote-flagged"
-case.
+**Never use `git log @{u}..` to decide whether work is pushed.** With no upstream it prints
+nothing, so unpushed work reads as clean and can authorise a reap over unpushed commits. Use
+`git log HEAD --not --remotes`, and check `git remote` separately: a repo with no remote
+cannot be pushed anywhere, so its branch refs are the only copy. Pinned by
+`session-preserve.sh`'s header comment and `tests/test-session-preserve.sh` ("no-remote-flagged").
 
-What actually makes a reap safe is that **HEAD is reachable from a named local
-branch** — then killing the session and removing its worktree cannot orphan the
-commits, because they stay in the canonical repo's object store. It follows
-that *deleting the branch* is the dangerous operation, not reaping. Any worktree
-GC must leave `session/*` and research branches alone.
+A reap is safe when **HEAD is reachable from a named local branch**: killing the session and
+removing its worktree can't orphan commits, which stay in the canonical repo's object store.
+So *deleting the branch* is the dangerous operation, not reaping; worktree GC must leave
+`session/*` and research branches alone.
 
-Respawned sessions start on a fresh worktree cut from the default branch, **not**
-on the old session's branch. Say so in the kickoff: name the prior branch, the
-prior transcript path, and what the session was mid-way through, or the
-replacement re-derives it at full cost.
+A respawned session starts on a fresh worktree cut from the default branch, **not** the old
+session's branch. Name the prior branch, prior transcript path and what it was mid-way
+through in the kickoff, or the replacement re-derives it at full cost.
 
 ## Detecting a hook-wedged session (different from bloat)
 
-A session can go silent for a reason that looks identical to the "send didn't
-land" failure mode but has a different mechanism and a different fix: a
-`UserPromptSubmit` or `PreToolUse` hook in the session's own
-`.claude/settings.json` throws (a subprocess spawn error, a missing script, an
-unhandled exception) and has **no fail-open guard**. Because
-`UserPromptSubmit` fires on *every* prompt, once it starts erroring, every
-future prompt — including plain retries like "try again" — is rejected before
-Claude ever sees it. No amount of resending fixes this from inside the
-session; resending IS the thing that keeps failing.
+A `UserPromptSubmit` or `PreToolUse` hook in the session's `.claude/settings.json` throws
+(spawn error, missing script, unhandled exception) with **no fail-open guard**.
+`UserPromptSubmit` fires on every prompt, so every later prompt, including "try again", is
+rejected before Claude sees it; resending cannot fix it. A `PreToolUse` wedge also blocks
+Bash/Read/Grep/Glob, so even `advisor()` stalls. No automated test covers this shape (needs a
+genuinely broken hook); diagnose from outside.
 
-**Symptom in `tmux capture-pane -p`:** repeated blocks shaped like
+**Symptom** in `tmux capture-pane -p`: repeated blocks like
 
 ```
 UserPromptSubmit operation blocked by hook:
@@ -133,80 +108,50 @@ UserPromptSubmit operation blocked by hook:
   Original prompt: <whatever was sent>
 ```
 
-with no `✻`/`●` processing indicator after it — the agent process is alive and
-idle, but unreachable, including to the session's own in-context tools (a
-`PreToolUse` wedge blocks Bash/Read/Grep/Glob too, so even an `advisor()` call
-made to diagnose it stalls and errors). No automated test covers this shape
-(it requires a genuinely broken hook script); diagnose from outside the
-session as below.
+with no `✻`/`●` processing indicator after: process alive and idle but unreachable.
 
-**Diagnose:** `cat <rundir>/.claude/settings.json` and look at the failing
-hook's command. If it has no fail-open guard (compare to a sibling hook line
-in the same file that does, e.g. `[ -x <script> ] && <script> || exit 0`),
-a subprocess error there is a hard, permanent block — not a fluke worth
-retrying.
+**Diagnose:** `cat <rundir>/.claude/settings.json`; look at the failing hook's command. With no
+fail-open guard (compare a sibling like `[ -x <script> ] && <script> || exit 0`) a subprocess
+error is a permanent block, not a fluke.
 
-**Recover:** same mechanics as the bloat recycle recipe above — a hook wedge
-is not a special case for reaping:
+**Recover** (same mechanics as the bloat recycle):
 
 ```bash
-session-preserve <s> --rescue --wip        # runs from OUTSIDE the wedged session — unaffected by its hook
+session-preserve <s> --rescue --wip        # runs from OUTSIDE the wedged session, unaffected by its hook
 systemctl --user disable --now <base>.service
 new-session <foldername> workspace --alias <same-alias>
 ```
 
-Then hand off the wedged session's actual state in the kickoff (branch, task
-list, what was in progress) since its own transcript may be unrecoverable —
-`tmux capture-pane -S` is capped by the pane's history-limit and may not reach
-back to the original kickoff.
-
-**Prevention (tell whoever fixes the hook):** any script wired to
-`UserPromptSubmit` or `PreToolUse` must fail open — catch spawn/subprocess
-errors and `exit 0` rather than propagate — because a failure there doesn't
-just fail one tool call, it can permanently wedge the whole session.
+Hand off the wedged session's state in the kickoff (branch, task list, in-progress work); its
+transcript may be unrecoverable and `tmux capture-pane -S` is capped by the pane's
+history-limit. **Prevention:** any script wired to `UserPromptSubmit` or `PreToolUse` must
+fail open (catch errors, `exit 0`); a failure there can permanently wedge the session.
 
 ## Detecting a stuck-on-a-menu session (different from both wedge types above)
 
-A session can look wedged for a third reason that has nothing wrong with it
-at all: it's mid an interactive multi-choice widget (an `AskUserQuestion`-style
-prompt — numbered options with `[ ]`/`[✔]` checkboxes, a
-`←  ☐ Next direction  ✔ Submit  →` bar, "Enter to select · ↑/↓ to navigate ·
-Esc to cancel") and whoever replied sent ordinary free text instead of
-navigating it. The widget only understands arrow keys + Enter (and a
-dedicated "Type something" option for free text); a plain sentence sent into
-it is not a valid input, so it just sits there inert — the session looks
-unresponsive to normal chat, but the agent process is perfectly healthy the
-whole time. Detection is pinned by `tests/test-session-handoff-ready.sh`
-(`_is_on_menu`'s true/false-positive cases).
+Nothing is wrong with the session: it is mid an interactive multi-choice widget
+(`AskUserQuestion`-style: numbered options with `[ ]`/`[✔]` checkboxes, a
+`←  ☐ Next direction  ✔ Submit  →` bar, "Enter to select · ↑/↓ to navigate · Esc to cancel")
+and someone sent free text. The widget only understands arrows + Enter (and a "Type
+something" option), so plain text sits inert while the agent is healthy. Detection is pinned
+by `tests/test-session-handoff-ready.sh` (`_is_on_menu` true/false-positive cases).
 
-**Symptom in `tmux capture-pane -p`:** a numbered option list with checkboxes
-and the `↑/↓ to navigate` hint still on screen, with a plain-text line sitting
-below it that was clearly meant as an answer but isn't reflected in any
-checkbox state.
+**Symptom:** option list with checkboxes and the `↑/↓ to navigate` hint on screen, with a
+plain-text line below it that no checkbox reflects.
 
-**Recover (no reap needed — this is not a broken session):**
-1. `tmux send-keys -t <s> Down` (or `Up`) and re-capture to confirm the `❯`
-   marker actually moves — this proves the widget is live and just
-   mis-navigated, not stuck for some other reason.
-2. Navigate to the option that best matches what the original sender meant
-   (`Enter` toggles a `[ ]`→`[✔]` checkbox on the highlighted option — it does
+**Recover (no reap):**
+1. `tmux send-keys -t <s> Down` (or `Up`) and re-capture; the `❯` marker moving proves the
+   widget is live and just mis-navigated.
+2. Navigate to the option matching the sender's intent (`Enter` toggles `[ ]`->`[✔]`; it does
    **not** submit).
-3. `Right` arrow to move from the options page to "Submit", then `Enter` again
-   on the review screen ("1. Submit answers") to actually confirm. Re-capture
-   after each step — the same "type, act, verify" discipline as any other
-   kickoff, just with arrow keys instead of literal text.
+3. `Right` to move to "Submit", then `Enter` on the review screen ("1. Submit answers").
+   Re-capture after each step (type, act, verify).
 
-Check `session-preserve` / `git log HEAD --not --remotes` before doing
-anything if there's any doubt — but a stuck-menu session usually has nothing
-to lose: it was mid a *review* pause, not mid an edit.
+If in doubt, check `session-preserve` / `git log HEAD --not --remotes` first, but a stuck-menu
+session usually has nothing to lose: it was mid a review pause, not an edit.
 
-**A different widget classifies the same way but recovers differently:**
-Claude Code's first-launch workspace-trust dialog ("Do you trust the files in
-this folder? ... Enter to confirm · Esc to cancel") is also detected as
-`menu` (`_is_on_menu` / `_state_of` in `scripts/session-handoff.sh`, pinned by
-`tests/test-session-handoff-trust-dialog.sh`), since blind text/Enter is
-just as unsafe there as on the widget above — but it is a numbered
-Yes/No choice, not an arrow-key+checkbox+Submit-page flow: recover with
-`tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the
-Down/Right/Enter sequence above.
-
+**Workspace-trust dialog** ("Do you trust the files in this folder? ... Enter to confirm · Esc
+to cancel") is also classified `menu` (`_is_on_menu` / `_state_of` in
+`scripts/session-handoff.sh`, pinned by `tests/test-session-handoff-trust-dialog.sh`), since
+blind text/Enter is unsafe there too, but it is a numbered Yes/No choice. Recover with
+`tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the Down/Right/Enter sequence.
