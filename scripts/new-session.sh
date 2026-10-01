@@ -154,8 +154,8 @@ Environment:
                                 model/sandbox/approval flags here.
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
-                                (pinned) for orchestrator; sonnet/sonnet/haiku
-                                for owner/builder/copywriter — bare aliases that
+                                (pinned) for orchestrator; sonnet/sonnet/sonnet/haiku
+                                for owner/hub/builder/copywriter — bare aliases that
                                 auto-track the latest release for their tier.
                                 Set it to override: a bare alias tracks latest,
                                 or pass an exact id (e.g. claude-opus-4-8) to
@@ -171,6 +171,10 @@ Environment:
                                   owners keep the native advisor and cost less per
                                   resident turn; use orchestrator, or an explicit
                                   CLAUDE_SESSION_MODEL, when Opus is approved).
+                                hub          — same full tool set as owner, but
+                                  with a short appended system contract for Sonnet
+                                  to consult Opus one-shot at major forks. Default
+                                  model: sonnet.
                                 builder      — trimmed --tools allowlist; drops the
                                   orchestration-only schemas to reclaim ~10.3k of the
                                   ~19.5k System-tools context. Hands-on
@@ -185,6 +189,7 @@ Environment:
 Examples:
   new-session my-project                                                     # orchestrator + claude-opus-5-5 (pinned)
   CLAUDE_SESSION_PROFILE=owner new-session my-lane-owner sessions            # full tools + sonnet
+  CLAUDE_SESSION_PROFILE=hub new-session my-review-hub sessions              # full tools + Sonnet hub + Opus consult contract
   new-session my-project workspace
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
@@ -323,8 +328,8 @@ if [ "$BACKEND" = claude ]; then
   # the default model for the spawned Claude session.
   PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
   case "$PROFILE" in
-    orchestrator|owner|builder|copywriter) ;;
-    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|builder|copywriter" >&2
+    orchestrator|owner|hub|builder|copywriter) ;;
+    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|hub|builder|copywriter" >&2
        PROFILE="orchestrator" ;;
   esac
 
@@ -334,6 +339,7 @@ if [ "$BACKEND" = claude ]; then
     case "$PROFILE" in
       orchestrator) MODEL=claude-opus-5-5 ;;
       owner)        MODEL=sonnet ;;
+      hub)          MODEL=sonnet ;;
       builder)      MODEL=sonnet ;;
       copywriter)   MODEL=haiku ;;
     esac
@@ -385,6 +391,7 @@ fi
 # line does not).
 # This allowlist is necessary but not sufficient — keep builder on sonnet.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
+HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
 
 # --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
 # cwd/env/memory-path/git-status out of the cached system prompt into the first
@@ -393,6 +400,7 @@ BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSe
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
 if [ "$BACKEND" = claude ]; then
   case "$PROFILE" in
+    hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
   esac
 else
@@ -525,6 +533,8 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 fi
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
+HUB_CONSULT_PROMPT_FILE=""
+[ "$BACKEND" = claude ] && [ "$PROFILE" = hub ] && HUB_CONSULT_PROMPT_FILE="${SCRIPT%.sh}-hub-consult-prompt.txt"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 SESSION_LITERAL="$(_shell_quote "$SESSION")"
 WORKDIR_LITERAL="$(_shell_quote "$WORKDIR")"
@@ -542,6 +552,9 @@ if [ "$DRYRUN" = yes ]; then
 fi
 
 mkdir -p "$(dirname "$SCRIPT")" "$(dirname "$SERVICE")"
+if [ -n "$HUB_CONSULT_PROMPT_FILE" ]; then
+  printf '%s\n' "$HUB_CONSULT_PROMPT" > "$HUB_CONSULT_PROMPT_FILE"
+fi
 
 # ── Generate start script ────────────────────────────────────────────────────
 # Variables without backslash expand NOW (baked into generated script).

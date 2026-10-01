@@ -7,8 +7,9 @@ this is a deliberately reduced last resort. Versus `new-session.sh` it:
 - looks aliases up in the store only (no acronym inference for un-stored long folders);
 - has no same-minute collision lock (a second same-minute spawn of the same folder can
   collide/no-op);
-- has no `CLAUDE_SESSION_PROFILE` (no `builder`/`copywriter` `--tools` trimming), only a bare
-  `CLAUDE_SESSION_MODEL` override, defaulting to what `new-session.sh`'s default
+- has no `CLAUDE_SESSION_PROFILE` (no `hub` appended prompt and no `builder`/`copywriter`
+  `--tools` trimming), only a bare `CLAUDE_SESSION_MODEL` override, defaulting to what
+  `new-session.sh`'s default
   `orchestrator` profile resolves to (`claude-opus-5-5`, see its Model selection comment);
 - reads `CRSS_*` from the environment only (no `$CRSS_HOME/config.sh` parsing) and ignores
   `CRSS_LEGACY_PREFIXES` (it only generates under `CRSS_SESSION_PREFIX`).
@@ -75,7 +76,7 @@ _fr_poisoned "$ALIAS" && ALIAS=""
 SESSION="${CRSS_SESSION_PREFIX}_${ALIAS}-${ID}"
 REMOTE_NAME="${CRSS_SESSION_PREFIX}-${ALIAS}-${ID}"
 # Mirrors new-session.sh's default (orchestrator profile, claude-opus-5-5). No
-# CLAUDE_SESSION_PROFILE here: pass CLAUDE_SESSION_MODEL for an owner/builder/copywriter model.
+# CLAUDE_SESSION_PROFILE here: pass CLAUDE_SESSION_MODEL for an owner/hub/builder/copywriter model.
 MODEL="${CLAUDE_SESSION_MODEL:-claude-opus-5-5}"
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
