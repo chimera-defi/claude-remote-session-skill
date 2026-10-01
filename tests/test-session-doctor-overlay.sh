@@ -5,11 +5,8 @@
 # No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 DOCTOR="$HERE/../scripts/session-doctor.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unwanted pattern present: $3"; else pass=$((pass+1)); fi; }
 
 # ── absent overlay: dir/config.sh/rules/local.md all missing, still exit 0 ──
 ABSENT="/tmp/crss-doctor-overlay-absent-$$-nonexistent"
@@ -19,7 +16,7 @@ has "absent-header"      "$out" "=== OVERLAY: $ABSENT ==="
 has "absent-dir"         "$out" "dir: absent"
 has "absent-config"      "$out" "config.sh: absent"
 has "absent-local"       "$out" "local.md: absent"
-lacks "absent-no-traceback" "$out" "Traceback"
+hasnt "absent-no-traceback" "$out" "Traceback"
 
 # ── good overlay: dir/config.sh/rules (with @import)/local.md all present ──
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"
@@ -36,7 +33,7 @@ has "good-dir"       "$out" "dir: found"
 has "good-config"    "$out" "config.sh: found"
 has "good-rules"     "$out" "imports local.md"
 has "good-local"     "$out" "local.md: found"
-lacks "good-no-warn" "$out" "warn:"
+hasnt "good-no-warn" "$out" "warn:"
 
 # ── broken overlay: config.sh has a line that LOOKS like an assignment but
 #    won't be loaded (warn, not fail); rules present but no @import; no
@@ -82,5 +79,4 @@ rm -rf "$BADRE"
 
 rm -rf "$GOOD" "$BROKEN"
 
-echo "test-session-doctor-overlay: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "test-session-doctor-overlay"

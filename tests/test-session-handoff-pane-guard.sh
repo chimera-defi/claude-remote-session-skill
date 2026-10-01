@@ -31,11 +31,9 @@
 # fixture — a real `sleep` IS the bare-shell state being guarded against.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 FIXTURE="$HERE/fake-claude-tui.py"
 NEW_HANDOFF="$HERE/../scripts/session-handoff.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 command -v tmux >/dev/null 2>&1    || { echo "session-handoff-pane-guard: SKIP (no tmux)"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "session-handoff-pane-guard: SKIP (no python3)"; exit 0; }
@@ -129,7 +127,7 @@ send2_out="$(bash "$NEW_HANDOFF" send "$S2" 'echo pwned $(id) `whoami`' 2>&1)"; 
 has "sleep-send-refuses"       "$send2_out" "claude not running in pane (sleep)"
 ok  "sleep-send-exit2"         "$send2_rc" "2"
 after="$(tmux capture-pane -p -t "$S2")"
-ok "sleep-pane-untouched" "$([ "$before" = "$after" ] && echo yes || echo no)" "yes"
+ok "sleep-pane-untouched" "$(yn test "$before" = "$after")" "yes"
 has "sleep-pane-no-injection" "$after" "sleep 300"
 if printf '%s' "$after" | grep -q "pwned"; then
   fail=$((fail+1)); echo "FAIL: sleep-pane-no-injection — payload text leaked into the pane"
@@ -138,5 +136,4 @@ else
 fi
 tmux kill-session -t "$S2" 2>/dev/null || true
 
-echo "session-handoff-pane-guard: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-pane-guard"

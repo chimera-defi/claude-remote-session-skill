@@ -1,42 +1,22 @@
 #!/usr/bin/env bash
-# Tests for session-compact.sh. No live tmux, no real session, no real
-# /compact anywhere in this file. Two layers:
-#   1. Sourced, in-process tests against the pure _decide function and the
-#      non-pure-but-stubbable helpers (_evaluate_row, _marker_hit,
-#      _write_marker, _do_compact) — fast, no subprocess.
-#   2. Subprocess/CLI tests that exec a COPY of session-compact.sh in an
-#      isolated dir (no real session-doctor.sh/session-handoff.sh sibling),
-#      with a stub session-handoff on PATH and $SESSION_COMPACT_SENSOR
-#      pointing at a fixture script — proves the real dispatch/flag/exit-code
-#      contract, still with zero tmux and zero I/O against anything real.
+# session-compact.sh: sourced in-process tests (_decide, _evaluate_row, markers, _do_compact), then CLI tests
+# against a COPY of the script in an isolated dir with a stub session-handoff and a fixture sensor.
+# No tmux, no live session, no real /compact.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SCRIPT="$HERE/../scripts/session-compact.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # source-guarded: must NOT run dispatch
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
-lacks(){ if printf '%s' "$2" | grep -qF "$3"; then fail=$((fail+1)); echo "FAIL: $1 — pattern SHOULD NOT be present: $3 in: $2"; else pass=$((pass+1)); fi; }
 
-# ============================================================================
-# Layer 1: _decide — the pure eligibility function.
-# d() fixes tmux_session/remote_name/pid/cwd/last_ts to placeholders so each
-# call only has to spell out the fields that vary for that test, in the
-# exact positional order _decide expects: min max idle protected compacted
-# landed dirty marker_hit.
-# ============================================================================
+# Layer 1: _decide (pure). d() spells only the varying fields; positional order: min max idle protected compacted landed dirty marker_hit.
 d() { _decide "$1" "$2" sess remote pid cwd "$3" 2026-01-01T00:00:00 "$4" "$5" "$6" "$7" "$8"; }
 
-# --- each skip reason, exactly once -----------------------------------------
 ok "decide-never-touched"     "$(d 60 0 never no  no      unknown clean   na)" "skip:never-touched"
 ok "decide-outside-window-lo" "$(d 60 0 30    no  no      unknown clean   na)" "skip:outside-window"
 ok "decide-protected"         "$(d 60 0 90    yes no      unknown clean   na)" "skip:protected"
 ok "decide-landed-and-clean"  "$(d 60 0 90    no  no      yes     clean   na)" "skip:landed-and-clean"
 ok "decide-already-compacted" "$(d 60 0 90    no  yes     no      unknown na)" "skip:already-compacted"
-# pane-safety ("pane-<reason>") is NOT part of _decide (it requires I/O) —
-# covered separately in the _evaluate_row section below.
-
 # --- a fully-eligible row ----------------------------------------------------
 ok "decide-fully-eligible" "$(d 60 0 90 no no unknown clean na)" "eligible"
 
@@ -56,20 +36,14 @@ ok "decide-outside-window-hi" "$(d 60 120 200 no no unknown clean na)" "skip:out
 ok "decide-escape-hatch-30-60" "$(d 30 60 45 no no unknown clean na)" "eligible"
 ok "decide-escape-hatch-30-60-too-old" "$(d 30 60 90 no no unknown clean na)" "skip:outside-window"
 
-# --- Bug 2: protected/compacted/landed/dirty must fail CLOSED on any value
-# outside the sensor's documented vocabulary (including "", which a
-# truncated TSV row produces) rather than silently reading as the
-# PERMISSIVE default ("not protected", "not landed", "not already
-# compacted"). idle_minutes is valid in every case here so these reach the
-# new vocabulary checks instead of being caught early by bad-idle-field.
-ok "decide-malformed-protected-empty"  "$(d 60 0 90 ""      no      unknown clean   na)" "skip:malformed-row"
-ok "decide-malformed-protected-junk"   "$(d 60 0 90 maybe   no      unknown clean   na)" "skip:malformed-row"
-ok "decide-malformed-compacted-empty"  "$(d 60 0 90 no      ""      unknown clean   na)" "skip:malformed-row"
-ok "decide-malformed-compacted-junk"   "$(d 60 0 90 no      maybe   unknown clean   na)" "skip:malformed-row"
-ok "decide-malformed-landed-empty"     "$(d 60 0 90 no      no      ""      clean   na)" "skip:malformed-row"
-ok "decide-malformed-landed-junk"      "$(d 60 0 90 no      no      maybe   clean   na)" "skip:malformed-row"
-ok "decide-malformed-dirty-empty"      "$(d 60 0 90 no      no      unknown ""      na)" "skip:malformed-row"
-ok "decide-malformed-dirty-junk"       "$(d 60 0 90 no      no      unknown maybe   na)" "skip:malformed-row"
+# protected/compacted/landed/dirty must fail CLOSED on any value outside the sensor vocabulary
+# (including "" from a truncated TSV row), not read as the permissive default.
+for v in "" maybe; do
+  ok "decide-malformed-protected-${v:-empty}" "$(d 60 0 90 "$v" no unknown clean na)" "skip:malformed-row"
+  ok "decide-malformed-compacted-${v:-empty}" "$(d 60 0 90 no "$v" unknown clean na)" "skip:malformed-row"
+  ok "decide-malformed-landed-${v:-empty}"    "$(d 60 0 90 no no "$v" clean na)" "skip:malformed-row"
+  ok "decide-malformed-dirty-${v:-empty}"     "$(d 60 0 90 no no unknown "$v" na)" "skip:malformed-row"
+done
 # and the legitimate no-worktree value for landed is NOT malformed
 ok "decide-landed-no-worktree-valid"   "$(d 60 0 90 no      no      no-worktree clean na)" "eligible"
 
@@ -78,25 +52,12 @@ out="$(_decide 60 0 sess 2>&1)"; rc=$?
 ok "decide-ragged-no-crash-exit"   "$rc" "0"
 has "decide-ragged-no-crash-output" "$out" "skip:"
 
-# ============================================================================
-# Layer 2: _evaluate_row — adds the marker-file lookup + the live pane-safety
-# call. We point $_SESSION_HANDOFF_BIN directly at a stub (bypassing
-# _find_helper's co-located-first resolution, which would otherwise find the
-# REAL scripts/session-handoff.sh sitting right next to session-compact.sh)
-# — a seam the memoized resolver gives us for free.
-# ============================================================================
+# _evaluate_row + marker + _do_compact. _SESSION_HANDOFF_BIN points at a stub, bypassing the co-located real script.
 STUBDIR="$(mktemp -d)"
 trap 'rm -rf "$STUBDIR"' EXIT
 
-# _write_stub_handoff — a reusable stub whose behavior is driven by env vars
-# read at call time (exported by the test before invoking session-compact
-# code, so each fresh `bash $bin ...` subprocess still sees them):
-#   STUB_LOG              - every call appended here as "CALL <args>"
-#   STUB_READY_SESSIONS   - space-separated sessions `ready` reports SAFE for
-#   STUB_READY_REASON     - reason for non-SAFE sessions (default: busy)
-#   STUB_BUSY_POLLS       - `check` reports busy this many times per session,
-#                           then ready forever after (default 0 = ready immediately)
-#   STUB_STATE            - dir for the per-session poll counters
+# Stub session-handoff driven by env: STUB_LOG (calls), STUB_READY_SESSIONS (ready=SAFE), STUB_READY_REASON,
+# STUB_BUSY_POLLS (check busy N times then ready), STUB_STATE (counter dir), STUB_SEND_FAIL.
 _write_stub_handoff() {
   cat > "$STUBDIR/session-handoff" <<'EOF'
 #!/usr/bin/env bash
@@ -144,18 +105,13 @@ row_ready=(readysess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean)
 row_notready=(notreadysess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean)
 ok "evalrow-eligible-through-pane-check" "$(_evaluate_row 60 0 "${row_ready[@]}")" "eligible"
 ok "evalrow-pane-unsafe-reason-propagated" "$(_evaluate_row 60 0 "${row_notready[@]}")" "skip:pane-busy"
-# a pure-check failure (e.g. protected) must short-circuit BEFORE the live
-# ready call — assert the stub was never invoked for that session.
+# a pure-check failure short-circuits before the live ready call
 _reset_stub_env
 row_protected=(protsess remote 1 /cwd 90 2026-01-01T00:00:00 yes no unknown clean)
 decision="$(_evaluate_row 60 0 "${row_protected[@]}")"
 ok "evalrow-protected-short-circuit-decision" "$decision" "skip:protected"
-lacks "evalrow-protected-short-circuit-no-pane-call" "$(cat "$STUB_LOG")" "protsess"
+hasnt "evalrow-protected-short-circuit-no-pane-call" "$(cat "$STUB_LOG")" "protsess"
 
-# ============================================================================
-# _marker_hit / _write_marker — real filesystem I/O, sandboxed via HOME
-# override (same convention session-doctor.sh's tests use).
-# ============================================================================
 _REAL_HOME="$HOME"
 HOME="$(mktemp -d)"
 
@@ -167,10 +123,6 @@ has "marker-file-well-formed-json" "$(cat "$HOME/.sessions/compact-markers/marke
 
 HOME="$_REAL_HOME"
 
-# ============================================================================
-# _do_compact — send + poll-to-completion, with the seen-busy-before-ready
-# guard, the per-session single-issue guard, and the timeout path.
-# ============================================================================
 _reset_stub_env
 STUB_BUSY_POLLS=2   # busy for 2 polls, ready on the 3rd -> success before timeout
 out="$(_do_compact compactok 30)"; rc=$?
@@ -189,32 +141,18 @@ out="$(_do_compact compactsendfail 5)"; rc=$?
 ok "docompact-send-failed-exit"   "$rc" "1"
 ok "docompact-send-failed-output" "$out" "send-failed"
 
-# never issue /compact twice to the SAME session in one invocation
+# never issue /compact twice to the same session
 _reset_stub_env
 STUB_BUSY_POLLS=0
 _do_compact compacttwice 5 >/dev/null
 out2="$(_do_compact compacttwice 5 2>&1)"; rc2=$?
 ok "docompact-no-double-issue-exit" "$rc2" "1"
 has "docompact-no-double-issue-msg" "$out2" "refusing to send /compact"
-# and it must not have sent a SECOND /compact — exactly one send line for it
 sendcount="$(grep -c 'CALL send compacttwice /compact' "$STUB_LOG")"
 ok "docompact-no-double-issue-single-send" "$sendcount" "1"
 
-# ============================================================================
-# Bug B: _do_compact must detect completion from the TRANSCRIPT — ground
-# truth, independent of pane text — not just from observed pane state. Real
-# bug, confirmed against live sessions: a genuinely-completed
-# compact ("Compacted (ctrl+o to see full summary)" visibly on the pane) was
-# reported "timeout" by this function, because the pane-state path requires
-# observing `busy` at least once before accepting `ready`, and `busy` was
-# never observed even once across the ENTIRE timeout on either real run — see
-# _do_compact's own comment for the confirmed mechanism (compaction measures
-# ~101s, well inside a 240s timeout, so if `busy` had ever been seen a later
-# `ready` poll would have caught it well before timing out; it never did).
-# STUB_BUSY_POLLS=999 below means the pane NEVER reports busy — under the OLD
-# pane-only logic this could only ever end in "timeout"; success here can only
-# come from the transcript path.
-# ============================================================================
+# Completion must be detected from the TRANSCRIPT (ground truth) too: with the pane never reporting busy
+# (STUB_BUSY_POLLS=999) only a fresh compact_boundary newer than the pre-send baseline can yield "compacted".
 _encode_cwd_test_dir() {  # <home> <cwd> -> the transcript dir path (mkdir -p'd)
   local home="$1" cwd="$2" dir
   dir="$home/.claude/projects/$(_encode_cwd "$cwd")"
@@ -227,17 +165,12 @@ STUB_BUSY_POLLS=999
 DOTB_HOME="$(mktemp -d)"
 DOTB_CWD="$DOTB_HOME/proj"; mkdir -p "$DOTB_CWD"
 DOTB_PROJDIR="$(_encode_cwd_test_dir "$DOTB_HOME" "$DOTB_CWD")"
-# A STALE pre-existing marker — proves the fix snapshots a BASELINE and
-# requires something NEWER than it, not merely "a marker exists somewhere in
-# the file" (which would false-positive on a session compacted long ago that
-# hasn't had a fresh turn since).
+# stale marker: must be a baseline, not a match
 cat > "$DOTB_PROJDIR/old.jsonl" <<'EOF'
 {"type":"system","subtype":"compact_boundary","timestamp":"2020-01-01T00:00:00.000Z"}
 EOF
 HOME="$DOTB_HOME"
-# Simulates the real compact completing mid-poll (without waiting out a real
-# ~101s compact): append a FRESH compact_boundary 1s after send, in the
-# background, while _do_compact (foreground, 3s poll interval) is waiting.
+# fresh compact_boundary appended 1s after send, while _do_compact polls
 ( sleep 1; printf '{"type":"system","subtype":"compact_boundary","timestamp":"%s"}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$DOTB_PROJDIR/live.jsonl" ) &
 BGPID=$!
@@ -248,12 +181,7 @@ ok "docompact-transcript-success-exit"   "$rc" "0"
 ok "docompact-transcript-success-output" "$out" "compacted"
 rm -rf "$DOTB_HOME"
 
-# Fail-closed sibling: cwd given, transcript dir exists, but nothing EVER
-# postdates the baseline (only the same stale 2020 marker sits there the
-# whole time) AND the pane never resolves either (STUB_BUSY_POLLS=999 again)
-# — must still time out, exit nonzero, print "timeout", same as the pane-only
-# case above. This is the fail-closed requirement: "can't confirm" must never
-# be relaxed into a false "compacted", regardless of which signal is used.
+# fail closed: nothing postdates the baseline and the pane never resolves -> timeout
 _reset_stub_env
 STUB_BUSY_POLLS=999
 DOTB_HOME2="$(mktemp -d)"
@@ -269,19 +197,7 @@ ok "docompact-transcript-failclosed-exit"   "$rc" "1"
 ok "docompact-transcript-failclosed-output" "$out" "timeout"
 rm -rf "$DOTB_HOME2"
 
-# No-cwd callers (existing tests above, and any caller that omits the new
-# 3rd arg entirely) must keep working exactly as before — pane-state only,
-# no transcript lookup attempted. Not a new assertion on its own; the
-# pre-existing docompact-success-*/docompact-timeout-* tests above already
-# call _do_compact with only 2 args and still pass, which IS the proof.
-
-# ============================================================================
-# Layer 3: CLI/subprocess tests. Copy session-compact.sh ALONE into an
-# isolated dir (no session-doctor.sh/session-handoff.sh sibling — forces
-# PATH-only resolution, exactly like test-session-send.sh's DEPLOY pattern),
-# stub session-handoff + systemctl on PATH, point $SESSION_COMPACT_SENSOR at
-# a fixture script.
-# ============================================================================
+# Layer 3: CLI. Copy session-compact.sh ALONE into an isolated dir (PATH-only helper resolution), stub session-handoff and systemctl.
 ISO="$(mktemp -d)"
 cp "$SCRIPT" "$ISO/session-compact.sh"
 BIN="$(mktemp -d)"
@@ -309,12 +225,8 @@ _run() {  # _run <mode/args...> — invokes the isolated copy with stubs wired u
 CLI_HOME="$(mktemp -d)"
 _reset_stub_env
 
-# _fixture_transcript <cwd> <tokens> <model> — same helper as
-# test-session-compact-sweep.sh, needed for exactly one row below (readysess)
-# that must clear the idle trigger's new context floor
-# (_SWEEP_IDLE_CONTEXT_FLOOR_PCT) without a real context percentage becoming
-# the point of this CLI-contract section (that coverage lives in
-# tests/test-session-compact-sweep.sh).
+# _fixture_transcript CWD TOKENS MODEL: one assistant turn so a row clears the idle trigger context floor
+# (real context-trigger coverage is in test-session-compact-sweep.sh).
 _fixture_transcript() {
   local cwd="$1" tokens="$2" model="$3" dir
   dir="$CLI_HOME/.claude/projects/$(_encode_cwd "$cwd")"
@@ -332,7 +244,7 @@ STUB_READY_SESSIONS="readysess"
 out="$(_run report)"; rc=$?
 ok   "cli-report-exit0"          "$rc" "0"
 has  "cli-report-header-default-window" "$out" "idle >= 60m"
-lacks "cli-report-header-no-upper-bound-by-default" "$out" "<= "
+hasnt "cli-report-header-no-upper-bound-by-default" "$out" "<= "
 has  "cli-report-eligible-row"   "$out" "readysess"
 has  "cli-report-reason-eligible" "$(printf '%s' "$out" | grep readysess)" "eligible"
 has  "cli-report-reason-pane-busy" "$(printf '%s' "$out" | grep notreadysess)" "pane-busy"
@@ -342,42 +254,12 @@ out2="$(_run report --min-idle 30 --max-idle 60)"; rc2=$?
 ok  "cli-report-escape-hatch-exit0" "$rc2" "0"
 has "cli-report-escape-hatch-window-text" "$out2" "idle >= 30m, <= 60m"
 
-# ============================================================================
-# sweep: context-aware two-trigger model. Trigger A (idle >= --min-idle,
-# default 60 — the SAME threshold/flag this repo's sweep always had) behaves
-# exactly as before; the only default-behavior change is what happens when
-# NEITHER --dry-run nor --apply is given (used to be a hard error; now means
-# --dry-run — a sweep that mutates by default is too dangerous to ship, but
-# refusing to run at all was needless friction for the routine, safe case).
-# See scripts/session-compact.sh's `sweep)` dispatch + _sweep_decide's
-# comment for the full rationale, especially why trigger B (context) is
-# routed back through _evaluate_row rather than a narrower reimplementation:
-# doing otherwise would re-issue /compact to an already-compacted, still-idle
-# session on every single sweep run, forever (idle-report deliberately does
-# not reset idle_minutes across a compact).
-#
-# These exercise the CLI contract (flags, exit codes, verdict text) through
-# the same stubbed-session-handoff harness as the rest of this file — same
-# ready-based pane-safety stub _evaluate_row already drives everywhere else,
-# no second busy-detector or stub protocol. Most rows below use
-# /nonexistent-cwd — no transcript dir exists there, so context is always
-# "unavailable" (skip:context-unknown — see _sweep_decide) rather than the
-# old "degrades to idle-only" behavior. readysess is the one exception in
-# this section: its whole point is exercising the idle trigger's CLI/apply
-# mechanics (flags, pane check, marker write), which is no longer reachable
-# on unknown context, so it gets a real fixture transcript at 50% — clears
-# the idle trigger's context floor without approaching the separate 80%
-# context-trigger threshold. Fixture-JSONL + real-tmux-stub coverage for an
-# ACTUAL context trigger (>=80% usage) lives in
-# tests/test-session-compact-sweep.sh, which needs real files on disk to
-# produce a real token count.
-# ============================================================================
-
+# sweep: CLI contract (flags, exit codes, verdict text). Rows use /nonexistent-cwd (context unavailable) except
+# readysess, which gets a 50% transcript so the idle trigger is reachable.
 READY_CWD="$CLI_HOME/proj-ready"
 _fixture_transcript "$READY_CWD" 500000 claude-sonnet-4-6   # 50%
 
-# --- neither --dry-run nor --apply: DEFAULT is now dry-run (used to be a
-# hard error) — exits 0, mutates nothing, but DOES check the pane -----------
+# neither flag: defaults to dry-run (exit 0, no send, but pane checked)
 : > "$STUB_LOG"
 { _row readysess remote 1 "$READY_CWD" 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 STUB_READY_SESSIONS="readysess"
@@ -385,7 +267,7 @@ outn="$(_run sweep)"; rcn=$?
 ok  "cli-sweep-bare-defaults-to-dryrun-exit0" "$rcn" "0"
 has "cli-sweep-bare-would-compact"            "$outn" "would-compact: readysess"
 has "cli-sweep-bare-pane-check-happened"      "$(cat "$STUB_LOG")" "ready readysess"
-lacks "cli-sweep-bare-no-send"                "$(cat "$STUB_LOG")" "send"
+hasnt "cli-sweep-bare-no-send"                "$(cat "$STUB_LOG")" "send"
 
 # --- sweep --dry-run performs no send (ready calls are fine, send is not) --
 : > "$STUB_LOG"
@@ -393,7 +275,7 @@ outd="$(_run sweep --dry-run)"; rcd=$?
 ok  "cli-sweep-dryrun-exit0" "$rcd" "0"
 has "cli-sweep-dryrun-would-compact" "$outd" "would-compact: readysess"
 has "cli-sweep-dryrun-pane-check-happened" "$(cat "$STUB_LOG")" "ready readysess"
-lacks "cli-sweep-dryrun-no-send" "$(cat "$STUB_LOG")" "send"
+hasnt "cli-sweep-dryrun-no-send" "$(cat "$STUB_LOG")" "send"
 
 # --- sweep --apply actually compacts an eligible row + writes a marker -----
 : > "$STUB_LOG"
@@ -410,8 +292,7 @@ STUB_BUSY_POLLS=0
 _run sweep --dry-run --apply >/dev/null 2>&1; rcboth=$?
 ok "cli-sweep-both-flags-exit2" "$rcboth" "2"
 
-# --- busy pane -> skip: busy, even though idle alone would trigger (rule 4:
-# never compact a session that is actively processing) ----------------------
+# busy pane -> skip: busy
 : > "$STUB_LOG"
 { _row busysweepsess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 STUB_READY_SESSIONS=""
@@ -420,29 +301,22 @@ outbusy="$(_run sweep)"; rcbusy=$?
 ok  "cli-sweep-busy-exit0"   "$rcbusy" "0"
 has "cli-sweep-busy-verdict" "$(printf '%s' "$outbusy" | grep busysweepsess)" "skip: busy"
 
-# --- protected, idle already >= min-idle -> skip: protected, and the pane is
-# never even checked (same short-circuit-before-live-call _evaluate_row
-# already uses) --------------------------------------------------------------
+# protected: skipped without any pane check
 : > "$STUB_LOG"
 { _row protsweepsess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 yes no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 outprot="$(_run sweep)"; rcprot=$?
 ok    "cli-sweep-protected-exit0"       "$rcprot" "0"
 has   "cli-sweep-protected-verdict"     "$(printf '%s' "$outprot" | grep protsweepsess)" "skip: protected"
-lacks "cli-sweep-protected-no-pane-call" "$(cat "$STUB_LOG")" "protsweepsess"
+hasnt "cli-sweep-protected-no-pane-call" "$(cat "$STUB_LOG")" "protsweepsess"
 
-# --- protected AND under trigger A's window: trigger B must ALSO see
-# protected, not silently read as eligible just because idle>=5 — this is
-# the "unmask outside-window" path _sweep_decide's own comment describes ----
+# protected AND under trigger A window: trigger B must also see protected
 : > "$STUB_LOG"
 { _row protfreshsess remote 1 /nonexistent-cwd 10 2026-01-01T00:00:00 yes no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 outprotfresh="$(_run sweep)"; rcprotfresh=$?
 ok  "cli-sweep-protected-under-window-exit0"   "$rcprotfresh" "0"
 has "cli-sweep-protected-under-window-verdict" "$(printf '%s' "$outprotfresh" | grep protfreshsess)" "skip: protected"
 
-# --- under thresholds: low idle (below EVEN the 5m context-trigger floor,
-# so context is never consulted at all), no context data available (no
-# transcript for /nonexistent-cwd) -> "skip: under thresholds" plus a printed
-# degradation note — never a guessed percentage (rule 6) --------------------
+# low idle + no context data -> skip: under thresholds with a degradation note, never a guessed percentage
 : > "$STUB_LOG"
 { _row freshsweepsess remote 1 /nonexistent-cwd 2 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 outfresh="$(_run sweep)"; rcfresh=$?
@@ -460,57 +334,36 @@ ok  "cli-report-ragged-row-exit0" "$rcr" "0"
 has "cli-report-ragged-row-listed" "$outr" "onlyname"
 has "cli-report-ragged-row-reason" "$(printf '%s' "$outr" | grep onlyname)" "bad-idle-field"
 
-# --- Bug 2: TSV rows truncated AFTER idle_minutes (unlike the ragged-row
-# case above, which truncates at column 1 and is caught early by
-# bad-idle-field) must fail CLOSED as skip:malformed-row, not read the
-# missing protected/compacted/landed/dirty columns as their PERMISSIVE
-# default and come out "eligible". Real `read` -c 10 vars pads missing
-# trailing columns with "", exactly like a genuinely short TSV line does.
-printf 'trunc5sess\tremote\t1\t/cwd\t90\n' > "$FIXTURE_DIR/rows.tsv"
-out5="$(_run report 2>&1)"; rc5=$?
-ok  "cli-report-trunc5-exit0"  "$rc5" "0"
-has "cli-report-trunc5-reason" "$(printf '%s' "$out5" | grep trunc5sess)" "malformed-row"
-
-printf 'trunc6sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\n' > "$FIXTURE_DIR/rows.tsv"
-out6="$(_run report 2>&1)"; rc6=$?
-ok  "cli-report-trunc6-exit0"  "$rc6" "0"
-has "cli-report-trunc6-reason" "$(printf '%s' "$out6" | grep trunc6sess)" "malformed-row"
-
-printf 'trunc7sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\tno\n' > "$FIXTURE_DIR/rows.tsv"
-out7="$(_run report 2>&1)"; rc7=$?
-ok  "cli-report-trunc7-exit0"  "$rc7" "0"
-has "cli-report-trunc7-reason" "$(printf '%s' "$out7" | grep trunc7sess)" "malformed-row"
+# TSV rows truncated after idle_minutes must fail closed (malformed-row), not read as eligible.
+{
+  printf 'trunc5sess\tremote\t1\t/cwd\t90\n'
+  printf 'trunc6sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\n'
+  printf 'trunc7sess\tremote\t1\t/cwd\t90\t2026-01-01T00:00:00\tno\n'
+} > "$FIXTURE_DIR/rows.tsv"
+outt="$(_run report 2>&1)"; rct=$?
+ok "cli-report-trunc-exit0" "$rct" "0"
+for n in 5 6 7; do has "cli-report-trunc$n-reason" "$(grep "trunc${n}sess" <<<"$outt")" "malformed-row"; done
 
 # --- numeric validation idiom -----------------------------------------------
 outv="$(_run report --min-idle notanumber 2>&1)"; rcv=$?
 ok "cli-report-bad-min-idle-exit2" "$rcv" "2"
 has "cli-report-bad-min-idle-msg" "$outv" "requires a non-negative integer"
 
-# --- before-relay: the critical fail-closed case ----------------------------
+# before-relay fail-closed: compact never verifies -> real message must not be sent
 { _row failsess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 STUB_READY_SESSIONS="failsess"
 STUB_BUSY_POLLS=999   # never verifies -> before-relay must not send the real message
-# --timeout must come BEFORE the session name — before-relay only recognizes
-# it as a leading flag (see the script's own comment on why: a free-form
-# message must never be mistaken for a flag).
+# --timeout must precede the session name
 outf="$(_run before-relay --timeout 2 failsess "THE REAL MESSAGE" 2>&1)"; rcf=$?
-ok    "cli-relay-unverified-exit-nonzero" "$([ "$rcf" -ne 0 ] && echo yes || echo no)" "yes"
+ok    "cli-relay-unverified-exit-nonzero" "$(yn test "$rcf" -ne 0)" "yes"
 has   "cli-relay-unverified-says-fail-closed" "$outf" "FAILING CLOSED"
-lacks "cli-relay-unverified-message-not-sent" "$(cat "$STUB_LOG")" "THE REAL MESSAGE"
+hasnt "cli-relay-unverified-message-not-sent" "$(cat "$STUB_LOG")" "THE REAL MESSAGE"
 has   "cli-relay-unverified-compact-was-sent" "$(cat "$STUB_LOG")" "send failsess /compact"
 [ -f "$CLI_HOME/.sessions/compact-markers/failsess.json" ] && { fail=$((fail+1)); echo "FAIL: cli-relay-unverified-no-marker — marker file exists but must not"; } || { pass=$((pass+1)); }
 STUB_BUSY_POLLS=0
 
-# --- before-relay: the primary happy path — eligible session -> compact ->
-# verify -> THEN relay the real message. The other before-relay tests only
-# exercise its PIECES (sweep --apply proves compact+marker in isolation;
-# not-stale proves the skip-compact routing); this is the one place the
-# actual "compact, verify, THEN relay" composition inside the before-relay
-# arm itself gets exercised end to end. STUB_BUSY_POLLS=1 (not 0) is
-# deliberate: _do_compact's seen-busy guard requires observing at least one
-# busy poll before it will accept "ready" as done, so a stub that goes
-# ready on the very first check would never satisfy it.
+# before-relay happy path: compact, verify, THEN relay. STUB_BUSY_POLLS=1 because _do_compact needs one busy poll first.
 { _row okrelay remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 STUB_READY_SESSIONS="okrelay"
@@ -522,18 +375,14 @@ has "cli-relay-happypath-message-sent"     "$(cat "$STUB_LOG")" "send okrelay th
 has "cli-relay-happypath-marker-written"   "$(cat "$CLI_HOME/.sessions/compact-markers/okrelay.json" 2>&1)" '"result": "compacted"'
 STUB_BUSY_POLLS=0
 
-# --- before-relay: not eligible (below the idle window) -> relays directly -
-# Bug 1 fix sibling: outside-window is a BENIGN skip reason (not a pane-
-# safety verdict) and must still fall through to a plain relay — proves the
-# skip:pane-* fail-closed fix below doesn't overcorrect into refusing every
-# non-eligible decision.
+# before-relay: benign skip (outside window) still relays plainly
 { _row freshsess remote 1 /cwd 5 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 outk="$(_run before-relay freshsess "hello there")"; rck=$?
 ok  "cli-relay-not-stale-exit0"    "$rck" "0"
 has "cli-relay-not-stale-says-so"  "$outk" "not stale/eligible"
 has "cli-relay-not-stale-relayed"  "$(cat "$STUB_LOG")" "send freshsess hello there"
-lacks "cli-relay-not-stale-no-compact-sent" "$(cat "$STUB_LOG")" "/compact"
+hasnt "cli-relay-not-stale-no-compact-sent" "$(cat "$STUB_LOG")" "/compact"
 
 # --- before-relay: --file variant reaches session-handoff unmangled --------
 MSGFILE="$(mktemp)"; printf 'file-relayed message\n' > "$MSGFILE"
@@ -543,54 +392,38 @@ ok  "cli-relay-file-variant-exit0" "$rcfile" "0"
 has "cli-relay-file-variant-forwarded" "$(cat "$STUB_LOG")" "send freshsess --file $MSGFILE"
 rm -f "$MSGFILE"
 
-# ============================================================================
-# Bug 1: before-relay must FAIL CLOSED on skip:pane-* — the pane-safety check
-# it just ran (`session-handoff.sh ready`) said the pane itself is unsafe to
-# type into (busy / on an interactive menu / no prompt / holding an unsent
-# draft). Before the fix this fell through to the generic "not stale/
-# eligible — relaying without compacting" branch and sent anyway. The row
-# here is otherwise fully in-window/eligible (idle=90, nothing else skips
-# it) so the ONLY reason _evaluate_row returns skip:pane-<reason> is the
-# `ready` stub reporting NOT-SAFE.
-# ============================================================================
+# before-relay must FAIL CLOSED on skip:pane-* (otherwise-eligible row; only the ready stub says NOT-SAFE)
 { _row busysess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 STUB_READY_SESSIONS=""
 STUB_READY_REASON="busy"
 outb="$(_run before-relay busysess "should never be sent" 2>&1)"; rcb=$?
-ok    "cli-relay-pane-busy-exit-nonzero"     "$([ "$rcb" -ne 0 ] && echo yes || echo no)" "yes"
+ok    "cli-relay-pane-busy-exit-nonzero"     "$(yn test "$rcb" -ne 0)" "yes"
 has   "cli-relay-pane-busy-refuses-msg"      "$outb" "not safe to inject into"
 has   "cli-relay-pane-busy-reason-shown"     "$outb" "(busy)"
-lacks "cli-relay-pane-busy-message-not-sent" "$(cat "$STUB_LOG")" "should never be sent"
-lacks "cli-relay-pane-busy-no-compact-sent"  "$(cat "$STUB_LOG")" "/compact"
+hasnt "cli-relay-pane-busy-message-not-sent" "$(cat "$STUB_LOG")" "should never be sent"
+hasnt "cli-relay-pane-busy-no-compact-sent"  "$(cat "$STUB_LOG")" "/compact"
 
 { _row draftsess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
 : > "$STUB_LOG"
 STUB_READY_SESSIONS=""
 STUB_READY_REASON="draft-in-input-box"
 outd="$(_run before-relay draftsess "should also never be sent" 2>&1)"; rcd=$?
-ok    "cli-relay-pane-draft-exit-nonzero"     "$([ "$rcd" -ne 0 ] && echo yes || echo no)" "yes"
+ok    "cli-relay-pane-draft-exit-nonzero"     "$(yn test "$rcd" -ne 0)" "yes"
 has   "cli-relay-pane-draft-reason-shown"     "$outd" "draft-in-input-box"
-lacks "cli-relay-pane-draft-message-not-sent" "$(cat "$STUB_LOG")" "should also never be sent"
+hasnt "cli-relay-pane-draft-message-not-sent" "$(cat "$STUB_LOG")" "should also never be sent"
 STUB_READY_REASON="busy"
 
-# ============================================================================
-# Bug 1, the not-found-in-sensor branch: a session the sensor never reported
-# on used to relay with ZERO pane-safety information. Must now consult
-# `ready` directly (via the same _session_handoff indirection, so the stub
-# still intercepts it) and refuse when it comes back NOT-SAFE — and,
-# symmetrically, must still relay when the pane IS safe, so the fix doesn't
-# overcorrect into refusing every unseen session outright.
-# ============================================================================
+# session absent from the sensor: consult ready directly; refuse when NOT-SAFE, relay when safe
 : > "$FIXTURE_DIR/rows.tsv"   # sensor has no rows at all -> row_line is empty
 : > "$STUB_LOG"
 STUB_READY_SESSIONS=""
 STUB_READY_REASON="menu"
 outn="$(_run before-relay ghostsess "unsafe unseen message" 2>&1)"; rcn2=$?
-ok    "cli-relay-notfound-unsafe-exit-nonzero"     "$([ "$rcn2" -ne 0 ] && echo yes || echo no)" "yes"
+ok    "cli-relay-notfound-unsafe-exit-nonzero"     "$(yn test "$rcn2" -ne 0)" "yes"
 has   "cli-relay-notfound-unsafe-refuses-msg"      "$outn" "not safe to inject into"
 has   "cli-relay-notfound-unsafe-reason-shown"     "$outn" "(menu)"
-lacks "cli-relay-notfound-unsafe-message-not-sent" "$(cat "$STUB_LOG")" "unsafe unseen message"
+hasnt "cli-relay-notfound-unsafe-message-not-sent" "$(cat "$STUB_LOG")" "unsafe unseen message"
 
 : > "$STUB_LOG"
 STUB_READY_SESSIONS="ghostsess2"
@@ -601,9 +434,7 @@ has "cli-relay-notfound-safe-relayed" "$(cat "$STUB_LOG")" "send ghostsess2 safe
 STUB_READY_SESSIONS=""
 STUB_READY_REASON="busy"
 
-# ============================================================================
 # install-timer: writes units, enables nothing, refuses to clobber
-# ============================================================================
 IT_CFG="$(mktemp -d)"
 IT_HOME="$(mktemp -d)"
 SYSTEMCTL_LOG="$(mktemp)"; export SYSTEMCTL_LOG
@@ -616,7 +447,7 @@ TMR="$IT_CFG/systemd/user/session-compact-report.timer"
 [ -f "$SVC" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: cli-installtimer-service-written — $SVC missing"; }
 [ -f "$TMR" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: cli-installtimer-timer-written — $TMR missing"; }
 has "cli-installtimer-execstart-report-mode" "$(cat "$SVC" 2>/dev/null)" "ExecStart=$IT_HOME/.local/bin/session-compact report"
-lacks "cli-installtimer-execstart-not-sweep" "$(cat "$SVC" 2>/dev/null)" "sweep"
+hasnt "cli-installtimer-execstart-not-sweep" "$(cat "$SVC" 2>/dev/null)" "sweep"
 ok  "cli-installtimer-no-systemctl-calls" "$(cat "$SYSTEMCTL_LOG")" ""
 
 out2="$(run_it install-timer 2>&1)"; rc2=$?
@@ -627,5 +458,4 @@ run_it install-timer --force >/dev/null 2>&1; rc3=$?
 ok  "cli-installtimer-force-overwrites-exit0" "$rc3" "0"
 ok  "cli-installtimer-force-no-systemctl-calls" "$(cat "$SYSTEMCTL_LOG")" ""
 
-echo "session-compact: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-compact"

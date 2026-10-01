@@ -21,11 +21,9 @@
 # "trust-dialog" mode (same fixture as test-session-handoff-paste-race.sh).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 FIXTURE="$HERE/fake-claude-tui.py"
 HANDOFF="$HERE/../scripts/session-handoff.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 command -v tmux >/dev/null 2>&1    || { echo "session-handoff-trust-dialog: SKIP (no tmux)"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "session-handoff-trust-dialog: SKIP (no python3)"; exit 0; }
@@ -89,5 +87,4 @@ tmux send-keys -t "$S2" "exec -a claude python3 '$WORK/quote.py'" Enter
 for _ in $(seq 1 20); do tmux capture-pane -p -t "$S2" | grep -q '\[Opus 5.5\]' && break; sleep 0.2; done
 has "quoted-hint-not-menu" "$(bash "$HANDOFF" check "$S2" 2>&1)" "state=ready"
 
-echo "session-handoff-trust-dialog: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-handoff-trust-dialog"

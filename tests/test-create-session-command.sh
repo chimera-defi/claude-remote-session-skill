@@ -20,12 +20,11 @@
 # guards the source of that symlink so the recipe cannot creep back in.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 CMD="$HERE/../.claude/commands/create-session.md"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if grep -qF "$2" "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found in $3: $2"; fi; }
 
-ok "command-file-exists" "$([ -f "$CMD" ] && echo yes || echo no)" "yes"
+isfile "command-file-exists" "$CMD"
 
 # It must delegate to the script, and name the ONE sanctioned manual fallback.
 has "delegates-to-new-session"     'new-session "$FOLDERNAME"' "$CMD"
@@ -51,4 +50,4 @@ ok "no-manual-daemon-reload"     "$(grep -cE 'systemctl --user daemon-reload &&'
 ok "no-stale-monorepo-commit" "$(grep -cE 'Etc-mono-repo' "$CMD")" "0"
 has "states-local-only"       'local-only' "$CMD"
 
-echo "create-session command: pass=$pass fail=$fail"; [ "$fail" -eq 0 ]
+finish "create-session command"

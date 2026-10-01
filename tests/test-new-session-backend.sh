@@ -3,14 +3,13 @@
 # first-class backend, not a Claude profile variant.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 NS="$HERE/../scripts/new-session.sh"
 
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
 has(){ if printf '%s' "$2" | grep -qE -- "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 not_has(){ if printf '%s' "$2" | grep -qE -- "$3"; then fail=$((fail+1)); echo "FAIL: $1 — unexpected pattern: $3 in: $2"; else pass=$((pass+1)); fi; }
 
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
+isolate_overlay
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 
@@ -119,5 +118,4 @@ grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf 
 ok "codex-grouped-args-count" "$grp_n" "4"
 ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
-echo "new-session-backend: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "new-session-backend"

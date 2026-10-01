@@ -22,18 +22,15 @@
 # No external test framework.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 REPO="$HERE/.."
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 # Every script that reads overlay config — keep this list in sync with
-# CLAUDE.md's overlay-config instructions if a new script gains the loader.
+# the scripts if a new one gains the loader.
 LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh)
 
 # Every script that reads CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES — keep in
-# sync with CLAUDE.md's prefix-plumbing instructions if a new script gains
-# the block. Deliberately a SUBSET of LOADER_FILES: fleet-status.sh,
+# sync with the scripts if a new one gains the block. Deliberately a SUBSET of LOADER_FILES: fleet-status.sh,
 # telemetry-report.sh and record-spawn-telemetry.sh have the config loader
 # but never parse/generate a session name themselves (fleet-status delegates
 # to session-doctor), so they don't need this block.
@@ -196,5 +193,4 @@ has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has
 out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 ok "empty-legacy-no-warning" "$out" "RE=px"
 
-echo "test-crss-overlay-config: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "test-crss-overlay-config"

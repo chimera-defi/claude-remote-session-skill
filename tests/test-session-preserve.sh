@@ -1,20 +1,13 @@
 #!/usr/bin/env bash
-# Regression coverage for session-preserve.sh: the safe-to-reap audit that
-# gates every reap/recycle in session-doctor and the SKILL.md recipes.
-# Previously untested despite deciding whether commits/files are safe to lose.
+# session-preserve.sh: the safe-to-reap audit that gates every reap/recycle.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Isolation: never read the operator's real overlay — see CLAUDE.md "Test isolation".
-export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"
-# Fixture shape: configured prefix "px", legacy "oldhost" — see
-# examples/crss-overlay/README.md. Fixtures below assume this (smaller diff
-# than converting every "px_"/"px-" literal to a generic-default shape).
+source "$HERE/lib.sh"
+isolate_overlay
+# Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
 SP="$HERE/../scripts/session-preserve.sh"
-pass=0; fail=0
-ok(){ if [ "$2" = "$3" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — got '$2' want '$3'"; fi; }
-has(){ if printf '%s' "$2" | grep -qF "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1 — pattern not found: $3 in: $2"; fi; }
 
 command -v tmux >/dev/null 2>&1 || { echo "session-preserve: SKIP (no tmux)"; exit 0; }
 
@@ -23,34 +16,20 @@ export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 
 mkrepo() { git init --quiet -b main "$1"; git -C "$1" commit --quiet --allow-empty -m init; }
 
-# Sessions are named sp-test-$$-* (see spawn_in below); killed by pattern in the
-# trap rather than tracked in an array, since spawn_in runs in a command-
-# substitution subshell and could not append to a parent-scope array anyway.
+# Sessions are named sp-test-$$-*; killed by pattern in the trap (spawn_in runs in a subshell, no parent array).
 WORK="$(mktemp -d)"
 trap 'tmux ls -F "#{session_name}" 2>/dev/null | grep "^sp-test-$$-" | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
 export HOME="$WORK/home"; mkdir -p "$HOME"
 
-# spawn_in <dir> -> tmux session name whose pane shell has a live child process
-# with cwd=<dir>, matching what rundir_of() walks (pane_pid -> first child -> cwd).
-# Each call runs in a command-substitution subshell (`s=$(spawn_in ...)`), so a
-# plain incrementing counter variable would never survive back to the caller —
-# every call would see the same starting value and mint the same session name,
-# silently colliding with (and reusing the cwd of) whichever session claimed
-# that name first. $RANDOM is per-subshell-call-safe since it needs no shared
-# state across calls.
+# spawn_in <dir> -> tmux session whose pane has a live child with cwd=<dir> (what rundir_of() walks).
+# Runs in a command substitution, so a counter would not survive: names use $RANDOM.
 spawn_in() {
   local dir="$1" s
   s="sp-test-$$-$RANDOM-$RANDOM"
   tmux new-session -d -s "$s" -c "$dir" 2>/dev/null
   tmux send-keys -t "$s" 'sleep 300 &' Enter
-  # Wait for the backgrounded `sleep` to actually appear before returning — NOT
-  # just any child. The pane's login shell can fork a short-lived startup
-  # helper first (observed live: rbenv-rehash and other transients that exit
-  # before `ps` can even read their cmdline); stopping as soon as ANY child
-  # shows up can return while that transient is the only one present, and by
-  # the time the caller invokes session-preserve.sh it may have already exited
-  # with `sleep` not yet started — a window where rundir_of() sees no children
-  # and spuriously reports the proc gone (flaky test failures, ~30-40% rate).
+  # wait for the backgrounded `sleep` specifically, not any child: the login shell forks short-lived startup helpers
+  # first, and returning on one of those made rundir_of() see no children (flaky ~30-40%)
   local pid tries=0 cpid found=no
   pid=$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null)
   while [ "$tries" -lt 20 ]; do
@@ -63,10 +42,7 @@ spawn_in() {
   printf '%s' "$s"
 }
 
-# 1. No such tmux session at all -> proc gone, AND no worktree matches its
-# name either -> genuinely SAFE-TO-REAP, but under a reason string distinct
-# from a clean, actually-audited worktree (see tests 10-12 below for the
-# fallback that finds a real worktree instead of stopping here).
+# 1. No tmux session and no matching worktree -> SAFE-TO-REAP, under a reason distinct from an audited clean worktree.
 out="$(bash "$SP" "no-such-session-$$" 2>&1)"; rc=$?
 has "dead-session-unknown-rundir" "$out" "UNKNOWN (proc gone)"
 has "dead-session-safe" "$out" "SAFE-TO-REAP"
@@ -102,9 +78,7 @@ has "wip-then-safe"    "$out" "SAFE-TO-REAP"
 ok  "wip-exit0"         "$rc" "0"
 ok  "wip-clean-after"   "$(git -C "$R2" status --porcelain | grep -vE '^\?\? \.claude/' | wc -l | tr -d ' ')" "0"
 
-# 4b. --wip commit rejected (e.g. by a pre-commit hook) -> `dirty` must NOT be
-# cleared, so the audit still falls through to NOT-SAFE-TO-REAP instead of
-# printing a contradictory SAFE-TO-REAP right after "do not reap".
+# 4b. --wip commit rejected (pre-commit hook) -> `dirty` must NOT clear; verdict stays NOT-SAFE.
 R2B="$WORK/repo2b"; mkrepo "$R2B"
 mkdir -p "$R2B/.git/hooks"
 printf '#!/bin/sh\nexit 1\n' > "$R2B/.git/hooks/pre-commit"; chmod +x "$R2B/.git/hooks/pre-commit"
@@ -132,11 +106,8 @@ ok  "rescue-exit0"       "$rc" "0"
 RESCUED_DIR="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
 ok "rescue-file-on-disk" "$(cat "$RESCUED_DIR/$S_UNTRACKED/scratch.txt" 2>/dev/null)" "orphan"
 
-# 5b. Two untracked files that would collide under the OLD flatten-slashes-to-
-# underscores naming (src/util.txt and src_util.txt both -> src_util.txt) must
-# both survive --rescue with their real content intact — regression for a
-# data-loss bug where the second cp -f silently clobbered the first while both
-# still printed "rescued".
+# 5b. src/util.txt and src_util.txt (collide under the old flatten-slashes naming) must both survive --rescue
+# intact (data-loss regression: the second cp clobbered the first).
 R3B="$WORK/repo3b"; mkrepo "$R3B"
 mkdir -p "$R3B/src"
 echo "nested" > "$R3B/src/util.txt"
@@ -148,13 +119,8 @@ ok  "collide-rescue-exit0" "$rc" "0"
 ok "collide-nested-preserved" "$(cat "$RESCUED_DIR/$S_COLLIDE/src/util.txt" 2>/dev/null)" "nested"
 ok "collide-flat-preserved"   "$(cat "$RESCUED_DIR/$S_COLLIDE/src_util.txt" 2>/dev/null)" "flat"
 
-# 5c. A path component that already exists as a FILE from an earlier rescue of
-# the SAME session on the SAME day (one $RESCUE_ROOT) must not be silently
-# marked safe when the second rescue can't land: untracked "foo" is rescued,
-# then "foo" is replaced by a directory containing untracked "foo/bar" —
-# `mkdir -p .../foo` now fails because "foo" is a file there, so "foo/bar"
-# can't be copied. Verdict must stay NOT-SAFE-TO-REAP, not flip to SAFE over a
-# silently-lost file (found in review, chatgpt-codex-connector, PR #43).
+# 5c. An earlier rescue left "foo" as a FILE, then "foo" becomes a dir holding untracked foo/bar: mkdir fails, the
+# file can't be copied, and the verdict must stay NOT-SAFE (not flip to SAFE over a lost file; PR #43).
 R3C="$WORK/repo3c"; mkrepo "$R3C"
 echo "v1" > "$R3C/foo"
 S_CONFLICT="$(spawn_in "$R3C")"
@@ -165,8 +131,7 @@ out="$(bash "$SP" "$S_CONFLICT" --rescue 2>&1)"; rc=$?
 has "conflict-second-rescue-not-safe" "$out" "NOT-SAFE-TO-REAP"
 ok  "conflict-second-rescue-exit1"    "$rc" "1"
 
-# 6. Untracked file matching JUNK_RE (e.g. under node_modules/) must NOT count —
-# it is regenerable clutter every session produces, not real work to preserve.
+# 6. Untracked JUNK_RE file (node_modules/) is regenerable clutter and must NOT count.
 R4="$WORK/repo4"; mkrepo "$R4"
 mkdir -p "$R4/node_modules/pkg"; echo x > "$R4/node_modules/pkg/index.js"
 S_JUNK="$(spawn_in "$R4")"
@@ -174,12 +139,8 @@ out="$(bash "$SP" "$S_JUNK" 2>&1)"; rc=$?
 has "junk-untracked-safe" "$out" "SAFE-TO-REAP"
 ok  "junk-untracked-exit0" "$rc" "0"
 
-# 6b. --wip must not sweep in a TRACKED file under a JUNK_RE path (e.g. a
-# committed node_modules/ entry -- unusual but real for vendored deps). The
-# audit above never counts it as dirty, so committing it anyway via a bare
-# `git add -A` would silently include content the operator was never told was
-# there. Only the real, non-junk tracked change should land in the WIP commit;
-# the junk change stays uncommitted (harmless -- it was never blocking reap).
+# 6b. --wip must not sweep in a TRACKED file under a JUNK_RE path (vendored node_modules/ entry): only the real
+# change lands in the WIP commit.
 R4B="$WORK/repo4b"; mkrepo "$R4B"
 mkdir -p "$R4B/node_modules/pkg"; echo v1 > "$R4B/node_modules/pkg/index.js"
 echo one > "$R4B/real.txt"
@@ -195,13 +156,8 @@ has "junk-wip-then-safe" "$out" "SAFE-TO-REAP"
 ok "junk-wip-real-committed" "$(git -C "$R4B" diff --name-only HEAD)" "node_modules/pkg/index.js"
 ok "junk-wip-junk-not-committed" "$(git -C "$R4B" show HEAD:real.txt)" "two"
 
-# 6c. The spawner's own untracked .sessions-init-<remote> sentinel (touched by
-# new-session.sh's kickoff loop at the worktree root, for the life of the
-# session) must NOT count as untracked work -- session-git-prep.sh and
-# session-doctor.sh's _wt_dirty already treat it as clean; before JUNK_RE
-# covered it here, this audit disagreed and reported NOT-SAFE-TO-REAP on the
-# sentinel alone, on every restarted session, regardless of real work (found
-# in review, PR #76).
+# 6c. The spawner's root-level .sessions-init-<remote> sentinel must NOT count as untracked work (it made every
+# restarted session NOT-SAFE; PR #76).
 R4C="$WORK/repo4c"; mkrepo "$R4C"
 echo x > "$R4C/.sessions-init-px-example-0101-0100"
 S_SENTINEL="$(spawn_in "$R4C")"
@@ -209,9 +165,7 @@ out="$(bash "$SP" "$S_SENTINEL" 2>&1)"; rc=$?
 has "sentinel-untracked-safe" "$out" "SAFE-TO-REAP"
 ok  "sentinel-untracked-exit0" "$rc" "0"
 
-# 6d. A sentinel alongside a genuine untracked file must still report
-# NOT-SAFE-TO-REAP for the real file -- the sentinel exclusion must not mask
-# actual unsaved work sitting next to it.
+# 6d. A sentinel next to a genuine untracked file must still report NOT-SAFE for the real file.
 R4D="$WORK/repo4d"; mkrepo "$R4D"
 echo x > "$R4D/.sessions-init-px-example-0101-0100"
 echo "real work" > "$R4D/scratch.txt"
@@ -221,14 +175,8 @@ has "sentinel-plus-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "sentinel-plus-reason"   "$out" "untracked-files"
 ok  "sentinel-plus-exit1"    "$rc" "1"
 
-# 6e. The sentinel exemption is anchored to a ROOT-LEVEL file only -- it must
-# NOT swallow a nested path that merely CONTAINS ".sessions-init-" as a path
-# component (e.g. a real doc at docs/.sessions-init-notes, or a real file
-# inside a directory literally named .sessions-init-output/). new-session.sh
-# only ever creates a single flat sentinel at the worktree root; anything
-# with a "/" in it is real, unrelated content that must still block reap
-# (found by Codex review, PR #77 -- the first fix anchored on (^|/)...(/|$),
-# which matches a path component at ANY depth, not just the root).
+# 6e. The sentinel exemption is anchored to a ROOT-LEVEL file: nested paths containing ".sessions-init-" (docs/.sessions-init-notes,
+# .sessions-init-output/) are real content and must still block reap (PR #77).
 R4E="$WORK/repo4e"; mkrepo "$R4E"
 mkdir -p "$R4E/docs" "$R4E/.sessions-init-output"
 echo "real doc" > "$R4E/docs/.sessions-init-notes"
@@ -239,9 +187,7 @@ has "nested-sentinel-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "nested-sentinel-reason"   "$out" "untracked-files"
 ok  "nested-sentinel-exit1"    "$rc" "1"
 
-# 7. No remote configured -> flagged explicitly, since local-only commits there
-# have nowhere to be pushed to (the finding that prompted this script, see the
-# header comment: @{u}.. silently reports 0 unpushed with no upstream at all).
+# 7. No remote configured -> flagged explicitly (local-only commits have nowhere to be pushed).
 R5="$WORK/repo5"; mkrepo "$R5"
 S_NOREMOTE="$(spawn_in "$R5")"
 out="$(bash "$SP" "$S_NOREMOTE" 2>&1)"; rc=$?
@@ -249,8 +195,7 @@ has "no-remote-flagged" "$out" "repo has NO REMOTE"
 has "no-remote-still-safe" "$out" "SAFE-TO-REAP"   # HEAD is still on branch 'main'
 ok  "no-remote-exit0"   "$rc" "0"
 
-# 8. HEAD not reachable from any named local branch (a commit made after
-# detaching) -> NOT-SAFE-TO-REAP, since reaping would orphan it.
+# 8. HEAD not reachable from any named local branch -> NOT-SAFE (reaping would orphan it).
 R6="$WORK/repo6"; mkrepo "$R6"
 git -C "$R6" checkout --quiet --detach main
 echo "orphan-commit" > "$R6/f.txt"; git -C "$R6" add f.txt
@@ -261,25 +206,14 @@ has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
 
-# 9. --all audits every live px_/oldhost_ session. The synthetic sp-test-*
-# sessions above are NOT px_/oldhost_-prefixed, so --all must skip them.
-# Its EXIT CODE reflects real host state (0 = every audited session safe,
-# 1 = at least one not-safe) — both are valid completions. So assert it
-# completed without a crash/usage error (rc 0 or 1) AND that it never named a
-# synthetic session, rather than pinning a host-state-dependent exit code
-# (asserting 0 spuriously fails on any active host with an in-flight not-safe
-# session — e.g. one with untracked telemetry pending --rescue).
+# 9. --all skips the synthetic sp-test-* sessions (not px_/oldhost_). Its exit code reflects host state, so assert
+# rc is 0 or 1 (no crash) and that no synthetic session is named.
 out="$(bash "$SP" --all 2>&1)"; rc=$?
 if [ "$rc" = 0 ] || [ "$rc" = 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: all-completes-no-crash — got rc=$rc; out: $out"; fi
 ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")" "0"
 
-# 10. FAIL-OPEN REGRESSION: a dead session (no tmux session at all, so
-# rundir_of() fails outright — the COMMON case for a reap, not an edge case)
-# whose name maps to a worktree dir that actually has real, unsaved work in
-# it. Before the fix this printed "SAFE-TO-REAP (nothing to
-# preserve)" purely because the PROCESS was gone, never once looking at the
-# WORKTREE — the exact bug that nearly cost 320 lines of unsaved work in practice (see the header comment). Must now fall back to locating and
-# auditing the worktree, and correctly report NOT-SAFE-TO-REAP.
+# 10. FAIL-OPEN REGRESSION: a dead session whose name maps to a worktree with unsaved work printed SAFE-TO-REAP
+# purely because the process was gone (nearly lost 320 lines). Must fall back to auditing the worktree -> NOT-SAFE.
 WT_BASE="$HOME/.claude/worktrees"; mkdir -p "$WT_BASE"
 R7="$WT_BASE/px-sp-repro-$$"; mkrepo "$R7"
 echo "unsaved work" > "$R7/scratch.txt"    # untracked, real work
@@ -290,13 +224,8 @@ has "deadwt-not-safe"           "$out" "NOT-SAFE-TO-REAP"
 has "deadwt-reason"             "$out" "untracked-files"
 ok  "deadwt-exit1"              "$rc" "1"
 
-# 11. Same fallback path, but the located worktree is genuinely CLEAN -> must
-# fall through to the SAME SAFE-TO-REAP verdict a live session would get
-# (not a separate, weaker message). The session name carries a SECOND
-# underscore in its slug (px_sp_clean_$$) to prove only the FIRST "_" after
-# the px/oldhost prefix is converted to "-" — matching the mapping
-# (px_xx-0101-0101 -> px-xx-0101-0101) — and later underscores in
-# the slug are left alone.
+# 11. Same fallback, worktree CLEAN -> the SAME SAFE verdict as a live session. The slug carries a second underscore
+# (px_sp_clean_$$) to prove only the FIRST "_" after the prefix becomes "-".
 R8="$WT_BASE/px-sp_clean_$$"; mkrepo "$R8"
 S_DEAD_CLEAN="px_sp_clean_$$"
 out="$(bash "$SP" "$S_DEAD_CLEAN" 2>&1)"; rc=$?
@@ -304,13 +233,8 @@ has "deadwt-clean-found" "$out" "located via worktree lookup"
 has "deadwt-clean-safe"  "$out" "SAFE-TO-REAP (work is on branch"
 ok  "deadwt-clean-exit0" "$rc" "0"
 
-# 12. Worktree DIRECTORY suffixed by session-git-prep on a name collision
-# (dirname no longer matches the guessed base exactly), but its BRANCH is
-# still session/<base> — the exact case session-doctor.sh's worktree-stale
-# already special-cases for the same reason (dirname collisions get a -$$
-# suffix; the branch survives unsuffixed). Must still be found by scanning
-# every worktree dir and matching on ITS OWN branch, not just the direct
-# dirname guess, and the printed rundir must be the REAL suffixed path.
+# 12. Worktree DIR suffixed on a name collision (branch still session/<base>): must be found by matching each
+# worktree's own branch, and the printed rundir must be the real suffixed path.
 R9="$WT_BASE/px-sp-collide-$$-9999"; mkrepo "$R9"
 git -C "$R9" checkout --quiet -b "session/px-sp-collide-$$"
 echo "unsaved" > "$R9/scratch.txt"
@@ -320,14 +244,8 @@ has "deadwt-collide-found-suffixed" "$out" "$R9"
 has "deadwt-collide-not-safe"       "$out" "NOT-SAFE-TO-REAP"
 ok  "deadwt-collide-exit1"          "$rc" "1"
 
-# 13. Collision case where the dirname-guessed dir and the branch-owning dir
-# are TWO DIFFERENT, COEXISTING directories: $dir/<base> exists, is clean,
-# and sits on an unrelated branch (left behind by session-git-prep's -$$
-# rename on collision — see the worktree_of() comment); the REAL worktree is
-# $dir/<base>-<pid>, dirty, on branch session/<base>. A naive dirname-first
-# lookup would return the clean decoy and report SAFE-TO-REAP while the
-# actual dirty worktree goes unaudited — the exact fail-open class this
-# whole fix targets. Branch match must win over the dirname match.
+# 13. Collision with TWO coexisting dirs: a clean decoy $dir/<base> on an unrelated branch and the dirty real
+# worktree $dir/<base>-<pid> on session/<base>. Branch match must win over dirname (else fail-open).
 R10="$WT_BASE/px-sp-decoy-$$"; mkrepo "$R10"   # clean, dirname matches guess exactly
 R11="$WT_BASE/px-sp-decoy-$$-5555"; mkrepo "$R11"  # dirty, dirname does NOT match
 git -C "$R11" checkout --quiet -b "session/px-sp-decoy-$$"
@@ -339,5 +257,4 @@ has "decoy-not-safe"                  "$out" "NOT-SAFE-TO-REAP"
 has "decoy-reason"                    "$out" "untracked-files"
 ok  "decoy-exit1"                     "$rc" "1"
 
-echo "session-preserve: pass=$pass fail=$fail"
-[ "$fail" -eq 0 ]
+finish "session-preserve"
