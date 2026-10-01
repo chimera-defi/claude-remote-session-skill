@@ -56,47 +56,37 @@ session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
                                        # bring a DEAD session back on its own unit + transcript
 ```
 
-**A dead session comes back with `session-resume`, never by hand.** Every agent, Codex
-included: do not type `claude --resume <uuid> …` into a new tmux pane and do not
-`systemctl --user start` the unit bare. A hand relaunch drops the unit's
-`--dangerously-skip-permissions` and binary, so the session stalls on approval prompts
-nobody sees; a bare unit start can open a fresh conversation instead of the old one.
-`session-resume` resumes the session's own transcript by uuid through its own unit, keeps
-the unit's launch flags, and refuses while anything still holds the session. Run
-`--dry-run` first. Steps: header comment of `scripts/session-resume.sh`, pinned by
+**A dead session comes back with `session-resume`, never by hand** (every agent, Codex
+included). Do not type `claude --resume <uuid> …` into a new tmux pane or
+`systemctl --user start` the unit bare: a hand relaunch drops the unit's
+`--dangerously-skip-permissions` and binary (stalls on unseen approval prompts), and a bare
+start can open a fresh conversation. `session-resume` resumes the session's own transcript
+by uuid through its own unit, keeps its launch flags, and refuses while anything still holds
+the session. Run `--dry-run` first. Steps: header of `scripts/session-resume.sh`, pinned by
 `tests/test-session-resume.sh`.
 
-`reap` refuses protected names outright, and refuses a session with unlanded/uncommitted
-work unless `--force` — rescue first via `session-preserve <name> --rescue --wip`. It also
-removes that session's own `~/.claude/worktrees/<name>` git worktree by default (branch
-kept; `--keep-worktree` opts out); guards: `references/session-lifecycle.md`.
+`reap` refuses protected names, and sessions with unlanded/uncommitted work unless `--force`
+(rescue first: `session-preserve <name> --rescue --wip`). It also removes the session's own
+`~/.claude/worktrees/<name>` worktree (branch kept; `--keep-worktree` opts out); guards:
+`references/session-lifecycle.md`.
 
 ### Codex Backend
 
-`new-session --backend codex` uses the same session envelope as Claude (tmux session,
-systemd user unit, start script, alias/name parsing, telemetry, `--task`/`--task-file`
-kickoff, `session-send`/`session-handoff` landing verification, `session-doctor reap`
-cleanup). The backend switch and Codex command are in `scripts/new-session.sh`; pane-state
-detection is in `scripts/session-handoff.sh`.
+`new-session --backend codex` shares Claude's envelope (tmux, systemd unit, start script,
+alias/name parsing, telemetry, `--task`/`--task-file` kickoff, `session-send`/
+`session-handoff` verification, `session-doctor reap`). Switch and command:
+`scripts/new-session.sh`; pane-state detection: `scripts/session-handoff.sh`. Host defaults
+in `$CRSS_HOME/config.sh`: `CRSS_SESSION_BACKEND=codex` (generic default: Claude),
+`CRSS_CODEX_BIN`, `CRSS_CODEX_ARGS` (model/sandbox/approval flags — check `codex --help`
+first). Skipped for Codex: model/profile pinning, `BUILDER_TOOLS`, `advisor`, `--settings`,
+remote-control registration, the global `.claude/skills` symlink; Claude registry and
+transcript history stay Claude-specific.
 
-Host defaults live in `$CRSS_HOME/config.sh`: `CRSS_SESSION_BACKEND=codex` changes the
-default (generic default: Claude), `CRSS_CODEX_BIN` selects the binary, `CRSS_CODEX_ARGS`
-supplies model, sandbox, and approval flags. Check the installed `codex --help` before
-setting those args.
+Script lives at `~/.local/bin/new-session`; if missing, recreate it from
+`references/fallback-recipe.md` (or copy `scripts/new-session.sh`).
 
-Claude-only features do not apply to Codex sessions: model/profile pinning,
-`BUILDER_TOOLS`, `advisor`, `--settings`, remote-control registration, and the global
-`.claude/skills` symlink/bootstrap are skipped. `session-doctor` tmux/systemd/worktree/reap
-handling covers Codex sessions; Claude registry and transcript history stay Claude-specific.
-
-Script lives at `~/.local/bin/new-session`. If it's missing, recreate it from
-`references/fallback-recipe.md` (or copy `scripts/new-session.sh` directly).
-
-**Deployed copies drift.** The skill dir and `/create-session` symlink into this repo's
-canonical checkout; `~/.local/bin/*` are real copies — redeploy after landing a fix
-(`install -m 755 scripts/<x>.sh ~/.local/bin/<x>`) or it stays inert, and **diff before
-overwriting** or you silently revert a deployed-only hand-patch (how `advisor` fell out of
-`BUILDER_TOOLS`). Full procedure: `CLAUDE.md` "Deploying".
+**Deployed copies drift:** `~/.local/bin/*` are real copies of `scripts/`. Diff before
+`install`, and redeploy after landing — `CLAUDE.md` "Deploying".
 
 ## Key Rules
 
@@ -132,28 +122,20 @@ generic defaults in those two files. What matters most for a fresh spawn:
   *when they know what done looks like*; an open-ended ask is where they drift.
 - **A stop rule that names the channel.** Say when to keep going, when to stop and ask, and
   *through what*: a question left only in the child's own pane is a stall, not an
-  escalation. Default wording: *"When a step doesn't need me, keep going and put status in
-  the same message as your next action. Stop and ask only if you can't continue without a
-  decision from me, or before anything destructive (deleting data, force-pushing, touching
-  anything outside this repo). Anything genuinely my call goes to me via `session-send
-  <parent-session> --file <f>` — a numbered list with your recommended option. Decide
-  defaults yourself when there's a normal recommended answer; report them afterwards."*
+  escalation. Default wording (via `session-send <parent-session> --file <f>`, numbered list
+  with a recommended option): [`handoff/references/massaging.md`](handoff/references/massaging.md).
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Delegate every independent slice.** Research, per-file edits, and verification each go
-  to their own subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
-  `advisor`); don't delegate a builder's own verification back to itself, and brief each one
-  completely — only the prompt string crosses over. Second opinion on the orchestrator's own
-  work: Fable (see Key Rules).
-- **Context hygiene.** Have subagents write large research, logs, or diffs to files and
-  return a short summary plus the file path, instead of dumping it inline.
+- **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
+  verification each go to their own subagent (`subagent_type: builder` or `model: "sonnet"`,
+  which keeps `advisor`); brief each completely — only the prompt string crosses over — and
+  don't delegate a builder's own verification back to itself. Have subagents write large
+  output to files and return a short summary plus the path; check each one's evidence before
+  accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md
   checklist with the finish line at the top; update it as you go; re-read it after any
   compaction, before acting."* Context gets summarized; the file doesn't.
-- **Subagents with evidence checks for large audits/migrations.** *"Give each slice its own
-  subagent (`subagent_type: builder`), have it write large output to files, and return a
-  short summary; check each one's evidence before accepting its report."*
 - **Eval/hillclimb campaigns need a budget gate.** For prompt/model/grader/harness loops,
   use the compact add-on in
   [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
@@ -193,12 +175,10 @@ recognising older sessions.
 - **`--alias` is per-spawn.** Sessions habitually pass the *task* (`--alias crss-prs`), so it
   no longer rewrites the folder default. Add `--set-default-alias` only when the name
   describes the **folder**, not the task.
-- **Protected folders are never aliased**: a folder matching your host's
-  `CRSS_ALIAS_PROTECT_NAMES` (e.g. `my-other-bridge` — see
-  `examples/crss-overlay/config.sh.example`) keeps its full name so `session-doctor` can
-  protect it by that token. (Narrower than reap's own `CRSS_PROTECT_NAMES`, which also
-  covers `claude-remote` bridge sessions — this repo's folder merely contains that string
-  and still shortens normally.)
+- **Protected folders are never aliased**: a folder matching `CRSS_ALIAS_PROTECT_NAMES`
+  (see `examples/crss-overlay/config.sh.example`) keeps its full name so `session-doctor`
+  can protect it by that token. (Narrower than reap's `CRSS_PROTECT_NAMES`, which also covers
+  `claude-remote` bridge sessions; this repo's folder still shortens normally.)
 - **Alias values are validated (anti-poisoning)** on read, write, and store upsert, so a
   stored alias that looks like a full session name can't produce
   `<prefix>-<prefix>-…-MMDD-MMDD`. Rules: `scripts/session-alias.sh`, pinned by
@@ -228,19 +208,21 @@ a broken repo.
 
 | Question | Command | Notes |
 |---|---|---|
-| Is the fleet/server healthy? | `fleet-status` (`--sessions`, `--host`) | composes `session-doctor report`, `worktree-stale`, a host health snapshot (prints its age), and a token-savings tool's summary, where the host has them. On demand only. |
+| Is the fleet/server healthy? | `fleet-status` (`--sessions`, `--host`) | composes `session-doctor report`, `worktree-stale`, a host health snapshot (prints its age) and a token-savings summary, where the host has them. On demand only. |
 | Which sessions are older than N? | `session-registry --older-than 3d` | age = *first-ever* spawn from `~/.sessions/session-starts.log`, so a restart doesn't reset it |
 | What ran in this folder before / now? | `session-doctor history <folder-or-substring>` | NOW (live, idle mins) + PAST (from transcripts, which outlive worktrees) + branch/landed/dirty |
 | Relay into an idle/stale session | `session-compact before-relay <name> "task"` | compacts, verifies, then relays; fails closed. Don't compact under ~60 min idle — the 1h cache is still live |
 | Recycle a bloated session | `session-preserve <s> --rescue --wip` → must print `SAFE-TO-REAP` | then stop the unit and respawn; **never reap before this** |
 | Session went silent | `tmux capture-pane -p -t <s>` | bloat vs. hook wedge vs. stuck menu — see runbooks |
-| Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes that session's own entry unless `--keep-registry` — see `references/session-lifecycle.md` |
-| Clean up a reaped session's leftover worktree | `session-doctor worktree-stale` | for one NOT already handled — `reap <name>` removes its own worktree automatically (`--keep-worktree` to skip); see `references/session-lifecycle.md` |
+| Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes its own entry unless `--keep-registry` |
+| Clean up a reaped session's leftover worktree | `session-doctor worktree-stale` | only for one NOT already handled — `reap <name>` removes its own worktree (`--keep-worktree` to skip) |
+
+Both: `references/session-lifecycle.md`. Host-specific ops tooling lives outside this repo.
 
 Host-specific ops tooling lives outside this repo.
 
-Runbooks for compaction, recycling, hook-wedged sessions, and stuck-menu sessions:
-[`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping and
+Runbooks (compaction, recycling, hook-wedged and stuck-menu sessions):
+[`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping,
 registry expiry: [`references/session-lifecycle.md`](references/session-lifecycle.md).
 
 Two rules from those runbooks bite hardest
@@ -258,33 +240,29 @@ This repo is public and generic. Anything specific to one machine or operator (p
 vocabulary) lives in the overlay directory `$CRSS_HOME` (default `~/.config/crss`), never
 in this repo:
 
-| File | Holds | Read by |
-|---|---|---|
-| `config.sh` | `CRSS_*=value` settings (parsed, never sourced) | the scripts that load it (`new-session`, `session-doctor`, `session-handoff`, `session-preserve`, `session-registry`, `session-alias`, `session-resume`, `fleet-status`, telemetry scripts); not `session-compact`, `session-git-prep`, `session-send` |
-| `local.md` | host prose: operator handle, escalation channel, project index, routing | agents, via a tiny user rules file that `@`-imports it |
-| `leak-denylist.txt` | host-private terms that must never reach this repo | `tests/test-no-host-leaks.sh`, only when `CRSS_LEAK_DENYLIST` is set |
+| File | Holds |
+|---|---|
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced); loaded by most `session-*` scripts, not `session-compact`, `session-git-prep`, `session-send` |
+| `local.md` | host prose: operator handle, escalation channel, project index, routing; agents read it via a tiny user rules file that `@`-imports it |
+| `leak-denylist.txt` | host-private terms that must never reach this repo; read only by `tests/test-no-host-leaks.sh` when `CRSS_LEAK_DENYLIST` is set |
 
-To add a host fact: machine-readable knob goes in `config.sh` (see
-`examples/crss-overlay/config.sh.example`), human/agent prose goes in `local.md`; do not edit
-`SKILL.md` or any file in this repo. Step-by-step setup, the denylist term syntax, and how to
-run the stricter local leak check are in
+To add a host fact: knobs go in `config.sh` (see `examples/crss-overlay/config.sh.example`),
+prose in `local.md`; never edit `SKILL.md` or any file in this repo. Setup, the loader's
+script list, denylist syntax and the stricter leak check:
 [`examples/crss-overlay/README.md`](examples/crss-overlay/README.md). `session-doctor overlay`
-reports whether the overlay is healthy.
+reports overlay health.
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
-For durable facts other sessions should inherit, most hosts wire up a shared memory
-convention (a memory-store repo, a knowledge tool) through the user-level
-`~/.claude/CLAUDE.md` every session already loads; its details (root, namespace, sync
-command, citation format) are there or in `$CRSS_HOME/local.md`, not here.
-
-"Who else is working here right now" is a different question — use
-`session-doctor history`, which derives presence from live processes.
+Durable facts other sessions should inherit go through the host's shared memory convention
+(root, namespace, sync command, citation format), set up in the user-level
+`~/.claude/CLAUDE.md` or `$CRSS_HOME/local.md` — not restated here. "Who else is working
+here right now" is a different question: `session-doctor history` derives presence from
+live processes.
 
 ## Sessions agent scope
 
 Some hosts run a bounded sessions-management agent (session ops only, no project work),
-enforced by its own `.claude/CLAUDE.md`. If yours does — see your host's
-`$CRSS_HOME/local.md` — and project work lands there anyway: write a handoff to that
-project's `memory/`, spawn or connect to the project session (use the `handoff` skill),
-and tell the user which session has it — don't do the work yourself.
+enforced by its own `.claude/CLAUDE.md` (see `$CRSS_HOME/local.md`). If project work lands
+there: write a handoff to that project's `memory/`, spawn or connect to the project session
+(`handoff` skill), and tell the user which session has it — don't do the work yourself.

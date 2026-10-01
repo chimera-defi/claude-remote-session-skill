@@ -52,7 +52,7 @@ new-session my-project --dry-run    # print resolved names and exit (no session 
 new-session --help                  # print usage and exit (no session spawned)
 ```
 
-The session appears in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs`, set via `CRSS_SESSION_PREFIX` — e.g. `cs-my-project-0101-0630`); see "Naming convention" below.
+The session appears in the Claude Code app under Remote sessions as `<prefix>-<alias>-<MMDD-HHMM>` (default `<prefix>` is `cs` — e.g. `cs-my-project-0101-0630`); see "Naming convention". Full flag list and recipe: `SKILL.md`.
 
 ## Model default
 
@@ -92,16 +92,12 @@ you pass a bare alias *explicitly* — never for a role default.
 | start script | `~/.local/bin/<prefix>-<alias>-<MMDD-HHMM>-start.sh` |
 | systemd service | `~/.config/systemd/user/<prefix>-<alias>-<MMDD-HHMM>.service` |
 
-Name-first, date last (`MMDD-HHMM`). Short aliases keep the whole name inside the
-mobile-list window and group by project. `<alias>` is the folder name as-is when short,
-otherwise a short inferred/persisted acronym (or an explicit `--alias`) — resolution rules
-in `SKILL.md`. `<prefix>` defaults to `cs` (`CRSS_SESSION_PREFIX`); old prefixes go in
-`CRSS_LEGACY_PREFIXES` so `session-doctor` keeps recognising older sessions — see
-`examples/crss-overlay/config.sh.example`.
+Alias resolution, prefix (`CRSS_SESSION_PREFIX`, `CRSS_LEGACY_PREFIXES`) and the rest of the
+naming rules: `SKILL.md` "Naming".
 
 ## How to connect
 
-Open Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`. Conversation context survives restarts (`--continue`) and reboots (systemd user service).
+Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`. Context survives restarts (`--continue`) and reboots (systemd user service).
 
 ## Agent instructions in this repo
 

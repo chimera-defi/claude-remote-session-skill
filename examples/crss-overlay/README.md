@@ -1,12 +1,10 @@
 # crss host-local overlay
 
-crss (this repo) is installed the same way on every host: the scripts under
-`scripts/` are copied flat into `~/.local/bin`, and `SKILL.md`/`handoff/`/
-`references/` are symlinked into `~/.claude/skills` from a canonical
-checkout. Everything host-specific — which paths repo/utility sessions live
-under, which `claude` binary to launch, which session names must never be
-reaped, extra scaffolding paths to ignore — lives OUTSIDE the repo, in a
-small local overlay directory, so the public skill stays generic.
+crss's scripts are copied flat into `~/.local/bin` and `SKILL.md`/`handoff/`/`references/`
+are symlinked into `~/.claude/skills` from a canonical checkout (see `CLAUDE.md`
+"Deploying"). Everything host-specific — session paths, which `claude` binary, session names
+never to reap, extra scaffolding paths to ignore — lives OUTSIDE the repo in a small local
+overlay directory, so the public skill stays generic.
 
 ## What `CRSS_HOME` is
 
@@ -40,6 +38,9 @@ So by default it's `~/.config/crss`. Inside it:
   CRSS_LEAK_DENYLIST=~/.config/crss/leak-denylist.txt bash tests/test-no-host-leaks.sh
   ```
 
+  Any hit names the file and line: fix the file in the repo (make it generic), not the
+  denylist, and run this before every PR that touches docs, scripts, or tests.
+
   CI never sets `$CRSS_LEAK_DENYLIST`, so it only runs the generic,
   host-agnostic checks (absolute home paths, emails, github owners, …); this
   file adds host-specific coverage locally, and — being outside the repo —
@@ -58,15 +59,13 @@ mkdir -p ~/.claude/rules
 printf '%s\n' '@~/.config/crss/local.md' > ~/.claude/rules/crss-host.md
 ```
 
-The last two steps make `local.md` load into every session on the host
-(Claude Code loads `~/.claude/rules/*.md`, including `@`-imports). Keep
-`crss-host.md` tiny — it loads into every session's context — and put the
-content in `local.md`, which only the pointer file references.
+The last two steps load `local.md` into every session (Claude Code loads
+`~/.claude/rules/*.md`, including `@`-imports). Keep `crss-host.md` tiny — it loads into
+every session's context — and put the content in `local.md`.
 
-`new-session` prints an `overlay: <path> (config: found|absent, rules:
-found|absent)` line on every spawn, and `session-doctor overlay` (also
-folded into the default `session-doctor` report) gives a fuller health
-check, so a missing or half-set-up overlay is visible rather than silent.
+`new-session` prints an `overlay: <path> (config: found|absent, rules: found|absent)` line
+on every spawn; `session-doctor overlay` (also in the default `session-doctor` report) is
+the fuller health check.
 
 ## How to add a host fact
 
@@ -82,40 +81,22 @@ check, so a missing or half-set-up overlay is visible rather than silent.
      `session-git-prep` and `session-send` do not (set their variables in the environment).
    - Prose for a human or agent (who the operator is, where to escalate, which project
      lives where, which delegate to use): add it to `$CRSS_HOME/local.md`.
-2. Do NOT put either in `SKILL.md`, `references/`, a script, or a test in this repo. It is
+2. Do NOT put either in `SKILL.md`, `references/`, a script, or a test in this repo — it is
    public; host facts there are leaks.
-3. Verify: run `session-doctor overlay` (shows whether `config.sh` and the rules pointer
-   are found) and start a session or run the affected script.
-
-## How to add a leak-denylist term
-
-1. Append one line to `$CRSS_HOME/leak-denylist.txt`: an ERE for the private word, for
-   example `my-private-project` (comments start with `#`). Optionally add a TAB and a
-   comma-separated list of path globs where the term is legitimately allowed.
-2. Run the stricter local check from a repo checkout:
-
-   ```sh
-   CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
-   ```
-
-   Any hit names the file and line; fix the file in the repo (make it generic), not the
-   denylist. Run this before every PR that touches docs, scripts, or tests.
+3. Verify: `session-doctor overlay` (shows whether `config.sh` and the rules pointer are
+   found), then start a session or run the affected script.
 
 ## Parse, never source
 
-`config.sh` is **parsed**, not sourced: several crss scripts run under
-`set -u`/`set -e`, so one bad line in a *sourced* config could kill every
-session-\* script on the host at once — including the doctor that's meant
-to diagnose it. Each script instead reads `config.sh` line by line and only
-accepts lines matching `^CRSS_[A-Z0-9_]+=<value>`. The value is taken
-**literally**: one optional layer of matching single or double quotes is
-stripped, and nothing is ever `eval`'d, shell-expanded (`$VAR`, `~`), or
-command-substituted (`$(...)`/`` `...` `` are kept as inert text). Anything
-that doesn't match — comments, blank lines, a lowercase or non-`CRSS_` name,
-a typo — is silently ignored. An environment variable of the same name,
-already set before the script runs, always wins over the file. A missing or
-unreadable file is fine: every variable has a built-in generic default, so
-scripts behave normally with no overlay at all.
+`config.sh` is **parsed**, not sourced: several scripts run under `set -u`/`set -e`, so one bad line
+in a *sourced* config could kill every session-\* script on the host, including the doctor
+meant to diagnose it. Each script reads it line by line and accepts only lines matching
+`^CRSS_[A-Z0-9_]+=<value>`. The value is **literal**: one optional layer of matching
+single or double quotes is stripped; nothing is `eval`'d, shell-expanded (`$VAR`, `~`) or
+command-substituted (`$(...)`/`` `...` `` stay inert text). Anything else — comments, blank
+lines, lowercase or non-`CRSS_` names, typos — is silently ignored. An environment variable
+of the same name, set before the script runs, always wins. A missing or unreadable file is
+fine: every variable has a generic default.
 
 See `config.sh.example` in this directory for the full list of variables,
 each documented with its default.

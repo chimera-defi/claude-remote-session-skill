@@ -35,9 +35,7 @@ if it doesn't, write the finish line down yourself before starting.
 ## When to keep going vs. stop and ask
 
 Keep going when a step doesn't need the operator; put status notes in the same message as
-your next action.
-
-Stop and ask **only** when:
+your next action. Stop and ask **only** when:
 - you can't continue without a decision that is genuinely the operator's (conflicting
   requirements, a trade-off the brief doesn't settle), or
 - the next step is destructive or outward-facing: deleting branches/worktrees/files you
@@ -45,8 +43,8 @@ Stop and ask **only** when:
   shared checkout, deleting registry entries, or changing anything outside this repo other
   than the documented redeploy targets.
 
-A test failing for a reason you can explain is not a reason to stop — fix it. A test failing
-for a reason you *can't* explain is.
+A test failing for a reason you can explain is not a reason to stop — fix it; one you
+*can't* explain is.
 
 ## Anti-patterns this repo has already paid for
 
@@ -94,22 +92,20 @@ Each of these has happened here. Don't repeat them.
 
 ## Large audits and migrations: subagents, then verify
 
-For work that spans many files or many sessions (a doc audit, a fleet-wide check, a
-multi-script migration), give each independent slice to its own subagent. Spawn them with
-`subagent_type: builder` or `model: "sonnet"` — a subagent that inherits an Opus 5.x model
-silently loses the `advisor` tool.
+For work spanning many files or sessions (doc audit, fleet-wide check, multi-script
+migration), give each independent slice its own subagent, spawned with
+`subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model silently
+loses `advisor`.
 
-**Check each subagent's evidence before accepting its report.** A summary saying "fixed" or
-"no issues" is a claim, not a result: re-run the command it cites, open the file:line it
-names, or diff the change yourself. If it gave no evidence, treat the item as unverified.
-Consolidate the verified results in one table at the end.
+**Check each subagent's evidence before accepting its report.** "Fixed" or "no issues" is a
+claim: re-run the command it cites, open the file:line it names, or diff the change. No
+evidence means unverified. Consolidate verified results in one table at the end.
 
-**The Opus orchestrator's own second opinion is Fable, not a Sonnet builder.** Opus 5.x has
-no `advisor` tool, and a Sonnet builder would just be Sonnet re-checking its own reasoning.
-Spawn Fable directly — `Agent({description, prompt, model: "fable"})` — at the forks
-`advisor` would otherwise cover: before a risky or destructive action, before committing to
-a design under real ambiguity, before declaring a multi-step task done. A Sonnet
-orchestrator keeps using `advisor` natively; this is specifically the Opus path.
+**The Opus orchestrator's second opinion is Fable, not a Sonnet builder** (which would just
+re-check its own reasoning; Opus 5.x has no `advisor`): `Agent({description, prompt, model:
+"fable"})` at the forks `advisor` would cover — before a risky or destructive action, a
+design under real ambiguity, or declaring a multi-step task done. A Sonnet orchestrator
+keeps using `advisor`.
 
 ## Long runs: keep a task file
 
@@ -134,9 +130,9 @@ After merge, for each changed deployable:
 | `agents/<name>.md` | `~/.claude/agents/<name>.md` | `diff` first, then `install -m 644` |
 | `SKILL.md`, `handoff/`, `references/`, `.claude/commands/create-session.md` | symlinked from the canonical checkout | canonical checkout must be on `origin/main` |
 
-If a diff shows the deployed copy has changes the repo lacks, stop — that's a deployed-only
-patch that must be landed in the repo first, not overwritten.
+If a diff shows the deployed copy has changes the repo lacks, stop — land that deployed-only
+patch in the repo first; don't overwrite it.
 
 The skill docs are only live once the **canonical checkout** reflects `origin/main`. If it
 has diverged or carries someone else's uncommitted work, don't reset it — report it to the
-operator (see "stop and ask").
+operator.
