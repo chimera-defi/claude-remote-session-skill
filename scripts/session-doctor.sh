@@ -215,6 +215,9 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=yes; shift;;
     --keep-registry) KEEP_REGISTRY=yes; shift;;
     --keep-worktree) KEEP_WORKTREE=yes; shift;;
+    # An unrecognized --flag must fail closed: a typo'd or assumed flag such as
+    # `reap <name> --dry-run` was silently treated as a positional and the reap ran.
+    --*) echo "session-doctor: unknown option '$1'" >&2; exit 2;;
     *) ARGS+=("$1"); shift;;
   esac
 done
