@@ -226,6 +226,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 set -- "${ARGS[@]}"
+# --dry-run is only accepted where it is honored: reap (preview) and the two
+# modes that are already dry by default. Anywhere else (e.g. archive-ignored,
+# which writes under ~/backups) it would be silently ignored, so refuse it.
+if [ "$DRY_RUN" = yes ]; then
+  case "$MODE" in
+    reap|reap-local|registry-prune) ;;
+    *) echo "session-doctor: --dry-run is not supported for $MODE" >&2; exit 2;;
+  esac
+fi
 # --dry-run means "change nothing"; --apply (registry-prune) and reap-local's
 # --force mean "change things". Together they are contradictory, so refuse
 # rather than guess which one the operator meant.

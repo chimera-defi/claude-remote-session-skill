@@ -45,6 +45,10 @@ ok "dry-run-apply-rejected" "$rc" 2
 has "dry-run-apply-msg" "$out" "--dry-run cannot be combined with --apply"
 out="$(bash "$SD" reap-local --dry-run --force 2>&1)"; rc=$?
 ok "dry-run-reap-local-force-rejected" "$rc" 2
+# ...and is refused by modes that would otherwise ignore it (archive-ignored writes under ~/backups).
+out="$(bash "$SD" archive-ignored "$HERE/.." --dry-run 2>&1)"; rc=$?
+ok "dry-run-archive-ignored-rejected" "$rc" 2
+has "dry-run-archive-ignored-msg" "$out" "--dry-run is not supported for archive-ignored"
 for d in 30 08; do
   out="$(bash "$SD" registry-stale --days $d 2>&1)"
   hasnt "days-$d-not-rejected" "$out" "requires a non-negative integer"
