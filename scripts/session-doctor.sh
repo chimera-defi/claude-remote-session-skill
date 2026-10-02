@@ -10,7 +10,7 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree]
+#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run]
 #                                           # one-shot teardown of a named ALIVE session (tmux+unit);
 #                                           # refuses on unlanded work unless --force; also deletes
 #                                           # that session's registry entry (by title == base name)
@@ -20,7 +20,9 @@
 #                                           # worktree (branch kept) unless --keep-worktree — see
 #                                           # _reap_remove_worktree's own header comment for the
 #                                           # guards (dirty refusal, in-use-by-another-unit, caller's
-#                                           # own cwd, primary checkout) that make this safe
+#                                           # own cwd, primary checkout) that make this safe.
+#                                           # --dry-run runs the same refusal checks, then prints
+#                                           # what would be torn down and changes nothing
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh registry-prune [--days N] [--apply]
 #                                           # same candidate set as registry-stale; DRY-RUN by default
@@ -198,6 +200,7 @@ TSV=no
 APPLY=no
 KEEP_REGISTRY=no
 KEEP_WORKTREE=no
+DRY_RUN=no
 MINUTES=""
 DAYS_SET=no
 MINUTES_SET=no
@@ -215,6 +218,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=yes; shift;;
     --keep-registry) KEEP_REGISTRY=yes; shift;;
     --keep-worktree) KEEP_WORKTREE=yes; shift;;
+    --dry-run) DRY_RUN=yes; shift;;
     # An unrecognized --flag must fail closed: a typo'd or assumed flag such as
     # `reap <name> --dry-run` was silently treated as a positional and the reap ran.
     --*) echo "session-doctor: unknown option '$1'" >&2; exit 2;;
@@ -222,6 +226,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 set -- "${ARGS[@]}"
+# --dry-run means "change nothing"; --apply (registry-prune) and reap-local's
+# --force mean "change things". Together they are contradictory, so refuse
+# rather than guess which one the operator meant.
+if [ "$DRY_RUN" = yes ] && { [ "$APPLY" = yes ] || { [ "$MODE" = reap-local ] && [ "$FORCE" = yes ]; }; }; then
+  echo "session-doctor: --dry-run cannot be combined with $([ "$APPLY" = yes ] && echo --apply || echo --force) for $MODE" >&2
+  exit 2
+fi
 # --minutes and --days both select an idle-report threshold — giving both is
 # ambiguous (which one wins?), not additive, so reject it outright instead of
 # silently picking one.
@@ -1891,6 +1902,33 @@ else:
     if [ -n "$base" ] && ! _reap_safe_base "$base"; then
       echo "session-doctor: refusing to reap '$NAME' — unsafe derived session base '$base'" >&2
       exit 2
+    fi
+    # --dry-run: every refusal above has already run (so a refused reap still
+    # previews as refused), now report what the real reap would touch and stop
+    # before the first mutation. No registry call: the preview stays offline.
+    if [ "$DRY_RUN" = yes ]; then
+      echo "(DRY-RUN — nothing changed; re-run without --dry-run to reap)"
+      if tmux has-session -t "$NAME" 2>/dev/null; then
+        echo "  would kill tmux session: $NAME"
+      else
+        echo "  no live tmux session '$NAME' (ok)"
+      fi
+      if [ -n "$base" ]; then
+        echo "  would disable ${base}.service and archive its unit/start-script files"
+        [ "$KEEP_REGISTRY" = yes ] || echo "  would delete the registry entry titled '$base', if any"
+        if [ "$KEEP_WORKTREE" != yes ]; then
+          dry_wt="$(_wt_resolve_for_base "$base")"
+          if [ -n "$dry_wt" ] && [ -d "$dry_wt" ]; then
+            echo "  would remove worktree (branch kept, subject to reap's worktree guards): $dry_wt"
+          else
+            echo "  worktree: none found for '$base' (ok)"
+          fi
+        fi
+      else
+        echo "  '$NAME' does not match a recognised session prefix (${_crss_prefix_re}) — no systemd unit to tear down" >&2
+      fi
+      echo "would-reap '$NAME'"
+      exit 0
     fi
     tmux kill-session -t "$NAME" 2>/dev/null \
       && echo "  tmux session killed: $NAME" || echo "  no live tmux session '$NAME' (ok)"
