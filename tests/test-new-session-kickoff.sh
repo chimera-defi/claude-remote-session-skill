@@ -76,7 +76,7 @@ cat > "$T/tmuxstub/tmux" <<'EOS'
 exec "$REAL_TMUX" "$@"
 EOS
 chmod +x "$T/tmuxstub/tmux"
-export REAL_TMUX="$(command -v tmux)"
+REAL_TMUX="$(command -v tmux)"; export REAL_TMUX
 STUB_PANE="GPT-5.5 retires on October 14, 2026.
 1. Try new model
 2. Use existing model" PATH="$T/tmuxstub:$PATH" run "menu" >"$T/rc"
