@@ -105,6 +105,10 @@ def attempt(hook):
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp, mode)
+        # One-time backup BEFORE the re-check, so its copy time is not an unchecked window.
+        bak = cfg + ".crss-bak"
+        if not os.path.exists(bak):
+            shutil.copy2(cfg, bak)
         if hook:
             subprocess.run(hook, shell=True, check=False)
         # The CLI takes no lock we can share, so detect a concurrent write by
@@ -116,9 +120,6 @@ def attempt(hook):
         except OSError:
             os.unlink(tmp)
             return False
-        bak = cfg + ".crss-bak"
-        if not os.path.exists(bak):
-            shutil.copy2(cfg, bak)
         os.replace(tmp, cfg)
     except BaseException:
         try: os.unlink(tmp)
