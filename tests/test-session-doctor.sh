@@ -12,7 +12,7 @@ SD="$HERE/../scripts/session-doctor.sh"
 source "$SD"   # must NOT run report (source-guard)
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"; for s in wtlive wtpidlive lclive reaplivetest; do tmux kill-session -t "px_$s-0101-0900" 2>/dev/null; done' EXIT
+trap 'rm -rf "$TMP"; for s in wtlive wtpidlive lclive reaplivetest reapdrytest; do tmux kill-session -t "px_$s-0101-0900" 2>/dev/null; done' EXIT
 # systemctl stub: always "active", logs its argv (reap-local must not trust is-active; reap must daemon-reload).
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "${SYSTEMCTL_LOG:-/dev/null}"\nexit 0\n' > "$TMP/stub/systemctl"; chmod +x "$TMP/stub/systemctl"
@@ -36,9 +36,19 @@ ok "days-nonnumeric-rejected" "$rc" 2
 hasnt "days-nonnumeric-no-traceback" "$out" Traceback
 has "days-nonnumeric-clean-msg" "$out" "--days requires a non-negative integer"
 # An unknown --flag must be rejected before any mode runs (reap <name> --dry-run once reaped for real).
-out="$(bash "$SD" reap px_nonexistent-0101-0900 --dry-run 2>&1)"; rc=$?
+out="$(bash "$SD" reap px_nonexistent-0101-0900 --dryrun 2>&1)"; rc=$?
 ok "reap-unknown-flag-rejected" "$rc" 2
-has "reap-unknown-flag-msg" "$out" "unknown option '--dry-run'"
+has "reap-unknown-flag-msg" "$out" "unknown option '--dryrun'"
+# --dry-run is contradictory with flags that mean "mutate": refused, not guessed.
+out="$(bash "$SD" registry-prune --dry-run --apply 2>&1)"; rc=$?
+ok "dry-run-apply-rejected" "$rc" 2
+has "dry-run-apply-msg" "$out" "--dry-run cannot be combined with --apply"
+out="$(bash "$SD" reap-local --dry-run --force 2>&1)"; rc=$?
+ok "dry-run-reap-local-force-rejected" "$rc" 2
+# ...and is refused by modes that would otherwise ignore it (archive-ignored writes under ~/backups).
+out="$(bash "$SD" archive-ignored "$HERE/.." --dry-run 2>&1)"; rc=$?
+ok "dry-run-archive-ignored-rejected" "$rc" 2
+has "dry-run-archive-ignored-msg" "$out" "--dry-run is not supported for archive-ignored"
 for d in 30 08; do
   out="$(bash "$SD" registry-stale --days $d 2>&1)"
   hasnt "days-$d-not-rejected" "$out" "requires a non-negative integer"
@@ -379,6 +389,27 @@ if command -v tmux >/dev/null 2>&1; then
   isfile "reap-archive-failure-keeps-start" "$FH/.local/bin/$B-start.sh"
   has "reap-archive-failure-warns" "$out" "WARNING: unit/start-script archive failed"
   has "reap-archive-failure-still-reaped" "$out" "reaped 'px_reaparchfail-0101-0900'"
+
+  # --dry-run on a live session with a unit, start script and registry candidate: previews the
+  # teardown and changes nothing (it once ignored --dry-run and reaped for real).
+  B=px-reapdrytest-0101-0900; DS=px_reapdrytest-0101-0900
+  printf '[Service]\nExecStart=/bin/true\n' > "$RHOME/.config/systemd/user/$B.service"
+  printf '#!/usr/bin/env bash\necho start\n' > "$RHOME/.local/bin/$B-start.sh"
+  tmux new-session -d -s "$DS" -c "$TMP" 2>/dev/null
+  : > "$SYSTEMCTL_LOG"
+  out="$(reap "$DS" --dry-run --force)"; rc=$?
+  ok "reap-dry-run-exit0" "$rc" 0
+  has "reap-dry-run-banner" "$out" "DRY-RUN"
+  has "reap-dry-run-would-kill" "$out" "would kill tmux session: $DS"
+  has "reap-dry-run-would-disable" "$out" "would disable $B.service"
+  has "reap-dry-run-would-reap" "$out" "would-reap '$DS'"
+  hasnt "reap-dry-run-not-reaped" "$out" "reaped '$DS'"
+  ok "reap-dry-run-session-survives" "$(yn tmux has-session -t "$DS")" yes
+  isfile "reap-dry-run-keeps-service" "$RHOME/.config/systemd/user/$B.service"
+  isfile "reap-dry-run-keeps-start" "$RHOME/.local/bin/$B-start.sh"
+  ok "reap-dry-run-no-archive" "$(ls -d "$RHOME/backups/reaped-worktree-ignored/$B"-* 2>/dev/null | wc -l | tr -d ' ')" 0
+  ok "reap-dry-run-no-systemctl" "$(cat "$SYSTEMCTL_LOG")" ""
+  tmux kill-session -t "$DS" 2>/dev/null
 
   # live session with unlanded work: refused without --force (session survives), reaped with it (session gone)
   mkrepo "$TMP/reaprepo"; echo uncommitted > "$TMP/reaprepo/scratch.txt"

@@ -56,7 +56,7 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
-session-doctor reap <name> [--force] [--keep-registry] [--keep-worktree]
+session-doctor reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run]
                                        # teardown (tmux + unit) + registry entry + worktree
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
