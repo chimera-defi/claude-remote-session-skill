@@ -257,4 +257,24 @@ has "decoy-not-safe"                  "$out" "NOT-SAFE-TO-REAP"
 has "decoy-reason"                    "$out" "untracked-files"
 ok  "decoy-exit1"                     "$rc" "1"
 
+# 14. A file already rescued (identical copy in rescued-*/<session>/) must not re-flag on a plain audit (what
+# `session-doctor reap` runs after `--rescue`); an edit after the rescue must.
+R12="$WT_BASE/px-sp-rescued-$$"; mkrepo "$R12"
+git -C "$R12" checkout --quiet -b "session/px-sp-rescued-$$"
+echo "keep" > "$R12/notes.txt"
+S_RESCUED="$(spawn_in "$R12")"
+bash "$SP" "$S_RESCUED" --rescue >/dev/null 2>&1
+out="$(bash "$SP" "$S_RESCUED" 2>&1)"; rc=$?
+has "rescued-then-plain-audit-safe" "$out" "SAFE-TO-REAP"
+ok  "rescued-then-plain-audit-exit0" "$rc" "0"
+echo "edited after rescue" >> "$R12/notes.txt"
+out="$(bash "$SP" "$S_RESCUED" 2>&1)"; rc=$?
+has "edited-after-rescue-not-safe" "$out" "NOT-SAFE-TO-REAP"
+ok  "edited-after-rescue-exit1"    "$rc" "1"
+
+ln -s notes.txt "$R12/link.txt"
+bash "$SP" "$S_RESCUED" --rescue >/dev/null 2>&1
+out="$(bash "$SP" "$S_RESCUED" 2>&1)"; rc=$?
+ok  "symlink-never-counts-as-rescued" "$rc" "1"
+
 finish "session-preserve"
