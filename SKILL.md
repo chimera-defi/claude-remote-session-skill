@@ -15,11 +15,12 @@ Use when asked to: "create a session for X", "create a remote session in X", "sp
 **Done** for a spawn means: `new-session` printed a `REMOTE_NAME`, the unit is active
 (`systemctl --user is-active <REMOTE_NAME>.service`), and — if you gave it a task —
 `--task` printed `Task sent … and verified landed.` The kickoff settles first (several
-consecutive ready polls) and refuses rather than pasting blind:
-`trust dialog open (or another menu/dialog widget)` means answer it by hand first
-(`tmux send-keys -t <session> 1 Enter`); `claude not running in pane` means it isn't up
-yet — wait and resend. On plain `UNVERIFIED` (common on first send), check the pane and
-resend with `session-send` ([`references/troubleshooting.md`](references/troubleshooting.md)).
+consecutive ready polls) and refuses rather than pasting blind. If the task is not
+(verifiably) delivered, `new-session` exits 3 naming the session and why instead of
+printing `Session created` (see the kickoff block in `scripts/new-session.sh`); resend with
+`session-handoff send` once the pane is ready. On a menu/trust dialog see
+[`references/troubleshooting.md`](references/troubleshooting.md) (the default option there is
+"No, exit").
 Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `cs`,
 configurable via `CRSS_SESSION_PREFIX`).
 

@@ -216,16 +216,38 @@ ok "dry-run-bypasses-capacity-gate-exit0" "$capexit" "0"
 capexit2=0; NEW_SESSION_MIN_AVAIL_MB=999999999 bash "$NS" capacity-real-run-test >/dev/null 2>&1 || capexit2=$?
 ok "non-dry-run-capacity-gate-still-refuses" "$capexit2" "1"
 
-# ── Unknown TYPE positional must warn and fall back, not silently redirect ──
-# ── Unknown TYPE positional must warn and fall back (review): a typo like `workspce` was silently treated as
-# `sessions`, redirecting a repo spawn into .sessions/ (cf. CLAUDE_SESSION_PROFILE validation). ──
-outty="$(bash "$NS" --dry-run type-typo-test workspce 2>/dev/null)"
-has "unknown-type-falls-back-to-sessions" "$outty" 'SCRIPT=.*/.local/bin/px-type-typo-test-'
-erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1 1>/dev/null)"
-has "unknown-type-warns" "$erty" "unknown session type 'workspce'"
-# a recognized TYPE must NOT warn
-ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1 1>/dev/null)"
-if printf '%s' "$ertyok" | grep -q 'unknown session type'; then fail=$((fail+1)); echo "FAIL: known-type-should-not-warn"; else pass=$((pass+1)); fi
+# ── Positional validation: rejected (exit 2) BEFORE any side effect, never silently reinterpreted ──
+# Unknown TYPE (a typo like `workspce` used to be silently treated as `sessions`).
+erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1)"; rcty=$?
+has "unknown-type-rejected" "$erty" "unknown session type 'workspce'"
+ok  "unknown-type-exit2" "$rcty" "2"
+hasnt "unknown-type-no-names" "$erty" "SESSION="
+ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1)"; rcok=$?
+hasnt "known-type-accepted" "$ertyok" "unknown session type"
+ok  "known-type-exit0" "$rcok" "0"
+# Exact repro of the doubled-workdir incident: a directory as the FIRST positional, a name as the second.
+erdir="$(bash "$NS" --dry-run /nonexistent-crss-dir fleet-v2 --alias fleet-v2 2>&1)"; rcdir=$?
+has "abs-foldername-rejected" "$erdir" "must be a bare name"
+ok  "abs-foldername-exit2" "$rcdir" "2"
+hasnt "abs-foldername-no-names" "$erdir" "SESSION="
+for badname in "a/b" "." ".." ""; do
+  erbad="$(bash "$NS" --dry-run "$badname" 2>&1)"; rcbad=$?
+  ok "bad-foldername-exit2[$badname]" "$rcbad" "2"
+  hasnt "bad-foldername-no-names[$badname]" "$erbad" "SESSION="
+done
+bash "$NS" --dry-run >/dev/null 2>&1; rcnp=$?
+ok "missing-foldername-exit2" "$rcnp" "2"
+erx="$(bash "$NS" --dry-run a workspace extra 2>&1)"; rcx=$?
+has "extra-positional-rejected" "$erx" "too many positional"
+ok  "extra-positional-exit2" "$rcx" "2"
+erfl="$(bash "$NS" --dry-run a --bogus 2>&1)"; rcfl=$?
+has "unknown-option-rejected" "$erfl" "unknown option '--bogus'"
+ok  "unknown-option-exit2" "$rcfl" "2"
+# a real (non-dry-run) bad foldername must not create anything either
+SIDE="$(mktemp -d)"; HOME="$SIDE" bash "$NS" /abs/dir fleet >/dev/null 2>&1; rcside=$?
+ok  "bad-foldername-real-run-exit2" "$rcside" "2"
+ok  "bad-foldername-no-side-effects" "$(find "$SIDE" -mindepth 1 | wc -l | tr -d ' ')" "0"
+rm -rf "$SIDE"
 
 # ── Session-name lock loop must not hang forever on a persistent mkdir failure ──
 # ── Session-name lock loop must not hang on a persistent mkdir failure (review): previously unbounded, no sleep, no
