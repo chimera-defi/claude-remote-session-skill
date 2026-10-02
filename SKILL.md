@@ -4,6 +4,12 @@ slug: gstack-session-spawn
 version: "1.9.1"
 tagline: "Create a persistent Claude remote session via tmux + systemd"
 description: "Use when asked to create a remote session, schedule a persistent agent, spin up a Claude session for a project, or start a background Claude process. Creates a tmux+systemd session with --dangerously-skip-permissions, --continue auto-resume, and smart backoff."
+triggers:
+  - "create a remote session"
+  - "spawn a session"
+  - "new session for"
+  - "schedule a persistent agent"
+  - "start a background claude process"
 allowed-tools:
   - Bash
 ---
