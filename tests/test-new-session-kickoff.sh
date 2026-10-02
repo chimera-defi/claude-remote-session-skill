@@ -68,6 +68,22 @@ hasnt "unverified-no-banner" "$(cat "$T/out")" "Session created"
 
 # --task-file resend hint carries the file path
 printf 'hello\n' > "$T/task.txt"; rm -f "$T/n"
+# Codex model-retirement menu: named distinctly (not "trust"), still exit 3, never auto-answered
+mkdir -p "$T/tmuxstub"
+cat > "$T/tmuxstub/tmux" <<'EOS'
+#!/usr/bin/env bash
+[ "$1" = capture-pane ] && { printf '%s\n' "${STUB_PANE:-}"; exit 0; }
+exec "$REAL_TMUX" "$@"
+EOS
+chmod +x "$T/tmuxstub/tmux"
+export REAL_TMUX="$(command -v tmux)"
+STUB_PANE="GPT-5.5 retires on October 14, 2026.
+1. Try new model
+2. Use existing model" PATH="$T/tmuxstub:$PATH" run "menu" >"$T/rc"
+has "model-menu-rc3" "$(cat "$T/rc")" "3"
+has "model-menu-named" "$(cat "$T/err")" "model-retirement menu"
+hasnt "model-menu-not-trust" "$(cat "$T/err")" "'Yes, I trust this folder'"
+has "model-menu-no-autopick" "$(cat "$T/err")" "not an auto-pick"
 STUB_CHECKS="menu" bash "$BIN/new-session.sh" kick-f --task-file "$T/task.txt" >"$T/out" 2>"$T/err"
 has "menu-resend-hint-file" "$(cat "$T/err")" "--file $T/task.txt"
 
