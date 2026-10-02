@@ -153,5 +153,7 @@ session usually has nothing to lose: it was mid a review pause, not an edit.
 **Workspace-trust dialog** ("Do you trust the files in this folder? ... Enter to confirm · Esc
 to cancel") is also classified `menu` (`_is_on_menu` / `_state_of` in
 `scripts/session-handoff.sh`, pinned by `tests/test-session-handoff-trust-dialog.sh`), since
-blind text/Enter is unsafe there too, but it is a numbered Yes/No choice. Recover with
-`tmux send-keys -t <s> 1 Enter` (trust) or `2 Enter` (exit), not the Down/Right/Enter sequence.
+blind text/Enter is unsafe there too. On CLI 2.1.285 the highlighted default is **"No, exit"**
+(so `1 Enter` quits claude), "Yes, I trust this folder" is the second option. Spawns avoid the
+dialog: the start script runs `scripts/session-trust-seed.sh` on the run directory first (it
+explains which key the CLI checks for git worktrees; pinned by `tests/test-session-trust-seed.sh`).
