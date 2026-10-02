@@ -611,7 +611,7 @@ case "$MODE" in
       # incident: a kickoff paste's Enter answered a first-launch folder-
       # trust dialog with its default "No, exit" and killed the session — see
       # _is_on_menu's comment). Answer it by hand first.
-      menu)     echo "send: '$S' is on a menu/dialog widget (e.g. a first-launch folder-trust prompt) — refusing to send; Enter could submit an unintended choice. Answer it by hand, e.g.: tmux send-keys -t $S 1 Enter" >&2; exit 2;;
+      menu)     echo "send: '$S' is on a menu/dialog widget (e.g. a first-launch folder-trust prompt) — refusing to send; Enter could submit an unintended choice. Answer it by hand (on the folder-trust dialog the highlighted default is 'No, exit' — pick 'Yes, I trust this folder'; new spawns pre-seed it via session-trust-seed)" >&2; exit 2;;
       busy)     echo "send: note — '$S' is busy (working); message will queue behind current work" >&2;;
     esac
     frag="$(_frag "$MSG")"
