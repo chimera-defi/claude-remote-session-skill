@@ -855,7 +855,11 @@ if [ -n "$TASK" ]; then
       fi
       sleep 1
     done
-    if [ "$trust_dialog" = yes ]; then
+    if [ "$trust_dialog" = yes ] && tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -qiE 'retires on|Try new model|Use existing model'; then
+      # Codex's model-retirement notice is a menu too, but answering it is a model
+      # choice, not a trust grant: name it distinctly and never pick for the operator.
+      TASK_FAILED="'${SESSION}' is parked on the Codex model-retirement menu ('Try new model' / 'Use existing model') — task NOT sent. Attach and choose deliberately (not an auto-pick; 'Use existing model' keeps the configured model, 'Try new model' switches it), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
+    elif [ "$trust_dialog" = yes ]; then
       TASK_FAILED="'${SESSION}' is parked on a menu/trust dialog — task NOT sent (pre-seeding trust failed: see $HOME/.sessions/session-starts.log). Attach and choose 'Yes, I trust this folder' (the highlighted default is 'No, exit', so do not press Enter blindly), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
     elif [ "$gone" = yes ]; then
       TASK_FAILED="tmux session '${SESSION}' vanished while waiting for claude — task NOT sent; see $HOME/.sessions/session-starts.log"
