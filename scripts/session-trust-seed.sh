@@ -20,10 +20,18 @@
 # when already trusted. Missing or invalid JSON is an error (exit 1) and the file
 # is never touched. A one-time backup <config>.crss-bak is made before the first
 # write. Exit: 0 ok, 1 error, 2 usage.
+#
+# The CLI takes no lock we can share, so only our own seeders are serialised by
+# flock. Against the CLI it is optimistic: size/mtime/sha256 of what was read are
+# re-checked just before the rename; on a change it re-reads, re-merges and retries
+# (6 tries, jittered), else exits 1 with the file untouched. The remaining race is
+# the instant between that re-check and the rename.
+# Test-only: CRSS_TRUST_SEED_TEST_HOOK=<shell cmd> runs once between the read and
+# the re-check, to simulate a concurrent writer (tests/test-session-trust-seed.sh).
 set -u
 [ $# -ge 1 ] || { echo "usage: session-trust-seed <dir> [<dir>...]" >&2; exit 2; }
 exec python3 - "$@" <<'PY'
-import fcntl, json, os, shutil, subprocess, sys, tempfile
+import fcntl, hashlib, json, os, random, shutil, subprocess, sys, tempfile, time
 
 def die(msg):
     sys.stderr.write("session-trust-seed: " + msg + "\n")
@@ -57,12 +65,19 @@ for d in sys.argv[1:]:
     if k not in keys:
         keys.append(k)
 
-lock = open(cfg + ".crss-lock", "a")
-fcntl.flock(lock, fcntl.LOCK_EX)
-try:
+def snapshot():
+    """(bytes, (size, mtime_ns, sha256)) of the live config, read in one go."""
+    with open(cfg, "rb") as f:
+        raw = f.read()
+        st = os.fstat(f.fileno())
+    return raw, (st.st_size, st.st_mtime_ns, hashlib.sha256(raw).hexdigest())
+
+def attempt(hook):
+    """One read-merge-write. Returns True when done, False when the file changed
+    underneath us (the caller retries from a fresh read)."""
     try:
-        with open(cfg, encoding="utf-8") as f:
-            data = json.load(f)
+        raw, sig = snapshot()
+        data = json.loads(raw.decode("utf-8"))
     except FileNotFoundError:
         die("%s does not exist; run claude once first (refusing to create it)" % cfg)
     except (OSError, ValueError) as e:
@@ -70,36 +85,61 @@ try:
     if not isinstance(data, dict) or not isinstance(data.get("projects", {}), dict):
         die("%s has an unexpected shape (want an object with an object 'projects'); left untouched" % cfg)
     projects = data.setdefault("projects", {})
-    todo = []
+    todo, already = [], []
     for k in keys:
         e = projects.get(k)
         if e is not None and not isinstance(e, dict):
             die("projects[%s] is not an object; left untouched" % k)
-        if e is not None and e.get("hasTrustDialogAccepted") is True:
+        (already if e is not None and e.get("hasTrustDialogAccepted") is True else todo).append(k)
+    if not todo:
+        for k in already:
             print("trusted (already): " + k)
-        else:
-            todo.append(k)
-    if todo:
-        for k in todo:
-            projects.setdefault(k, {})["hasTrustDialogAccepted"] = True
-        mode = os.stat(cfg).st_mode & 0o7777
+        return True
+    for k in todo:
+        projects.setdefault(k, {})["hasTrustDialogAccepted"] = True
+    mode = os.stat(cfg).st_mode & 0o7777
+    fd, tmp = tempfile.mkstemp(prefix=".claude.json.crss-", dir=cfgdir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)  # the CLI's own format: no re-format churn
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        if hook:
+            subprocess.run(hook, shell=True, check=False)
+        # The CLI takes no lock we can share, so detect a concurrent write by
+        # re-reading just before the rename and retry if the file moved.
+        try:
+            if snapshot()[1] != sig:
+                os.unlink(tmp)
+                return False
+        except OSError:
+            os.unlink(tmp)
+            return False
         bak = cfg + ".crss-bak"
         if not os.path.exists(bak):
             shutil.copy2(cfg, bak)
-        fd, tmp = tempfile.mkstemp(prefix=".claude.json.crss-", dir=cfgdir)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)  # the CLI's own format: no re-format churn
-                f.flush()
-                os.fsync(f.fileno())
-            os.chmod(tmp, mode)
-            os.replace(tmp, cfg)
-        except BaseException:
-            try: os.unlink(tmp)
-            except OSError: pass
-            raise
-        for k in todo:
-            print("trusted (seeded): " + k)
+        os.replace(tmp, cfg)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+    for k in already:
+        print("trusted (already): " + k)
+    for k in todo:
+        print("trusted (seeded): " + k)
+    return True
+
+lock = open(cfg + ".crss-lock", "a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+try:
+    hook = os.environ.get("CRSS_TRUST_SEED_TEST_HOOK")  # test-only: run once, between read and the recheck
+    for i in range(6):
+        if attempt(hook if i == 0 else None):
+            break
+        time.sleep(random.uniform(0.005, 0.05))
+    else:
+        die("%s kept changing underneath us after 6 tries; left untouched" % cfg)
 finally:
     lock.close()
 PY

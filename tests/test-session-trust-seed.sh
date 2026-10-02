@@ -75,4 +75,11 @@ N=12; for i in $(seq 1 $N); do mkdir -p "$T/c$i"; done
 for i in $(seq 1 $N); do bash "$SEED" "$T/c$i" >/dev/null 2>&1 & done; wait
 ok "concurrent-all-present" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(1 for v in d["projects"].values() if v.get("hasTrustDialogAccepted") is True), d["keep"])' "$CFG")" "$N 1"
 
+# a concurrent writer (the CLI, no shared lock) changing ANOTHER key between our read and rename:
+# its change must survive and our key must land (retry re-merges from a fresh read)
+printf '{"counter": 1, "projects": {}}' > "$CFG"
+HOOK="python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d[\"counter\"]=2; d[\"cliKey\"]=\"x\"; json.dump(d,open(p,\"w\"))' '$CFG'"
+out="$(CRSS_TRUST_SEED_TEST_HOOK="$HOOK" bash "$SEED" "$PLAIN" 2>&1)"; rc=$?
+ok "race-rc0" "$rc" "0"
+ok "race-both-survive" "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["counter"], d["cliKey"], d["projects"][sys.argv[2]]["hasTrustDialogAccepted"])' "$CFG" "$PLAIN")" "2 x True"
 finish "session-trust-seed"
