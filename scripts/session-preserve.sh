@@ -221,7 +221,7 @@ _already_rescued() {
 }
 
 audit_one() {
-  local s="$1" cwd br nremote local_only unreach dirty untracked reasons via
+  local s="$1" cwd br nremote local_only unreach dirty untracked unrescued reasons via
   cwd=$(rundir_of "$s")
   via=""
   if [ -z "$cwd" ]; then
