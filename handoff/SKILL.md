@@ -1,10 +1,9 @@
 ---
 name: handoff
-description: Use when a launcher/session-launcher session has a raw or terse human task that belongs in some OTHER Claude session rather than done here, or when the operator types /handoff. Triggers: "hand this to <session>", "relay this task to X", "new <repo> session" followed by a paragraph of intent, routing a request to a live or freshly-spawned target session.
+description: "Use when a launcher/session-launcher session has a raw or terse human task that belongs in some OTHER Claude session rather than done here, or when the operator types /handoff. Triggers: \"hand this to <session>\", \"relay this task to X\", \"new <repo> session\" followed by a paragraph of intent, routing a request to a live or freshly-spawned target session."
 triggers:
   - "hand this to"
   - "relay this task to"
-  - "new session for"
   - "/handoff"
 ---
 
