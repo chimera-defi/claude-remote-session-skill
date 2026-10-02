@@ -272,4 +272,9 @@ out="$(bash "$SP" "$S_RESCUED" 2>&1)"; rc=$?
 has "edited-after-rescue-not-safe" "$out" "NOT-SAFE-TO-REAP"
 ok  "edited-after-rescue-exit1"    "$rc" "1"
 
+ln -s notes.txt "$R12/link.txt"
+bash "$SP" "$S_RESCUED" --rescue >/dev/null 2>&1
+out="$(bash "$SP" "$S_RESCUED" 2>&1)"; rc=$?
+ok  "symlink-never-counts-as-rescued" "$rc" "1"
+
 finish "session-preserve"

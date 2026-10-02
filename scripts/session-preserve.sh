@@ -212,6 +212,9 @@ worktree_of() {
 _already_rescued() {
   local s="$1" cwd="$2" rel="$3" d
   for d in "$HOME"/.sessions/rescued-*/"$s"/"$rel"; do
+    # A symlink is never "already rescued": cp/cmp dereference it, so the
+    # copy proves nothing about the link itself.
+    [ -L "$cwd/$rel" ] && return 1
     [ -f "$d" ] && cmp -s "$cwd/$rel" "$d" && return 0
   done
   return 1
