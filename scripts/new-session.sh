@@ -200,7 +200,7 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
@@ -214,10 +214,23 @@ while [ $# -gt 0 ]; do
     # positional (after the folder). Matching them as the first positional would
     # make a folder literally named `sessions`/`workspace`/`auto` unspawnable
     # (e.g. the live `sessions` management session).
-    *) if [ -z "$FOLDERNAME" ]; then FOLDERNAME="$1"; else TYPE="$1"; fi; shift ;;
+    -*) echo "new-session: unknown option '$1' (see --help)" >&2; exit 2 ;;
+    *) if [ "$NPOS" -eq 0 ]; then FOLDERNAME="$1"; elif [ "$NPOS" -eq 1 ]; then TYPE="$1"
+       else echo "new-session: too many positional arguments ('$1') — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2; fi
+       NPOS=$((NPOS + 1)); shift ;;
   esac
 done
-: "${FOLDERNAME:?Usage: new-session <foldername> [workspace|sessions] [--alias X]}"
+# Validate the positionals BEFORE any side effect (pinned by tests/test-new-session-names.sh).
+# FOLDERNAME is a bare name that gets joined onto the workspace/sessions root, never a
+# path: `new-session ~/.sessions fleet-v2` once made WORKDIR=<root>/<root> (the first
+# positional was a directory, the second was taken as TYPE).
+case "$FOLDERNAME" in
+  ""|.|..|/*|*/*) echo "new-session: foldername '$FOLDERNAME' must be a bare name (no '/', not empty/./..) — it is joined onto \$CRSS_WORKSPACE or \$CRSS_SESSIONS_DIR. usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
+esac
+case "$TYPE" in
+  auto|workspace|sessions) ;;
+  *) echo "new-session: unknown session type '$TYPE' (valid: workspace|sessions|auto) — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
+esac
 
 # ── Backend selection ────────────────────────────────────────────────────────
 BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-claude}}"
@@ -408,16 +421,7 @@ else
 fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
-# Validate the TYPE positional the same way PROFILE is validated above (fail
-# SAFE with a warning, don't silently reinterpret): an unrecognized value here
-# — most likely a typo like `workspce` — previously fell straight through to
-# the `else` branch below and was silently treated as `sessions`, redirecting
-# a repo-intended spawn into .sessions/ with zero diagnostic.
-case "$TYPE" in
-  auto|workspace|sessions) ;;
-  *) echo "note: unknown session type '$TYPE' — defaulting to 'auto'. Valid: workspace|sessions|auto" >&2
-     TYPE="auto" ;;
-esac
+# TYPE was validated with the other positionals above.
 if [ "$TYPE" = "auto" ]; then
   [ -d "${CRSS_WORKSPACE}/${FOLDERNAME}" ] && TYPE="workspace" || TYPE="sessions"
 fi
@@ -551,6 +555,13 @@ if [ "$DRYRUN" = yes ]; then
   exit 0
 fi
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+# Folder-trust pre-seed helper, baked into the start script: co-located (repo layout)
+# first, then PATH (deployed layout, .sh dropped). Empty when neither exists.
+TRUST_SEED=""
+if [ -f "$SELF_DIR/session-trust-seed.sh" ]; then TRUST_SEED="$SELF_DIR/session-trust-seed.sh"
+elif command -v session-trust-seed >/dev/null 2>&1; then TRUST_SEED="$(command -v session-trust-seed)"; fi
+TRUST_SEED_LITERAL="$(_shell_quote "$TRUST_SEED")"
 mkdir -p "$(dirname "$SCRIPT")" "$(dirname "$SERVICE")"
 if [ -n "$HUB_CONSULT_PROMPT_FILE" ]; then
   printf '%s\n' "$HUB_CONSULT_PROMPT" > "$HUB_CONSULT_PROMPT_FILE"
@@ -611,6 +622,17 @@ fi
 python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
+fi
+# Pre-accept the folder-trust dialog for the dir claude will actually run in (RUNDIR is
+# often a fresh worktree, which prompts on first launch and parks an unattended spawn).
+# See scripts/session-trust-seed.sh for what key it writes and why. Never blocks the
+# start: a failure is logged and new-session's kickoff reports a still-open dialog.
+TRUST_SEED=${TRUST_SEED_LITERAL}
+if [ -n "\$TRUST_SEED" ] && [ -f "\$TRUST_SEED" ]; then
+  bash "\$TRUST_SEED" "\$RUNDIR" 2>&1 | sed "s|^|[trust-seed] |" >> "\$LOG_FILE"
+  [ "\${PIPESTATUS[0]}" -eq 0 ] || echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=trust-seed-FAILED rundir=\$RUNDIR (claude may park on the folder-trust dialog)" | tee -a "\$LOG_FILE"
+else
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=session-trust-seed-not-found (claude may park on the folder-trust dialog)" | tee -a "\$LOG_FILE"
 fi
 SCRIPT_EOF
 fi
@@ -749,7 +771,10 @@ WantedBy=default.target
 UNIT_EOF
 
 # ── Enable and start ─────────────────────────────────────────────────────────
-systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"
+if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"; }; then
+  echo "new-session: systemd failed to start $(basename "$SERVICE") — the session was NOT started. Inspect: journalctl --user -u $(basename "$SERVICE") -n 30; start script: $SCRIPT" >&2
+  exit 1
+fi
 
 # ── Telemetry (best-effort, never fails the spawn) ──────────────────────────
 # Prefer the directory the session actually launched in over WORKDIR:
@@ -772,7 +797,6 @@ if [ -f "$SPAWN_LOG" ]; then
   RD="${LOGLINE#*session="${SESSION}" rundir=}"
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
-SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
   "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" || true
 fi
@@ -786,6 +810,9 @@ fi
 # in ~/.local/bin with the .sh dropped, see session-git-prep.sh's header) so
 # this works in both. Invoked via `bash` so the helper's exec bit (664 in-repo)
 # never matters.
+# TASK_FAILED collects why the task was not (verifiably) delivered; any value makes the
+# spawn exit 3 below, after naming the session, so a launcher never mistakes it for success.
+TASK_FAILED=""
 if [ -n "$TASK" ]; then
   HANDOFF=""
   if [ -f "$SELF_DIR/session-handoff.sh" ]; then
@@ -794,45 +821,32 @@ if [ -n "$TASK" ]; then
     HANDOFF="$(command -v session-handoff)"
   fi
   if [ -z "$HANDOFF" ]; then
-    echo "WARNING: could not locate session-handoff (looked next to this script and on PATH) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
+    TASK_FAILED="could not locate session-handoff (looked next to this script and on PATH) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..."
   else
     # Require `check` to report ready for NEW_SESSION_TASK_SETTLE (default 3)
-    # CONSECUTIVE 1s-apart polls, not just once, before the first send. `check`
-    # reports ready as soon as the ❯ prompt renders, but on a freshly booted
-    # Claude Code the TUI's bracketed-paste handling can still be wiring
-    # itself up at that exact instant — the very first paste sent right on
-    # the heels of "ready" then lands on a not-quite-live input handler and
-    # is silently dropped (input box stays empty, text never reaches the
-    # transcript). Observed 8/8 on first sends via --task-file; a manual retry seconds later
-    # always landed, pointing at the paste racing readiness rather than
-    # anything wrong with the target session. A few consecutive ready polls
-    # give that handler time to settle before the first paste is ever
-    # attempted, cutting how often the race is hit at all — it does not
-    # replace session-handoff.sh's own recovery (see `send`'s "dropped-first-
-    # paste recovery" comment), which is what catches a race that slips past
-    # this settle window anyway.
+    # CONSECUTIVE 1s-apart polls, not just once, before the first send: on a freshly
+    # booted TUI the first paste right after the prompt renders can be silently
+    # dropped. This only cuts how often that race is hit; session-handoff.sh's
+    # `send` ("dropped-first-paste recovery") is what catches one that slips past.
     ready=no
     trust_dialog=no
+    gone=no
     settle_need="${NEW_SESSION_TASK_SETTLE:-3}"
     settle_have=0
     for _i in $(seq 1 "${NEW_SESSION_TASK_READY_TRIES:-90}"); do
-      check_out="$(bash "$HANDOFF" check "$SESSION" 2>&1)"; check_rc=$?
-      # A menu/dialog widget — most likely Claude Code's first-launch
-      # folder-trust prompt on a worktree never opened before — will not
-      # resolve to "ready" on its own; it is waiting on a human. Stop
-      # polling the instant it shows up rather than burning the whole
-      # NEW_SESSION_TASK_READY_TRIES budget on a state that cannot change
-      # without intervention, and say so plainly. Verified against the installed CLI: no
-      # documented way to pre-accept a folder's trust for an INTERACTIVE
-      # session exists in `claude --help` short of writing
-      # `~/.claude.json`'s per-project `hasTrustDialogAccepted` by hand
-      # (the CLI's only built-in bypass is `-p`/non-interactive mode, which
-      # doesn't apply to a persistent spawned TUI session) — so the honest
-      # move here is to bail loudly, not to fabricate an auto-answer.
+      # `check` exits non-zero for every not-ready state, so the status must be
+      # captured WITHOUT tripping `set -e` (a bare `x="$(cmd)"` exits the whole
+      # script silently — the first not-ready poll killed the spawn after the
+      # systemd symlink line, with no "Session created" and no warning).
+      check_rc=0; check_out="$(bash "$HANDOFF" check "$SESSION" 2>&1)" || check_rc=$?
+      # A menu/dialog (typically the folder-trust prompt) waits on a human and
+      # cannot resolve by itself: stop polling at once. The start script pre-seeds
+      # trust (session-trust-seed), so seeing it here means seeding failed.
       if printf '%s' "$check_out" | grep -q 'state=menu'; then
         trust_dialog=yes
         break
       fi
+      if [ "$check_rc" -eq 2 ]; then gone=yes; break; fi
       if [ "$check_rc" -eq 0 ]; then
         settle_have=$((settle_have + 1))
         [ "$settle_have" -ge "$settle_need" ] && { ready=yes; break; }
@@ -842,18 +856,25 @@ if [ -n "$TASK" ]; then
       sleep 1
     done
     if [ "$trust_dialog" = yes ]; then
-      echo "WARNING: '${SESSION}' — trust dialog open (or another menu/dialog widget) — task NOT sent. Answer it by hand first, e.g.: tmux send-keys -t ${SESSION} 1 Enter" >&2
+      TASK_FAILED="'${SESSION}' is parked on a menu/trust dialog — task NOT sent (pre-seeding trust failed: see $HOME/.sessions/session-starts.log). Attach and choose 'Yes, I trust this folder' (the highlighted default is 'No, exit', so do not press Enter blindly), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
+    elif [ "$gone" = yes ]; then
+      TASK_FAILED="tmux session '${SESSION}' vanished while waiting for claude — task NOT sent; see $HOME/.sessions/session-starts.log"
     elif [ "$ready" != yes ]; then
-      echo "WARNING: '${SESSION}' never reached ready state — task NOT sent; send it by hand: session-handoff send ${SESSION} ..." >&2
+      TASK_FAILED="'${SESSION}' never reached ready state (last: ${check_out}) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..."
     elif bash "$HANDOFF" send "$SESSION" "$TASK"; then
       echo "Task sent to ${REMOTE_NAME} and verified landed."
     else
-      echo "WARNING: task send UNVERIFIED on ${REMOTE_NAME} — check the session before assuming it received the task" >&2
+      TASK_FAILED="task send UNVERIFIED on ${REMOTE_NAME} — check the session before assuming it received the task"
     fi
   fi
 fi
 
 # ── Confirm ──────────────────────────────────────────────────────────────────
+if [ -n "$TASK_FAILED" ]; then
+  echo "" >&2
+  echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) is running, but the task was NOT delivered: ${TASK_FAILED}" >&2
+  exit 3
+fi
 echo ""
 echo "Session created: ${REMOTE_NAME}"
 echo "Connect: Claude Code app → Remote sessions → ${REMOTE_NAME}"
