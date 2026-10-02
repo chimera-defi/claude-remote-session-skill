@@ -207,6 +207,16 @@ worktree_of() {
   return 1
 }
 
+# True when a byte-identical copy of untracked file $3 (of session $1, in
+# worktree $2) already exists under any $HOME/.sessions/rescued-*/$1/ dir.
+_already_rescued() {
+  local s="$1" cwd="$2" rel="$3" d
+  for d in "$HOME"/.sessions/rescued-*/"$s"/"$rel"; do
+    [ -f "$d" ] && cmp -s "$cwd/$rel" "$d" && return 0
+  done
+  return 1
+}
+
 audit_one() {
   local s="$1" cwd br nremote local_only unreach dirty untracked reasons via
   cwd=$(rundir_of "$s")
@@ -250,10 +260,17 @@ audit_one() {
 
   dirty=$(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE" | wc -l)
   untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" | wc -l)
+  # An untracked file whose byte-identical copy already sits in a rescued-*
+  # dir for this session (an earlier --rescue run, same day or not) is saved:
+  # `rescue` copies but leaves the original, so without this a later audit —
+  # notably the one `session-doctor reap` re-runs — flags it again and the
+  # "rescue first" loop can only be escaped with --force.
+  unrescued=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" \
+      | while read -r rel; do _already_rescued "$s" "$cwd" "$rel" || echo "$rel"; done)
+  untracked=$(printf '%s' "$unrescued" | grep -c .)
   echo "   uncommitted TRACKED changes (non-junk): $dirty"
   echo "   untracked files (non-junk): $untracked"
-  [ "$untracked" -gt 0 ] && git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null \
-      | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" | head -10 | sed 's/^/       /'
+  [ "$untracked" -gt 0 ] && printf '%s\n' "$unrescued" | head -10 | sed 's/^/       /'
 
   if [ "$MODE_WIP" = yes ] && [ "$dirty" -gt 0 ]; then
     # Stage exactly the paths counted as "dirty" above (git diff --name-only
@@ -307,7 +324,7 @@ audit_one() {
         echo "   RESCUE FAILED: $rel (path conflict with an earlier rescue?)" >&2
         rescue_failed=1
       fi
-    done < <(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE")
+    done < <(printf '%s\n' "$unrescued")
     [ "$rescue_failed" -eq 0 ] && untracked=0
   fi
 
