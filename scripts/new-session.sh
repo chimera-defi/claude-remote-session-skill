@@ -706,12 +706,41 @@ LOG_FILE="\$HOME/.sessions/session-starts.log"
 SESSION=${SESSION_LITERAL}
 CODEX_BIN=${CODEX_BIN_LITERAL}
 CODEX_ARGS=(${CODEX_ARGS_LITERAL})
+CODEX_PIN="\$HOME/.sessions/resume/${REMOTE_NAME}.codex-thread"
+CODEX_SANDBOX=read-only; CODEX_SANDBOX_EXPLICIT=""
+if command -v codex-resume-pin >/dev/null 2>&1; then
+  CODEX_SANDBOX=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}")
+  CODEX_SANDBOX_EXPLICIT=\$(codex-resume-pin sandbox-of --explicit "\${CODEX_ARGS[@]}")
+fi
 while true; do
   START=\$(date +%s)
   _codex_trust_dir="\${PWD//\\\\/\\\\\\\\}"
   _codex_trust_dir="\${_codex_trust_dir//\"/\\\\\"}"
   CODEX_TRUST_CONFIG="projects.\"\${_codex_trust_dir}\".trust_level=\"trusted\""
-  "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${CODEX_ARGS[@]}"
+  # Resume the lane's pinned thread (kept current by the watcher below) so a
+  # reboot/crash does not lose it. A resume does NOT inherit the thread's
+  # sandbox (it takes the config default), so resume-args always passes -s
+  # explicitly and the watcher kills codex if the recorded sandbox_policy is
+  # ever wider than CODEX_SANDBOX. A bad pin is retried after the backoff,
+  # never silently downgraded to a fresh thread.
+  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""
+  if command -v codex-resume-pin >/dev/null 2>&1; then
+    [ -s "\$CODEX_PIN" ] && PIN_ID=\$(cat "\$CODEX_PIN")
+    [ -n "\$PIN_ID" ] && mapfile -t RESUME_ARGV < <(codex-resume-pin resume-args "\$PIN_ID" "\${CODEX_ARGS[@]}")
+    # Enforce on a resume (sandbox passed explicitly) and on a fresh run that
+    # named one; a fresh run with none keeps the config default, unchanged.
+    WATCH_EXPECT="\$CODEX_SANDBOX_EXPLICIT"
+    [ "\${#RESUME_ARGV[@]}" -gt 0 ] && WATCH_EXPECT="\$CODEX_SANDBOX"
+    codex-resume-pin watch "\$CODEX_PIN" "\$PWD" "\$START" "\${WATCH_EXPECT:--}" "child-of:\$\$" 2>>"\$LOG_FILE" &
+    WATCH_PID=\$!
+  fi
+  if [ "\${#RESUME_ARGV[@]}" -gt 0 ]; then
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume thread=\$PIN_ID sandbox=\$CODEX_SANDBOX" | tee -a "\$LOG_FILE"
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${RESUME_ARGV[@]}"
+  else
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${CODEX_ARGS[@]}"
+  fi
+  [ -n "\${WATCH_PID:-}" ] && kill "\$WATCH_PID" 2>/dev/null
   RUNTIME=\$(( \$(date +%s) - START ))
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
   if [ "\$RUNTIME" -lt 30 ]; then

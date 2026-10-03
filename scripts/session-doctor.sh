@@ -767,7 +767,7 @@ _reap_archive_unit_files() {
   # A leftover one-shot resume pin (session-resume) would otherwise be consumed
   # by a later session that reuses this name. A pin is a uuid, not state worth
   # archiving.
-  rm -f -- "$HOME/.sessions/resume/${base}.uuid"
+  rm -f -- "$HOME/.sessions/resume/${base}.uuid" "$HOME/.sessions/resume/${base}.codex-thread"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 }
 
