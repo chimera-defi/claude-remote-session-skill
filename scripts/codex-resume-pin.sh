@@ -34,7 +34,8 @@
 #                                   backoff then retries, it never runs wider).
 #                                   <expected> "-" = record the pin only.
 # [since]: only sandbox_policy lines stamped at/after it count (a resumed thread keeps
-# its previous run's policy until its first new turn).#
+# its previous run's policy until its first new turn).
+#
 # Known limits (read before installing):
 #  - Sandbox asymmetry: a lane spawned with NO -s runs its FRESH thread on the config
 #    default (here danger-full-access), but every RESUME passes an explicit -s, read-only
@@ -181,6 +182,9 @@ watch() {
     fi
     seen=yes
     id="$(_open_thread "$tgt")"
+    # Only a lane thread (codex-tui, this cwd, written this run) may become the pin; a
+    # held helper/other-cwd rollout is ignored.
+    if [ -n "$id" ] && ! _threads_for "$cwd" "$since" | awk -v i="$id" '$2==i{f=1} END{exit !f}'; then id=""; fi
     [ -n "$id" ] || id="$(latest "$cwd" "$since" "$pin")"
     if [ -n "$id" ]; then
       cur="$(cat "$pin" 2>/dev/null || true)"
