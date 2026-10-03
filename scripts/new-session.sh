@@ -721,11 +721,17 @@ while true; do
   # reboot/crash does not lose it. A resume does NOT inherit the thread's
   # sandbox (it takes the config default), so resume-args always passes -s
   # explicitly and the watcher kills codex if the recorded sandbox_policy is
-  # ever wider than CODEX_SANDBOX. A bad pin is retried after the backoff,
-  # never silently downgraded to a fresh thread.
+  # ever wider than CODEX_SANDBOX. A pin that still exists but fails to resume
+  # is retried after the backoff, never downgraded to a fresh thread.
   PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""
   if command -v codex-resume-pin >/dev/null 2>&1; then
     [ -s "\$CODEX_PIN" ] && PIN_ID=\$(cat "\$CODEX_PIN")
+    # A pin whose rollout is gone cannot resume (codex would start a different
+    # thread): set it aside, loudly, and start fresh with the explicit sandbox.
+    if [ -n "\$PIN_ID" ] && ! codex-resume-pin exists "\$PIN_ID"; then
+      echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
+      mv -f "\$CODEX_PIN" "\$CODEX_PIN.stale"; PIN_ID=""
+    fi
     [ -n "\$PIN_ID" ] && mapfile -t RESUME_ARGV < <(codex-resume-pin resume-args "\$PIN_ID" "\${CODEX_ARGS[@]}")
     # Enforce on a resume (sandbox passed explicitly) and on a fresh run that
     # named one; a fresh run with none keeps the config default, unchanged.
