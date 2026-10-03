@@ -723,20 +723,22 @@ while true; do
   # explicitly and the watcher kills codex if the recorded sandbox_policy is
   # ever wider than CODEX_SANDBOX. A pin that still exists but fails to resume
   # is retried after the backoff, never downgraded to a fresh thread.
-  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""
+  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""; STALE_FRESH=""; FRESH_ARGV=("\${CODEX_ARGS[@]}")
   if command -v codex-resume-pin >/dev/null 2>&1; then
     [ -s "\$CODEX_PIN" ] && PIN_ID=\$(cat "\$CODEX_PIN")
     # A pin whose rollout is gone cannot resume (codex would start a different
-    # thread): set it aside, loudly, and start fresh with the explicit sandbox.
+    # thread): set it aside, loudly, and start fresh; the fresh run gets an explicit
+  # -s (CODEX_SANDBOX) when its args name none, and the watcher enforces it.
     if [ -n "\$PIN_ID" ] && ! codex-resume-pin exists "\$PIN_ID"; then
       echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
-      mv -f "\$CODEX_PIN" "\$CODEX_PIN.stale"; PIN_ID=""
+      mv -f "\$CODEX_PIN" "\$CODEX_PIN.stale.\$(date +%s)"; PIN_ID=""; STALE_FRESH=1
     fi
     [ -n "\$PIN_ID" ] && mapfile -t RESUME_ARGV < <(codex-resume-pin resume-args "\$PIN_ID" "\${CODEX_ARGS[@]}")
     # Enforce on a resume (sandbox passed explicitly) and on a fresh run that
     # named one; a fresh run with none keeps the config default, unchanged.
     WATCH_EXPECT="\$CODEX_SANDBOX_EXPLICIT"
     [ "\${#RESUME_ARGV[@]}" -gt 0 ] && WATCH_EXPECT="\$CODEX_SANDBOX"
+    if [ -n "\$STALE_FRESH" ] && [ -z "\$CODEX_SANDBOX_EXPLICIT" ]; then FRESH_ARGV+=(-s "\$CODEX_SANDBOX"); WATCH_EXPECT="\$CODEX_SANDBOX"; fi
     codex-resume-pin watch "\$CODEX_PIN" "\$PWD" "\$START" "\${WATCH_EXPECT:--}" "child-of:\$\$" 2>>"\$LOG_FILE" &
     WATCH_PID=\$!
   fi
@@ -744,7 +746,7 @@ while true; do
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume thread=\$PIN_ID sandbox=\$CODEX_SANDBOX" | tee -a "\$LOG_FILE"
     "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${RESUME_ARGV[@]}"
   else
-    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${CODEX_ARGS[@]}"
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${FRESH_ARGV[@]}"
   fi
   [ -n "\${WATCH_PID:-}" ] && kill "\$WATCH_PID" 2>/dev/null
   RUNTIME=\$(( \$(date +%s) - START ))

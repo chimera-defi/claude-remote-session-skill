@@ -96,6 +96,7 @@ has "script-invokes-codex-args" "$script_text" '-m stub-model -s read-only -a ne
 has "script-pins-codex-thread" "$script_text" '.codex-thread'
 has "script-resume-argv-explicit-sandbox" "$script_text" 'codex-resume-pin resume-args'
 has "script-watches-sandbox-policy" "$script_text" 'codex-resume-pin watch'
+has "script-stale-fresh-gets-explicit-sandbox" "$script_text" 'FRESH_ARGV\+=\(-s'
 has "script-sets-stale-pin-aside" "$script_text" 'event=pin-stale'
 has "script-resumes-only-when-pinned" "$script_text" '#RESUME_ARGV\[@\]\}" -gt 0'
 has "script-trusts-runtime-workdir" "$script_text" 'trust_level=\\"trusted\\"'
