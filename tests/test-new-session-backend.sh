@@ -98,6 +98,7 @@ has "script-resume-argv-explicit-sandbox" "$script_text" 'codex-resume-pin resum
 has "script-watches-sandbox-policy" "$script_text" 'codex-resume-pin watch'
 has "script-every-fresh-attempt-explicit-sandbox" "$script_text" 'FRESH_ARGV\+=\(-s'
 has "script-fails-closed-on-helper-error" "$script_text" 'event=resume-pin-fail-closed'
+has "script-sandbox-resolved-inside-loop" "$(printf '%s' "$script_text" | awk '/while true; do/{w=1} w && /sandbox-of/{print "in-loop"; exit}')" 'in-loop'
 has "script-resume-args-failure-checked" "$script_text" 'resume-args failed'
 has "script-sets-stale-pin-aside" "$script_text" 'event=pin-stale'
 has "script-resumes-only-when-pinned" "$script_text" '#RESUME_ARGV\[@\]\}" -gt 0'

@@ -707,11 +707,6 @@ SESSION=${SESSION_LITERAL}
 CODEX_BIN=${CODEX_BIN_LITERAL}
 CODEX_ARGS=(${CODEX_ARGS_LITERAL})
 CODEX_PIN="\$HOME/.sessions/resume/${REMOTE_NAME}.codex-thread"
-CODEX_SANDBOX=read-only; CODEX_SANDBOX_EXPLICIT=""
-if command -v codex-resume-pin >/dev/null 2>&1; then
-  CODEX_SANDBOX=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}") || CODEX_SANDBOX=""
-  CODEX_SANDBOX_EXPLICIT=\$(codex-resume-pin sandbox-of --explicit "\${CODEX_ARGS[@]}") || CODEX_SANDBOX_EXPLICIT=""
-fi
 while true; do
   START=\$(date +%s)
   _codex_trust_dir="\${PWD//\\\\/\\\\\\\\}"
@@ -725,8 +720,13 @@ while true; do
   # rollout is gone is set aside and the next launch is a fresh one (explicit -s
   # too). The watcher is advisory (kills codex after the fact if the recorded
   # policy is wider than expected); the guarantee is the explicit -s.
-  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""; HELPER_FAIL=""; FRESH_ARGV=("\${CODEX_ARGS[@]}")
+  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""; HELPER_FAIL=""; CODEX_SANDBOX=""; CODEX_SANDBOX_EXPLICIT=""; FRESH_ARGV=("\${CODEX_ARGS[@]}")
+  # Helper absent (not installed yet): legacy launch, unchanged, so a fleet
+  # without the helper is never blocked. Helper present: resolved every round, so a
+  # fixed/updated helper recovers a failed-closed lane without a restart.
   if command -v codex-resume-pin >/dev/null 2>&1; then
+    CODEX_SANDBOX=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}") || CODEX_SANDBOX=""
+    CODEX_SANDBOX_EXPLICIT=\$(codex-resume-pin sandbox-of --explicit "\${CODEX_ARGS[@]}") || CODEX_SANDBOX_EXPLICIT=""
     [ -n "\$CODEX_SANDBOX" ] || HELPER_FAIL="sandbox-of failed"
     [ -s "\$CODEX_PIN" ] && PIN_ID=\$(cat "\$CODEX_PIN")
     if [ -n "\$PIN_ID" ] && ! codex-resume-pin exists "\$PIN_ID"; then
