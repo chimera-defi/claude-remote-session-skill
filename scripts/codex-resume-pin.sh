@@ -34,7 +34,19 @@
 #                                   backoff then retries, it never runs wider).
 #                                   <expected> "-" = record the pin only.
 # [since]: only sandbox_policy lines stamped at/after it count (a resumed thread keeps
-# its previous run's policy until its first new turn).
+# its previous run's policy until its first new turn).#
+# Known limits (read before installing):
+#  - Sandbox asymmetry: a lane spawned with NO -s runs its FRESH thread on the config
+#    default (here danger-full-access), but every RESUME passes an explicit -s, read-only
+#    when none was named. After a reboot such a lane comes back narrower than it ran.
+#    Name -s in CRSS_CODEX_ARGS / the lane's args to keep a wider sandbox on resume.
+#  - Mis-pin residual: the watcher pins the rollout the lane's own process holds open;
+#    only when it holds none does it fall back to the newest codex-tui thread in the cwd.
+#    A first-ever lane sharing its cwd with another codex-tui lane, with no pin yet, can
+#    then adopt the sibling's newer thread (sibling-pin skipping only covers threads
+#    already pinned). Give lanes distinct cwds.
+#  - Trust dialog: the start script's `-c projects."<cwd>".trust_level` override is
+#    unverified on a real lane dir; a resume that hits the trust prompt waits there.
 # Exit: 0 ok, 1 mismatch/none, 2 usage, 3 not recorded yet.
 set -uo pipefail
 
@@ -91,7 +103,23 @@ latest() {
       [ -e "$f" ] && [ "$f" != "$3" ] && cat "$f" 2>/dev/null
     done)"
   fi
-  _threads_for "$1" "$2" | sort -n | { if [ -n "$skip" ]; then grep -vFf <(printf '%s\n' "$skip" | sed 's/^/ /;s/$//' | grep -v '^ *$') ; else cat; fi; } | tail -1 | cut -d' ' -f2
+  _threads_for "$1" "$2" | sort -n | awk -v skip="$skip" 'BEGIN{n=split(skip,a,"\n");for(i=1;i<=n;i++)if(a[i]!="")s[a[i]]=1} !($2 in s)' | tail -1 | cut -d' ' -f2
+}
+
+# The thread whose rollout the process (or a child of it) holds open: the lane's own,
+# even when a sibling in the same cwd started at the same moment. Empty when none.
+_open_thread() {
+  local p f
+  for p in "$1" $(pgrep -P "$1" 2>/dev/null); do
+    for f in /proc/"$p"/fd/*; do
+      case "$(readlink "$f" 2>/dev/null)" in
+        "$CODEX_HOME_DIR"/sessions/*/rollout-*.jsonl)
+          f="$(readlink "$f")"; f="${f##*/}"; f="${f%.jsonl}"
+          # rollout-<YYYY-MM-DDThh-mm-ss>-<uuid>: id = after the 6th dash-field
+          echo "$f" | sed -E 's/^rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-//'; return ;;
+      esac
+    done
+  done
 }
 
 # Exit 0 when a rollout for the thread id exists (a deleted pin cannot resume).
@@ -120,7 +148,7 @@ for line in open(f, errors="replace"):
             ts = datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
     except Exception:
         pass
-    if ts is None or ts >= since - 2:
+    if (ts is None and since <= 0) or (ts is not None and ts >= since - 2):
         last = m.group(1)
 print(last)
 PY
@@ -152,7 +180,8 @@ watch() {
       sleep 1; continue
     fi
     seen=yes
-    id="$(latest "$cwd" "$since" "$pin")"
+    id="$(_open_thread "$tgt")"
+    [ -n "$id" ] || id="$(latest "$cwd" "$since" "$pin")"
     if [ -n "$id" ]; then
       cur="$(cat "$pin" 2>/dev/null || true)"
       if [ "$cur" != "$id" ]; then

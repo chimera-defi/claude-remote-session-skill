@@ -105,6 +105,29 @@ bash "$RP" check gggg-res read-only 0;            ok "check: without since the o
 printf '{"timestamp":"%s","type":"turn_context","payload":{"sandbox_policy":{"type":"read-only"}}}\n' "$TS_NEW" >> "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-gggg-res.jsonl"
 bash "$RP" check gggg-res read-only "$(( $(date +%s) - 5 ))"; ok "check: a fresh policy for this run is honoured" "$?" "0"
 
+# --- untimestamped policy lines are not trusted once a start time is given
+printf '{"type":"session_meta","payload":{"id":"hhhh-nots","cwd":"%s","originator":"codex-tui"}}\n{"type":"turn_context","payload":{"sandbox_policy":{"type":"danger-full-access"}}}\n' "$WORK/laneR" > "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-hhhh-nots.jsonl"
+bash "$RP" check hhhh-nots read-only "$(date +%s)"; ok "check: no timestamp + since => unrecorded, not a kill" "$?" "3"
+
+# --- sibling filter matches whole ids, not prefixes
+mk_rollout iiii-full "$WORK/laneP" codex-tui workspace-write -3
+echo iiii > "$HOME/.sessions/resume/prefix.codex-thread"
+ok "sibling filter is exact-id" "$(bash "$RP" latest "$WORK/laneP" 0 "$HOME/.sessions/resume/mine2.codex-thread")" "iiii-full"
+
+# --- the lane's own open rollout wins over a newer same-cwd sibling thread
+mk_rollout jjjj-mine "$WORK/laneQ" codex-tui workspace-write -30
+mk_rollout kkkk-sib  "$WORK/laneQ" codex-tui workspace-write -1
+cat > "$WORK/holder.sh" <<'H'
+exec 9< "$1"; exec sleep 6
+H
+mkdir -p "$WORK/bin"; cp "$(command -v bash)" "$WORK/bin/codex"
+"$WORK/bin/codex" "$WORK/holder.sh" "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-jjjj-mine.jsonl" & C5=$!
+sleep 0.5
+CODEX_PIN_GRACE=5 bash "$RP" watch "$HOME/.sessions/resume/q.codex-thread" "$WORK/laneQ" 0 - "$C5" 1 & W5=$!
+for _ in $(seq 1 30); do [ -s "$HOME/.sessions/resume/q.codex-thread" ] && break; sleep 0.2; done
+ok "watch pins the thread the lane holds open" "$(cat "$HOME/.sessions/resume/q.codex-thread" 2>/dev/null)" "jjjj-mine"
+kill "$C5" 2>/dev/null; wait "$W5" 2>/dev/null
+
 # (generated-start-script wiring is asserted in test-new-session-backend.sh)
 
 finish "codex-resume-pin"
