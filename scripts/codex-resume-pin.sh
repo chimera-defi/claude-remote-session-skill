@@ -37,15 +37,16 @@
 # its previous run's policy until its first new turn).
 #
 # Known limits (read before installing):
-#  - Sandbox asymmetry: a lane spawned with NO -s runs its FRESH thread on the config
-#    default (here danger-full-access), but every RESUME passes an explicit -s, read-only
-#    when none was named. After a reboot such a lane comes back narrower than it ran.
-#    Name -s in CRSS_CODEX_ARGS / the lane's args to keep a wider sandbox on resume.
-#  - Mis-pin residual: the watcher pins the rollout the lane's own process holds open;
-#    only when it holds none does it fall back to the newest codex-tui thread in the cwd.
-#    A first-ever lane sharing its cwd with another codex-tui lane, with no pin yet, can
-#    then adopt the sibling's newer thread (sibling-pin skipping only covers threads
-#    already pinned). Give lanes distinct cwds.
+#  - Explicit sandbox on EVERY attempt (fresh and resume): a lane whose args name no -s
+#    gets -s read-only (never the config default). Name -s in CRSS_CODEX_ARGS to keep a
+#    wider sandbox. If sandbox-of or resume-args fails, the loop fails closed (logs
+#    event=resume-pin-fail-closed, backs off, retries); it never launches unpinned.
+#  - The watcher is ADVISORY: it polls (20s) and can only act after codex has recorded a
+#    policy, i.e. after the first turn. The guarantee is the explicit -s, not the watcher.
+#  - Identity: the watcher pins ONLY the rollout the lane's own process holds open (and
+#    only if it is a codex-tui thread for this cwd written this run). No proof => no pin
+#    and no enforcement; there is no "newest thread in the cwd" guess. A lane that never
+#    holds its rollout open at a poll simply stays unpinned (resumes fresh after reboot).
 #  - Trust dialog: the start script's `-c projects."<cwd>".trust_level` override is
 #    unverified on a real lane dir; a resume that hits the trust prompt waits there.
 # Exit: 0 ok, 1 mismatch/none, 2 usage, 3 not recorded yet.
@@ -60,7 +61,7 @@ sandbox_of() {
   for a in "$@"; do
     case "$prev" in
       -s|--sandbox) want="$a" ;;
-      -c|--config) case "$a" in sandbox_mode=*) want="${a#sandbox_mode=}"; want="${want//\"/}" ;; esac ;;
+      -c|--config) a2="${a// /}"; case "$a2" in sandbox_mode=*) want="$(printf '%s' "${a2#sandbox_mode=}" | tr -d "\"' ")";; esac ;;
     esac
     case "$a" in --sandbox=*) want="${a#--sandbox=}" ;; esac
     prev="$a"
@@ -185,7 +186,8 @@ watch() {
     # Only a lane thread (codex-tui, this cwd, written this run) may become the pin; a
     # held helper/other-cwd rollout is ignored.
     if [ -n "$id" ] && ! _threads_for "$cwd" "$since" | awk -v i="$id" '$2==i{f=1} END{exit !f}'; then id=""; fi
-    [ -n "$id" ] || id="$(latest "$cwd" "$since" "$pin")"
+    # No proof of identity (nothing held open) => do not pin and do not enforce
+    # this tick; never fall back to "newest thread in the cwd".
     if [ -n "$id" ]; then
       cur="$(cat "$pin" 2>/dev/null || true)"
       if [ "$cur" != "$id" ]; then

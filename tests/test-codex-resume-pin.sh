@@ -19,6 +19,10 @@ mk_rollout() {
   return 0
 }
 
+# hold <thread-id> [secs]: a process named `codex` holding that thread's rollout open (what a real lane does); pid in HPID
+mkdir -p "$WORK/bin"; cp "$(command -v sleep)" "$WORK/bin/codex"
+hold() { "$WORK/bin/codex" "${2:-60}" 9< "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-$1.jsonl" & HPID=$!; sleep 0.4; }
+
 # --- sandbox-of / resume-args: the pin never lets a resume fall back to the config default
 ok "sandbox -s"          "$(bash "$RP" sandbox-of -m x -s workspace-write -a never)" "workspace-write"
 ok "sandbox --sandbox"   "$(bash "$RP" sandbox-of --sandbox read-only)" "read-only"
@@ -52,7 +56,7 @@ mkdir -p "$WORK/laneC"; mk_rollout cccc-none "$WORK/laneC" codex-tui -
 bash "$RP" check cccc-none read-only;      ok "check unrecorded" "$?" "3"
 
 # --- watch: pins the thread; kills the lane when the recorded sandbox is wider than expected
-sleep 60 & P1=$!
+hold aaaa-new; P1=$HPID
 bash "$RP" watch "$WORK/pinA" "$WORK/laneA" 0 workspace-write "$P1" 1 & W1=$!
 for _ in $(seq 1 30); do [ -s "$WORK/pinA" ] && break; sleep 0.2; done
 ok "watch writes the pin" "$(cat "$WORK/pinA" 2>/dev/null)" "aaaa-new"
@@ -60,14 +64,14 @@ ok "matching sandbox leaves lane alive" "$(kill -0 "$P1" 2>/dev/null && echo ali
 kill "$P1" 2>/dev/null; wait "$W1"; ok "watch exits 0 when lane exits" "$?" "0"
 
 mk_rollout dddd-wide "$WORK/laneB" codex-tui danger-full-access 0
-sleep 60 & P2=$!
+hold dddd-wide; P2=$HPID
 bash "$RP" watch "$WORK/pinB" "$WORK/laneB" 0 workspace-write "$P2" 1 2>"$WORK/watch.err"; rc=$?
 ok  "mismatch returns 1" "$rc" "1"
 sleep 0.3
 ok  "mismatch kills the lane" "$(kill -0 "$P2" 2>/dev/null && echo alive || echo dead)" "dead"
 has "mismatch is logged" "$(cat "$WORK/watch.err")" "SANDBOX-MISMATCH"
 rm -f "$CODEX_HOME"/sessions/2026/10/03/rollout-*-bbbb-new.jsonl
-sleep 60 & P3=$!
+hold dddd-wide; P3=$HPID
 bash "$RP" watch "$WORK/pinC" "$WORK/laneB" 0 - "$P3" 1 & W3=$!
 for _ in $(seq 1 30); do [ -s "$WORK/pinC" ] && break; sleep 0.2; done
 ok "expected '-' records the pin without enforcing" "$(kill -0 "$P3" 2>/dev/null && echo alive || echo dead)/$(cat "$WORK/pinC" 2>/dev/null)" "alive/dddd-wide"
@@ -90,7 +94,7 @@ rm -f "$HOME/.sessions/resume/late.codex-thread"
 CODEX_PIN_GRACE=10 bash "$RP" watch "$HOME/.sessions/resume/late.codex-thread" "$WORK/laneS" 0 - "child-of:$$" 1 & W4=$!
 sleep 2                                    # no codex child yet: the watcher must still be up
 ok "watcher waits for a late codex child" "$(kill -0 "$W4" 2>/dev/null && echo up || echo gone)" "up"
-mkdir -p "$WORK/bin"; cp "$(command -v sleep)" "$WORK/bin/codex"; "$WORK/bin/codex" 4 & C4=$!
+hold eeee-mine 4; C4=$HPID
 for _ in $(seq 1 30); do [ -s "$HOME/.sessions/resume/late.codex-thread" ] && break; sleep 0.2; done
 ok "late child still gets its thread pinned" "$(cat "$HOME/.sessions/resume/late.codex-thread" 2>/dev/null)" "eeee-mine"
 kill "$C4" 2>/dev/null; wait "$W4" 2>/dev/null
@@ -117,12 +121,7 @@ ok "sibling filter is exact-id" "$(bash "$RP" latest "$WORK/laneP" 0 "$HOME/.ses
 # --- the lane's own open rollout wins over a newer same-cwd sibling thread
 mk_rollout jjjj-mine "$WORK/laneQ" codex-tui workspace-write -30
 mk_rollout kkkk-sib  "$WORK/laneQ" codex-tui workspace-write -1
-cat > "$WORK/holder.sh" <<'H'
-exec 9< "$1"; exec sleep 6
-H
-mkdir -p "$WORK/bin"; cp "$(command -v bash)" "$WORK/bin/codex"
-"$WORK/bin/codex" "$WORK/holder.sh" "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-jjjj-mine.jsonl" & C5=$!
-sleep 0.5
+hold jjjj-mine; C5=$HPID
 CODEX_PIN_GRACE=5 bash "$RP" watch "$HOME/.sessions/resume/q.codex-thread" "$WORK/laneQ" 0 - "$C5" 1 & W5=$!
 for _ in $(seq 1 30); do [ -s "$HOME/.sessions/resume/q.codex-thread" ] && break; sleep 0.2; done
 ok "watch pins the thread the lane holds open" "$(cat "$HOME/.sessions/resume/q.codex-thread" 2>/dev/null)" "jjjj-mine"
@@ -130,14 +129,27 @@ kill "$C5" 2>/dev/null; wait "$W5" 2>/dev/null
 
 # --- a held helper (codex_exec) or other-cwd rollout never becomes the pin
 mk_rollout llll-helper "$WORK/laneQ" codex_exec read-only -2
-cp "$(command -v bash)" "$WORK/bin/codex"
 rm -f "$HOME/.sessions/resume/h.codex-thread"
-"$WORK/bin/codex" "$WORK/holder.sh" "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-llll-helper.jsonl" & C6=$!
-sleep 0.5
+hold llll-helper; C6=$HPID
 CODEX_PIN_GRACE=5 bash "$RP" watch "$HOME/.sessions/resume/h.codex-thread" "$WORK/laneQ" 0 - "$C6" 1 & W6=$!
 sleep 2.5
-ok "watch never pins a held helper rollout" "$(cat "$HOME/.sessions/resume/h.codex-thread" 2>/dev/null)" "kkkk-sib"
+ok "watch never pins a held helper rollout (and no newest fallback)" "$(cat "$HOME/.sessions/resume/h.codex-thread" 2>/dev/null)" ""
 kill "$C6" 2>/dev/null; wait "$W6" 2>/dev/null
+
+# --- no proof of identity => no pin, no enforcement, no newest-in-cwd guess
+mk_rollout mmmm-new "$WORK/laneM" codex-tui danger-full-access -1
+"$WORK/bin/codex" 60 & C7=$!; sleep 0.3                       # a lane process holding nothing
+CODEX_PIN_GRACE=5 bash "$RP" watch "$WORK/pinM" "$WORK/laneM" 0 read-only "$C7" 1 & W7=$!
+sleep 2.5
+ok "unproven identity: nothing pinned" "$(cat "$WORK/pinM" 2>/dev/null)" ""
+ok "unproven identity: lane not killed (advisory)" "$(kill -0 "$C7" 2>/dev/null && echo alive || echo dead)" "alive"
+kill "$C7" 2>/dev/null; wait "$W7" 2>/dev/null
+
+# --- TOML quoting: single-quoted / spaced sandbox_mode resolve; a bogus one still fails
+ok "sandbox-of single-quoted toml" "$(bash "$RP" sandbox-of -c "sandbox_mode='read-only'")" "read-only"
+ok "sandbox-of spaced toml"        "$(bash "$RP" sandbox-of -c 'sandbox_mode = "workspace-write"')" "workspace-write"
+bash "$RP" sandbox-of -c "sandbox_mode='bogus'" 2>/dev/null; ok "sandbox-of bogus fails" "$?" "1"
+ra="$(bash "$RP" resume-args T9 -c "sandbox_mode='read-only'" | tr "\n" " ")"; has "resume-args accepts single-quoted toml" "$ra" "-s read-only"
 
 # (generated-start-script wiring is asserted in test-new-session-backend.sh)
 
