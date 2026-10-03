@@ -18,9 +18,12 @@
 #                                   + the args, with an explicit `-s <sandbox>`
 #                                   added when the args lack one (never the config
 #                                   default).
-#   latest <cwd> <since-epoch>      newest thread id whose session cwd is <cwd>
-#                                   and whose rollout was written at/after <since>.
-#   check <id> <expected>           exit 0 when the thread's LAST recorded
+#   latest <cwd> <since-epoch> [pin]  newest thread id whose session cwd is <cwd>
+#                                   and whose rollout was written at/after <since>;
+#                                   ids pinned by sibling lanes (other *.codex-thread
+#                                   beside [pin]) are skipped.
+#   exists <id>                     exit 0 when the thread has a rollout on disk.
+#   check <id> <expected> [since]           exit 0 when the thread's LAST recorded
 #                                   sandbox_policy is <expected>; 1 on mismatch;
 #                                   3 when nothing is recorded yet.
 #   watch <pin> <cwd> <since> <expected> <pid|child-of:PPID> [interval]
@@ -30,6 +33,8 @@
 #                                   and kill <pid> (fail closed: the loop's
 #                                   backoff then retries, it never runs wider).
 #                                   <expected> "-" = record the pin only.
+# [since]: only sandbox_policy lines stamped at/after it count (a resumed thread keeps
+# its previous run's policy until its first new turn).
 # Exit: 0 ok, 1 mismatch/none, 2 usage, 3 not recorded yet.
 set -uo pipefail
 
@@ -76,14 +81,50 @@ for f in glob.glob(os.path.join(root, "**", "rollout-*.jsonl"), recursive=True):
 PY
 }
 
-latest() { _threads_for "$1" "$2" | sort -n | tail -1 | cut -d' ' -f2; }
+# Newest matching thread. With a 3rd arg (a pin file), ids already pinned by a
+# SIBLING lane (another *.codex-thread in the same dir) are skipped, so two lanes
+# sharing a cwd cannot steal each other's thread.
+latest() {
+  local skip=""
+  if [ -n "${3:-}" ]; then
+    skip="$(for f in "$(dirname "$3")"/*.codex-thread; do
+      [ -e "$f" ] && [ "$f" != "$3" ] && cat "$f" 2>/dev/null
+    done)"
+  fi
+  _threads_for "$1" "$2" | sort -n | { if [ -n "$skip" ]; then grep -vFf <(printf '%s\n' "$skip" | sed 's/^/ /;s/$//' | grep -v '^ *$') ; else cat; fi; } | tail -1 | cut -d' ' -f2
+}
+
+# Exit 0 when a rollout for the thread id exists (a deleted pin cannot resume).
+exists() { [ -n "$(_rollout_of "$1")" ]; }
 
 _rollout_of() { find "$CODEX_HOME_DIR/sessions" -name "rollout-*-$1.jsonl" 2>/dev/null | head -1; }
 
 check() {
   local f last
   f="$(_rollout_of "$1")"; [ -n "$f" ] || return 3
-  last="$(grep -o '"sandbox_policy":{"type":"[a-z-]*"' "$f" | tail -1 | sed 's/.*"type":"//; s/"$//')"
+  # Only policies recorded at/after <since> count: a resumed thread still holds
+  # its previous run's policy until its first new turn, and that must not read
+  # as a mismatch for the run we are enforcing.
+  last="$(python3 - "$f" "${3:-0}" <<'PY'
+import datetime, json, re, sys
+f, since = sys.argv[1], float(sys.argv[2])
+last = ""
+for line in open(f, errors="replace"):
+    m = re.search(r'"sandbox_policy":\{"type":"([a-z-]*)"', line)
+    if not m:
+        continue
+    ts = None
+    try:
+        t = json.loads(line).get("timestamp")
+        if t:
+            ts = datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        pass
+    if ts is None or ts >= since - 2:
+        last = m.group(1)
+print(last)
+PY
+)"
   [ -n "$last" ] || return 3
   [ "$last" = "$2" ]
 }
@@ -99,15 +140,25 @@ watch() {
       *) kill -0 "$pid" 2>/dev/null && echo "$pid" ;;
     esac
   }
-  local tgt
-  while tgt="$(_target)"; [ -n "$tgt" ]; do
-    id="$(latest "$cwd" "$since")"
+  local tgt seen=no t0 grace="${CODEX_PIN_GRACE:-90}"
+  t0=$(date +%s)
+  # The watcher starts before codex does: wait up to <grace>s for the target to
+  # appear (it exits only once the target was seen and is gone, or never came).
+  while :; do
+    tgt="$(_target)"
+    if [ -z "$tgt" ]; then
+      [ "$seen" = yes ] && break
+      [ $(( $(date +%s) - t0 )) -ge "$grace" ] && break
+      sleep 1; continue
+    fi
+    seen=yes
+    id="$(latest "$cwd" "$since" "$pin")"
     if [ -n "$id" ]; then
       cur="$(cat "$pin" 2>/dev/null || true)"
       if [ "$cur" != "$id" ]; then
         mkdir -p "$(dirname "$pin")" && printf '%s\n' "$id" > "$pin.tmp.$$" && mv -f "$pin.tmp.$$" "$pin"
       fi
-      if [ "$expected" = "-" ]; then rc=0; else check "$id" "$expected"; rc=$?; fi
+      if [ "$expected" = "-" ]; then rc=0; else check "$id" "$expected" "$since"; rc=$?; fi
       if [ "$rc" -eq 1 ]; then
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] codex-resume-pin event=SANDBOX-MISMATCH thread=$id expected=$expected — killing pid $tgt" >&2
         kill "$tgt" 2>/dev/null
@@ -133,8 +184,9 @@ case "$cmd" in
     for a in "$@"; do printf '%s\n' "$a"; done
     [ "$has_s" = yes ] || printf -- '-s\n%s\n' "$sb"
     ;;
-  latest) [ $# -eq 2 ] || usage; latest "$1" "$2" ;;
-  check) [ $# -eq 2 ] || usage; check "$1" "$2" ;;
+  latest) [ $# -ge 2 ] || usage; latest "$@" ;;
+  exists) [ $# -eq 1 ] || usage; exists "$1" ;;
+  check) [ $# -ge 2 ] || usage; check "$@" ;;
   watch) [ $# -ge 5 ] || usage; watch "$@" ;;
   *) usage ;;
 esac
