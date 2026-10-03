@@ -128,6 +128,17 @@ for _ in $(seq 1 30); do [ -s "$HOME/.sessions/resume/q.codex-thread" ] && break
 ok "watch pins the thread the lane holds open" "$(cat "$HOME/.sessions/resume/q.codex-thread" 2>/dev/null)" "jjjj-mine"
 kill "$C5" 2>/dev/null; wait "$W5" 2>/dev/null
 
+# --- a held helper (codex_exec) or other-cwd rollout never becomes the pin
+mk_rollout llll-helper "$WORK/laneQ" codex_exec read-only -2
+cp "$(command -v bash)" "$WORK/bin/codex"
+rm -f "$HOME/.sessions/resume/h.codex-thread"
+"$WORK/bin/codex" "$WORK/holder.sh" "$CODEX_HOME/sessions/2026/10/03/rollout-2026-10-03T10-00-00-llll-helper.jsonl" & C6=$!
+sleep 0.5
+CODEX_PIN_GRACE=5 bash "$RP" watch "$HOME/.sessions/resume/h.codex-thread" "$WORK/laneQ" 0 - "$C6" 1 & W6=$!
+sleep 2.5
+ok "watch never pins a held helper rollout" "$(cat "$HOME/.sessions/resume/h.codex-thread" 2>/dev/null)" "kkkk-sib"
+kill "$C6" 2>/dev/null; wait "$W6" 2>/dev/null
+
 # (generated-start-script wiring is asserted in test-new-session-backend.sh)
 
 finish "codex-resume-pin"
