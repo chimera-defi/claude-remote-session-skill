@@ -553,7 +553,7 @@ has "T4: ...and the manual reset-failed command" "$t4b_out" 'systemctl --user re
 not_has "T4: ...and does not claim it was disabled" "$t4b_out" 'The unit was disabled'
 # a normal spawn (the main stub) never disables or resets anything
 th="$(mkhome)"; : > "$th/ctl.log"
-ok_out="$(HOME="$th" STUBLOG="$th/ctl.log" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4ok-lane sessions --alias t4ok 2>&1)"; ok_rc=$?
+HOME="$th" STUBLOG="$th/ctl.log" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4ok-lane sessions --alias t4ok >/dev/null 2>&1; ok_rc=$?
 ok "T4: a normal spawn exits 0" "$ok_rc" "0"
 ok "T4: ...and its systemctl log has no disable and no reset-failed" "$(grep -cE 'disable|reset-failed' "$th/ctl.log")" "0"
 ok "T4: ...but the stub did see enable" "$(grep -c 'enable' "$th/ctl.log")" "1"
