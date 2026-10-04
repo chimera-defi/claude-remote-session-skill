@@ -221,7 +221,7 @@ _already_rescued() {
 }
 
 audit_one() {
-  local s="$1" cwd br nremote local_only unreach dirty untracked unrescued reasons via
+  local s="$1" cwd br nremote local_only unreach brs b dirty untracked unrescued reasons via
   cwd=$(rundir_of "$s")
   via=""
   if [ -z "$cwd" ]; then
@@ -253,11 +253,18 @@ audit_one() {
 
   # What actually decides reap safety: is HEAD reachable from a named branch?
   # If yes, removing the worktree/tmux session cannot orphan the commits.
-  if grep -q hit < <(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads \
-       | while read -r b; do git -C "$cwd" merge-base --is-ancestor HEAD "refs/heads/$b" 2>/dev/null && echo hit && break; done); then
-    unreach=no
-  else
-    unreach=yes
+  # The branch list is captured whole with its status checked, then each name is tested. Only
+  # merge-base status 0 proves reachability (1 = not an ancestor, anything else = an error, which
+  # proves nothing). A failed listing is unreach=yes whatever it printed first, as the old pipe
+  # under pipefail said; no early-exiting consumer sits downstream of the producer.
+  unreach=yes
+  if brs="$(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads && printf x)"; then
+    brs=${brs%x}
+    if [ -n "$brs" ]; then
+      while read -r b; do
+        if git -C "$cwd" merge-base --is-ancestor HEAD "refs/heads/$b" 2>/dev/null; then unreach=no; break; fi
+      done <<<"${brs%$'\n'}"
+    fi
   fi
   echo "   HEAD reachable from a named local branch: $([ "$unreach" = no ] && echo yes || echo 'NO')"
 

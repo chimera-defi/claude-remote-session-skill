@@ -292,14 +292,20 @@ BIG_TRANSCRIPT="$(printf 'MARKER-LINE-ONE\n%s\n❯\n' "$BIGPAD")"
 BIG_BUSY="$(printf '✢ Incubating… (esc to interrupt)\n%s\n❯\n' "$BIGPAD")"
 BIG_BYTES=${#BIG_TRANSCRIPT}
 ok "big-capture-is-over-64KiB" "$([ "$BIG_BYTES" -ge 65536 ] && echo yes || echo no)" yes
-miss_t=0; miss_w=0; miss_i=0
+# marker on the FIRST line of the producer's output (the prompt line), before the padding: grep -q
+# exits at once and a piped producer would take SIGPIPE. Marker-last would pass the old code too.
+BIG_INPUT="$(printf '❯ MARKER-LINE-ONE\n%s\n' "$BIGPAD")"
+BIG_COLLAPSED="$(printf '❯ [Pasted text #1 +17 lines]\n%s\n' "$BIGPAD")"
+miss_t=0; miss_w=0; miss_i=0; miss_c=0
 for _ in $(seq 1 200); do
   _in_transcript "MARKER-LINE-ONE" "$BIG_TRANSCRIPT" || miss_t=$((miss_t+1))
   _is_working "$BIG_BUSY" || miss_w=$((miss_w+1))
-  _on_input_line "MARKER-LINE-ONE" "$(printf '❯\n%s\nMARKER-LINE-ONE\n' "$BIGPAD")" || miss_i=$((miss_i+1))
+  _on_input_line "MARKER-LINE-ONE" "$BIG_INPUT" || miss_i=$((miss_i+1))
+  _is_collapsed_paste_in_input "$BIG_COLLAPSED" || miss_c=$((miss_c+1))
 done
 ok "big-capture-_in_transcript-200-of-200" "$miss_t" 0
 ok "big-capture-_is_working-200-of-200" "$miss_w" 0
 ok "big-capture-_on_input_line-200-of-200" "$miss_i" 0
+ok "big-capture-_is_collapsed_paste_in_input-200-of-200" "$miss_c" 0
 
 finish "session-handoff-ready"

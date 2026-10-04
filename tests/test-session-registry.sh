@@ -70,9 +70,9 @@ tmux new-session -d -s px_test-nolog-0101-0100 2>/dev/null
 
 out="$(bash "$REG" 2>&1)"
 has "old-session-listed" "$out" 'px_test-old-0101-0100'
-ok "old-session-age-10d"   "$(grep -qF '(10d old)' < <(grep -F 'px_test-old-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
-ok "new-session-age-0d"    "$(grep -qF '(0d old)' < <(grep -F 'px_test-new-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
-ok "nolog-uses-tmux-fallback" "$(grep -qF 'tmux session_created' < <(grep -F 'px_test-nolog-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
+ok "old-session-age-10d"   "$(row="$(grep -F 'px_test-old-0101-0100' <<<"$out" && printf x)" && row=${row%x} && [ -n "$row" ] && grep -qF '(10d old)' <<<"${row%$'\n'}" && echo yes || echo no)" "yes"
+ok "new-session-age-0d"    "$(row="$(grep -F 'px_test-new-0101-0100' <<<"$out" && printf x)" && row=${row%x} && [ -n "$row" ] && grep -qF '(0d old)' <<<"${row%$'\n'}" && echo yes || echo no)" "yes"
+ok "nolog-uses-tmux-fallback" "$(row="$(grep -F 'px_test-nolog-0101-0100' <<<"$out" && printf x)" && row=${row%x} && [ -n "$row" ] && grep -qF 'tmux session_created' <<<"${row%$'\n'}" && echo yes || echo no)" "yes"
 
 filtered="$(bash "$REG" --older-than 3d 2>&1)"
 has "older-than-includes-old" "$filtered" 'px_test-old-0101-0100'

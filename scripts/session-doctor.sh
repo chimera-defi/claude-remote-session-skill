@@ -387,8 +387,13 @@ for s in cand:
 # same PROTECT terms catch both forms, without widening PROTECT itself (it's
 # also used against tmux/systemd names elsewhere, where that broadening isn't
 # wanted).
+# Capture the squeezed title with its status checked (sentinel keeps the exact bytes), then
+# match: a failed producer is "not protected", as the old pipe under pipefail said.
 _title_protected() {
-  grep -qiE "$PROTECT" < <(printf '%s' "$1" | tr -s '[:space:]' '-')
+  local t
+  t="$(printf '%s' "$1" | tr -s '[:space:]' '-' && printf x)" || return 1
+  t=${t%x}
+  [ -n "$t" ] && grep -qiE "$PROTECT" <<<"${t%$'\n'}"
 }
 
 # _registry_delete_one <id> <title> — protect-check + DELETE one registry
@@ -466,6 +471,16 @@ backend_of() {
 }
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
+# _tmux_live_has <name> — is <name> exactly one of the live tmux session names? The listing is
+# captured whole with its status checked, THEN matched (an early-exiting `grep -q` downstream of
+# the producer races SIGPIPE under pipefail, and `< <(live_tmux)` would drop the producer's
+# status). A failed or empty listing is "not live", as the old `live_tmux | grep -qx` said.
+_tmux_live_has() {
+  local o
+  o="$(live_tmux && printf x)" || return 1
+  o=${o%x}
+  [ -n "$o" ] && grep -qx -- "$1" <<<"${o%$'\n'}"
+}
 # Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
 # name from the tmux session name. Claude sessions are alive with claude/node
 # foregrounds; Codex sessions are alive with codex/node. sleep is the shared
@@ -1392,7 +1407,7 @@ case "$MODE" in
     echo "=== LOCAL: systemd units without a live tmux (orphans) ==="
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
-      grep -qx -- "$tm" < <(live_tmux) || echo "  ORPHAN unit: $u"
+      _tmux_live_has "$tm" || echo "  ORPHAN unit: $u"
     done
     echo "=== REGISTRY: staleness summary ==="
     registry_json | python3 -c "
@@ -1447,7 +1462,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       grep -qiE "$PROTECT" <<<"$u" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
-      grep -qx -- "$tm" < <(live_tmux) && continue
+      _tmux_live_has "$tm" && continue
       echo "ORPHAN unit (no tmux): $u"
       do_reap "" "$u" "${base}-start.sh"
       reaped=$((reaped+1))
@@ -1502,7 +1517,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         echo "  skipped(protected)  $id  $title"
         n_skip=$((n_skip+1)); continue
       fi
-      if grep -qxF -- "$title" < <(printf '%s' "$live_bases"); then
+      if [ -n "$live_bases" ] && grep -qxF -- "$title" <<<"${live_bases%$'\n'}"; then
         echo "  skipped(live-tmux)  $id  $title"
         n_skip=$((n_skip+1)); continue
       fi
@@ -1551,7 +1566,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       grep -qiE "$PROTECT" <<<"$remote" && continue
       tm="$(svc_to_tmux "$remote")"
       # Owning session still live (tmux present AND its claude proc running)? Keep it.
-      if [ -n "$tm" ] && grep -qx -- "$tm" < <(live_tmux) && proc_alive "$tm"; then
+      if [ -n "$tm" ] && _tmux_live_has "$tm" && proc_alive "$tm"; then
         continue
       fi
       cand=$((cand+1))
