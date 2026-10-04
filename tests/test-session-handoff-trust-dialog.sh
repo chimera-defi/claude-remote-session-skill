@@ -38,7 +38,8 @@ tmux send-keys -t "$S" "FAKE_TUI_LOG='$LOG' exec -a claude python3 '$FIXTURE' tr
 tries=0
 while [ "$tries" -lt 50 ]; do
   [ "$(tmux list-panes -t "$S" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] \
-    && tmux capture-pane -p -t "$S" 2>/dev/null | grep -qF 'trust this folder' && break
+    && cap="$(tmux capture-pane -p -t "$S" 2>/dev/null && printf x)" && cap=${cap%x} && [ -n "$cap" ] \
+    && grep -qF 'trust this folder' <<<"${cap%$'\n'}" && break
   sleep 0.1; tries=$((tries+1))
 done
 
@@ -84,7 +85,11 @@ print("  [Opus 5.5] x")
 time.sleep(60)
 PY
 tmux send-keys -t "$S2" "exec -a claude python3 '$WORK/quote.py'" Enter
-for _ in $(seq 1 20); do tmux capture-pane -p -t "$S2" | grep -q '\[Opus 5.5\]' && break; sleep 0.2; done
+for _ in $(seq 1 20); do
+  cap="$(tmux capture-pane -p -t "$S2" && printf x)" && cap=${cap%x} && [ -n "$cap" ] \
+    && grep -q '\[Opus 5.5\]' <<<"${cap%$'\n'}" && break
+  sleep 0.2
+done
 has "quoted-hint-not-menu" "$(bash "$HANDOFF" check "$S2" 2>&1)" "state=ready"
 
 finish "session-handoff-trust-dialog"

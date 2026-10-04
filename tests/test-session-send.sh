@@ -86,7 +86,7 @@ if command -v tmux >/dev/null 2>&1; then
   sleep 1
   MSGFILE="$(mktemp)"; printf 'relayed via --file\n' > "$MSGFILE"
   outf2="$(bash "$SEND" "$S2" --file "$MSGFILE" 2>&1)"
-  if printf '%s' "$outf2" | grep -qE 'landed on|UNVERIFIED on'; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: file-flag-content-sent — got: $outf2"; fi
+  if grep -qE 'landed on|UNVERIFIED on' <<<"$outf2"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: file-flag-content-sent — got: $outf2"; fi
   rm -f "$MSGFILE"
 
   # 5c. --file pointing at a path that does not exist, on a session that DOES
@@ -96,7 +96,7 @@ if command -v tmux >/dev/null 2>&1; then
   outf3="$(bash "$SEND" "$S2" --file "/no/such/path-$$" 2>&1)"; rcf3=$?
   has "unreadable-file-reported" "$outf3" "could not read --file path"
   ok  "unreadable-file-exit2"    "$rcf3" "2"
-  if printf '%s' "$outf3" | grep -q "empty or whitespace-only"; then
+  if grep -q "empty or whitespace-only" <<<"$outf3"; then
     fail=$((fail+1)); echo "FAIL: unreadable-file-not-misreported — got: $outf3"
   else
     pass=$((pass+1))
