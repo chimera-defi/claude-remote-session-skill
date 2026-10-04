@@ -25,6 +25,7 @@ ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 # START_ID read from the generated start script, as the real log_start would.
 cat > "$BIN/systemctl" <<'CTLEOF'
 #!/usr/bin/env bash
+echo "$*" >> "${STUBLOG:-/dev/null}"
 case " $* " in *" enable "*)
   [ -z "${KSTUB_NONE:-}" ] || exit 0
   unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"
@@ -522,18 +523,40 @@ else
 fi
 
 # T4: a failing `systemctl enable --now` makes new-session exit non-zero and say the session was NOT started.
+# The stub logs its arguments to $STUBLOG; STUB_DISABLE_FAIL=1 makes `disable` fail too.
 FAILCTL="$(mktemp -d)"
 cat > "$FAILCTL/systemctl" <<'FCEOF'
 #!/usr/bin/env bash
-case "$*" in *enable*) echo "stub: enable failed" >&2; exit 1 ;; esac
+echo "$*" >> "${STUBLOG:-/dev/null}"
+case "$*" in
+  *enable*) echo "stub: enable failed" >&2; exit 1 ;;
+  *" disable "*) [ -z "${STUB_DISABLE_FAIL:-}" ] || exit 1 ;;
+esac
 exit 0
 FCEOF
 chmod +x "$FAILCTL/systemctl"
-th="$(mkhome)"
-t4_out="$(HOME="$th" PATH="$FAILCTL:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4-lane sessions --alias t4 2>&1)"; t4_rc=$?
+th="$(mkhome)"; t4log="$th/ctl.log"
+t4_out="$(HOME="$th" STUBLOG="$t4log" PATH="$FAILCTL:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4-lane sessions --alias t4 2>&1)"; t4_rc=$?
 ok "T4: failing systemctl exits non-zero" "$([ "$t4_rc" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
 has "T4: says the session was NOT started" "$t4_out" 'the session was NOT started'
 not_has "T4: does not claim success" "$t4_out" 'Session created'
+has "T4: says the unit was disabled" "$t4_out" 'The unit was disabled, so a reboot will not re-run it'
+ok "T4: the log shows disable then reset-failed for the unit, in that order" "$(grep -nE '^--user (disable|reset-failed) px-t4-0101-0000.service$' "$t4log" | sed 's/^[0-9]*://' | tr '\n' '|')" "--user disable px-t4-0101-0000.service|--user reset-failed px-t4-0101-0000.service|"
+ok "T4: the unit file is left on disk" "$([ -f "$th/.config/systemd/user/px-t4-0101-0000.service" ] && echo kept || echo gone)" "kept"
+# a disable that fails too: still rc 1, and both manual commands are printed
+th="$(mkhome)"; t4log="$th/ctl.log"
+t4b_out="$(HOME="$th" STUBLOG="$t4log" STUB_DISABLE_FAIL=1 PATH="$FAILCTL:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4b-lane sessions --alias t4b 2>&1)"; t4b_rc=$?
+ok "T4: a failing disable still exits 1" "$t4b_rc" "1"
+has "T4: ...says the session was NOT started" "$t4b_out" 'the session was NOT started'
+has "T4: ...prints the manual disable command" "$t4b_out" 'systemctl --user disable px-t4b-0101-0000.service;'
+has "T4: ...and the manual reset-failed command" "$t4b_out" 'systemctl --user reset-failed px-t4b-0101-0000.service'
+not_has "T4: ...and does not claim it was disabled" "$t4b_out" 'The unit was disabled'
+# a normal spawn (the main stub) never disables or resets anything
+th="$(mkhome)"; : > "$th/ctl.log"
+HOME="$th" STUBLOG="$th/ctl.log" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4ok-lane sessions --alias t4ok >/dev/null 2>&1; ok_rc=$?
+ok "T4: a normal spawn exits 0" "$ok_rc" "0"
+ok "T4: ...and its systemctl log has no disable and no reset-failed" "$(grep -cE 'disable|reset-failed' "$th/ctl.log")" "0"
+ok "T4: ...but the stub did see enable" "$(grep -c 'enable' "$th/ctl.log")" "1"
 
 # L: the per-start id comes from od's own successful output. Each failing od must refuse the spawn
 # (rc 1) before any script, unit or log line exists; --dry-run needs no RNG at all.
