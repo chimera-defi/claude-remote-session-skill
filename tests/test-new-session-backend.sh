@@ -538,21 +538,26 @@ not_has "T4: does not claim success" "$t4_out" 'Session created'
 # L: the per-start id comes from od's own successful output. Each failing od must refuse the spawn
 # (rc 1) before any script, unit or log line exists; --dry-run needs no RNG at all.
 ODBIN="$(mktemp -d)"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$ODBIN/od-empty"
-printf '#!/usr/bin/env bash\necho " 0123456789abcdef0123456789abcdef"\nexit 1\n' > "$ODBIN/od-hexfail"
+# Each stub appends a line to $OD_MARKER before it behaves, so a case can show whether od ran at all.
+printf '#!/usr/bin/env bash\necho called >> "$OD_MARKER"\nexit 0\n' > "$ODBIN/od-empty"
+printf '#!/usr/bin/env bash\necho called >> "$OD_MARKER"\necho " 0123456789abcdef0123456789abcdef"\nexit 1\n' > "$ODBIN/od-hexfail"
 for odk in empty hexfail; do
   lbd="$ODBIN/$odk"; mkdir -p "$lbd"; cp "$ODBIN/od-$odk" "$lbd/od"; chmod +x "$lbd/od"
-  lh="$(mkhome)"
-  lo="$(HOME="$lh" PATH="$lbd:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "l-$odk" sessions --alias "l$odk" 2>&1)"; lrc=$?
+  lh="$(mkhome)"; lmark="$lbd/marker"
+  lo="$(HOME="$lh" OD_MARKER="$lmark" PATH="$lbd:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "l-$odk" sessions --alias "l$odk" 2>&1)"; lrc=$?
   ok "L(od $odk): spawn exits 1" "$lrc" "1"
   has "L(od $odk): says it could not generate a start id" "$lo" 'could not generate a start id'
+  ok "L(od $odk): the od stub was invoked (the stub is live)" "$([ -s "$lmark" ] && echo called || echo never)" "called"
   ok "L(od $odk): no start script written" "$(ls "$lh/.local/bin" 2>/dev/null | grep -c -- '-start.sh$' || true)" "0"
   ok "L(od $odk): no unit written" "$(ls "$lh/.config/systemd/user" 2>/dev/null | grep -c . || true)" "0"
   ok "L(od $odk): no log line" "$([ -s "$lh/.sessions/session-starts.log" ] && echo some || echo none)" "none"
+  # --dry-run needs no RNG: rc 0, the plan is printed, and od is never invoked
+  dmark="$lbd/dry-marker"
+  ld_out="$(HOME="$(mkhome)" OD_MARKER="$dmark" PATH="$lbd:$DATESTUB:$PATH" bash "$NS" --dry-run "l-dry-$odk" --backend codex 2>&1)"; ld_rc=$?
+  ok "L(dry-run, od $odk): rc 0" "$ld_rc" "0"
+  has "L(dry-run, od $odk): prints the plan" "$ld_out" '^BACKEND=codex$'
+  ok "L(dry-run, od $odk): od was never invoked" "$([ -e "$dmark" ] && echo invoked || echo absent)" "absent"
 done
-ld_out="$(HOME="$(mkhome)" PATH="$ODBIN/hexfail:$DATESTUB:$PATH" bash "$NS" --dry-run l-dry --backend codex 2>&1)"; ld_rc=$?
-ok "L(dry-run): a failing od does not matter (rc 0)" "$ld_rc" "0"
-has "L(dry-run): prints the plan" "$ld_out" '^BACKEND=codex$'
 # two spawns with the same alias get different ids
 ids=""
 for _ in 1 2; do
