@@ -387,8 +387,13 @@ for s in cand:
 # same PROTECT terms catch both forms, without widening PROTECT itself (it's
 # also used against tmux/systemd names elsewhere, where that broadening isn't
 # wanted).
+# Capture the squeezed title with its status checked (sentinel keeps the exact bytes), then
+# match: a failed producer is "not protected", as the old pipe under pipefail said.
 _title_protected() {
-  printf '%s' "$1" | tr -s '[:space:]' '-' | grep -qiE "$PROTECT"
+  local t
+  t="$(printf '%s' "$1" | tr -s '[:space:]' '-' && printf x)" || return 1
+  t=${t%x}
+  [ -n "$t" ] && grep -qiE "$PROTECT" <<<"${t%$'\n'}"
 }
 
 # _registry_delete_one <id> <title> — protect-check + DELETE one registry
@@ -466,6 +471,16 @@ backend_of() {
 }
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
+# _tmux_live_has <name> — is <name> exactly one of the live tmux session names? The listing is
+# captured whole with its status checked, THEN matched (an early-exiting `grep -q` downstream of
+# the producer races SIGPIPE under pipefail, and `< <(live_tmux)` would drop the producer's
+# status). A failed or empty listing is "not live", as the old `live_tmux | grep -qx` said.
+_tmux_live_has() {
+  local o
+  o="$(live_tmux && printf x)" || return 1
+  o=${o%x}
+  [ -n "$o" ] && grep -qx -- "$1" <<<"${o%$'\n'}"
+}
 # Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
 # name from the tmux session name. Claude sessions are alive with claude/node
 # foregrounds; Codex sessions are alive with codex/node. sleep is the shared
@@ -515,7 +530,8 @@ _find_helper() {
 # doesn't look dirty just because the spawner touched it. Before this fix,
 # EVERY worktree was reported DIRTY unconditionally.
 _wt_dirty() {
-  if git -C "$1" status --porcelain 2>/dev/null | grep -qvE '^.. (\.claude(/|$)|\.sessions-init)'; then
+  local out; out="$(git -C "$1" status --porcelain 2>/dev/null)"
+  if [ -n "$out" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$out"; then
     echo DIRTY
   else
     echo clean
@@ -1204,7 +1220,7 @@ _history_report() {
       cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
       [ -n "$cwd" ] || continue
       [ "$cwd" = "$wt" ] || continue
-      prot=no; printf '%s %s %s' "$rc" "$tm" "$cwd" | grep -qiE "$PROTECT" && prot=yes
+      prot=no; grep -qiE "$PROTECT" <<<"$rc $tm $cwd" && prot=yes
       printf '%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$prot"
     done
   )"
@@ -1385,13 +1401,13 @@ case "$MODE" in
     echo "=== LOCAL: tmux sessions ==="
     for s in $(live_tmux); do
       alive=$(proc_alive "$s" && echo yes || echo NO-PROC)
-      prot=$(echo "$s" | grep -qiE "$PROTECT" && echo " [PROTECTED]" || true)
+      prot=$(grep -qiE "$PROTECT" <<<"$s" && echo " [PROTECTED]" || true)
       printf "  %-52s proc=%s%s\n" "$s" "$alive" "$prot"
     done
     echo "=== LOCAL: systemd units without a live tmux (orphans) ==="
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
-      live_tmux | grep -qx "$tm" || echo "  ORPHAN unit: $u"
+      _tmux_live_has "$tm" || echo "  ORPHAN unit: $u"
     done
     echo "=== REGISTRY: staleness summary ==="
     registry_json | python3 -c "
@@ -1429,7 +1445,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     reaped=0
     # 1. tmux sessions whose claude proc is gone (skip protected).
     for s in $(live_tmux); do
-      echo "$s" | grep -qiE "$PROTECT" && continue
+      grep -qiE "$PROTECT" <<<"$s" && continue
       base="$(tmux_to_base "$s")"; [ -z "$base" ] && continue   # not ours (e.g. codexhost_) → leave it
       proc_alive "$s" && continue                                # alive → keep
       echo "DEAD tmux (no claude proc): $s"
@@ -1444,9 +1460,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     # (the exact case this loop exists to reap). Same liveness definition as
     # `report`'s ORPHAN listing above: no live tmux match.
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
-      echo "$u" | grep -qiE "$PROTECT" && continue
+      grep -qiE "$PROTECT" <<<"$u" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
-      live_tmux | grep -qx "$tm" && continue
+      _tmux_live_has "$tm" && continue
       echo "ORPHAN unit (no tmux): $u"
       do_reap "" "$u" "${base}-start.sh"
       reaped=$((reaped+1))
@@ -1501,7 +1517,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         echo "  skipped(protected)  $id  $title"
         n_skip=$((n_skip+1)); continue
       fi
-      if printf '%s' "$live_bases" | grep -qxF "$title"; then
+      if [ -n "$live_bases" ] && grep -qxF -- "$title" <<<"${live_bases%$'\n'}"; then
         echo "  skipped(live-tmux)  $id  $title"
         n_skip=$((n_skip+1)); continue
       fi
@@ -1547,10 +1563,10 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         session/*) owned=yes; remote="${branch#session/}" ;;
         *)         owned=no;  remote="$(basename "$wt")" ;;
       esac
-      echo "$remote" | grep -qiE "$PROTECT" && continue
+      grep -qiE "$PROTECT" <<<"$remote" && continue
       tm="$(svc_to_tmux "$remote")"
       # Owning session still live (tmux present AND its claude proc running)? Keep it.
-      if [ -n "$tm" ] && live_tmux | grep -qx "$tm" && proc_alive "$tm"; then
+      if [ -n "$tm" ] && _tmux_live_has "$tm" && proc_alive "$tm"; then
         continue
       fi
       cand=$((cand+1))
@@ -1688,7 +1704,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         tm="$(svc_to_tmux "$rc")"                       # reuse existing name mapping
         cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
         [ -n "$cwd" ] || continue                       # proc vanished mid-scan
-        prot=no; printf '%s %s %s' "$rc" "$tm" "$cwd" | grep -qiE "$PROTECT" && prot=yes
+        prot=no; grep -qiE "$PROTECT" <<<"$rc $tm $cwd" && prot=yes
         printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$cwd" "$prot"
       done
     } | python3 -c "
@@ -1888,7 +1904,7 @@ else:
     # is already gone). Idempotent: a missing tmux session or a missing/never-
     # installed systemd unit does not fail the rest of the teardown.
     NAME="${1:?usage: session-doctor.sh reap <tmux-session> [--force]}"
-    echo "$NAME" | grep -qiE "$PROTECT" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
+    grep -qiE "$PROTECT" <<<"$NAME" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
     # Safety gate: refuse a session with unlanded/uncommitted work unless
     # --force. Reuses session-preserve.sh's own audit (exit 0 = safe to reap)
     # rather than re-deriving dirty/unpushed/reachability logic here. If the

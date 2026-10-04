@@ -118,7 +118,7 @@ fi
 # in the glyph class: every Codex reply starts with "•", so a completed reply
 # beginning "Working…" must stay inert transcript text.
 _is_working() {
-  printf '%s' "$1" | grep -qE 'esc to interrupt|(✻|✽|✶|✳|✢|✷|✦|✧|⋆|∗|·)[[:space:]]*[[:alpha:]][[:alpha:]]*…'
+  grep -qE 'esc to interrupt|(✻|✽|✶|✳|✢|✷|✦|✧|⋆|∗|·)[[:space:]]*[[:alpha:]][[:alpha:]]*…' <<<"$1"
 }
 
 _is_codex_selection_widget() {
@@ -155,7 +155,7 @@ _is_codex_selection_widget() {
 # feature of Claude Code, not a one-off rendering.
 _is_on_menu() {
   _is_codex_selection_widget "$1" && return 0
-  printf '%s' "$1" | grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Press enter to confirm|Back to Agent Command Center'
+  grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Press enter to confirm|Back to Agent Command Center' <<<"$1"
 }
 
 # _frag — a distinctive single-line fragment of a (possibly multi-line) message,
@@ -184,9 +184,24 @@ _transcript_region() { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} E
 
 # _on_input_line — is the fragment still sitting in the input box (typed but not
 # submitted)? Then another Enter is needed.
-_on_input_line() { _input_region "$1" "$2" | grep -qF "$1"; }
+#
+# Both predicates (and _is_collapsed_paste_in_input) capture the region with its status checked,
+# THEN match, instead of `region | grep -q` (SIGPIPE race under pipefail) or `grep -q < <(region)`
+# (drops the producer's status). A failed region is "no" — never an input/submission inference —
+# exactly what the old pipe said. A sentinel keeps the exact bytes; zero bytes never match.
+_on_input_line() {
+  local r
+  r="$(_input_region "$1" "$2" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qF -- "$1" <<<"${r%$'\n'}"
+}
 # _in_transcript — did the fragment reach the conversation (submitted + echoed)?
-_in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
+_in_transcript() {
+  local r
+  r="$(_transcript_region "$1" "$2" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qF -- "$1" <<<"${r%$'\n'}"
+}
 
 # _is_collapsed_paste_in_input — is the input box showing Claude Code's
 # collapsed-multiline-paste placeholder ("[Pasted text #1 +17 lines]",
@@ -202,7 +217,10 @@ _in_transcript() { _transcript_region "$1" "$2" | grep -qF "$1"; }
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
 _is_collapsed_paste_in_input() {
-  _input_region "" "$1" | grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]'
+  local r
+  r="$(_input_region "" "$1" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]' <<<"${r%$'\n'}"
 }
 
 # _has_prompt — is there a real ❯/› input line visible anywhere in the capture?
@@ -210,7 +228,7 @@ _is_collapsed_paste_in_input() {
 # frame) or if the capture is empty/garbled.
 # Alternation, not a bracket class — see _input_region's comment above for why
 # `[❯›]` false-matches under a POSIX/C locale.
-_has_prompt() { printf '%s' "$1" | grep -qE '❯|›'; }
+_has_prompt() { grep -qE '❯|›' <<<"$1"; }
 
 # _strip_ansi — drop ANSI CSI sequences (ESC '[' params letter), e.g. color /
 # bold / dim SGR codes from `tmux capture-pane -e`. Used to make the busy /
@@ -256,8 +274,8 @@ _strip_ansi() {
 # the one upstream change that would silently invert this predicate.
 _is_dim_span() {
   local s="$1" esc nbsp; esc=$'\x1b'; nbsp=$'\xc2\xa0'
-  printf '%s' "$s" | grep -Eq \
-    "^[[:space:]${nbsp}]*((${esc}\\[0;2m)|(${esc}\\[2m)|(${esc}\\[7m.${esc}\\[0;2m))[^${esc}]*${esc}\\[0m[[:space:]${nbsp}]*\$"
+  grep -Eq \
+    "^[[:space:]${nbsp}]*((${esc}\\[0;2m)|(${esc}\\[2m)|(${esc}\\[7m.${esc}\\[0;2m))[^${esc}]*${esc}\\[0m[[:space:]${nbsp}]*\$" <<<"$s"
 }
 
 # _input_box_empty — reuses _input_region, whose output always starts AT the
@@ -315,7 +333,7 @@ _input_box_empty() {
       nbound=$((nbound_n - 1))
       break
     fi
-    if [ "$nbound_n" -gt 1 ] && printf '%s' "$stripped" | head -1 | grep -q '›' \
+    if [ "$nbound_n" -gt 1 ] && grep -q '›' <<<"${stripped%%$'\n'*}" \
        && [ -z "$(printf '%s' "$nbound_ln" | tr -d '[:space:]')" ]; then
       nbound=$((nbound_n - 1))
       break

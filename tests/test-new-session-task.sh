@@ -21,14 +21,14 @@ NS="$HERE/../scripts/new-session.sh"
 out="$(bash "$NS" --dry-run mutex-test --task hi --task-file /etc/hostname 2>&1)"; rc=$?
 has "mutex-rejected"        "$out" "mutually exclusive"
 ok  "mutex-exit2"           "$rc" "2"
-if printf '%s' "$out" | grep -q '^SESSION='; then fail=$((fail+1)); echo "FAIL: mutex-no-spawn-attempt — dry-run names were printed despite the rejection"; else pass=$((pass+1)); fi
+if grep -q '^SESSION=' <<<"$out"; then fail=$((fail+1)); echo "FAIL: mutex-no-spawn-attempt — dry-run names were printed despite the rejection"; else pass=$((pass+1)); fi
 
 # A missing --task-file must fail loudly, before spawning — not silently spawn
 # with no task, and not fail only after the (expensive) spawn already happened.
 out2="$(bash "$NS" --dry-run missing-file-test --task-file /no/such/path/xyz-$$ 2>&1)"; rc2=$?
 has "missing-file-rejected" "$out2" "missing or unreadable"
 ok  "missing-file-exit2"    "$rc2" "2"
-if printf '%s' "$out2" | grep -q '^SESSION='; then fail=$((fail+1)); echo "FAIL: missing-file-no-spawn-attempt"; else pass=$((pass+1)); fi
+if grep -q '^SESSION=' <<<"$out2"; then fail=$((fail+1)); echo "FAIL: missing-file-no-spawn-attempt"; else pass=$((pass+1)); fi
 
 # An unreadable (permission-denied) --task-file must be treated the same way.
 if [ "$(id -u)" -ne 0 ]; then

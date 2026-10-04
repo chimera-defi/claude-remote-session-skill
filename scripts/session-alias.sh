@@ -172,7 +172,7 @@ has_mmdd_group() {
 looks_like_session_name() {
   local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   [[ "$v" =~ ^(${_crss_prefix_re})[-_] ]] && return 0
-  printf '%s' "$v" | grep -qE -- '-[0-9]{5,}' && has_mmdd_group "$v" && return 0
+  grep -qE -- '-[0-9]{5,}' <<<"$v" && has_mmdd_group "$v" && return 0
   # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
   # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
   # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, but the
@@ -295,7 +295,10 @@ if [ "$AUDIT" = yes ]; then
 fi
 # Resolution order (see spec):
 # 0. protected -> sanitized folder, never stored, --alias ignored (warn)
-if printf '%s' "$FOLDER" | grep -qiE "$ALIAS_PROTECT"; then
+# The old `printf '%s' "$FOLDER" | grep -q` saw zero bytes for an empty FOLDER (the default
+# ALIAS_PROTECT is '^$', which a here-string's lone empty line would match), and ${FOLDER%$'\n'}
+# keeps the one-line-per-newline shape of the printf bytes.
+if [ -n "$FOLDER" ] && grep -qiE "$ALIAS_PROTECT" <<<"${FOLDER%$'\n'}"; then
   [ -n "$ALIAS_ARG" ] && echo "session-alias: '$FOLDER' is protected; ignoring --alias" >&2
   sanitize "$FOLDER"; exit 0
 fi

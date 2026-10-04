@@ -12,7 +12,7 @@ BIN="$(mktemp -d)"; trap 'rm -rf "$BIN"' EXIT
 ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 export PATH="$BIN:$PATH"
 STORE="$(mktemp)"; rm -f "$STORE"; export SESSION_ALIAS_STORE="$STORE"
-has(){ if printf '%s' "$2" | grep -q "$3"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
+has(){ if grep -q "$3" <<<"$2"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: $1"; fi; }
 
 # Name-first, date last: px-<alias>-<MMDD-HHMM>.
 out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
@@ -99,7 +99,7 @@ CTLEOF
   tmux kill-session -t px_collide-real-test-0101-0000 2>/dev/null || true
   rm -rf "$RLOCKHOME" "$RSTUBBIN"
   has "real-collision-suffixed-minus-2" "$rout" 'px-collide-real-test-0101-0000-2'
-  if printf '%s' "$rout" | grep -q -- '-0101-0000-3'; then fail=$((fail+1)); echo "FAIL: real-collision-skipped-minus-2 — got -3 instead of -2"; else pass=$((pass+1)); fi
+  if grep -q -- '-0101-0000-3' <<<"$rout"; then fail=$((fail+1)); echo "FAIL: real-collision-skipped-minus-2 — got -3 instead of -2"; else pass=$((pass+1)); fi
 fi
 
 # ── CLAUDE_SESSION_PROFILE: selects the tool footprint AND a default model. builder/copywriter use a bare alias
@@ -112,7 +112,7 @@ has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
 has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
 # a role-default bare alias is intended (auto-upgrade): no warning
 errp="$(bash "$NS" --dry-run profile-default 2>&1 1>/dev/null)"
-if printf '%s' "$errp" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: role-default-model-should-not-warn"; else pass=$((pass+1)); fi
+if grep -q 'moving model alias' <<<"$errp"; then fail=$((fail+1)); echo "FAIL: role-default-model-should-not-warn"; else pass=$((pass+1)); fi
 
 # owner: full tool set (no --tools allowlist, like orchestrator) but a Sonnet default, and no alias warning
 outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/null)"
@@ -121,7 +121,7 @@ has "owner-default-model-sonnet"    "$outw" '^MODEL=sonnet$'
 has "owner-model-src-profile"       "$outw" '^MODEL_SRC=profile-default$'
 has "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
 errw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>&1 1>/dev/null)"
-if printf '%s' "$errw" | grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE'; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
+if grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE' <<<"$errw"; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
 
 outh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>/dev/null)"
 has "profile-hub"                  "$outh" 'PROFILE=hub'
@@ -130,7 +130,7 @@ has "hub-model-src-profile"        "$outh" '^MODEL_SRC=profile-default$'
 has "hub-has-consult-prompt-flag"  "$outh" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
 has "hub-keeps-full-tool-set"      "$outh" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections --append-system-prompt '
 errh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>&1 1>/dev/null)"
-if printf '%s' "$errh" | grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE'; then fail=$((fail+1)); echo "FAIL: hub-profile-should-not-warn"; else pass=$((pass+1)); fi
+if grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE' <<<"$errh"; then fail=$((fail+1)); echo "FAIL: hub-profile-should-not-warn"; else pass=$((pass+1)); fi
 
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
 has "profile-builder"               "$outb" 'PROFILE=builder'
@@ -150,7 +150,7 @@ outho="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=hub bash "$
 has "hub-explicit-model-overrides-default" "$outho" '^MODEL=claude-opus-4-8$'
 has "hub-explicit-keeps-consult-prompt"    "$outho" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
 erro="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 bash "$NS" --dry-run profile-override 2>&1 1>/dev/null)"
-if printf '%s' "$erro" | grep -q 'moving model alias'; then fail=$((fail+1)); echo "FAIL: pinned-id-should-not-warn"; else pass=$((pass+1)); fi
+if grep -q 'moving model alias' <<<"$erro"; then fail=$((fail+1)); echo "FAIL: pinned-id-should-not-warn"; else pass=$((pass+1)); fi
 # an EXPLICIT bare alias (one-off spawn) SHOULD warn
 erra="$(CLAUDE_SESSION_MODEL=opus bash "$NS" --dry-run profile-explicit-alias 2>&1 1>/dev/null)"
 has "explicit-bare-alias-warns"        "$erra" 'moving model alias'
@@ -295,7 +295,7 @@ rec_args_for() {  # $@ = extra new-session flags; prints the args passed to sess
 # A bare --alias spawn must NOT ask session-alias to persist.
 recA="$(rec_args_for --alias taskname)"
 has "alias-passed-through"            "$recA" 'alias taskname'
-if printf '%s' "$recA" | grep -q -- '--set-default'; then
+if grep -q -- '--set-default' <<<"$recA"; then
   fail=$((fail+1)); echo "FAIL: alias-alone-must-not-request-persist — got '$recA'"
 else pass=$((pass+1)); fi
 
