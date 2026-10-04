@@ -555,7 +555,7 @@ ok "L(dry-run): a failing od does not matter (rc 0)" "$ld_rc" "0"
 has "L(dry-run): prints the plan" "$ld_out" '^BACKEND=codex$'
 # two spawns with the same alias get different ids
 ids=""
-for n in 1 2; do
+for _ in 1 2; do
   lh="$(mkhome)"
   HOME="$lh" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex l-same sessions --alias lsame >/dev/null 2>&1
   ids="$ids $(sed -n 's/^START_ID=//p' "$lh/.local/bin/px-lsame-0101-0000-start.sh" 2>/dev/null)"
