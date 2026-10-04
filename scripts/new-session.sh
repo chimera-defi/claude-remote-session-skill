@@ -549,10 +549,6 @@ HUB_CONSULT_PROMPT_FILE=""
 [ "$BACKEND" = claude ] && [ "$PROFILE" = hub ] && HUB_CONSULT_PROMPT_FILE="${SCRIPT%.sh}-hub-consult-prompt.txt"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 SESSION_LITERAL="$(_shell_quote "$SESSION")"
-# One id per start attempt, logged on every start-script line and required by the Codex start
-# verdict below, so a stale or concurrent line can never stand in for THIS spawn.
-START_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
-[[ "$START_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "new-session: could not generate a start id from /dev/urandom" >&2; exit 1; }
 WORKDIR_LITERAL="$(_shell_quote "$WORKDIR")"
 TYPE_LITERAL="$(_shell_quote "$TYPE")"
 REMOTE_NAME_LITERAL="$(_shell_quote "$REMOTE_NAME")"
@@ -567,6 +563,14 @@ if [ "$DRYRUN" = yes ]; then
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
+
+# One id per start attempt, logged on every start-script line and required by the Codex start
+# verdict below, so a stale or concurrent line can never stand in for THIS spawn. Generated after
+# the dry-run exit (a dry run needs no RNG) and before anything is written. od's own status is
+# checked, not tr's: an od that prints 32 hex characters and then fails is refused.
+START_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null)" || START_ID=""
+START_ID="${START_ID//[$' \n']/}"
+[[ "$START_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "new-session: could not generate a start id from /dev/urandom" >&2; exit 1; }
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # Folder-trust pre-seed helper, baked into the start script: co-located (repo layout)
