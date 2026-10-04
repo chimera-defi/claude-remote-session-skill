@@ -529,7 +529,8 @@ _backend_of() {
 }
 
 # _codex_live <session> — true iff a process named `codex` is a live
-# descendant of the pane's pid (wrapper-bash Codex start scripts).
+# foreground, non-stopped descendant of the pane's pid (wrapper-bash Codex
+# start scripts).
 _codex_live() {
   local root kids k comm queue="" n=0
   root="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)"
@@ -541,7 +542,13 @@ _codex_live() {
     kids="$(pgrep -P "$k" 2>/dev/null | tr '\n' ' ')"
     for c in $kids; do
       comm="$(ps -o comm= -p "$c" 2>/dev/null)"
-      [ "$comm" = codex ] && return 0
+      # Must be the pane tty's FOREGROUND process group and not stopped: a
+      # backgrounded/stopped codex under a bare shell prompt is not a TUI
+      # we can type into.
+      if [ "$comm" = codex ]; then
+        read -r st pg tpg <<< "$(ps -o stat=,pgid=,tpgid= -p "$c" 2>/dev/null)"
+        case "$st" in T*) : ;; *) [ -n "$pg" ] && [ "$pg" = "$tpg" ] && return 0 ;; esac
+      fi
       queue="${queue:+$queue }$c"
     done
   done
