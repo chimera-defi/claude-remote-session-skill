@@ -632,7 +632,7 @@ if ! mkdir -p "\$RUNDIR"; then
   exit 1
 fi
 # An existing directory is not enough: tmux would start the pane in \$HOME if it cannot enter it
-# (chmod 000, or another user's 0700 dir). Entering it also proves it is usable.
+# (chmod 000, or another user's 0700 dir). Entering it proves tmux can start the pane there.
 if ! cd "\$RUNDIR"; then
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-unusable rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
   exit 1
