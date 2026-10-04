@@ -228,6 +228,7 @@ kout="$(HOME="$KHOME" KSTUB_NONE=1 PATH="$KHOME/.local/bin:$DATESTUB:$PATH" CRSS
 ok "S-task: exit 3" "$krc" "3"
 ok "S-task: no send-keys/paste-buffer/load-buffer reached tmux" "$(grep -cE 'send-keys|paste-buffer|load-buffer' "$KHOME/tmux.calls" 2>/dev/null)" "0"
 has "S-task: says start NOT verified" "$kout" 'start NOT verified'
+has "S-task: says the task was NOT sent because the start was not verified" "$kout" 'task NOT sent: the lane.s start was not verified'
 not_has "S-task: never says is running" "$kout" 'is running'
 
 # M: a verified start whose tmux session vanishes during task readiness
