@@ -868,7 +868,8 @@ WantedBy=default.target
 UNIT_EOF
 
 # ── Enable and start ─────────────────────────────────────────────────────────
-t0="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# bash's own clock (no `date` fork): several test harnesses put a recursing `date` stub on PATH
+t0="$(TZ=UTC printf '%(%Y-%m-%dT%H:%M:%SZ)T' -1)"
 if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"; }; then
   echo "new-session: systemd failed to start $(basename "$SERVICE") — the session was NOT started. Inspect: journalctl --user -u $(basename "$SERVICE") -n 30; start script: $SCRIPT" >&2
   exit 1

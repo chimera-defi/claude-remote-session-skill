@@ -192,7 +192,7 @@ ok "C: missing parent dir => 10 (ENOENT)" "$(rc bash "$RP" read-pin "$P/nodir/pi
 SBIN="$WORK/sbin"; mkdir -p "$SBIN"
 ln -sf "$HERE/../scripts/session-alias.sh" "$SBIN/session-alias"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SBIN/systemctl"; chmod +x "$SBIN/systemctl"
-printf '#!/usr/bin/env bash\ncase "$1" in +%%m%%d-%%H%%M) echo 0101-0000 ;; *) exec /usr/bin/env date "$@" ;; esac\n' > "$SBIN/date"; chmod +x "$SBIN/date"
+printf '#!/usr/bin/env bash\ncase "$1" in +%%m%%d-%%H%%M) echo 0101-0000 ;; *) exec /usr/bin/date "$@" ;; esac\n' > "$SBIN/date"; chmod +x "$SBIN/date"
 export CRSS_SESSION_PREFIX=px SESSION_ALIAS_STORE="$WORK/alias-store"
 SPAWN_HOME="$WORK/spawnhome"; mkdir -p "$SPAWN_HOME/.sessions/lp-start"
 HOME="$SPAWN_HOME" PATH="$SBIN:$PATH" CRSS_CODEX_BIN=/bin/true CRSS_CODEX_ARGS='-m m -s read-only' \
