@@ -805,33 +805,46 @@ fi
 
 cat >> "$SCRIPT" << SCRIPT_EOF
 # A fail-closed Codex first pass (helper missing, bad args, bad pin) ends in \`sleep 300\`, which
-# the kickoff below counts as launched. Remember where the log ends before the first Enter so the
-# loop's own fail-closed line (written before its sleep) can be told apart from older ones.
-_k_off=\$(wc -c < "\$LOG_FILE" 2>/dev/null || echo 0)
+# the kickoff below counts as launched. For codex, \`started\` is reported only from explicit
+# evidence: the pane command is codex/node, or (sleep) the pane shows the loop's OWN expanded
+# fail-closed line for THIS session. Anything else is UNVERIFIED, never a plain \`started\`.
 kicked=no
+_kcmd=""
 for _try in 1 2 3; do
   tmux send-keys -t "${SESSION}" Enter
   for _j in \$(seq 1 12); do
-    case "\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)" in
-      ${KICKED_CMDS}) kicked=yes; break ;;
+    _kc="\$(tmux display-message -p -t "${SESSION}" '#{pane_current_command}' 2>/dev/null)"
+    case "\$_kc" in
+      ${KICKED_CMDS}) kicked=yes; _kcmd="\$_kc"; break ;;
     esac
     sleep 0.5
   done
   [ "\$kicked" = yes ] && break
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=kickoff-retry attempt=\$_try" | tee -a "\$LOG_FILE"
 done
-if [ "\$kicked" = yes ]; then
-  _fc=""
-  if [ "\$BACKEND" = codex ]; then
-    _fc=\$(tail -c +\$(( _k_off + 1 )) "\$LOG_FILE" 2>/dev/null | grep -a "session=\$SESSION event=resume-pin-fail-closed reason=" | tail -1)
-  fi
+if [ "\$kicked" != yes ]; then
+  log_start "started-UNVERIFIED-kickoff-may-have-failed"
+elif [ "\$BACKEND" = codex ] && [ "\$_kcmd" = sleep ]; then
+  _fc=""; _cap_ok=no
+  for _t in 1 2 3 4 5 6 7 8 9 10; do
+    if _pane="\$(tmux capture-pane -p -J -S - -t "${SESSION}" 2>/dev/null)"; then
+      _cap_ok=yes
+      _fc="\$(printf '%s\\n' "\$_pane" | sed 's/[[:space:]]*\$//' \\
+        | grep -aE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] session=[^ ]+ event=resume-pin-fail-closed reason=[a-z][a-z-]*\$' \\
+        | grep -aF "] session=${SESSION} event=" | tail -1)"
+      [ -z "\$_fc" ] || break
+    fi
+    sleep 0.5
+  done
   if [ -n "\$_fc" ]; then
     log_start "started-FAIL-CLOSED reason=\${_fc##*reason=}"
+  elif [ "\$_cap_ok" = yes ]; then
+    log_start "started-UNVERIFIED-codex-not-running"
   else
-    log_start "started"
+    log_start "started-UNVERIFIED-pane-unreadable"
   fi
 else
-  log_start "started-UNVERIFIED-kickoff-may-have-failed"
+  log_start "started"
 fi
 SCRIPT_EOF
 chmod +x "$SCRIPT"
@@ -855,16 +868,27 @@ WantedBy=default.target
 UNIT_EOF
 
 # ── Enable and start ─────────────────────────────────────────────────────────
+t0="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"; }; then
   echo "new-session: systemd failed to start $(basename "$SERVICE") — the session was NOT started. Inspect: journalctl --user -u $(basename "$SERVICE") -n 30; start script: $SCRIPT" >&2
   exit 1
 fi
 
-# A Codex lane whose first pass failed closed is not running codex: say so (exit 3 below).
-START_FAIL_CLOSED=""
-if [ "$BACKEND" = codex ] && [ -f "$HOME/.sessions/session-starts.log" ]; then
-  _last="$(grep -aF "session=${SESSION} " "$HOME/.sessions/session-starts.log" | grep -a 'event=started' | tail -1)"
-  case "$_last" in *event=started-FAIL-CLOSED*) START_FAIL_CLOSED="${_last##*reason=}" ;; esac
+# A Codex lane is reported started only from explicit evidence: the LAST well-formed log line for
+# this session written at or after t0 must end exactly in ` event=started`. A fresh fail-closed
+# line, any UNVERIFIED line, a stale line, a malformed timestamp, or no line at all exits 3.
+START_FAIL_CLOSED=""; START_UNVERIFIED=""; START_VERDICT=""
+if [ "$BACKEND" = codex ]; then
+  _sl="$HOME/.sessions/session-starts.log"; _last=""
+  if [ -f "$_sl" ]; then
+    _last="$(grep -aF "session=${SESSION} " "$_sl" | grep -aE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] ' \
+      | grep -aF ' event=started' | awk -v t0="$t0" '{ ts = substr($1, 2, 20); if ((ts "") >= (t0 "")) last = $0 } END { print last }')" || _last=""
+  fi
+  case "$_last" in
+    *" event=started") ;;
+    *" event=started-FAIL-CLOSED reason="*) START_FAIL_CLOSED="${_last##*reason=}"; START_VERDICT="fail-closed reason=${START_FAIL_CLOSED}" ;;
+    *) START_UNVERIFIED=1; START_VERDICT="start not verified" ;;
+  esac
 fi
 
 # ── Telemetry (best-effort, never fails the spawn) ──────────────────────────
@@ -904,7 +928,9 @@ fi
 # TASK_FAILED collects why the task was not (verifiably) delivered; any value makes the
 # spawn exit 3 below, after naming the session, so a launcher never mistakes it for success.
 TASK_FAILED=""
-if [ -n "$TASK" ]; then
+if [ -n "$TASK" ] && [ -n "$START_VERDICT" ]; then
+  TASK_FAILED="task NOT sent: the lane's start was not verified (${START_VERDICT})"
+elif [ -n "$TASK" ]; then
   HANDOFF=""
   if [ -f "$SELF_DIR/session-handoff.sh" ]; then
     HANDOFF="$SELF_DIR/session-handoff.sh"
@@ -967,14 +993,19 @@ fi
 # ── Confirm ──────────────────────────────────────────────────────────────────
 if [ -n "$START_FAIL_CLOSED" ]; then
   echo "" >&2
-  echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) started FAIL-CLOSED (reason=${START_FAIL_CLOSED}): codex was NOT launched and the loop retries after its backoff. Inspect: grep -a 'session=${SESSION} ' $HOME/.sessions/session-starts.log | tail" >&2
+  echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) started FAIL-CLOSED (reason=${START_FAIL_CLOSED}): codex was NOT launched and the loop retries after its backoff. ${TASK_FAILED:+${TASK_FAILED}. }Inspect: grep -a 'session=${SESSION} ' $HOME/.sessions/session-starts.log | tail" >&2
+  exit 3
+fi
+if [ -n "$START_UNVERIFIED" ]; then
+  echo "" >&2
+  echo "new-session: start NOT verified for ${REMOTE_NAME} (tmux ${SESSION}): codex is not confirmed running. ${TASK_FAILED:+${TASK_FAILED}. }Inspect: journalctl --user -u $(basename "$SERVICE") -n 30; grep -a 'session=${SESSION} ' ~/.sessions/session-starts.log | tail" >&2
+  exit 3
 fi
 if [ -n "$TASK_FAILED" ]; then
   echo "" >&2
   echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) is running, but the task was NOT delivered: ${TASK_FAILED}" >&2
   exit 3
 fi
-[ -z "$START_FAIL_CLOSED" ] || exit 3
 echo ""
 echo "Session created: ${REMOTE_NAME}"
 echo "Connect: Claude Code app → Remote sessions → ${REMOTE_NAME}"
