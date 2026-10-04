@@ -130,4 +130,61 @@ grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf 
 ok "codex-grouped-args-count" "$grp_n" "4"
 ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
+# K2: a spawn whose start script logged `started-FAIL-CLOSED` is reported loudly and exits 3;
+# a healthy `started` spawn is untouched. The stub systemctl plays the start script's part by
+# appending the line the real script writes, keyed on the unit name.
+KBIN="$(mktemp -d)"
+cat > "$KBIN/systemctl" <<'KCTL'
+#!/usr/bin/env bash
+case " $* " in *" enable "*)
+  unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"
+  printf '[ts] host=h session=%s remote=%s backend=codex workdir=w model=m profile=p event=%s\n' \
+    "$sess" "$unit" "${KSTUB_EVENT:-started}" >> "$HOME/.sessions/session-starts.log" ;;
+esac
+exit 0
+KCTL
+chmod +x "$KBIN/systemctl"
+KHOME="$(mktemp -d)"; mkdir -p "$KHOME/.sessions/k-start"
+kfc_out="$(HOME="$KHOME" KSTUB_EVENT='started-FAIL-CLOSED reason=helper-missing' PATH="$KBIN:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-start sessions --alias kfc 2>&1)"; kfc_rc=$?
+ok "K2: fail-closed start exits 3" "$kfc_rc" "3"
+has "K2: names the session" "$kfc_out" 'px-kfc-0101-0000'
+has "K2: names the reason" "$kfc_out" 'FAIL-CLOSED \(reason=helper-missing\)'
+mkdir -p "$KHOME/.sessions/k-ok"
+kok_out="$(HOME="$KHOME" PATH="$KBIN:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-ok sessions --alias kok 2>&1)"; kok_rc=$?
+ok "K2: healthy start exits 0" "$kok_rc" "0"
+has "K2: healthy start still says created" "$kok_out" 'Session created: px-kok-0101-0000'
+not_has "K2: healthy start is not flagged" "$kok_out" 'FAIL-CLOSED'
+
+# K1: run the generated start script against a stub tmux. The stub plays the pane: it reports a
+# shell, then `sleep`, and (on the first Enter) writes the loop's own fail-closed line.
+cat > "$KHOME/.local/bin/tmux" <<'KTMUX'
+#!/usr/bin/env bash
+case "$1" in
+  has-session) exit 1 ;;
+  display-message)
+    n="$(cat "$HOME/tmux.n" 2>/dev/null || echo 0)"; echo $((n+1)) > "$HOME/tmux.n"
+    if [ "$n" -eq 0 ]; then echo bash; else echo sleep; fi ;;
+  send-keys)
+    if [ "${!#}" = Enter ] && [ -n "${KTMUX_FC:-}" ] && [ ! -e "$HOME/tmux.fired" ]; then
+      : > "$HOME/tmux.fired"
+      printf '[ts] session=%s event=resume-pin-fail-closed reason=%s\n' "$3" "$KTMUX_FC" >> "$HOME/.sessions/session-starts.log"
+    fi ;;
+esac
+exit 0
+KTMUX
+chmod +x "$KHOME/.local/bin/tmux"
+KSCRIPT="$KHOME/.local/bin/px-kfc-0101-0000-start.sh"
+rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
+HOME="$KHOME" KTMUX_FC=helper-missing bash "$KSCRIPT" >/dev/null 2>&1
+has "K1: fail-closed first pass logs started-FAIL-CLOSED with the reason" "$(cat "$KHOME/.sessions/session-starts.log")" 'event=started-FAIL-CLOSED reason=helper-missing'
+rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
+HOME="$KHOME" bash "$KSCRIPT" >/dev/null 2>&1
+has "K1: healthy first pass still logs started" "$(cat "$KHOME/.sessions/session-starts.log")" 'event=started$'
+not_has "K1: healthy first pass is not flagged" "$(cat "$KHOME/.sessions/session-starts.log")" 'FAIL-CLOSED'
+# an OLD fail-closed line from before this start must not taint a healthy one
+rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
+printf '[old] session=px_kfc-0101-0000 event=resume-pin-fail-closed reason=pin-invalid\n' > "$KHOME/.sessions/session-starts.log"
+HOME="$KHOME" bash "$KSCRIPT" >/dev/null 2>&1
+not_has "K1: an older fail-closed line is ignored" "$(tail -n 1 "$KHOME/.sessions/session-starts.log")" 'FAIL-CLOSED'
+
 finish "new-session-backend"
