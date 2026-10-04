@@ -117,7 +117,7 @@ else:
 PY
 }
 
-# 0 pin (UUID on stdout) / 1 no pin file (lstat ENOENT) / 2 anything else.
+# 0 pin (UUID on stdout) / 10 no pin file (lstat ENOENT) / 2 anything else.
 read_pin() {
   python3 -I - "$1" <<'PY'
 import re, stat
