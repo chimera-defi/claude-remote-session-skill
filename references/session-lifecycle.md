@@ -79,7 +79,7 @@ cwd, else refuses and lists them (the newest isn't necessarily the real conversa
    never downgraded to `--continue`.
 
 Start scripts predating the pin loop are patched once (backup in `~/backups/session-resume/`).
-Codex-backend units are refused (their loop has no resume path).
+Codex-backend units are refused: session-resume does not handle Codex units. The Codex start loop itself resumes an explicitly pinned thread (see `scripts/codex-resume-pin.sh` and `tests/test-codex-resume-pin.sh`).
 
 Why a tool: a hand-relaunched session lacks `--dangerously-skip-permissions`, may run a
 different CLI binary, and has no unit, so it stalls on approval prompts; a bare
