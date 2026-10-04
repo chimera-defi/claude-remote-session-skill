@@ -596,7 +596,11 @@ fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
 # tmux silently starts the pane in \$HOME when \`-c\` names a missing dir, and only the claude
 # backend created it (\`mkdir -p \$RUNDIR/.claude\`), so a fresh codex \`sessions\` lane ran in \$HOME.
-mkdir -p "\$RUNDIR" || echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-mkdir-FAILED rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+# Fail closed: no run directory means no lane, and tmux must not be asked to start in \$HOME.
+if ! mkdir -p "\$RUNDIR"; then
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-mkdir-FAILED rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+  exit 1
+fi
 SCRIPT_EOF
 
 if [ "$BACKEND" = claude ]; then

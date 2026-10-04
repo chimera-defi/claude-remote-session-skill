@@ -126,7 +126,7 @@ wd_out="$(HOME="$WD_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CR
 has "workdir-spawn-created" "$wd_out" 'Session created: px-wdnomk-0101-0000'
 WD_SCRIPT="$WD_HOME/.local/bin/px-wdnomk-0101-0000-start.sh"
 ok "workdir-folder-not-precreated-by-spawn" "$([ -e "$WD_HOME/.sessions/wd-nomk" ] && echo exists || echo absent)" "absent"
-mk_line="$(grep -n '^mkdir -p "\$RUNDIR" ||' "$WD_SCRIPT" | head -1 | cut -d: -f1)"
+mk_line="$(grep -n '^if ! mkdir -p "\$RUNDIR"; then' "$WD_SCRIPT" | head -1 | cut -d: -f1)"
 tmux_line="$(grep -n '^tmux new-session' "$WD_SCRIPT" | head -1 | cut -d: -f1)"
 ok "workdir-static-mkdir-before-tmux" "$([ -n "$mk_line" ] && [ -n "$tmux_line" ] && [ "$mk_line" -lt "$tmux_line" ] && echo before || echo missing-or-after)" "before"
 cat > "$WD_HOME/.local/bin/tmux" <<'WDTMUX'
@@ -149,6 +149,25 @@ ok "workdir-tmux-got-existing-dir" "$(cat "$WD_HOME/tmux.c" 2>/dev/null)" "$WD_H
 WDC_HOME="$(mktemp -d)"; mkdir -p "$WDC_HOME/.sessions"
 wdc_out="$(HOME="$WDC_HOME" PATH="$DATESTUB:$PATH" bash "$NS" wd-claude sessions --alias wdclaude 2>&1)"
 has "workdir-claude-spawn-created" "$wdc_out" 'Session created: px-wdclaude-0101-0000'
-has "workdir-claude-script-has-mkdir" "$(cat "$WDC_HOME/.local/bin/px-wdclaude-0101-0000-start.sh")" '^mkdir -p "\$RUNDIR" \|\|'
+has "workdir-claude-script-has-mkdir" "$(cat "$WDC_HOME/.local/bin/px-wdclaude-0101-0000-start.sh")" '^if ! mkdir -p "\$RUNDIR"; then'
+# A failed mkdir fails closed: the start script exits non-zero before any tmux session is created.
+WB_HOME="$(mktemp -d)"; mkdir -p "$WB_HOME/.sessions"
+wb_out="$(HOME="$WB_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex wd-blk sessions --alias wdblk 2>&1)"
+has "workdir-blocked-spawn-created" "$wb_out" 'Session created: px-wdblk-0101-0000'
+: > "$WB_HOME/.sessions/wd-blk"   # a file where the run directory must go: mkdir -p fails even as root
+cat > "$WB_HOME/.local/bin/tmux" <<'WBTMUX'
+#!/usr/bin/env bash
+echo "$*" >> "$HOME/tmux.calls"
+case "$1" in has-session) exit 1 ;; display-message) echo bash ;; esac
+exit 0
+WBTMUX
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WB_HOME/.local/bin/session-git-prep"
+chmod +x "$WB_HOME/.local/bin/tmux" "$WB_HOME/.local/bin/session-git-prep"
+HOME="$WB_HOME" bash "$WB_HOME/.local/bin/px-wdblk-0101-0000-start.sh" >/dev/null 2>&1; wb_rc=$?
+ok "workdir-mkdir-failure-exits-nonzero" "$([ "$wb_rc" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+ok "workdir-mkdir-failure-no-tmux-session" "$(grep -cv '^has-session' "$WB_HOME/tmux.calls" 2>/dev/null)" "0"
+wb_log="$(cat "$WB_HOME/.sessions/session-starts.log" 2>/dev/null)"
+has "workdir-mkdir-failure-logged" "$wb_log" 'event=rundir-mkdir-FAILED rundir='
+not_has "workdir-mkdir-failure-not-reported-started" "$wb_log" 'event=started'
 
 finish "new-session-backend"
