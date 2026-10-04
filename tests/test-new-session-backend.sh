@@ -118,4 +118,37 @@ grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf 
 ok "codex-grouped-args-count" "$grp_n" "4"
 ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
+# The run directory is created by the start script itself: a NEW folder of type `sessions`
+# (not pre-created, unlike backend-start above) used to leave tmux `-c <missing dir>`, which
+# silently starts the pane in $HOME.
+WD_HOME="$(mktemp -d)"; mkdir -p "$WD_HOME/.sessions"
+wd_out="$(HOME="$WD_HOME" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex wd-nomk sessions --alias wdnomk 2>&1)"
+has "workdir-spawn-created" "$wd_out" 'Session created: px-wdnomk-0101-0000'
+WD_SCRIPT="$WD_HOME/.local/bin/px-wdnomk-0101-0000-start.sh"
+ok "workdir-folder-not-precreated-by-spawn" "$([ -e "$WD_HOME/.sessions/wd-nomk" ] && echo exists || echo absent)" "absent"
+mk_line="$(grep -n '^mkdir -p "\$RUNDIR" ||' "$WD_SCRIPT" | head -1 | cut -d: -f1)"
+tmux_line="$(grep -n '^tmux new-session' "$WD_SCRIPT" | head -1 | cut -d: -f1)"
+ok "workdir-static-mkdir-before-tmux" "$([ -n "$mk_line" ] && [ -n "$tmux_line" ] && [ "$mk_line" -lt "$tmux_line" ] && echo before || echo missing-or-after)" "before"
+cat > "$WD_HOME/.local/bin/tmux" <<'WDTMUX'
+#!/usr/bin/env bash
+case "$1" in
+  has-session) exit 1 ;;
+  new-session) prev=""; for a in "$@"; do [ "$prev" = -c ] && printf '%s' "$a" > "$HOME/tmux.c"; prev="$a"; done ;;
+  display-message)
+    n="$(cat "$HOME/tmux.n" 2>/dev/null || echo 0)"; echo $((n+1)) > "$HOME/tmux.n"
+    if [ "$n" -eq 0 ]; then echo bash; else echo codex; fi ;;
+esac
+exit 0
+WDTMUX
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WD_HOME/.local/bin/session-git-prep"
+chmod +x "$WD_HOME/.local/bin/tmux" "$WD_HOME/.local/bin/session-git-prep"
+HOME="$WD_HOME" bash "$WD_SCRIPT" >/dev/null 2>&1
+ok "workdir-created-by-start-script" "$([ -d "$WD_HOME/.sessions/wd-nomk" ] && echo dir || echo missing)" "dir"
+ok "workdir-tmux-got-existing-dir" "$(cat "$WD_HOME/tmux.c" 2>/dev/null)" "$WD_HOME/.sessions/wd-nomk"
+# claude backend: the common-section mkdir must not disturb it
+WDC_HOME="$(mktemp -d)"; mkdir -p "$WDC_HOME/.sessions"
+wdc_out="$(HOME="$WDC_HOME" PATH="$DATESTUB:$PATH" bash "$NS" wd-claude sessions --alias wdclaude 2>&1)"
+has "workdir-claude-spawn-created" "$wdc_out" 'Session created: px-wdclaude-0101-0000'
+has "workdir-claude-script-has-mkdir" "$(cat "$WDC_HOME/.local/bin/px-wdclaude-0101-0000-start.sh")" '^mkdir -p "\$RUNDIR" \|\|'
+
 finish "new-session-backend"

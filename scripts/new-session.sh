@@ -594,6 +594,9 @@ if command -v session-git-prep >/dev/null 2>&1; then
   [ -n "\$PREP" ] && RUNDIR="\$PREP"
 fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+# tmux silently starts the pane in \$HOME when \`-c\` names a missing dir, and only the claude
+# backend created it (\`mkdir -p \$RUNDIR/.claude\`), so a fresh codex \`sessions\` lane ran in \$HOME.
+mkdir -p "\$RUNDIR" || echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-mkdir-FAILED rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
 SCRIPT_EOF
 
 if [ "$BACKEND" = claude ]; then
