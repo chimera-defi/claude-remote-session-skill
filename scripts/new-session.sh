@@ -919,7 +919,16 @@ UNIT_EOF
 # bash's own clock (no `date` fork): several test harnesses put a recursing `date` stub on PATH
 t0="$(TZ=UTC printf '%(%Y-%m-%dT%H:%M:%SZ)T' -1)"
 if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"; }; then
-  echo "new-session: systemd failed to start $(basename "$SERVICE") — the session was NOT started. Inspect: journalctl --user -u $(basename "$SERVICE") -n 30; start script: $SCRIPT" >&2
+  # The unit may now be enabled and failed: a later boot would re-run the start script and refuse
+  # again. Best effort, output discarded: disable it and clear the failed state. The unit file stays.
+  _unit="$(basename "$SERVICE")"
+  if systemctl --user disable "$_unit" >/dev/null 2>&1; then
+    _after="The unit was disabled, so a reboot will not re-run it."
+  else
+    _after="The unit could NOT be disabled; run by hand: systemctl --user disable $_unit; systemctl --user reset-failed $_unit"
+  fi
+  systemctl --user reset-failed "$_unit" >/dev/null 2>&1 || true
+  echo "new-session: systemd failed to start $_unit — the session was NOT started. $_after Inspect: journalctl --user -u $_unit -n 30; start script: $SCRIPT" >&2
   exit 1
 fi
 
