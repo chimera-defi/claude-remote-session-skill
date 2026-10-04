@@ -63,7 +63,7 @@ spawn_collapsed() {
   local tries=0
   while [ "$tries" -lt 50 ]; do
     if [ "$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] \
-       && tmux capture-pane -p -t "$s" 2>/dev/null | grep -qF '❯'; then
+       && grep -qF '❯' < <(tmux capture-pane -p -t "$s" 2>/dev/null); then
       break
     fi
     sleep 0.1; tries=$((tries+1))
@@ -129,7 +129,7 @@ ok  "sleep-send-exit2"         "$send2_rc" "2"
 after="$(tmux capture-pane -p -t "$S2")"
 ok "sleep-pane-untouched" "$(yn test "$before" = "$after")" "yes"
 has "sleep-pane-no-injection" "$after" "sleep 300"
-if printf '%s' "$after" | grep -q "pwned"; then
+if grep -q "pwned" <<<"$after"; then
   fail=$((fail+1)); echo "FAIL: sleep-pane-no-injection — payload text leaked into the pane"
 else
   pass=$((pass+1))

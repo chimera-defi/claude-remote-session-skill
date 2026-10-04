@@ -185,7 +185,7 @@ has "empty-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX '' is invalid"
 # (not just the bad element) — a valid CRSS_SESSION_PREFIX survives on its own.
 out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 has "invalid-legacy-element-drops-whole-list" "$out" "RE=px"
-has "invalid-legacy-element-not-oldhost" "$(printf '%s' "$out" | grep -qF 'RE=px|oldhost' && echo yes || echo no)" "no"
+has "invalid-legacy-element-not-oldhost" "$(grep -qF 'RE=px|oldhost' <<<"$out" && echo yes || echo no)" "no"
 has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
 
 # unset/empty CRSS_LEGACY_PREFIXES is the documented default (no legacy

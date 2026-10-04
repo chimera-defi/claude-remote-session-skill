@@ -33,7 +33,7 @@ ok "unprotected-by-default" "$(bash "$ALIAS" otherbot-autoresearch --alias oa2)"
 long_symbolic='@@@@@@@@@@@@@@@@@@@@'
 out="$(bash "$ALIAS" "$long_symbolic")"
 ok "empty-normalize-nonempty" "$(yn test -n "$out")" "yes"
-ok "empty-normalize-safe-charset" "$(printf '%s' "$out" | grep -qE '^[a-z0-9-]+$' && echo yes || echo no)" "yes"
+ok "empty-normalize-safe-charset" "$(grep -qE '^[a-z0-9-]+$' <<<"$out" && echo yes || echo no)" "yes"
 # --no-save resolves (incl. inference) but must NEVER write the store (a --dry-run must not mutate state)
 NS_STORE="$(mktemp)"; rm -f "$NS_STORE"
 ok "nosave-resolves"  "$(SESSION_ALIAS_STORE="$NS_STORE" bash "$ALIAS" brand-new-long-folder-xyz --no-save)" "bnlfx"
@@ -41,7 +41,7 @@ ok "nosave-no-write"  "$([ -f "$NS_STORE" ] && echo exists || echo absent)" "abs
 
 # ── Anti-poisoning (real corrupt values seen in the live store) ──
 # An alias must never look like a session name (px- prefix / MMDD-HHMM / trailing -MMDD / long numeric run).
-notsess(){ printf '%s' "$1" | grep -qiE '^px[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' && echo POISONED || echo clean; }
+notsess(){ grep -qiE '^px[-_]|[0-9]{4}-[0-9]{4}|-[0-9]{4}$|-[0-9]{5,}' <<<"$1" && echo POISONED || echo clean; }
 
 # READ-PATH guard: a poisoned stored value is discarded, re-inferred, and self-healed in the store.
 PZ="$(mktemp)"

@@ -70,9 +70,9 @@ tmux new-session -d -s px_test-nolog-0101-0100 2>/dev/null
 
 out="$(bash "$REG" 2>&1)"
 has "old-session-listed" "$out" 'px_test-old-0101-0100'
-ok "old-session-age-10d"   "$(printf '%s' "$out" | grep -F 'px_test-old-0101-0100' | grep -qF '(10d old)' && echo yes || echo no)" "yes"
-ok "new-session-age-0d"    "$(printf '%s' "$out" | grep -F 'px_test-new-0101-0100' | grep -qF '(0d old)' && echo yes || echo no)" "yes"
-ok "nolog-uses-tmux-fallback" "$(printf '%s' "$out" | grep -F 'px_test-nolog-0101-0100' | grep -qF 'tmux session_created' && echo yes || echo no)" "yes"
+ok "old-session-age-10d"   "$(grep -qF '(10d old)' < <(grep -F 'px_test-old-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
+ok "new-session-age-0d"    "$(grep -qF '(0d old)' < <(grep -F 'px_test-new-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
+ok "nolog-uses-tmux-fallback" "$(grep -qF 'tmux session_created' < <(grep -F 'px_test-nolog-0101-0100' <<<"$out") && echo yes || echo no)" "yes"
 
 filtered="$(bash "$REG" --older-than 3d 2>&1)"
 has "older-than-includes-old" "$filtered" 'px_test-old-0101-0100'

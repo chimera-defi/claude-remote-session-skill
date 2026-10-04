@@ -62,7 +62,7 @@ spawn_tui() {
   local tries=0
   while [ "$tries" -lt 50 ]; do
     if [ "$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] \
-       && tmux capture-pane -p -t "$s" 2>/dev/null | grep -qF '❯'; then
+       && grep -qF '❯' < <(tmux capture-pane -p -t "$s" 2>/dev/null); then
       break
     fi
     sleep 0.1; tries=$((tries+1))
