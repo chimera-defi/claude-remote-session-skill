@@ -712,50 +712,48 @@ while true; do
   _codex_trust_dir="\${PWD//\\\\/\\\\\\\\}"
   _codex_trust_dir="\${_codex_trust_dir//\"/\\\\\"}"
   CODEX_TRUST_CONFIG="projects.\"\${_codex_trust_dir}\".trust_level=\"trusted\""
-  # Resume the lane's pinned thread (kept current by the watcher below) so a
-  # reboot/crash does not lose it. A resume does NOT inherit the thread's
-  # sandbox (it takes the config default), so EVERY attempt, resume or fresh,
-  # passes -s explicitly. Any helper failure (bad sandbox value, resume-args
-  # error) fails closed: no launch this round, backoff, retry. A pin whose
-  # rollout is gone is set aside and the next launch is a fresh one (explicit -s
-  # too). The watcher is advisory (kills codex after the fact if the recorded
-  # policy is wider than expected); the guarantee is the explicit -s.
-  PIN_ID=""; RESUME_ARGV=(); WATCH_PID=""; HELPER_FAIL=""; CODEX_SANDBOX=""; CODEX_SANDBOX_EXPLICIT=""; FRESH_ARGV=("\${CODEX_ARGS[@]}")
-  # Helper absent (not installed yet): legacy launch, unchanged, so a fleet
-  # without the helper is never blocked. Helper present: resolved every round, so a
-  # fixed/updated helper recovers a failed-closed lane without a restart.
-  if command -v codex-resume-pin >/dev/null 2>&1; then
-    CODEX_SANDBOX=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}") || CODEX_SANDBOX=""
-    CODEX_SANDBOX_EXPLICIT=\$(codex-resume-pin sandbox-of --explicit "\${CODEX_ARGS[@]}") || CODEX_SANDBOX_EXPLICIT=""
-    [ -n "\$CODEX_SANDBOX" ] || HELPER_FAIL="sandbox-of failed"
-    [ -s "\$CODEX_PIN" ] && PIN_ID=\$(cat "\$CODEX_PIN")
-    if [ -n "\$PIN_ID" ] && ! codex-resume-pin exists "\$PIN_ID"; then
-      echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
-      mv -f "\$CODEX_PIN" "\$CODEX_PIN.stale.\$(date +%s)"; PIN_ID=""
-    fi
-    if [ -n "\$PIN_ID" ] && [ -z "\$HELPER_FAIL" ]; then
-      if RESUME_OUT=\$(codex-resume-pin resume-args "\$PIN_ID" "\${CODEX_ARGS[@]}") && [ -n "\$RESUME_OUT" ]; then
-        mapfile -t RESUME_ARGV <<<"\$RESUME_OUT"
+  # Resume the lane's EXPLICITLY pinned thread (a UUID a person/agent wrote to
+  # CODEX_PIN; nothing here writes or guesses it) so a reboot does not lose it.
+  # A resume does NOT inherit the thread's sandbox, so EVERY attempt passes
+  # exactly one explicit sandbox. The helper is mandatory and every read fails
+  # closed (reason logged, no launch, the backoff below retries); only a PROVEN
+  # absence of the pinned rollout leads to a fresh launch. argv is a bash array,
+  # never newline-delimited text.
+  FAIL=""; PIN_ID=""; SB=""; SB_ARGV=(); LAUNCH_ARGV=()
+  if ! command -v codex-resume-pin >/dev/null 2>&1; then
+    FAIL=helper-missing
+  elif ! SB=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}" 2>>"\$LOG_FILE"); then
+    FAIL=sandbox-invalid
+  else
+    HAS_S=""
+    for _a in "\${CODEX_ARGS[@]}"; do case "\$_a" in -s|--sandbox|--sandbox=*) HAS_S=1 ;; esac; done
+    [ -n "\$HAS_S" ] || SB_ARGV=(-s "\$SB")
+    if [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ]; then
+      if ! PIN_ID=\$(codex-resume-pin read-pin "\$CODEX_PIN" 2>>"\$LOG_FILE"); then
+        FAIL=pin-invalid; PIN_ID=""
       else
-        HELPER_FAIL="resume-args failed"
+        codex-resume-pin exists "\$PIN_ID" >/dev/null 2>>"\$LOG_FILE"; _rc=\$?
+        if [ "\$_rc" -eq 0 ]; then
+          codex-resume-pin verify-lane "\$PIN_ID" "\$PWD" 2>>"\$LOG_FILE" || FAIL=pin-foreign
+        elif [ "\$_rc" -eq 1 ]; then
+          echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
+          if mv -f -- "\$CODEX_PIN" "\$CODEX_PIN.stale.\$(date +%s)"; then PIN_ID=""; else FAIL=pin-archive-failed; fi
+        else
+          FAIL=pin-lookup-error
+        fi
       fi
     fi
-    # No explicit -s in the args: add the resolved one to a fresh launch too.
-    if [ -z "\$CODEX_SANDBOX_EXPLICIT" ] && [ -n "\$CODEX_SANDBOX" ]; then FRESH_ARGV+=(-s "\$CODEX_SANDBOX"); fi
-    if [ -z "\$HELPER_FAIL" ]; then
-      codex-resume-pin watch "\$CODEX_PIN" "\$PWD" "\$START" "\$CODEX_SANDBOX" "child-of:\$\$" 2>>"\$LOG_FILE" &
-      WATCH_PID=\$!
-    fi
   fi
-  if [ -n "\$HELPER_FAIL" ]; then
-    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume-pin-fail-closed reason=\$HELPER_FAIL thread=\$PIN_ID" | tee -a "\$LOG_FILE"
-  elif [ "\${#RESUME_ARGV[@]}" -gt 0 ]; then
-    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume thread=\$PIN_ID sandbox=\$CODEX_SANDBOX" | tee -a "\$LOG_FILE"
-    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${RESUME_ARGV[@]}"
+  if [ -n "\$FAIL" ]; then
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume-pin-fail-closed reason=\$FAIL" | tee -a "\$LOG_FILE"
+  elif [ -n "\$PIN_ID" ]; then
+    LAUNCH_ARGV=(resume "\$PIN_ID" "\${CODEX_ARGS[@]}" "\${SB_ARGV[@]}")
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume thread=\$PIN_ID sandbox=\$SB" | tee -a "\$LOG_FILE"
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}"
   else
-    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${FRESH_ARGV[@]}"
+    LAUNCH_ARGV=("\${CODEX_ARGS[@]}" "\${SB_ARGV[@]}")
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}"
   fi
-  [ -n "\${WATCH_PID:-}" ] && kill "\$WATCH_PID" 2>/dev/null
   RUNTIME=\$(( \$(date +%s) - START ))
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"
   if [ "\$RUNTIME" -lt 30 ]; then

@@ -1,227 +1,124 @@
 #!/usr/bin/env bash
-# codex-resume-pin: keep a Codex lane's thread across a reboot/crash, and make
-# every resume pass its sandbox explicitly.
+# codex-resume-pin: read-side checks for a Codex lane's explicitly pinned thread.
 #
-# Why: the Codex start-script loop restarted a FRESH `codex` each time, so a
-# crash or reboot lost the lane's thread (the Claude loop has RESUME_PIN).
-# And a resumed thread does NOT keep the sandbox it ran with: codex-cli 0.160
-# takes it from the current config (here danger-full-access) unless the resume
-# passes one (verified 2026-10-03: `codex exec resume` with no override wrote a
-# file from a thread that started read-only; with `-c sandbox_mode="read-only"`
-# it was blocked). Interactive `codex resume` takes `-s/-a` directly.
+# Why: the Codex start-script loop restarted a FRESH `codex` each time, so a crash or
+# reboot lost the lane's thread (the Claude loop has RESUME_PIN). And a resumed thread
+# does NOT keep the sandbox it ran with: codex-cli 0.160 takes it from the current
+# config unless the resume passes one (verified 2026-10-03: `codex exec resume` with no
+# override wrote a file from a thread that started read-only). So the start loop passes
+# an explicit sandbox on EVERY attempt, fresh or resume.
 #
-# Subcommands (all read $CODEX_HOME/sessions, default ~/.codex):
-#   sandbox-of [--explicit] <args>  the sandbox the args name (-s/--sandbox X, or
-#                                   `-c sandbox_mode=X`); read-only when none
-#                                   (--explicit: print nothing when none).
-#   resume-args <id> <codex args>   argv for an interactive resume: `resume <id>`
-#                                   + the args, with an explicit `-s <sandbox>`
-#                                   added when the args lack one (never the config
-#                                   default).
-#   latest <cwd> <since-epoch> [pin]  newest thread id whose session cwd is <cwd>
-#                                   and whose rollout was written at/after <since>;
-#                                   ids pinned by sibling lanes (other *.codex-thread
-#                                   beside [pin]) are skipped.
-#   exists <id>                     exit 0 when the thread has a rollout on disk.
-#   check <id> <expected> [since]           exit 0 when the thread's LAST recorded
-#                                   sandbox_policy is <expected>; 1 on mismatch;
-#                                   3 when nothing is recorded yet.
-#   watch <pin> <cwd> <since> <expected> <pid|child-of:PPID> [interval]
-#                                   while <pid> (or PPID's codex/node child) lives: keep <pin> = newest thread
-#                                   id for <cwd>; if that thread's recorded
-#                                   sandbox_policy differs from <expected>, log it
-#                                   and kill <pid> (fail closed: the loop's
-#                                   backoff then retries, it never runs wider).
-#                                   <expected> "-" = record the pin only.
-# [since]: only sandbox_policy lines stamped at/after it count (a resumed thread keeps
-# its previous run's policy until its first new turn).
+# The pin file (~/.sessions/resume/<remote>.codex-thread) is written ONLY by a person or
+# agent, on purpose: one canonical lowercase UUID. Nothing here writes it, and nothing
+# guesses a thread (no "newest in cwd", no open-file inference). Every read below fails
+# closed; only a PROVEN absence may lead to a fresh launch.
 #
-# Known limits (read before installing):
-#  - Explicit sandbox on EVERY attempt (fresh and resume): a lane whose args name no -s
-#    gets -s read-only (never the config default). Name -s in CRSS_CODEX_ARGS to keep a
-#    wider sandbox. If sandbox-of or resume-args fails, the loop fails closed (logs
-#    event=resume-pin-fail-closed, backs off, retries); it never launches unpinned.
-#  - The watcher is ADVISORY: it polls (20s) and can only act after codex has recorded a
-#    policy, i.e. after the first turn. The guarantee is the explicit -s, not the watcher.
-#  - Identity: the watcher pins ONLY the rollout the lane's own process holds open (and
-#    only if it is a codex-tui thread for this cwd written this run). No proof => no pin
-#    and no enforcement; there is no "newest thread in the cwd" guess. A lane that never
-#    holds its rollout open at a poll simply stays unpinned (resumes fresh after reboot).
-#  - Trust dialog: the start script's `-c projects."<cwd>".trust_level` override is
-#    unverified on a real lane dir; a resume that hits the trust prompt waits there.
-# Exit: 0 ok, 1 mismatch/none, 2 usage, 3 not recorded yet.
+# Subcommands (rollouts are read from $CODEX_HOME/sessions, default ~/.codex):
+#   sandbox-of [--explicit] <args>  the one sandbox the args name (-s/--sandbox X,
+#                                   --sandbox=X, -c sandbox_mode=X; TOML quotes allowed);
+#                                   read-only when none (--explicit: print nothing).
+#                                   Exit 1 on an unknown value, a missing value, or two
+#                                   different sandboxes.
+#   read-pin <file>                 print the UUID. Exit 0 ok; 1 no pin file at all;
+#                                   2 bad (symlink/dir/unreadable/empty/multi-line/not
+#                                   exactly one canonical lowercase UUID).
+#   exists <uuid>                   0 exactly one rollout (path on stdout); 1 the search
+#                                   completed and found none; 2 error (bad uuid, sessions
+#                                   dir missing/unreadable, find failed, >1 match).
+#   verify-lane <uuid> <cwd>        0 the rollout's session_meta cwd (realpath) == <cwd>
+#                                   and originator == codex-tui; 1 foreign; 2 error.
+# Exit codes are per subcommand; 2 is also usage.
 set -uo pipefail
 
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 sandbox_of() {
-  local want="" prev="" explicit=no
+  local explicit=no prev="" a a2 v found=""
   [ "${1:-}" = "--explicit" ] && { explicit=yes; shift; }
+  _take() {
+    v="$(printf '%s' "$1" | tr -d "\"' ")"
+    case "$v" in
+      read-only|workspace-write|danger-full-access) ;;
+      *) echo "codex-resume-pin: unknown sandbox '$v'" >&2; return 1 ;;
+    esac
+    if [ -n "$found" ] && [ "$found" != "$v" ]; then
+      echo "codex-resume-pin: conflicting sandboxes '$found' and '$v'" >&2; return 1
+    fi
+    found="$v"
+  }
   for a in "$@"; do
     case "$prev" in
-      -s|--sandbox) want="$a" ;;
-      -c|--config) a2="${a// /}"; case "$a2" in sandbox_mode=*) want="$(printf '%s' "${a2#sandbox_mode=}" | tr -d "\"' ")";; esac ;;
+      -s|--sandbox) _take "$a" || return 1 ;;
+      -c|--config) a2="${a// /}"; case "$a2" in sandbox_mode=*) _take "${a2#sandbox_mode=}" || return 1 ;; esac ;;
     esac
-    case "$a" in --sandbox=*) want="${a#--sandbox=}" ;; esac
+    case "$a" in --sandbox=*) _take "${a#--sandbox=}" || return 1 ;; esac
     prev="$a"
   done
-  case "$want" in
-    read-only|workspace-write|danger-full-access) echo "$want" ;;
-    "") [ "$explicit" = yes ] || echo read-only ;;
-    *) echo "codex-resume-pin: unknown sandbox '$want'" >&2; return 1 ;;
-  esac
+  case "$prev" in -s|--sandbox) echo "codex-resume-pin: $prev needs a value" >&2; return 1 ;; esac
+  if [ -n "$found" ]; then echo "$found"; elif [ "$explicit" = no ]; then echo read-only; fi
 }
 
-# stdout: "<mtime> <id>" per matching rollout; the caller sorts.
-_threads_for() {
-  python3 - "$CODEX_HOME_DIR/sessions" "$1" "$2" <<'PY'
-import glob, json, os, sys
-root, cwd, since = sys.argv[1], os.path.realpath(sys.argv[2]), float(sys.argv[3])
-for f in glob.glob(os.path.join(root, "**", "rollout-*.jsonl"), recursive=True):
-    try:
-        m = os.path.getmtime(f)
-        if m < since:
-            continue
-        with open(f) as fh:
-            meta = json.loads(fh.readline())
-        p = meta.get("payload", {})
-        # Interactive lane threads only: a `codex exec` helper run in the same cwd
-        # must never steal the pin.
-        if p.get("originator") == "codex-tui" and os.path.realpath(p.get("cwd", "")) == cwd and p.get("id"):
-            print(f"{m:.3f} {p['id']}")
-    except Exception:
-        continue
-PY
-}
-
-# Newest matching thread. With a 3rd arg (a pin file), ids already pinned by a
-# SIBLING lane (another *.codex-thread in the same dir) are skipped, so two lanes
-# sharing a cwd cannot steal each other's thread.
-latest() {
-  local skip=""
-  if [ -n "${3:-}" ]; then
-    skip="$(for f in "$(dirname "$3")"/*.codex-thread; do
-      [ -e "$f" ] && [ "$f" != "$3" ] && cat "$f" 2>/dev/null
-    done)"
+read_pin() {
+  local f="$1"
+  [ -e "$f" ] || [ -L "$f" ] || return 1
+  if [ -L "$f" ] || [ ! -f "$f" ] || [ ! -r "$f" ]; then
+    echo "codex-resume-pin: pin is not a regular readable file" >&2; return 2
   fi
-  _threads_for "$1" "$2" | sort -n | awk -v skip="$skip" 'BEGIN{n=split(skip,a,"\n");for(i=1;i<=n;i++)if(a[i]!="")s[a[i]]=1} !($2 in s)' | tail -1 | cut -d' ' -f2
-}
-
-# The thread whose rollout the process (or a child of it) holds open: the lane's own,
-# even when a sibling in the same cwd started at the same moment. Empty when none.
-_open_thread() {
-  local p f
-  for p in "$1" $(pgrep -P "$1" 2>/dev/null); do
-    for f in /proc/"$p"/fd/*; do
-      case "$(readlink "$f" 2>/dev/null)" in
-        "$CODEX_HOME_DIR"/sessions/*/rollout-*.jsonl)
-          f="$(readlink "$f")"; f="${f##*/}"; f="${f%.jsonl}"
-          # rollout-<YYYY-MM-DDThh-mm-ss>-<uuid>: id = after the 6th dash-field
-          echo "$f" | sed -E 's/^rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-//'; return ;;
-      esac
-    done
-  done
-}
-
-# Exit 0 when a rollout for the thread id exists (a deleted pin cannot resume).
-exists() { [ -n "$(_rollout_of "$1")" ]; }
-
-_rollout_of() { find "$CODEX_HOME_DIR/sessions" -name "rollout-*-$1.jsonl" 2>/dev/null | head -1; }
-
-check() {
-  local f last
-  f="$(_rollout_of "$1")"; [ -n "$f" ] || return 3
-  # Only policies recorded at/after <since> count: a resumed thread still holds
-  # its previous run's policy until its first new turn, and that must not read
-  # as a mismatch for the run we are enforcing.
-  last="$(python3 - "$f" "${3:-0}" <<'PY'
-import datetime, json, re, sys
-f, since = sys.argv[1], float(sys.argv[2])
-last = ""
-for line in open(f, errors="replace"):
-    m = re.search(r'"sandbox_policy":\{"type":"([a-z-]*)"', line)
-    if not m:
-        continue
-    ts = None
-    try:
-        t = json.loads(line).get("timestamp")
-        if t:
-            ts = datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        pass
-    if (ts is None and since <= 0) or (ts is not None and ts >= since - 2):
-        last = m.group(1)
-print(last)
+  python3 - "$f" <<'PY' || return 2
+import re, sys
+data = open(sys.argv[1], "rb").read()
+if data.endswith(b"\n"):
+    data = data[:-1]
+try:
+    s = data.decode("ascii")
+except UnicodeDecodeError:
+    sys.exit("codex-resume-pin: pin is not ASCII")
+if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", s):
+    sys.exit("codex-resume-pin: pin is not exactly one canonical lowercase UUID")
+print(s)
 PY
-)"
-  [ -n "$last" ] || return 3
-  [ "$last" = "$2" ]
 }
 
-watch() {
-  local pin="$1" cwd="$2" since="$3" expected="$4" pid="$5" interval="${6:-20}" id cur rc
-  # child-of:PPID resolves the foreground codex (or its node wrapper) under the
-  # loop shell each tick, since a TUI can't be backgrounded to learn its pid.
-  _target() {
-    case "$pid" in
-      child-of:*) pgrep -P "${pid#child-of:}" -x codex 2>/dev/null | head -1 || true
-                  [ -n "$(pgrep -P "${pid#child-of:}" -x codex 2>/dev/null)" ] || pgrep -P "${pid#child-of:}" -x node 2>/dev/null | head -1 ;;
-      *) kill -0 "$pid" 2>/dev/null && echo "$pid" ;;
-    esac
-  }
-  local tgt seen=no t0 grace="${CODEX_PIN_GRACE:-90}"
-  t0=$(date +%s)
-  # The watcher starts before codex does: wait up to <grace>s for the target to
-  # appear (it exits only once the target was seen and is gone, or never came).
-  while :; do
-    tgt="$(_target)"
-    if [ -z "$tgt" ]; then
-      [ "$seen" = yes ] && break
-      [ $(( $(date +%s) - t0 )) -ge "$grace" ] && break
-      sleep 1; continue
-    fi
-    seen=yes
-    id="$(_open_thread "$tgt")"
-    # Only a lane thread (codex-tui, this cwd, written this run) may become the pin; a
-    # held helper/other-cwd rollout is ignored.
-    if [ -n "$id" ] && ! _threads_for "$cwd" "$since" | awk -v i="$id" '$2==i{f=1} END{exit !f}'; then id=""; fi
-    # No proof of identity (nothing held open) => do not pin and do not enforce
-    # this tick; never fall back to "newest thread in the cwd".
-    if [ -n "$id" ]; then
-      cur="$(cat "$pin" 2>/dev/null || true)"
-      if [ "$cur" != "$id" ]; then
-        mkdir -p "$(dirname "$pin")" && printf '%s\n' "$id" > "$pin.tmp.$$" && mv -f "$pin.tmp.$$" "$pin"
-      fi
-      if [ "$expected" = "-" ]; then rc=0; else check "$id" "$expected" "$since"; rc=$?; fi
-      if [ "$rc" -eq 1 ]; then
-        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] codex-resume-pin event=SANDBOX-MISMATCH thread=$id expected=$expected — killing pid $tgt" >&2
-        kill "$tgt" 2>/dev/null
-        return 1
-      fi
-    fi
-    sleep "$interval"
-  done
-  return 0
+# stdout: the single rollout path. Exit as documented under `exists`.
+_find_rollout() {
+  local id="$1" root="$CODEX_HOME_DIR/sessions" out n
+  [[ "$id" =~ $UUID_RE ]] || { echo "codex-resume-pin: not a canonical uuid" >&2; return 2; }
+  if [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; then
+    echo "codex-resume-pin: sessions dir missing/unreadable" >&2; return 2
+  fi
+  out="$(find "$root" -type f -name "rollout-*-$id.jsonl" -print 2>/dev/null)" || { echo "codex-resume-pin: find failed" >&2; return 2; }
+  [ -z "$out" ] && return 1
+  n="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  [ "$n" -eq 1 ] || { echo "codex-resume-pin: $n rollouts match $id" >&2; return 2; }
+  printf '%s\n' "$out"
+}
+
+verify_lane() {
+  local f rc
+  f="$(_find_rollout "$1")"; rc=$?
+  [ "$rc" -eq 0 ] || return 2
+  python3 - "$f" "$2" <<'PY'
+import json, os, sys
+f, cwd = sys.argv[1], os.path.realpath(sys.argv[2])
+try:
+    with open(f) as fh:
+        p = json.loads(fh.readline()).get("payload", {})
+except Exception as e:
+    print(f"codex-resume-pin: unreadable rollout: {e}", file=sys.stderr); sys.exit(2)
+if p.get("originator") == "codex-tui" and os.path.realpath(p.get("cwd", "")) == cwd:
+    sys.exit(0)
+print(f"codex-resume-pin: foreign thread (cwd={p.get('cwd')!r} originator={p.get('originator')!r})", file=sys.stderr)
+sys.exit(1)
+PY
 }
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
   sandbox-of) sandbox_of "$@" ;;
-  resume-args)
-    [ $# -ge 1 ] || usage
-    id="$1"; shift
-    sb="$(sandbox_of "$@")" || exit 1
-    printf 'resume\n%s\n' "$id"
-    # An explicit -s/--sandbox in the args is kept; otherwise add the resolved one.
-    has_s=no
-    for a in "$@"; do case "$a" in -s|--sandbox|--sandbox=*) has_s=yes ;; esac; done
-    for a in "$@"; do printf '%s\n' "$a"; done
-    [ "$has_s" = yes ] || printf -- '-s\n%s\n' "$sb"
-    ;;
-  latest) [ $# -ge 2 ] || usage; latest "$@" ;;
-  exists) [ $# -eq 1 ] || usage; exists "$1" ;;
-  check) [ $# -ge 2 ] || usage; check "$@" ;;
-  watch) [ $# -ge 5 ] || usage; watch "$@" ;;
+  read-pin) [ $# -eq 1 ] || usage; read_pin "$1" ;;
+  exists) [ $# -eq 1 ] || usage; _find_rollout "$1" ;;
+  verify-lane) [ $# -eq 2 ] || usage; verify_lane "$@" ;;
   *) usage ;;
 esac
