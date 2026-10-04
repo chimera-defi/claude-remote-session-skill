@@ -980,7 +980,7 @@ elif [ -n "$TASK" ]; then
     elif [ "$trust_dialog" = yes ]; then
       TASK_FAILED="'${SESSION}' is parked on a menu/trust dialog — task NOT sent (pre-seeding trust failed: see $HOME/.sessions/session-starts.log). Attach and choose 'Yes, I trust this folder' (the highlighted default is 'No, exit', so do not press Enter blindly), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
     elif [ "$gone" = yes ]; then
-      TASK_FAILED="tmux session '${SESSION}' vanished while waiting for claude — task NOT sent; see $HOME/.sessions/session-starts.log"
+      TASK_FAILED="tmux session '${SESSION}' vanished while waiting for ${BACKEND} — task NOT sent; see $HOME/.sessions/session-starts.log"
     elif [ "$ready" != yes ]; then
       TASK_FAILED="'${SESSION}' never reached ready state (last: ${check_out}) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..."
     elif bash "$HANDOFF" send "$SESSION" "$TASK"; then
@@ -1004,7 +1004,7 @@ if [ -n "$START_UNVERIFIED" ]; then
 fi
 if [ -n "$TASK_FAILED" ]; then
   echo "" >&2
-  echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) is running, but the task was NOT delivered: ${TASK_FAILED}" >&2
+  echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) was spawned, but the task was NOT delivered: ${TASK_FAILED}" >&2
   exit 3
 fi
 echo ""

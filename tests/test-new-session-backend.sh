@@ -190,6 +190,23 @@ ok "K'-task: no readiness polling or send reached tmux" "$(grep -cE 'send-keys|p
 has "K'-task: says the task was not sent and why" "$kt_out" 'task NOT sent: the lane.s start was not verified'
 not_has "K'-task: never says is running" "$kt_out" 'is running'
 
+# M: a verified start whose tmux session vanishes during task readiness
+for mb in codex claude; do
+  newk "m$mb"; mkdir -p "$KHOME/.local/bin"
+  cat > "$KHOME/.local/bin/tmux" <<'TT'
+#!/usr/bin/env bash
+case "$1" in has-session) exit 1 ;; esac
+exit 0
+TT
+  chmod +x "$KHOME/.local/bin/tmux"
+  mkdir -p "$KHOME/.sessions/k-m$mb"
+  mout="$(HOME="$KHOME" PATH="$KHOME/.local/bin:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' KSTUB_RAW="${CMD_LINE}=started" bash "$NS" --backend "$mb" "k-m$mb" sessions --alias "km$mb" --task 'do the thing' 2>&1)"; mrc=$?
+  ok "M($mb): a vanished tmux session exits 3" "$mrc" "3"
+  has "M($mb): the message says was spawned" "$mout" 'was spawned, but the task was NOT delivered'
+  not_has "M($mb): ...and never says is running" "$mout" 'is running'
+  has "M($mb): the vanish names the backend" "$mout" "vanished while waiting for $mb"
+done
+
 # K1: run the generated start script against a stub tmux that plays the pane. display-message
 # reports a shell, then $KT_CMD; capture-pane prints the file $KT_PANE (or fails if KT_CAPFAIL).
 mkdir -p "$KHOME/.local/bin"
