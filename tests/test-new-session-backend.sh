@@ -513,4 +513,34 @@ ok "T4: failing systemctl exits non-zero" "$([ "$t4_rc" -ne 0 ] && echo nonzero 
 has "T4: says the session was NOT started" "$t4_out" 'the session was NOT started'
 not_has "T4: does not claim success" "$t4_out" 'Session created'
 
+# L: the per-start id comes from od's own successful output. Each failing od must refuse the spawn
+# (rc 1) before any script, unit or log line exists; --dry-run needs no RNG at all.
+ODBIN="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$ODBIN/od-empty"
+printf '#!/usr/bin/env bash\necho " 0123456789abcdef0123456789abcdef"\nexit 1\n' > "$ODBIN/od-hexfail"
+for odk in empty hexfail; do
+  lbd="$ODBIN/$odk"; mkdir -p "$lbd"; cp "$ODBIN/od-$odk" "$lbd/od"; chmod +x "$lbd/od"
+  lh="$(mkhome)"
+  lo="$(HOME="$lh" PATH="$lbd:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "l-$odk" sessions --alias "l$odk" 2>&1)"; lrc=$?
+  ok "L(od $odk): spawn exits 1" "$lrc" "1"
+  has "L(od $odk): says it could not generate a start id" "$lo" 'could not generate a start id'
+  ok "L(od $odk): no start script written" "$(ls "$lh/.local/bin" 2>/dev/null | grep -c -- '-start.sh$' || true)" "0"
+  ok "L(od $odk): no unit written" "$(ls "$lh/.config/systemd/user" 2>/dev/null | grep -c . || true)" "0"
+  ok "L(od $odk): no log line" "$([ -s "$lh/.sessions/session-starts.log" ] && echo some || echo none)" "none"
+done
+ld_out="$(HOME="$(mkhome)" PATH="$ODBIN/hexfail:$DATESTUB:$PATH" bash "$NS" --dry-run l-dry --backend codex 2>&1)"; ld_rc=$?
+ok "L(dry-run): a failing od does not matter (rc 0)" "$ld_rc" "0"
+has "L(dry-run): prints the plan" "$ld_out" '^BACKEND=codex$'
+# two spawns with the same alias get different ids
+ids=""
+for n in 1 2; do
+  lh="$(mkhome)"
+  HOME="$lh" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex l-same sessions --alias lsame >/dev/null 2>&1
+  ids="$ids $(sed -n 's/^START_ID=//p' "$lh/.local/bin/px-lsame-0101-0000-start.sh" 2>/dev/null)"
+done
+set -- $ids
+ok "L: two spawns of the same alias both carry an id" "$([ "${#1}" = 32 ] && [ "${#2}" = 32 ] && echo yes || echo no)" "yes"
+ok "L: ...and the ids differ" "$([ "$1" != "$2" ] && echo differ || echo same)" "differ"
+rm -rf "$ODBIN"
+
 finish "new-session-backend"
