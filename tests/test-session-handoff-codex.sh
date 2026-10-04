@@ -187,4 +187,25 @@ _capture() { printf '%s' "$CODEX_APPROVAL_MENU"; }
 _pane_cmd() { echo bash; }
 ok "state-wrapper-bash-menu-refused" "$(_state_of px_wrap)" "menu"
 
+# Real-process cases for _codex_live (needs tmux; skipped without it).
+if command -v tmux >/dev/null 2>&1; then
+  unset -f _codex_live _backend_of _capture _pane_cmd
+  # shellcheck disable=SC1090
+  source "$HERE/../scripts/session-handoff.sh"
+  FB="$(mktemp -d)"; cp "$(command -v sleep)" "$FB/codex"
+  TS="crsslive$$"
+  tmux new-session -d -s "${TS}a" "bash -c '$FB/codex 60; true'"
+  tmux new-session -d -s "${TS}b" "bash -i"
+  sleep 0.5; tmux send-keys -t "${TS}b" "$FB/codex 60 &" Enter; sleep 0.5
+  tmux new-session -d -s "${TS}c" "bash -i"
+  sleep 0.5; tmux send-keys -t "${TS}c" "$FB/codex 60" Enter; sleep 0.4; tmux send-keys -t "${TS}c" C-z; sleep 0.5
+  tmux new-session -d -s "${TS}d" "bash -i"; sleep 0.5
+  ok "live-wrapper-fg-codex" "$(_codex_live "${TS}a" && echo yes || echo no)" "yes"
+  ok "live-bg-codex-refused" "$(_codex_live "${TS}b" && echo yes || echo no)" "no"
+  ok "live-stopped-codex-refused" "$(_codex_live "${TS}c" && echo yes || echo no)" "no"
+  ok "live-bare-bash-refused" "$(_codex_live "${TS}d" && echo yes || echo no)" "no"
+  for z in a b c d; do tmux kill-session -t "${TS}$z" 2>/dev/null; done
+  pkill -f "$FB/codex" 2>/dev/null; rm -rf "$FB"
+fi
+
 finish "session-handoff-codex"
