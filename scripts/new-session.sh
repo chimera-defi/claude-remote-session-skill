@@ -231,6 +231,14 @@ case "$TYPE" in
   auto|workspace|sessions) ;;
   *) echo "new-session: unknown session type '$TYPE' (valid: workspace|sessions|auto) — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
 esac
+# The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
+# directory under whatever cwd the start script has. Refuse before any side effect.
+for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
+  case "${!_root_var}" in
+    /*) ;;
+    *) echo "new-session: ${_root_var}='${!_root_var}' must be an absolute path (the overlay is read literally: no \$HOME or ~ expansion)" >&2; exit 2 ;;
+  esac
+done
 
 # ── Backend selection ────────────────────────────────────────────────────────
 BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-claude}}"
@@ -594,6 +602,11 @@ if command -v session-git-prep >/dev/null 2>&1; then
   [ -n "\$PREP" ] && RUNDIR="\$PREP"
 fi
 echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+# A relative run directory (from session-git-prep or an env override) would resolve against the cwd.
+case "\$RUNDIR" in
+  /*) ;;
+  *) echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-not-absolute rundir=\$RUNDIR" | tee -a "\$LOG_FILE"; exit 1 ;;
+esac
 # tmux silently starts the pane in \$HOME when \`-c\` names a missing dir, and only the claude
 # backend created it (\`mkdir -p \$RUNDIR/.claude\`), so a fresh codex \`sessions\` lane ran in \$HOME.
 # Fail closed: no run directory means no lane, and tmux must not be asked to start in \$HOME.

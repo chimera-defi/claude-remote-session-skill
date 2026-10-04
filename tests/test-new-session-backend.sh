@@ -170,4 +170,68 @@ wb_log="$(cat "$WB_HOME/.sessions/session-starts.log" 2>/dev/null)"
 has "workdir-mkdir-failure-logged" "$wb_log" 'event=rundir-mkdir-FAILED rundir='
 not_has "workdir-mkdir-failure-not-reported-started" "$wb_log" 'event=started'
 
+# ── Lane helpers (brief 3b). Homes live under $WORKHOME so the EXIT trap removes them. ──
+# The start script resets PATH to $HOME/.local/bin:…:/usr/bin, so stubs go in <home>/.local/bin.
+mkhome() { local h; h="$(mktemp -d "$WORKHOME/h.XXXXXX")"; mkdir -p "$h/.sessions" "$h/.local/bin"; echo "$h"; }
+# stub tmux: logs every call; for new-session records the -c dir and whether it is enterable NOW.
+stub_tmux() {
+  cat > "$1/.local/bin/tmux" <<'STUBTMUX'
+#!/usr/bin/env bash
+echo "$*" >> "$HOME/tmux.calls"
+case "$1" in
+  has-session) exit 1 ;;
+  new-session) prev=""; for a in "$@"; do
+      if [ "$prev" = -c ]; then
+        printf '%s' "$a" > "$HOME/tmux.c"
+        if [ -d "$a" ] && (cd "$a") 2>/dev/null; then echo usable > "$HOME/tmux.cstate"; else echo missing > "$HOME/tmux.cstate"; fi
+      fi; prev="$a"; done ;;
+  display-message)
+    n="$(cat "$HOME/tmux.n" 2>/dev/null || echo 0)"; echo $((n+1)) > "$HOME/tmux.n"
+    if [ "$n" -eq 0 ]; then echo bash; else echo codex; fi ;;
+esac
+exit 0
+STUBTMUX
+  chmod +x "$1/.local/bin/tmux"
+}
+# stub session-git-prep: prints $2 (nothing when empty).
+stub_prep() { printf '#!/usr/bin/env bash\n[ -n "%s" ] && echo "%s"\nexit 0\n' "$2" "$2" > "$1/.local/bin/session-git-prep"; chmod +x "$1/.local/bin/session-git-prep"; }
+# lane_spawn HOME BACKEND FOLDER TYPE ALIAS: real new-session (stub systemctl), sets LANE_OUT, LANE_SCRIPT.
+lane_spawn() {
+  LANE_OUT="$(HOME="$1" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend "$2" "$3" "$4" --alias "$5" 2>&1)"
+  LANE_SCRIPT="$1/.local/bin/px-$5-0101-0000-start.sh"
+}
+# lane_run HOME [CWD]: run the generated start script, sets LANE_RC.
+lane_run() { ( cd "${2:-$1}" && HOME="$1" bash "$LANE_SCRIPT" >/dev/null 2>&1 ); LANE_RC=$?; }
+tmux_calls_other_than_has() { grep -cv '^has-session' "$1/tmux.calls" 2>/dev/null || true; }
+
+# N(a): the overlay is read literally, so a `~`/`$HOME`/relative root is refused at spawn (exit 2),
+# before any start script or unit exists.
+for nv in CRSS_SESSIONS_DIR CRSS_WORKSPACE; do
+  # shellcheck disable=SC2088  # the literal ~ is the point: the overlay never expands it
+  for nval in '~/.sessions' '$HOME/x' 'rel'; do
+    nh="$(mkhome)"; ncfg="$(mktemp -d "$WORKHOME/c.XXXXXX")"; printf '%s=%s\n' "$nv" "$nval" > "$ncfg/config.sh"
+    nout="$(env -u CRSS_SESSIONS_DIR -u CRSS_WORKSPACE HOME="$nh" CRSS_HOME="$ncfg" PATH="$DATESTUB:$PATH" bash "$NS" na-lane sessions --alias na 2>&1)"; nrc=$?
+    ok "N(a) $nv=$nval exits 2" "$nrc" "2"
+    ok "N(a) $nv=$nval names the variable and literal value" "$(grep -cF -- "$nv='$nval' must be an absolute path" <<<"$nout")" "1"
+    ok "N(a) $nv=$nval wrote no start script" "$(ls "$nh/.local/bin" 2>/dev/null | grep -c -- '-start.sh$' || true)" "0"
+    ok "N(a) $nv=$nval wrote no unit" "$(ls "$nh/.config/systemd/user" 2>/dev/null | wc -l)" "0"
+  done
+done
+# control: absolute roots spawn as before
+nh="$(mkhome)"; ncfg="$(mktemp -d "$WORKHOME/c.XXXXXX")"; printf 'CRSS_SESSIONS_DIR=%s/.sessions\nCRSS_WORKSPACE=%s/ws\n' "$nh" "$nh" > "$ncfg/config.sh"
+nout="$(env -u CRSS_SESSIONS_DIR -u CRSS_WORKSPACE HOME="$nh" CRSS_HOME="$ncfg" PATH="$DATESTUB:$PATH" bash "$NS" na-ctl sessions --alias nactl 2>&1)"; nrc=$?
+ok "N(a) control: absolute overlay roots spawn" "$nrc" "0"
+has "N(a) control: session created" "$nout" 'Session created: px-nactl-0101-0000'
+
+# N(b): a relative run directory (here from session-git-prep) aborts the start script and creates nothing.
+nh="$(mkhome)"; lane_spawn "$nh" codex nb-lane sessions nb; stub_tmux "$nh"; stub_prep "$nh" "rel/dir"
+has "N(b) spawn created" "$LANE_OUT" 'Session created: px-nb-0101-0000'
+ncwd="$(mktemp -d "$WORKHOME/w.XXXXXX")"; lane_run "$nh" "$ncwd"
+ok "N(b) relative RUNDIR exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+ok "N(b) no tmux call but has-session" "$(tmux_calls_other_than_has "$nh")" "0"
+nlog="$(cat "$nh/.sessions/session-starts.log" 2>/dev/null)"
+has "N(b) logs rundir-not-absolute" "$nlog" 'event=rundir-not-absolute rundir=rel/dir'
+hasnt "N(b) not reported started" "$nlog" 'event=started'
+ok "N(b) rel/dir not created under the cwd" "$([ -e "$ncwd/rel" ] && echo exists || echo absent)" "absent"
+
 finish "new-session-backend"
