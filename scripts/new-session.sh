@@ -719,28 +719,51 @@ while true; do
   # closed (reason logged, no launch, the backoff below retries); only a PROVEN
   # absence of the pinned rollout leads to a fresh launch. argv is a bash array,
   # never newline-delimited text.
-  FAIL=""; PIN_ID=""; SB=""; SB_ARGV=(); LAUNCH_ARGV=()
+  FAIL=""; PIN_ID=""; SB=""; SB_FLAG=""; SB_ARGV=(); LAUNCH_ARGV=()
+  # A logging failure must never change a decision or its reason: check the log once per
+  # iteration, and when it is unusable send helper stderr to the pane instead of the log.
+  mkdir -p "\$(dirname "\$LOG_FILE")" 2>/dev/null
+  if : >> "\$LOG_FILE" 2>/dev/null; then LOG_OK=1; else
+    LOG_OK=""; echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=log-unavailable"
+  fi
+  _h() { if [ -n "\$LOG_OK" ]; then "\$@" 2>>"\$LOG_FILE"; else "\$@"; fi; }
   if ! command -v codex-resume-pin >/dev/null 2>&1; then
     FAIL=helper-missing
-  elif ! SB=\$(codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}" 2>>"\$LOG_FILE"); then
+  elif ! SB=\$(_h codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}") || ! SB_FLAG=\$(_h codex-resume-pin sandbox-of --flag "\${CODEX_ARGS[@]}"); then
     FAIL=sandbox-invalid
   else
-    HAS_S=""
-    for _a in "\${CODEX_ARGS[@]}"; do case "\$_a" in -s|--sandbox|--sandbox=*) HAS_S=1 ;; esac; done
-    [ -n "\$HAS_S" ] || SB_ARGV=(-s "\$SB")
-    if [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ]; then
-      if ! PIN_ID=\$(codex-resume-pin read-pin "\$CODEX_PIN" 2>>"\$LOG_FILE"); then
-        FAIL=pin-invalid; PIN_ID=""
-      else
-        codex-resume-pin exists "\$PIN_ID" >/dev/null 2>>"\$LOG_FILE"; _rc=\$?
-        if [ "\$_rc" -eq 0 ]; then
-          codex-resume-pin verify-lane "\$PIN_ID" "\$PWD" 2>>"\$LOG_FILE" || FAIL=pin-foreign
-        elif [ "\$_rc" -eq 1 ]; then
+    # a -s/--sandbox FLAG beats a profile and config.toml; -c sits below them, so only a flag
+    # suppresses the appended -s
+    [ -n "\$SB_FLAG" ] || SB_ARGV=(-s "\$SB")
+    PIN_ID=\$(_h codex-resume-pin read-pin "\$CODEX_PIN"); _rc=\$?
+    if [ "\$_rc" -eq 1 ]; then
+      PIN_ID=""
+    elif [ "\$_rc" -ne 0 ]; then
+      FAIL=pin-invalid; PIN_ID=""
+    else
+      _h codex-resume-pin exists "\$PIN_ID" >/dev/null; _rc=\$?
+      if [ "\$_rc" -eq 0 ]; then
+        _h codex-resume-pin verify-lane "\$PIN_ID" "\$PWD"; _rc=\$?
+        if [ "\$_rc" -eq 1 ]; then FAIL=pin-foreign; elif [ "\$_rc" -ne 0 ]; then FAIL=pin-unverifiable; fi
+      elif [ "\$_rc" -eq 1 ]; then
+        _p2=\$(_h codex-resume-pin read-pin "\$CODEX_PIN") || _p2=""
+        if [ "\$_p2" != "\$PIN_ID" ]; then FAIL=pin-changed; else
           echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
-          if mv -f -- "\$CODEX_PIN" "\$CODEX_PIN.stale.\$(date +%s)"; then PIN_ID=""; else FAIL=pin-archive-failed; fi
-        else
-          FAIL=pin-lookup-error
+          # archive only to a name that does not exist yet, then VERIFY (mv -n exit codes differ)
+          _arc="\$CODEX_PIN.stale.\$(date +%s)"
+          if [ -e "\$_arc" ] || [ -L "\$_arc" ]; then FAIL=pin-archive-failed; else
+            mv -n -- "\$CODEX_PIN" "\$_arc" 2>/dev/null
+            if [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ] || [ ! -f "\$_arc" ] || [ "\$(cat -- "\$_arc" 2>/dev/null)" != "\$PIN_ID" ]; then
+              FAIL=pin-archive-failed
+            else PIN_ID=""; fi
+          fi
         fi
+      else
+        FAIL=pin-lookup-error
+      fi
+      if [ -z "\$FAIL" ] && [ -n "\$PIN_ID" ]; then
+        _p2=\$(_h codex-resume-pin read-pin "\$CODEX_PIN") || _p2=""
+        [ "\$_p2" = "\$PIN_ID" ] || FAIL=pin-changed
       fi
     fi
   fi
