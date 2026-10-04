@@ -532,11 +532,12 @@ _backend_of() {
 # foreground, non-stopped descendant of the pane's pid (wrapper-bash Codex
 # start scripts).
 _codex_live() {
-  local root kids k comm queue="" n=0
-  root="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)"
+  local root ptty kids k comm queue="" n=0
+  read -r root ptty <<< "$(tmux display-message -p -t "$1" '#{pane_pid} #{pane_tty}' 2>/dev/null)"
   case "$root" in ''|*[!0-9]*) return 1;; esac
+  ptty="${ptty#/dev/}"; [ -n "$ptty" ] || return 1
   queue="$root"
-  while [ -n "$queue" ] && [ "$n" -lt 64 ]; do
+  while [ -n "$queue" ] && [ "$n" -lt 256 ]; do
     k="${queue%% *}"; case "$queue" in *" "*) queue="${queue#* }";; *) queue="";; esac
     n=$((n+1))
     kids="$(pgrep -P "$k" 2>/dev/null | tr '\n' ' ')"
@@ -546,8 +547,8 @@ _codex_live() {
       # backgrounded/stopped codex under a bare shell prompt is not a TUI
       # we can type into.
       if [ "$comm" = codex ]; then
-        read -r st pg tpg <<< "$(ps -o stat=,pgid=,tpgid= -p "$c" 2>/dev/null)"
-        case "$st" in T*) : ;; *) [ -n "$pg" ] && [ "$pg" = "$tpg" ] && return 0 ;; esac
+        read -r st pg tpg ctty <<< "$(ps -o stat=,pgid=,tpgid=,tty= -p "$c" 2>/dev/null)"
+        case "$st" in [Tt]*) : ;; *) [ "$ctty" = "$ptty" ] && [ -n "$pg" ] && [ "$pg" = "$tpg" ] && return 0 ;; esac
       fi
       queue="${queue:+$queue }$c"
     done
