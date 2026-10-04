@@ -266,4 +266,23 @@ ok "W control: missing sessions lane starts" "$LANE_RC" "0"
 ok "W control: sessions dir created" "$([ -d "$wh/.sessions/ws-new" ] && echo dir || echo missing)" "dir"
 ok "W control: tmux -c dir is usable (sessions)" "$(cat "$wh/tmux.cstate" 2>/dev/null)" "usable"
 
+# U: an existing run directory that cannot be entered must not become tmux's `-c` (tmux would fall back to $HOME).
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP: U rundir chmod 000 (root)"
+else
+  for ub in codex claude; do
+    uh="$(mkhome)"; mkdir -p "$uh/.sessions/uu-lane"
+    lane_spawn "$uh" "$ub" uu-lane sessions "uu$ub"; stub_tmux "$uh"; stub_prep "$uh" ""
+    chmod 000 "$uh/.sessions/uu-lane"
+    lane_run "$uh"
+    chmod 755 "$uh/.sessions/uu-lane"
+    ok "U($ub) unenterable RUNDIR exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+    ok "U($ub) no tmux call but has-session" "$(tmux_calls_other_than_has "$uh")" "0"
+    ulog="$(cat "$uh/.sessions/session-starts.log" 2>/dev/null)"
+    has "U($ub) logs rundir-unusable" "$ulog" 'event=rundir-unusable rundir='
+    hasnt "U($ub) not reported started" "$ulog" 'event=started'
+    hasnt "U($ub) is not the mkdir failure" "$ulog" 'event=rundir-mkdir-FAILED'
+  done
+fi
+
 finish "new-session-backend"
