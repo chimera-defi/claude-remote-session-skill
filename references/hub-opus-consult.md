@@ -59,6 +59,6 @@ consults where its judgment is most useful. Builders stay Codex-first (`new-sess
 
 ## Cross-check ordering
 
-Per the host second-opinion ruling (2026-10-02): Opus first, then a GPT-5.5 cross-check via
+Per the host second-opinion ruling (2026-10-02): Opus first, then a gpt-6.1-sol cross-check (F1, 2026-10-04) via
 `codex exec` on the same packet, Fable last and only if the two disagree or the call is
 irreversible. Never close a fork on one model family alone.
