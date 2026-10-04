@@ -253,8 +253,8 @@ audit_one() {
 
   # What actually decides reap safety: is HEAD reachable from a named branch?
   # If yes, removing the worktree/tmux session cannot orphan the commits.
-  if git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads \
-       | while read -r b; do git -C "$cwd" merge-base --is-ancestor HEAD "refs/heads/$b" 2>/dev/null && echo hit && break; done | grep -q hit; then
+  if grep -q hit < <(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads \
+       | while read -r b; do git -C "$cwd" merge-base --is-ancestor HEAD "refs/heads/$b" 2>/dev/null && echo hit && break; done); then
     unreach=no
   else
     unreach=yes
