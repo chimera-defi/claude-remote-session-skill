@@ -63,7 +63,8 @@ spawn_collapsed() {
   local tries=0
   while [ "$tries" -lt 50 ]; do
     if [ "$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] \
-       && grep -qF '❯' < <(tmux capture-pane -p -t "$s" 2>/dev/null); then
+       && cap="$(tmux capture-pane -p -t "$s" 2>/dev/null && printf x)" && cap=${cap%x} && [ -n "$cap" ] \
+       && grep -qF '❯' <<<"${cap%$'\n'}"; then
       break
     fi
     sleep 0.1; tries=$((tries+1))

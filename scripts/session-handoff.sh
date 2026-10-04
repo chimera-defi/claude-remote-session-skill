@@ -184,9 +184,24 @@ _transcript_region() { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} E
 
 # _on_input_line — is the fragment still sitting in the input box (typed but not
 # submitted)? Then another Enter is needed.
-_on_input_line() { grep -qF -- "$1" < <(_input_region "$1" "$2"); }
+#
+# Both predicates (and _is_collapsed_paste_in_input) capture the region with its status checked,
+# THEN match, instead of `region | grep -q` (SIGPIPE race under pipefail) or `grep -q < <(region)`
+# (drops the producer's status). A failed region is "no" — never an input/submission inference —
+# exactly what the old pipe said. A sentinel keeps the exact bytes; zero bytes never match.
+_on_input_line() {
+  local r
+  r="$(_input_region "$1" "$2" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qF -- "$1" <<<"${r%$'\n'}"
+}
 # _in_transcript — did the fragment reach the conversation (submitted + echoed)?
-_in_transcript() { grep -qF -- "$1" < <(_transcript_region "$1" "$2"); }
+_in_transcript() {
+  local r
+  r="$(_transcript_region "$1" "$2" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qF -- "$1" <<<"${r%$'\n'}"
+}
 
 # _is_collapsed_paste_in_input — is the input box showing Claude Code's
 # collapsed-multiline-paste placeholder ("[Pasted text #1 +17 lines]",
@@ -202,7 +217,10 @@ _in_transcript() { grep -qF -- "$1" < <(_transcript_region "$1" "$2"); }
 # while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
 # manual Enter submitted it, proving it was still just buffered.
 _is_collapsed_paste_in_input() {
-  grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]' < <(_input_region "" "$1")
+  local r
+  r="$(_input_region "" "$1" && printf x)" || return 1
+  r=${r%x}
+  [ -n "$r" ] && grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]' <<<"${r%$'\n'}"
 }
 
 # _has_prompt — is there a real ❯/› input line visible anywhere in the capture?

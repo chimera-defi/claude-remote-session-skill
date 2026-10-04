@@ -242,7 +242,7 @@ EOF
   ok "tsv-h-old-version-unknown"    "$(printf '%s' "$rowH" | awk -F'\t' '{print $8}')" "unknown"
 
   # idle_minutes is numeric for a real timestamp
-  ok "tsv-d-idle-minutes-numeric" "$(grep -qE '^[0-9]+$' < <(printf '%s' "$rowD" | awk -F'\t' '{print $5}') && echo yes || echo no)" "yes"
+  ok "tsv-d-idle-minutes-numeric" "$(f5="$(printf '%s' "$rowD" | awk -F'\t' '{print $5}' && printf x)" && f5=${f5%x} && [ -n "$f5" ] && grep -qE '^[0-9]+$' <<<"${f5%$'\n'}" && echo yes || echo no)" "yes"
 
   # exactly 10 tab-separated columns per row (pgrep is host-wide, so noisy host rows too)
   badcols="$(printf '%s\n' "$tsvout" | awk -F'\t' 'NF!=10{print NR": "NF" cols"}')"

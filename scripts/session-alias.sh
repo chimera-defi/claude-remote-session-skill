@@ -295,7 +295,10 @@ if [ "$AUDIT" = yes ]; then
 fi
 # Resolution order (see spec):
 # 0. protected -> sanitized folder, never stored, --alias ignored (warn)
-if grep -qiE "$ALIAS_PROTECT" < <(printf '%s' "$FOLDER"); then
+# The old `printf '%s' "$FOLDER" | grep -q` saw zero bytes for an empty FOLDER (the default
+# ALIAS_PROTECT is '^$', which a here-string's lone empty line would match), and ${FOLDER%$'\n'}
+# keeps the one-line-per-newline shape of the printf bytes.
+if [ -n "$FOLDER" ] && grep -qiE "$ALIAS_PROTECT" <<<"${FOLDER%$'\n'}"; then
   [ -n "$ALIAS_ARG" ] && echo "session-alias: '$FOLDER' is protected; ignoring --alias" >&2
   sanitize "$FOLDER"; exit 0
 fi
