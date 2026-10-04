@@ -566,7 +566,7 @@ fi
 
 # One id per start attempt, logged on every start-script line and required by the Codex start
 # verdict below, so a stale or concurrent line can never stand in for THIS spawn. Generated after
-# the dry-run exit (a dry run needs no RNG) and before anything is written. od's own status is
+# the dry-run exit (a dry run needs no RNG) and before any start script or unit is written. od's own status is
 # checked, not tr's: an od that prints 32 hex characters and then fails is refused.
 START_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null)" || START_ID=""
 START_ID="${START_ID//[$' \n']/}"
