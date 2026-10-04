@@ -174,7 +174,7 @@ say "start script: $SCRIPT"
 say "backend:      $BACKEND   model: $MODEL${NEW_MODEL:+ -> $NEW_MODEL}"
 
 if [ "$BACKEND" != claude ]; then
-  echo "session-resume: backend '$BACKEND' is not supported — the Codex supervisor loop has no resume path (every unit start is a fresh Codex session)" >&2
+  echo "session-resume: backend '$BACKEND' is not supported — restart the unit instead; the Codex loop resumes only a thread pinned in ~/.sessions/resume/<remote>.codex-thread (see codex-resume-pin)" >&2
   exit 1
 fi
 

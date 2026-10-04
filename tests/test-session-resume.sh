@@ -254,7 +254,7 @@ out="$(bash "$SR" zzz_rsm$$-l --dry-run 2>&1)"; ok "unknown-prefix-exit2" "$?" 2
 has "unknown-prefix-unsafe" "$out" "unsafe session name"
 out="$(CRSS_LEGACY_PREFIXES='' bash "$SR" oldhost_rsm$$-l --dry-run 2>&1)"; ok "legacy-unset-exit2" "$?" 2
 
-# 8. codex-backend unit -> refused (its loop has no resume path).
+# 8. codex-backend unit -> refused (session-resume does not handle Codex units; the Codex loop resumes its own pin).
 R=px-rsm$$-d; mk_session "$R"; sed -i 's/^PROFILE=.*/&\nBACKEND=codex/' "$T/scripts/$R-start.sh"
 out="$(bash "$SR" px_rsm$$-d --dry-run 2>&1)"; ok "codex-exit1" "$?" 1
 has "codex-refused" "$out" "backend 'codex' is not supported"
