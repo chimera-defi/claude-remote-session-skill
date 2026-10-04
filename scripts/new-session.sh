@@ -720,13 +720,14 @@ while true; do
   # absence of the pinned rollout leads to a fresh launch. argv is a bash array,
   # never newline-delimited text.
   FAIL=""; PIN_ID=""; SB=""; SB_FLAG=""; SB_ARGV=(); LAUNCH_ARGV=()
-  # A logging failure must never change a decision or its reason: check the log once per
-  # iteration, and when it is unusable send helper stderr to the pane instead of the log.
+  # A logging failure must never change a decision or its reason: open the log ONCE per pass,
+  # on fd 9, and send helper stderr there (the pane when the log cannot be opened). A redirect
+  # reopened per call could fail mid-pass and make a helper call return 1 for the wrong reason.
   mkdir -p "\$(dirname "\$LOG_FILE")" 2>/dev/null
-  if : >> "\$LOG_FILE" 2>/dev/null; then LOG_OK=1; else
-    LOG_OK=""; echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=log-unavailable"
+  if { exec 9>>"\$LOG_FILE"; } 2>/dev/null; then LOG_OK=1; else
+    exec 9>&2; LOG_OK=""; echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=log-unavailable"
   fi
-  _h() { if [ -n "\$LOG_OK" ]; then "\$@" 2>>"\$LOG_FILE"; else "\$@"; fi; }
+  _h() { "\$@" 2>&9; }
   if ! command -v codex-resume-pin >/dev/null 2>&1; then
     FAIL=helper-missing
   elif ! SB=\$(_h codex-resume-pin sandbox-of "\${CODEX_ARGS[@]}") || ! SB_FLAG=\$(_h codex-resume-pin sandbox-of --flag "\${CODEX_ARGS[@]}"); then
@@ -736,7 +737,7 @@ while true; do
     # suppresses the appended -s
     [ -n "\$SB_FLAG" ] || SB_ARGV=(-s "\$SB")
     PIN_ID=\$(_h codex-resume-pin read-pin "\$CODEX_PIN"); _rc=\$?
-    if [ "\$_rc" -eq 1 ]; then
+    if [ "\$_rc" -eq 10 ]; then
       PIN_ID=""
     elif [ "\$_rc" -ne 0 ]; then
       FAIL=pin-invalid; PIN_ID=""
@@ -745,16 +746,22 @@ while true; do
       if [ "\$_rc" -eq 0 ]; then
         _h codex-resume-pin verify-lane "\$PIN_ID" "\$PWD"; _rc=\$?
         if [ "\$_rc" -eq 1 ]; then FAIL=pin-foreign; elif [ "\$_rc" -ne 0 ]; then FAIL=pin-unverifiable; fi
-      elif [ "\$_rc" -eq 1 ]; then
+      elif [ "\$_rc" -eq 11 ]; then
         _p2=\$(_h codex-resume-pin read-pin "\$CODEX_PIN") || _p2=""
         if [ "\$_p2" != "\$PIN_ID" ]; then FAIL=pin-changed; else
           echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-stale thread=\$PIN_ID" | tee -a "\$LOG_FILE"
           # archive only to a name that does not exist yet, then VERIFY (mv -n exit codes differ)
           _arc="\$CODEX_PIN.stale.\$(date +%s)"
           if [ -e "\$_arc" ] || [ -L "\$_arc" ]; then FAIL=pin-archive-failed; else
-            mv -n -- "\$CODEX_PIN" "\$_arc" 2>/dev/null
+            mv -n -T -- "\$CODEX_PIN" "\$_arc" 2>/dev/null
             if [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ] || [ ! -f "\$_arc" ] || [ "\$(cat -- "\$_arc" 2>/dev/null)" != "\$PIN_ID" ]; then
               FAIL=pin-archive-failed
+              # the pin changed under the archive: put the moved file back (only a regular,
+              # non-link archive, and only onto an empty pin path); report if that fails too
+              if ! { [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ]; } && [ -f "\$_arc" ] && [ ! -L "\$_arc" ]; then
+                mv -n -T -- "\$_arc" "\$CODEX_PIN" 2>/dev/null
+              fi
+              { [ -e "\$CODEX_PIN" ] || [ -L "\$CODEX_PIN" ]; } || echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=pin-restore-failed archive=\$_arc" | tee -a "\$LOG_FILE"
             else PIN_ID=""; fi
           fi
         fi
@@ -772,10 +779,10 @@ while true; do
   elif [ -n "\$PIN_ID" ]; then
     LAUNCH_ARGV=(resume "\$PIN_ID" "\${CODEX_ARGS[@]}" "\${SB_ARGV[@]}")
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=resume thread=\$PIN_ID sandbox=\$SB" | tee -a "\$LOG_FILE"
-    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}"
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}" 9>&-
   else
     LAUNCH_ARGV=("\${CODEX_ARGS[@]}" "\${SB_ARGV[@]}")
-    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}"
+    "\$CODEX_BIN" -c "\$CODEX_TRUST_CONFIG" "\${LAUNCH_ARGV[@]}" 9>&-
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=exit runtime=\${RUNTIME}s" | tee -a "\$LOG_FILE"

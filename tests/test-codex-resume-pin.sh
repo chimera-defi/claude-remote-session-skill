@@ -99,7 +99,7 @@ ok "sandbox missing value fails" "$(rc bash "$RP" sandbox-of -m x -s)" "1"
 
 # ---------------------------------------------------------------- read-pin
 P="$WORK/pins"; mkdir -p "$P"
-ok "read-pin absent => 1" "$(rc bash "$RP" read-pin "$P/none")" "1"
+ok "read-pin absent => 10" "$(rc bash "$RP" read-pin "$P/none")" "10"
 printf '%s\n' "$U1" > "$P/ok";       ok "read-pin ok" "$(bash "$RP" read-pin "$P/ok")" "$U1"
 printf '%s'   "$U1" > "$P/nonl";     ok "read-pin ok without newline" "$(bash "$RP" read-pin "$P/nonl")" "$U1"
 mkdir "$P/dir";                      ok "read-pin directory => 2" "$(rc bash "$RP" read-pin "$P/dir")" "2"
@@ -116,7 +116,7 @@ mkdir -p "$WORK/laneA" "$WORK/laneB"
 mk_rollout "$U1" "$WORK/laneA" codex-tui
 ok "exists: one rollout" "$(rc bash "$RP" exists "$U1")" "0"
 has "exists prints the path" "$(bash "$RP" exists "$U1")" "rollout-2026-10-03T10-00-00-$U1.jsonl"
-ok "exists: proven absence => 1" "$(rc bash "$RP" exists "$U2")" "1"
+ok "exists: proven absence => 11" "$(rc bash "$RP" exists "$U2")" "11"
 mk_rollout "$U1" "$WORK/laneA" codex-tui "$CODEX_HOME/sessions/2026/10/04"
 ok "exists: two matches => 2" "$(rc bash "$RP" exists "$U1")" "2"
 rm -rf "$CODEX_HOME/sessions/2026/10/04"
@@ -140,7 +140,7 @@ has "A: ...and its path is printed" "$(CODEX_HOME="$CH" bash "$RP" exists "$U1")
 mkch; mk_rollout "$U1" "$WORK/laneA" codex-tui "$WORK/realday2"; ln -s "$WORK/realday2/rollout-2026-10-03T10-00-00-$U1.jsonl" "$CH/sessions/2026/10/03/rollout-2026-10-03T10-00-00-$U1.jsonl"
 ok "A: symlinked rollout file with a live target => 0" "$(chrc "$U1")" "0"
 mkch; mkdir -p "$WORK/unrelated"; ln -s "$WORK/unrelated" "$CH/sessions/stray"
-ok "A: valid stray symlink, no match => 1 (one symlink must not stop a lane)" "$(chrc "$U1")" "1"
+ok "A: valid stray symlink, no match => 11 (one symlink must not stop a lane)" "$(chrc "$U1")" "11"
 mkch; ln -s "$WORK/gone-dir" "$CH/sessions/dangling-dir"
 ok "A: dangling subdirectory symlink, no match => 2" "$(chrc "$U1")" "2"
 mkch; ln -s "$WORK/gone-file" "$CH/sessions/2026/10/03/rollout-2026-10-03T10-00-00-$U1.jsonl"
@@ -184,7 +184,7 @@ fi
 chmod 755 "$P/np"
 : > "$P/regfile"
 ok "C: parent is a regular file => 2 (ENOTDIR)" "$(rc bash "$RP" read-pin "$P/regfile/pin")" "2"
-ok "C: missing parent dir => 1 (ENOENT)" "$(rc bash "$RP" read-pin "$P/nodir/pin")" "1"
+ok "C: missing parent dir => 10 (ENOENT)" "$(rc bash "$RP" read-pin "$P/nodir/pin")" "10"
 
 # ================================================================ start-loop harness
 # One stubbed spawn yields the REAL generated Codex loop; each case runs it once (the
@@ -209,6 +209,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$STUBS/sleep"
 cat > "$STUBS/codex" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\0' "$@" >> "$ARGV_OUT"; echo call >> "$CALLS"
+[ ! -e /proc/$$/fd/9 ] || echo fd9-open >> "$CALLS.fd9"
 if [ -n "${STUB_MODE:-}" ]; then
   # a lane that creates its own rollout and holds it open, with a child holding a SIBLING's rollout
   new=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
@@ -234,21 +235,27 @@ PATH_H="$STUBS:$WORK/helperbin:/usr/bin:/bin"
 setup_case() {
   H="$(mktemp -d "$WORK/case.XXXXXX")"; LANE="$H/lane"
   mkdir -p "$LANE" "$H/hm/.sessions/resume" "$H/codex/sessions/2026/10/03" "$H/wrapbin"
-  # wrapper: after a successful-or-not `exists`, run $WRAP_HOOK (a race in a bottle), rc preserved
+  # wrapper: counts calls per subcommand and evals PRE_<sub>_<n> before / POST_<sub>_<n> after the
+  # n-th call (a race in a bottle; a POST hook may set rc). WRAP_HOOK runs after every `exists`.
   cat > "$H/wrapbin/codex-resume-pin" <<'EOW'
 #!/usr/bin/env bash
-if [ "$1" = exists ] && [ -n "${WRAP_HOOK:-}" ]; then "$RP_REAL" "$@"; rc=$?; eval "$WRAP_HOOK"; exit $rc; fi
-exec "$RP_REAL" "$@"
+sub="${1//-/_}"; nf="$CASE_DIR/n.$sub"; n=$(( $(cat "$nf" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$nf"
+pre="PRE_${sub}_$n"; post="POST_${sub}_$n"
+[ -z "${!pre:-}" ] || eval "${!pre}"
+"$RP_REAL" "$@"; rc=$?
+[ "$1" != exists ] || [ -z "${WRAP_HOOK:-}" ] || eval "$WRAP_HOOK"
+[ -z "${!post:-}" ] || eval "${!post}"
+exit $rc
 EOW
   chmod +x "$H/wrapbin/codex-resume-pin"
   ARGV="$H/argv.out"; CALLS="$H/calls"; LOG="$H/hm/.sessions/session-starts.log"; : > "$ARGV"; : > "$CALLS"
   {
     printf 'CODEX_BIN=%s\nCODEX_ARGS=(%s)\nCODEX_PIN="$HOME/%s"\n' "$STUBS/codex" "$1" "${PINREL:-lane.pin}"
-    grep -vE '^(CODEX_BIN|CODEX_ARGS|CODEX_PIN)=' "$WORK/loop.src" | sed 's/^while true; do/for _once in 1; do/'
+    grep -vE '^(CODEX_BIN|CODEX_ARGS|CODEX_PIN)=' "$WORK/loop.src" | sed "s/^while true; do/for _once in ${PASSES:-1}; do/"
   } > "$H/loop.sh"
   LANE="$(cd "$LANE" && pwd -P)"; PIN="$H/hm/${PINREL:-lane.pin}"
 }
-go() { ( cd "$LANE" && env HOME="$H/hm" CODEX_HOME="$H/codex" ARGV_OUT="$ARGV" CALLS="$CALLS" RP_REAL="$RP" PATH="$H/wrapbin:$PATH_H" "$@" bash "$H/loop.sh" ) >"$H/out" 2>&1; }
+go() { ( cd "$LANE" && env HOME="$H/hm" CODEX_HOME="$H/codex" ARGV_OUT="$ARGV" CALLS="$CALLS" RP_REAL="$RP" CASE_DIR="$H" PIN_FILE="$PIN" LOG_F="$LOG" U1="$U1" U2="$U2" PATH="$H/wrapbin:$PATH_H" "$@" bash "$H/loop.sh" ) >"$H/out" 2>&1; }
 calls() { wc -l < "$CALLS" | tr -d ' '; }
 # argv_is <label> <expected args...>: the stub's NUL-delimited argv must equal them exactly
 argv_is() {
@@ -456,5 +463,132 @@ same "S: the pin was not moved"
 setup_case "-m m -a never"; printf '%s\n' "$U2" > "$PIN"; cp "$PIN" "$H/pin.before"
 go PATH="$WORK/mvnoop:$PATH_H"
 closed "S: mv that exits 0 without moving is caught" "pin-archive-failed"; same "S: pin still in place"
+
+# ======================================================= brief 2b (P, X, L, G', A', F', D')
+PR=".sessions/resume/lane.codex-thread"   # the production pin location, under ~/.sessions
+pinarc() { ls "$H"/hm/.sessions/resume/lane.codex-thread.stale.* 2>/dev/null | wc -l | tr -d ' '; }
+
+# ---- P: helper python is isolated, bounded, and every exception exits 2
+PX="$WORK/p"; mkdir -p "$PX/lane" "$PX/hm" "$PX/codex/sessions/2026/10/03"; PXL="$(cd "$PX/lane" && pwd -P)"
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s\\u0000x","originator":"codex-tui"}}\n' "$U1" "$PXL" > "$PX/codex/sessions/2026/10/03/rollout-2026-10-03T10-00-00-$U1.jsonl"
+ok "P: verify-lane with a NUL in the rollout cwd => 2" "$(CODEX_HOME="$PX/codex" rc bash "$RP" verify-lane "$U1" "$PXL")" "2"
+rm -f "$PX"/codex/sessions/2026/10/03/rollout-*
+if truncate -s 4G "$PX/big.pin" 2>/dev/null; then
+  ok "P: a 4 GiB pin under a 1 GiB address-space cap => 2" "$( ( ulimit -v 1048576; rc bash "$RP" read-pin "$PX/big.pin" ) )" "2"
+  PINREL="$PR" setup_case "-m m -s read-only"; cp "$PX/big.pin" "$PIN" 2>/dev/null || ln -f "$PX/big.pin" "$PIN"
+  go; closed "P: huge pin end to end" "pin-invalid"
+  ok "P: huge pin untouched" "$(stat -c %s "$PIN")" "$(stat -c %s "$PX/big.pin")"
+  rm -f "$PIN" "$PX/big.pin"
+else echo "SKIP: P huge pin (cannot create a sparse file)"; fi
+printf '%s\n' "$U1" > "$PX/hm/pin"; mk_rollout "$U1" "$PXL" codex-tui "$PX/codex/sessions/2026/10/03"
+for m in re json; do printf 'open("%s/MARKER-%s", "w").write("x")\nraise RuntimeError("shadowed")\n' "$PX" "$m" > "$PX/lane/$m.py"; done
+ok "P: read-pin with shadow modules in the CWD => 0" "$(cd "$PX/lane" && rc bash "$RP" read-pin "$PX/hm/pin")" "0"
+ok "P: verify-lane with shadow modules in the CWD => 0" "$(cd "$PX/lane" && CODEX_HOME="$PX/codex" rc bash "$RP" verify-lane "$U1" "$PXL")" "0"
+ok "P: sandbox-of with shadow modules in the CWD => 0" "$(cd "$PX/lane" && rc bash "$RP" sandbox-of -m x)" "0"
+ok "P: no shadow module was executed" "$(ls "$PX"/MARKER-* 2>/dev/null | wc -l | tr -d ' ')" "0"
+
+# ---- X: only an explicit 10 / 11 may lead to a fresh launch
+PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; cp "$PIN" "$H/pin.before"
+go POST_read_pin_1='rc=1'
+closed "X: read-pin exits 1" "pin-invalid"; same "X: read-pin exit 1 leaves the pin untouched"
+PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; cp "$PIN" "$H/pin.before"
+go POST_exists_1='rc=1'
+closed "X: exists exits 1" "pin-lookup-error"; same "X: exists exit 1 leaves the pin untouched"
+ok "X: exists exit 1 archives nothing" "$(pinarc)" "0"
+
+# ---- L: the log is opened once per pass; breaking it mid-pass changes nothing
+brk='rm -rf "$LOG_F"; mkdir "$LOG_F"'
+for pt in POST_sandbox_of_2 POST_read_pin_1 POST_exists_1; do
+  PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; cp "$PIN" "$H/pin.before"
+  mk_rollout "$U1" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+  go "$pt=$brk"
+  argv_is "L[$pt]: still resumes the pinned thread" -c "$(trust)" resume "$U1" -m m -s read-only
+  same "L[$pt]: pin untouched"
+done
+PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; mk_rollout "$U1" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+mkdir "$LOG"; go
+ok "L: log blocked before the pass: still resumes" "$(grep -c "^resume" <(tr '\0' '\n' < "$ARGV"))" "1"
+has "L: log blocked before the pass: log-unavailable" "$(cat "$H/out")" "event=log-unavailable"
+ok "L: codex runs with fd 9 closed" "$(cat "$CALLS.fd9" 2>/dev/null | wc -l | tr -d ' ')" "0"
+PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; mk_rollout "$U1" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+go; ok "L: codex runs with fd 9 closed (log fine)" "$(cat "$CALLS.fd9" 2>/dev/null | wc -l | tr -d ' ')" "0"
+for how in blocked POST_sandbox_of_2; do
+  PINREL="$PR" PASSES="1 2" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; mk_rollout "$U1" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+  hk=(); if [ "$how" = blocked ]; then mkdir "$LOG"; else hk=("POST_sandbox_of_2=$brk"); fi
+  ( cd "$LANE" && env HOME="$H/hm" CODEX_HOME="$H/codex" ARGV_OUT="$ARGV" CALLS="$CALLS" RP_REAL="$RP" CASE_DIR="$H" LOG_F="$LOG" PATH="$H/wrapbin:$PATH_H" "${hk[@]}" \
+      bash --norc -i < <(cat "$H/loop.sh"; echo 'echo SHELL-ALIVE') ) >"$H/out" 2>&1
+  has "L: interactive shell survives a broken log ($how)" "$(cat "$H/out")" "SHELL-ALIVE"
+  ok "L: interactive ($how): codex launched on every pass" "$(calls)" "2"
+done
+
+# ---- G': a pin that changes during the archive is put back
+PINREL="$PR" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"
+mk_rollout "$U2" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+go POST_read_pin_2='printf "%s\n" "$U2" > "$PIN_FILE"'
+closed "G': pin rewritten after the re-read" "pin-archive-failed"
+ok "G': the new pin is back in place" "$(cat "$PIN" 2>/dev/null)" "$U2"
+ok "G': nothing left archived" "$(pinarc)" "0"
+PINREL="$PR" PASSES="1 2" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"
+mk_rollout "$U2" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
+go POST_read_pin_2='printf "%s\n" "$U2" > "$PIN_FILE"'
+ok "G': pass 2 launches once" "$(calls)" "1"
+argv_is "G': pass 2 resumes U2" -c "$(trust)" resume "$U2" -m m -s read-only
+mkdir -p "$WORK/mvdir"
+cat > "$WORK/mvdir/mv" <<'EOS'
+#!/usr/bin/env bash
+# the ARCHIVE call (source is the pin): make the destination a directory first, then run the real mv
+for a in "$@"; do last_src="$prev"; prev="$a"; done
+case "$last_src" in "$PIN_FILE") mkdir -p "$prev" ;; esac
+exec /usr/bin/mv "$@"
+EOS
+chmod +x "$WORK/mvdir/mv"
+PINREL="$PR" PASSES="1 2" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"; cp "$PIN" "$H/pin.before"
+go PATH="$WORK/mvdir:$H/wrapbin:$PATH_H"
+ok "G': archive destination is a directory: no codex call in either pass" "$(calls)" "0"
+has "G': archive destination is a directory: pin-archive-failed" "$(cat "$LOG")" "reason=pin-archive-failed"
+same "G': archive destination is a directory: pin still U1"
+PINREL="$PR" setup_case "-m m -a never"; printf '%s\n' "$U2" > "$PIN"; go
+ok "G': control: plain stale pin archives" "$(pinarc)/$([ -e "$PIN" ] && echo present || echo gone)" "1/gone"
+ok "G': control: ...and launches fresh once" "$(calls)" "1"
+
+# ---- A': aliases are not duplicates; every 2 names its cause
+mkch; mk_rollout "$U1" "$WORK/laneA" codex-tui "$CH/sessions/2026/10/03"; ln -s 10/03 "$CH/sessions/2026/latest"
+ok "A': an in-root alias of the rollout's directory => 0" "$(chrc "$U1")" "0"
+ok "A': ...and the printed path is the real file" "$(CODEX_HOME="$CH" bash "$RP" exists "$U1")" "$(realpath "$CH/sessions/2026/10/03/rollout-2026-10-03T10-00-00-$U1.jsonl")"
+mkch; mk_rollout "$U1" "$WORK/laneA" codex-tui "$CH/sessions/2026/10/03"; mk_rollout "$U1" "$WORK/laneA" codex-tui "$CH/sessions/2026/10/04"
+ok "A': two distinct files with one uuid => 2" "$(chrc "$U1")" "2"
+mkch; ln -s "$WORK/gone-dir" "$CH/sessions/dangling-dir"
+ok "A': dangling link => 2" "$(chrc "$U1")" "2"
+has "A': ...and stderr names it" "$(CODEX_HOME="$CH" bash "$RP" exists "$U1" 2>&1 >/dev/null)" "dangling-dir"
+mkch; ln -s "$CH/sessions" "$CH/sessions/2026/loop"
+ok "A': loop => 2" "$(chrc "$U1")" "2"
+has "A': ...and stderr carries find's message" "$(CODEX_HOME="$CH" bash "$RP" exists "$U1" 2>&1 >/dev/null)" "find failed: "
+
+# ---- F': block the log as production would (a directory), pin under ~/.sessions/resume
+f2_run() { # <blocked 0|1> <scenario>
+  local blocked="$1" sc="$2"
+  PINREL="$PR" setup_case "-m m -s read-only"
+  case "$sc" in
+    pin-foreign) printf '%s\n' "$U1" > "$PIN"; mk_rollout "$U1" "$H/elsewhere" codex-tui "$H/codex/sessions/2026/10/03" ;;
+    stale) printf '%s\n' "$U2" > "$PIN" ;;
+    resume) printf '%s\n' "$U1" > "$PIN"; mk_rollout "$U1" "$LANE" codex-tui "$H/codex/sessions/2026/10/03" ;;
+  esac
+  [ "$blocked" = 0 ] || mkdir -p "$LOG"
+  go
+}
+for sc in stale resume pin-foreign; do
+  f2_run 0 "$sc"; c0="$(calls)"; r0="$(grep -o 'resume-pin-fail-closed reason=[a-z-]*' "$LOG" | head -1)"
+  f2_run 1 "$sc"; c1="$(calls)"; r1="$(grep -o 'resume-pin-fail-closed reason=[a-z-]*' "$H/out" | head -1)"
+  ok "F'[$sc]: same launch decision, log a directory, pin under .sessions/resume" "$c1" "$c0"
+  ok "F'[$sc]: same reason" "$r1" "$r0"
+  ok "F'[$sc]: exactly one log-unavailable line" "$(grep -c 'event=log-unavailable' "$H/out")" "1"
+done
+
+# ---- D': codex resume flags that must stay rejected
+for fl in --include-non-interactive --last --all; do
+  ok "D': sandbox-of rejects $fl" "$(rc bash "$RP" sandbox-of -m m "$fl")" "1"
+  setup_case "-m m $fl"; go; closed "D': loop with $fl" "sandbox-invalid"
+done
+
 
 finish "codex-resume-pin"

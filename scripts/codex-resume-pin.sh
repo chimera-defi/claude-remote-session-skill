@@ -19,18 +19,23 @@
 #                                   Prints the effective sandbox (the -s/--sandbox flag, else
 #                                   -c sandbox_mode, else read-only); --flag prints it only when
 #                                   a -s/--sandbox FLAG names it (the loop appends `-s` unless
-#                                   one does). Exit 1 on anything it cannot classify.
-#   read-pin <file>                 print the UUID. Exit 0 ok; 1 no pin file (lstat ENOENT);
+#                                   one does). Exit 1 cannot classify; 2 internal error.
+#   read-pin <file>                 print the UUID. Exit 0 ok; 10 no pin file (lstat ENOENT);
 #                                   2 anything else (other stat error, symlink, dir, unreadable,
-#                                   empty, multi-line, not one canonical lowercase UUID).
-#   exists <uuid>                   0 exactly one rollout (path on stdout); 1 the search
-#                                   completed and found none (and no broken symlink anywhere
-#                                   under sessions/); 2 error (bad uuid, sessions dir missing or
-#                                   unreadable, find failed, >1 match, dangling link).
+#                                   empty, multi-line, over 4096 bytes, not one canonical
+#                                   lowercase UUID, internal error).
+#   exists <uuid>                   0 exactly one distinct rollout file (resolved path on stdout);
+#                                   11 the search completed and found none (and no broken symlink
+#                                   anywhere under sessions/); 2 error (bad uuid, sessions dir
+#                                   missing or unreadable, find failed, >1 distinct file, dangling
+#                                   link), each with its cause on stderr.
 #   verify-lane <uuid> <cwd>        0 the rollout's session_meta has an absolute cwd (realpath)
 #                                   == <cwd> and originator == codex-tui; 1 foreign; 2 anything
 #                                   unverifiable (no single rollout, no session_meta/cwd).
-# Exit codes are per subcommand; 2 is also usage.
+# Exit codes are per subcommand; 2 is also usage. The two "go" answers (10 no pin, 11 proven absent)
+# are deliberately NOT 1, which is what a crashed interpreter or a failed redirect returns: only
+# an explicit 10/11 may lead to a fresh launch. Every python body runs isolated (-I, so a lane
+# file named like a stdlib module is never imported) and turns any uncaught exception into exit 2.
 set -uo pipefail
 
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
@@ -40,8 +45,11 @@ usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exi
 # The one argv grammar (codex 0.160). Fails closed (exit 1) on anything it cannot classify, so
 # this parser and codex's own clap can never disagree about which token is a flag.
 sandbox_of() {
-  python3 - "$@" <<'PY'
-import sys
+  python3 -I - "$@" <<'PY'
+import os, sys
+def _hook(t, e, tb):
+    os.write(2, ("codex-resume-pin: internal error: %s\n" % t.__name__).encode()); os._exit(2)
+sys.excepthook = _hook
 args = sys.argv[1:]
 mode = "effective"
 if args and args[0] == "--flag":
@@ -111,23 +119,29 @@ PY
 
 # 0 pin (UUID on stdout) / 1 no pin file (lstat ENOENT) / 2 anything else.
 read_pin() {
-  python3 - "$1" <<'PY'
-import os, re, stat, sys
+  python3 -I - "$1" <<'PY'
+import re, stat
+import os, sys
+def _hook(t, e, tb):
+    os.write(2, ("codex-resume-pin: internal error: %s\n" % t.__name__).encode()); os._exit(2)
+sys.excepthook = _hook
 f = sys.argv[1]
 def bad(msg):
     print("codex-resume-pin: " + msg, file=sys.stderr); sys.exit(2)
 try:
     st = os.lstat(f)
 except FileNotFoundError:
-    sys.exit(1)
+    sys.exit(10)
 except OSError as e:
     bad("cannot stat pin: %s" % e)
 if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
     bad("pin is not a regular file")
 try:
-    data = open(f, "rb").read()
+    data = open(f, "rb").read(4097)
 except OSError as e:
     bad("cannot read pin: %s" % e)
+if len(data) > 4096:
+    bad("pin too large")
 if data.endswith(b"\n"):
     data = data[:-1]
 try:
@@ -140,38 +154,52 @@ print(s)
 PY
 }
 
-# stdout: the single rollout path. Exit as documented under `exists`. Symlinks are followed
-# (find -L); a broken one anywhere under the root means the search cannot prove absence.
+# stdout: the single rollout's resolved path. Exit as documented under `exists`. Symlinks are
+# followed (find -L); a broken one anywhere under the root means the search cannot prove absence.
+# Matches are counted as distinct FILES (realpath), so an in-root alias is not a second rollout.
 _find_rollout() {
-  local id="$1" root tmp rc n p
+  local id="$1" root tmp etmp rc m r msg
+  local -a res=() uniq=()
   [[ "$id" =~ $UUID_RE ]] || { echo "codex-resume-pin: not a canonical uuid" >&2; return 2; }
   root="$(realpath -e -- "$CODEX_HOME_DIR/sessions" 2>/dev/null)" || { echo "codex-resume-pin: sessions dir missing" >&2; return 2; }
   if [ ! -d "$root" ] || [ ! -r "$root" ] || [ ! -x "$root" ]; then
     echo "codex-resume-pin: sessions dir unreadable" >&2; return 2
   fi
   tmp="$(mktemp)" || return 2
-  find -L "$root" -name "rollout-*-$id.jsonl" -print0 > "$tmp" 2>/dev/null; rc=$?
-  if [ "$rc" -ne 0 ]; then rm -f "$tmp"; echo "codex-resume-pin: find failed" >&2; return 2; fi
-  n="$(tr -cd '\0' < "$tmp" | wc -c | tr -d ' ')"
-  if [ "$n" -eq 0 ]; then
-    rm -f "$tmp"
-    p="$(find -L "$root" -type l -print -quit 2>/dev/null)" || { echo "codex-resume-pin: broken-link scan failed" >&2; return 2; }
-    [ -z "$p" ] || { echo "codex-resume-pin: broken symlink under sessions: cannot prove absence" >&2; return 2; }
-    return 1
+  etmp="$(mktemp)" || { rm -f "$tmp"; return 2; }
+  find -L "$root" -name "rollout-*-$id.jsonl" -print0 > "$tmp" 2>"$etmp"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    msg="$(head -n 1 "$etmp")"; rm -f "$tmp" "$etmp"
+    echo "codex-resume-pin: find failed: $msg" >&2; return 2
   fi
-  if [ "$n" -ne 1 ]; then rm -f "$tmp"; echo "codex-resume-pin: $n rollouts match $id" >&2; return 2; fi
-  IFS= read -r -d '' p < "$tmp"; rm -f "$tmp"
-  case "$p" in *$'\n'*) echo "codex-resume-pin: rollout path contains a newline" >&2; return 2 ;; esac
-  [ -f "$p" ] || { echo "codex-resume-pin: rollout is not a regular file (dangling link?)" >&2; return 2; }
-  printf '%s\n' "$p"
+  rm -f "$etmp"
+  while IFS= read -r -d '' m; do
+    r="$(realpath -e -- "$m" 2>/dev/null)" || { rm -f "$tmp"; echo "codex-resume-pin: dangling match: $(printf %q "$m")" >&2; return 2; }
+    case "$r" in *$'\n'*) rm -f "$tmp"; echo "codex-resume-pin: rollout path contains a newline" >&2; return 2 ;; esac
+    res+=("$r")
+  done < "$tmp"
+  rm -f "$tmp"
+  if [ "${#res[@]}" -eq 0 ]; then
+    m="$(find -L "$root" -type l -print -quit 2>/dev/null)" || { echo "codex-resume-pin: broken-link scan failed" >&2; return 2; }
+    [ -z "$m" ] || { echo "codex-resume-pin: broken symlink under sessions: $(printf %q "$m"): cannot prove absence" >&2; return 2; }
+    return 11
+  fi
+  mapfile -d '' -t uniq < <(printf '%s\0' "${res[@]}" | sort -zu)
+  if [ "${#uniq[@]}" -ne 1 ]; then echo "codex-resume-pin: ${#uniq[@]} distinct rollouts match $id" >&2; return 2; fi
+  [ -f "${uniq[0]}" ] || { echo "codex-resume-pin: rollout is not a regular file" >&2; return 2; }
+  printf '%s\n' "${uniq[0]}"
 }
 
 verify_lane() {
   local f rc
   f="$(_find_rollout "$1")"; rc=$?
   [ "$rc" -eq 0 ] || return 2
-  python3 - "$f" "$2" <<'PY'
-import json, os, sys
+  python3 -I - "$f" "$2" <<'PY'
+import json
+import os, sys
+def _hook(t, e, tb):
+    os.write(2, ("codex-resume-pin: internal error: %s\n" % t.__name__).encode()); os._exit(2)
+sys.excepthook = _hook
 f, lane = sys.argv[1], os.path.realpath(sys.argv[2])
 def unverifiable(msg):
     print("codex-resume-pin: " + msg, file=sys.stderr); sys.exit(2)
