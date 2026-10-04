@@ -17,8 +17,23 @@ BIN="$(mktemp -d)"
 WORKHOME="$(mktemp -d)"
 trap 'rm -rf "$BIN" "$WORKHOME"' EXIT
 ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
+# The stub systemctl plays the start script's part: on `enable` it appends the verdict line the
+# real script's log_start writes (a FRESH timestamp, since the spawn only trusts lines at or
+# after its own t0). KSTUB_EVENT overrides the event; KSTUB_RAW supplies whole lines (tokens
+# @NOW@ @OLD@ @SESS@ @UNIT@); KSTUB_NONE=1 writes nothing.
 cat > "$BIN/systemctl" <<'CTLEOF'
 #!/usr/bin/env bash
+case " $* " in *" enable "*)
+  [ -z "${KSTUB_NONE:-}" ] || exit 0
+  unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"; now="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$HOME/.sessions" 2>/dev/null
+  if [ -n "${KSTUB_RAW:-}" ]; then
+    printf '%s\n' "$KSTUB_RAW" | sed "s/@NOW@/$now/g; s/@OLD@/2020-01-01T00:00:00Z/g; s/@SESS@/$sess/g; s/@UNIT@/$unit/g" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
+  else
+    printf '[%s] host=h session=%s remote=%s backend=codex workdir=w model=m profile=p event=%s\n' \
+      "$now" "$sess" "$unit" "${KSTUB_EVENT:-started}" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
+  fi ;;
+esac
 exit 0
 CTLEOF
 chmod +x "$BIN/systemctl"
@@ -71,7 +86,7 @@ cat > "$DATESTUB/date" <<'DATEEOF'
 #!/usr/bin/env bash
 case "$1" in
   +%m%d-%H%M) echo "0101-0000" ;;
-  *) exec /usr/bin/env date "$@" ;;
+  *) exec /usr/bin/date "$@" ;;
 esac
 DATEEOF
 chmod +x "$DATESTUB/date"
@@ -130,61 +145,96 @@ grp_n="$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf 
 ok "codex-grouped-args-count" "$grp_n" "4"
 ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
-# K2: a spawn whose start script logged `started-FAIL-CLOSED` is reported loudly and exits 3;
-# a healthy `started` spawn is untouched. The stub systemctl plays the start script's part by
-# appending the line the real script writes, keyed on the unit name.
-KBIN="$(mktemp -d)"
-cat > "$KBIN/systemctl" <<'KCTL'
-#!/usr/bin/env bash
-case " $* " in *" enable "*)
-  unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"
-  printf '[ts] host=h session=%s remote=%s backend=codex workdir=w model=m profile=p event=%s\n' \
-    "$sess" "$unit" "${KSTUB_EVENT:-started}" >> "$HOME/.sessions/session-starts.log" ;;
-esac
-exit 0
-KCTL
-chmod +x "$KBIN/systemctl"
-KHOME="$(mktemp -d)"; mkdir -p "$KHOME/.sessions/k-start"
-kfc_out="$(HOME="$KHOME" KSTUB_EVENT='started-FAIL-CLOSED reason=helper-missing' PATH="$KBIN:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-start sessions --alias kfc 2>&1)"; kfc_rc=$?
-ok "K2: fail-closed start exits 3" "$kfc_rc" "3"
-has "K2: names the session" "$kfc_out" 'px-kfc-0101-0000'
-has "K2: names the reason" "$kfc_out" 'FAIL-CLOSED \(reason=helper-missing\)'
-mkdir -p "$KHOME/.sessions/k-ok"
-kok_out="$(HOME="$KHOME" PATH="$KBIN:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-ok sessions --alias kok 2>&1)"; kok_rc=$?
-ok "K2: healthy start exits 0" "$kok_rc" "0"
-has "K2: healthy start still says created" "$kok_out" 'Session created: px-kok-0101-0000'
-not_has "K2: healthy start is not flagged" "$kok_out" 'FAIL-CLOSED'
+# K2: a codex spawn is reported created only from a fresh, well-formed `event=started` line.
+CMD_LINE='[@NOW@] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p event'
+k2() { # <label> <raw-lines or ''> [extra env assignments...]; sets kout/krc; the log may be pre-made in $KHOME
+  local lbl="$1" raw="$2"; shift 2
+  kout="$(env HOME="$KHOME" KSTUB_RAW="$raw" "$@" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "k-$lbl" sessions --alias "k$lbl" 2>&1)"; krc=$?
+}
+newk() { KHOME="$(mktemp -d)"; mkdir -p "$KHOME/.sessions/k-$1"; }
+OLDL="${CMD_LINE/\[@NOW@\]/[@OLD@]}"
+newk a; k2 a "${CMD_LINE}=started"
+ok "K2: a fresh started exits 0" "$krc" "0"; has "K2: ...and says created" "$kout" 'Session created: px-ka-0101-0000'
+newk b; k2 b "${OLDL}=started-FAIL-CLOSED reason=pin-invalid"$'\n'"${CMD_LINE}=started"
+ok "K2: an older fail-closed plus a fresh started exits 0" "$krc" "0"
+newk c; k2 c "${OLDL}=started"
+ok "K2: only an older started exits 3" "$krc" "3"; has "K2: ...NOT verified" "$kout" 'start NOT verified for px-kc-0101-0000'
+newk d; k2 d "[ts] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p event=started"
+ok "K2: a malformed timestamp exits 3" "$krc" "3"; has "K2: ...NOT verified (malformed timestamp)" "$kout" 'start NOT verified'
+newk e; k2 e "${CMD_LINE}=started-FAIL-CLOSED reason=helper-missing"
+ok "K2: a fresh fail-closed exits 3" "$krc" "3"; has "K2: ...names the reason" "$kout" 'FAIL-CLOSED \(reason=helper-missing\)'; has "K2: ...and the session" "$kout" 'px-ke-0101-0000'
+newk f; k2 f "${CMD_LINE}=started-UNVERIFIED-codex-not-running"
+ok "K2: a fresh UNVERIFIED exits 3" "$krc" "3"
+newk g; mkdir "$KHOME/.sessions/session-starts.log"; k2 g "${CMD_LINE}=started"
+ok "K2: a log that is a directory exits 3" "$krc" "3"; has "K2: ...NOT verified, names journalctl" "$kout" 'NOT verified.*journalctl --user -u px-kg-0101-0000.service'
+newk h; k2 h "${CMD_LINE}=already-running"
+ok "K2: only already-running exits 3" "$krc" "3"
+not_has "K2: a not-verified start never says is running" "$kout" 'is running'
+newk i; mkdir -p "$KHOME/.sessions/k-claude"
+kcl_out="$(HOME="$KHOME" KSTUB_NONE=1 PATH="$DATESTUB:$PATH" bash "$NS" k-claude sessions --alias kclaude 2>&1)"; kcl_rc=$?
+ok "K2: a claude spawn with no verdict line is unchanged (exit 0)" "$kcl_rc" "0"
 
-# K1: run the generated start script against a stub tmux. The stub plays the pane: it reports a
-# shell, then `sleep`, and (on the first Enter) writes the loop's own fail-closed line.
-cat > "$KHOME/.local/bin/tmux" <<'KTMUX'
+# K'-task: an unverified start never gets a task delivered
+newk t; mkdir -p "$KHOME/.local/bin"
+cat > "$KHOME/.local/bin/tmux" <<'TT'
+#!/usr/bin/env bash
+echo "$*" >> "$HOME/tmux.calls"
+case "$1" in has-session) exit 1 ;; esac
+exit 0
+TT
+chmod +x "$KHOME/.local/bin/tmux"
+kt_out="$(HOME="$KHOME" KSTUB_RAW="${CMD_LINE}=started-UNVERIFIED-codex-not-running" PATH="$KHOME/.local/bin:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-t sessions --alias kt --task 'do the thing' 2>&1)"; kt_rc=$?
+ok "K'-task: exit 3" "$kt_rc" "3"
+ok "K'-task: no readiness polling or send reached tmux" "$(grep -cE 'send-keys|paste-buffer|load-buffer|capture-pane|display-message' "$KHOME/tmux.calls" 2>/dev/null)" "0"
+has "K'-task: says the task was not sent and why" "$kt_out" 'task NOT sent: the lane.s start was not verified'
+not_has "K'-task: never says is running" "$kt_out" 'is running'
+
+# K1: run the generated start script against a stub tmux that plays the pane. display-message
+# reports a shell, then $KT_CMD; capture-pane prints the file $KT_PANE (or fails if KT_CAPFAIL).
+mkdir -p "$KHOME/.local/bin"
+newk s; k1home="$KHOME"
+HOME="$k1home" KSTUB_NONE=1 PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-s sessions --alias kfc >/dev/null 2>&1
+KSCRIPT="$k1home/.local/bin/px-kfc-0101-0000-start.sh"
+cat > "$k1home/.local/bin/tmux" <<'KTMUX'
 #!/usr/bin/env bash
 case "$1" in
   has-session) exit 1 ;;
   display-message)
     n="$(cat "$HOME/tmux.n" 2>/dev/null || echo 0)"; echo $((n+1)) > "$HOME/tmux.n"
-    if [ "$n" -eq 0 ]; then echo bash; else echo sleep; fi ;;
-  send-keys)
-    if [ "${!#}" = Enter ] && [ -n "${KTMUX_FC:-}" ] && [ ! -e "$HOME/tmux.fired" ]; then
-      : > "$HOME/tmux.fired"
-      printf '[ts] session=%s event=resume-pin-fail-closed reason=%s\n' "$3" "$KTMUX_FC" >> "$HOME/.sessions/session-starts.log"
-    fi ;;
+    if [ "$n" -eq 0 ]; then echo bash; else echo "${KT_CMD:-bash}"; fi ;;
+  capture-pane) [ -z "${KT_CAPFAIL:-}" ] || exit 1; cat "${KT_PANE:-/dev/null}" ;;
 esac
 exit 0
 KTMUX
-chmod +x "$KHOME/.local/bin/tmux"
-KSCRIPT="$KHOME/.local/bin/px-kfc-0101-0000-start.sh"
-rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
-HOME="$KHOME" KTMUX_FC=helper-missing bash "$KSCRIPT" >/dev/null 2>&1
-has "K1: fail-closed first pass logs started-FAIL-CLOSED with the reason" "$(cat "$KHOME/.sessions/session-starts.log")" 'event=started-FAIL-CLOSED reason=helper-missing'
-rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
-HOME="$KHOME" bash "$KSCRIPT" >/dev/null 2>&1
-has "K1: healthy first pass still logs started" "$(cat "$KHOME/.sessions/session-starts.log")" 'event=started$'
-not_has "K1: healthy first pass is not flagged" "$(cat "$KHOME/.sessions/session-starts.log")" 'FAIL-CLOSED'
-# an OLD fail-closed line from before this start must not taint a healthy one
-rm -f "$KHOME/.sessions/session-starts.log" "$KHOME/tmux.n" "$KHOME/tmux.fired"
-printf '[old] session=px_kfc-0101-0000 event=resume-pin-fail-closed reason=pin-invalid\n' > "$KHOME/.sessions/session-starts.log"
-HOME="$KHOME" bash "$KSCRIPT" >/dev/null 2>&1
-not_has "K1: an older fail-closed line is ignored" "$(tail -n 1 "$KHOME/.sessions/session-starts.log")" 'FAIL-CLOSED'
+chmod +x "$k1home/.local/bin/tmux"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$k1home/.local/bin/session-git-prep"; chmod +x "$k1home/.local/bin/session-git-prep"
+FCL='[2026-10-04T00:00:00Z] session=px_kfc-0101-0000 event=resume-pin-fail-closed reason=helper-missing'
+k1() { # <label> <pane-cmd> <pane-file-content> [extra env]; prints the script's stdout; log in $k1home
+  local lbl="$1" cmd="$2" pane="$3"; shift 3
+  rm -f "$k1home/.sessions/session-starts.log" "$k1home/tmux.n"; printf '%s\n' "$pane" > "$k1home/pane.txt"
+  k1out="$(env HOME="$k1home" KT_CMD="$cmd" KT_PANE="$k1home/pane.txt" "$@" bash "$KSCRIPT" 2>&1)"
+}
+k1 codex codex ''
+has "K1: codex in the pane => started" "$k1out" 'event=started$'
+k1 fc sleep "$FCL"
+has "K1: sleep + this session's fail-closed line => started-FAIL-CLOSED with the reason" "$k1out" 'event=started-FAIL-CLOSED reason=helper-missing'
+k1 typed sleep 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=$SESSION event=resume-pin-fail-closed reason=$FAIL" | tee -a "$LOG_FILE"'
+has "K1: sleep + only the typed loop text => started-UNVERIFIED-codex-not-running" "$k1out" 'event=started-UNVERIFIED-codex-not-running'
+k1 other sleep "${FCL/kfc-0101-0000/kfc-0101-0000x}"
+has "K1: sleep + another session's line => started-UNVERIFIED-codex-not-running" "$k1out" 'event=started-UNVERIFIED-codex-not-running'
+k1 capfail sleep "$FCL" KT_CAPFAIL=1
+has "K1: capture-pane fails => started-UNVERIFIED-pane-unreadable" "$k1out" 'event=started-UNVERIFIED-pane-unreadable'
+rm -f "$k1home/.sessions/session-starts.log" "$k1home/tmux.n"; printf '%s\n' "$FCL" > "$k1home/pane.txt"; mkdir "$k1home/.sessions/session-starts.log"
+k1out="$(HOME="$k1home" KT_CMD=sleep KT_PANE="$k1home/pane.txt" bash "$KSCRIPT" 2>/dev/null)"
+has "K1: log is a directory: fail-closed still reaches the script's stdout" "$k1out" 'event=started-FAIL-CLOSED reason=helper-missing'
+not_has "K1: ...and it never says plain started" "$k1out" 'event=started$'
+rm -rf "$k1home/.sessions/session-starts.log"
+# claude backend: unchanged (sleep or claude in the pane => plain started)
+mkdir -p "$k1home/.sessions/k-cl"
+HOME="$k1home" KSTUB_NONE=1 PATH="$DATESTUB:$PATH" bash "$NS" k-cl sessions --alias kcl >/dev/null 2>&1
+CLSCRIPT="$k1home/.local/bin/px-kcl-0101-0000-start.sh"
+rm -f "$k1home/tmux.n"; printf '%s\n' "$FCL" > "$k1home/pane.txt"
+clout="$(HOME="$k1home" KT_CMD=sleep KT_PANE="$k1home/pane.txt" PATH="$k1home/.local/bin:$PATH" bash "$CLSCRIPT" 2>&1)"
+has "K1: claude backend with sleep in the pane => plain started" "$clout" 'event=started$'
 
 finish "new-session-backend"
