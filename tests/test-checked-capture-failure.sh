@@ -4,7 +4,8 @@
 # "false". Every repaired site captures the producer's complete output with its status checked, then
 # matches, so on producer failure it returns exactly what the old pipe returned (brief 3e2).
 #
-# Part A compares each repaired function with a literal copy of main's pipe over the four producer
+# Part A compares each repaired function with main's pipe (written without -q, so grep reads the whole
+# stream and cannot take SIGPIPE; pipefail still reports a failed producer, which is the point) over the four producer
 # outcomes (match, no match, failure after a match, failure with no output) plus zero bytes and real
 # trailing empty lines. Part B drives session-preserve with a git stub whose for-each-ref prints a
 # reachable branch and then fails. Part C checks _verdict (the handoff caller). Hermetic: no tmux
@@ -41,9 +42,9 @@ MODES="match nomatch failmatch failnone zero emptyline onlyempty noeol"
 source "$SCRIPTS/session-handoff.sh"   # source-guarded: must NOT run dispatch
 _input_region()      { stub_emit; }
 _transcript_region() { stub_emit; }
-ref_on_input()  { _input_region "$1" "$2" | grep -qF "$1"; }
-ref_in_trans()  { _transcript_region "$1" "$2" | grep -qF "$1"; }
-ref_collapsed() { _input_region "" "$1" | grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]'; }
+ref_on_input()  { _input_region "$1" "$2" | grep -F -- "$1" >/dev/null; }
+ref_in_trans()  { _transcript_region "$1" "$2" | grep -F -- "$1" >/dev/null; }
+ref_collapsed() { _input_region "" "$1" | grep -E '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]' >/dev/null; }
 for MODE in $MODES; do
   for frag in needle ""; do
     ref_on_input "$frag" cap; o=$?; _on_input_line "$frag" cap; n=$?
@@ -79,7 +80,7 @@ MODE=failmatch; ok "verdict-failed-transcript-is-unverified" "$(_verdict needle 
 PROTECT='^$'      # the default: a here-string's lone empty line must NOT match it
 eval "$(sed -n '/^_title_protected() {/,/^}/p' "$SCRIPTS/session-doctor.sh")"
 eval "$(sed -n '/^_tmux_live_has() {/,/^}/p' "$SCRIPTS/session-doctor.sh")"
-ref_title_protected() { printf '%s' "$1" | tr -s '[:space:]' '-' | grep -qiE "$PROTECT"; }
+ref_title_protected() { printf '%s' "$1" | tr -s '[:space:]' '-' | grep -iE "$PROTECT" >/dev/null; }
 for PROTECT in '^$' 'keep|secret'; do
   for t in "" "   " "a" "my secret" $'a\n' $'\n' $'keep\n' "x y"; do
     ref_title_protected "$t"; o=$?; _title_protected "$t"; n=$?
@@ -87,7 +88,7 @@ for PROTECT in '^$' 'keep|secret'; do
   done
 done
 live_tmux() { stub_emit; }
-ref_live_has() { live_tmux | grep -qx -- "$1"; }
+ref_live_has() { live_tmux | grep -x -- "$1" >/dev/null; }
 stub_emit() { case "$MODE" in
   match) printf 'alpha\nneedle\n' ;; nomatch) printf 'alpha\nbeta\n' ;;
   failmatch) printf 'needle\nalpha\n'; return 42 ;; failnone) return 42 ;; zero) : ;;
