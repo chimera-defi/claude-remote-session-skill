@@ -528,6 +528,26 @@ _backend_of() {
   [ -n "$backend" ] && echo "$backend" || echo claude
 }
 
+# _codex_live <session> — true iff a process named `codex` is a live
+# descendant of the pane's pid (wrapper-bash Codex start scripts).
+_codex_live() {
+  local root kids k comm queue="" n=0
+  root="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)"
+  case "$root" in ''|*[!0-9]*) return 1;; esac
+  queue="$root"
+  while [ -n "$queue" ] && [ "$n" -lt 64 ]; do
+    k="${queue%% *}"; case "$queue" in *" "*) queue="${queue#* }";; *) queue="";; esac
+    n=$((n+1))
+    kids="$(pgrep -P "$k" 2>/dev/null | tr '\n' ' ')"
+    for c in $kids; do
+      comm="$(ps -o comm= -p "$c" 2>/dev/null)"
+      [ "$comm" = codex ] && return 0
+      queue="${queue:+$queue }$c"
+    done
+  done
+  return 1
+}
+
 # _state_of — dead | starting | busy | menu | ready, from pane command +
 # capture. `menu` (see _is_on_menu's comment for the
 # incident) covers both the AskUserQuestion-style widgets and the folder-
@@ -553,7 +573,17 @@ _state_of() {
     # backticks and $(...) was pasted into exactly this state and was headed
     # for execution as shell input — caught and killed in time. Treat it
     # like `starting`: no claude process to send into yet, refuse.
-    sleep|bash|zsh|sh) echo starting; return;;
+    # Exception: an older Codex start script leaves a wrapper `bash` as the
+    # pane's foreground command with the live `codex` as its child. That is
+    # a ready-capable codex pane, not a bare shell, so fall through to the
+    # capture-based checks. Anything else (bare bash, bash with no codex
+    # descendant, any non-codex backend) stays `starting` and is refused.
+    sleep|bash|zsh|sh)
+      if [ "$cmd" != sleep ] && [ "$backend" = codex ] && _codex_live "$s"; then
+        :
+      else
+        echo starting; return
+      fi ;;
     *) echo dead; return;;
   esac
   cap="$(_capture "$s")"

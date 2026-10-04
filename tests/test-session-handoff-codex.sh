@@ -169,4 +169,22 @@ ok "start-meta-new-backend" "$(HOME="$META_HOME" _backend_of px_newmeta-0101-000
 ok "start-meta-new-model" "$(HOME="$META_HOME" _model_of px_newmeta-0101-0001)" "gpt-5.5"
 ok "start-meta-percentq-model" "$(HOME="$META_HOME" _model_of px_quotedmeta-0101-0002)" "gpt 5.5"
 
+# Wrapper-bash Codex pane: foreground cmd is bash with a live codex child.
+_backend_of() { echo codex; }
+_capture() { printf '%s' "$CODEX_READY"; }
+_pane_cmd() { echo bash; }
+_codex_live() { return 0; }
+ok "state-wrapper-bash-live-codex-ready" "$(_state_of px_wrap)" "ready"
+_codex_live() { return 1; }
+ok "state-bare-bash-starting" "$(_state_of px_wrap)" "starting"
+_codex_live() { return 0; }
+_backend_of() { echo claude; }
+ok "state-bash-claude-backend-starting" "$(_state_of px_wrap)" "starting"
+_backend_of() { echo codex; }
+_pane_cmd() { echo sleep; }
+ok "state-sleep-live-codex-starting" "$(_state_of px_wrap)" "starting"
+_capture() { printf '%s' "$CODEX_APPROVAL_MENU"; }
+_pane_cmd() { echo bash; }
+ok "state-wrapper-bash-menu-refused" "$(_state_of px_wrap)" "menu"
+
 finish "session-handoff-codex"
