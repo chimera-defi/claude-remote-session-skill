@@ -234,4 +234,36 @@ has "N(b) logs rundir-not-absolute" "$nlog" 'event=rundir-not-absolute rundir=re
 hasnt "N(b) not reported started" "$nlog" 'event=started'
 ok "N(b) rel/dir not created under the cwd" "$([ -e "$ncwd/rel" ] && echo exists || echo absent)" "absent"
 
+# W: a workspace lane needs an existing directory; the start script never creates one.
+for wb in codex claude; do
+  wh="$(mkhome)"; mkdir -p "$wh/workspace/ww-repo"
+  lane_spawn "$wh" "$wb" ww-repo workspace "ww$wb"; stub_tmux "$wh"; stub_prep "$wh" ""
+  has "W($wb) spawn created" "$LANE_OUT" "Session created: px-ww$wb-0101-0000"
+  has "W($wb) header bakes the resolved type" "$(cat "$LANE_SCRIPT")" '^LANE_TYPE=(["'\'']?)workspace\1$'
+  rmdir "$wh/workspace/ww-repo"   # the repo dir vanishes before the start script runs
+  lane_run "$wh"
+  ok "W($wb) missing workspace dir exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+  ok "W($wb) no tmux call but has-session" "$(tmux_calls_other_than_has "$wh")" "0"
+  wlog="$(cat "$wh/.sessions/session-starts.log" 2>/dev/null)"
+  has "W($wb) logs rundir-missing" "$wlog" 'event=rundir-missing rundir='
+  hasnt "W($wb) not reported started" "$wlog" 'event=started'
+  ok "W($wb) dir NOT recreated" "$([ -e "$wh/workspace/ww-repo" ] && echo exists || echo absent)" "absent"
+done
+# `auto` resolves to workspace for an existing dir, and bakes that
+wh="$(mkhome)"; mkdir -p "$wh/workspace/wa-repo"; lane_spawn "$wh" codex wa-repo auto waauto
+has "W auto->workspace bakes workspace" "$(cat "$LANE_SCRIPT")" '^LANE_TYPE=(["'\'']?)workspace\1$'
+# control: an existing workspace dir that is not a git repo starts (the dir is usable, started is logged)
+wh="$(mkhome)"; mkdir -p "$wh/workspace/wc-plain"; lane_spawn "$wh" codex wc-plain workspace wcplain; stub_tmux "$wh"; stub_prep "$wh" ""
+lane_run "$wh"
+ok "W control: plain workspace dir starts" "$LANE_RC" "0"
+ok "W control: tmux -c dir is usable" "$(cat "$wh/tmux.cstate" 2>/dev/null)" "usable"
+has "W control: started" "$(cat "$wh/.sessions/session-starts.log" 2>/dev/null)" 'event=started'
+# control: a missing sessions lane is still created and starts
+wh="$(mkhome)"; lane_spawn "$wh" codex ws-new sessions wsnew; stub_tmux "$wh"; stub_prep "$wh" ""
+has "W control: sessions header" "$(cat "$LANE_SCRIPT")" '^LANE_TYPE=(["'\'']?)sessions\1$'
+lane_run "$wh"
+ok "W control: missing sessions lane starts" "$LANE_RC" "0"
+ok "W control: sessions dir created" "$([ -d "$wh/.sessions/ws-new" ] && echo dir || echo missing)" "dir"
+ok "W control: tmux -c dir is usable (sessions)" "$(cat "$wh/tmux.cstate" 2>/dev/null)" "usable"
+
 finish "new-session-backend"
