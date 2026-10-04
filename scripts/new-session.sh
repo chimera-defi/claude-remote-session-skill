@@ -637,6 +637,11 @@ if ! cd "\$RUNDIR"; then
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-unusable rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
   exit 1
 fi
+# An enterable but read-only directory is no lane either: the agent could not write its own files there.
+if [ ! -w "\$RUNDIR" ]; then
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-unwritable rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+  exit 1
+fi
 SCRIPT_EOF
 
 if [ "$BACKEND" = claude ]; then
