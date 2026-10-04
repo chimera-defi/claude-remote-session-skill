@@ -622,6 +622,12 @@ if ! mkdir -p "\$RUNDIR"; then
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-mkdir-FAILED rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
   exit 1
 fi
+# An existing directory is not enough: tmux would start the pane in \$HOME if it cannot enter it
+# (chmod 000, or another user's 0700 dir). Entering it also proves it is usable.
+if ! cd "\$RUNDIR"; then
+  echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=rundir-unusable rundir=\$RUNDIR" | tee -a "\$LOG_FILE"
+  exit 1
+fi
 SCRIPT_EOF
 
 if [ "$BACKEND" = claude ]; then
