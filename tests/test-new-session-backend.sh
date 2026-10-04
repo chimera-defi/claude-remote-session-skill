@@ -20,18 +20,20 @@ ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 # The stub systemctl plays the start script's part: on `enable` it appends the verdict line the
 # real script's log_start writes (a FRESH timestamp, since the spawn only trusts lines at or
 # after its own t0). KSTUB_EVENT overrides the event; KSTUB_RAW supplies whole lines (tokens
-# @NOW@ @OLD@ @SESS@ @UNIT@); KSTUB_NONE=1 writes nothing.
+# @NOW@ @OLD@ @SESS@ @UNIT@ @ID@); KSTUB_NONE=1 writes nothing. @ID@ and the default line carry the
+# START_ID read from the generated start script, as the real log_start would.
 cat > "$BIN/systemctl" <<'CTLEOF'
 #!/usr/bin/env bash
 case " $* " in *" enable "*)
   [ -z "${KSTUB_NONE:-}" ] || exit 0
-  unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"; now="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  unit="${!#}"; unit="${unit%.service}"; sess="${unit/#px-/px_}"
+  sid="$(sed -n 's/^START_ID=//p' "$HOME/.local/bin/${unit}-start.sh" 2>/dev/null | head -1)"; now="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "$HOME/.sessions" 2>/dev/null
   if [ -n "${KSTUB_RAW:-}" ]; then
-    printf '%s\n' "$KSTUB_RAW" | sed "s/@NOW@/$now/g; s/@OLD@/2020-01-01T00:00:00Z/g; s/@SESS@/$sess/g; s/@UNIT@/$unit/g" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
+    printf '%s\n' "$KSTUB_RAW" | sed "s/@NOW@/$now/g; s/@OLD@/2020-01-01T00:00:00Z/g; s/@SESS@/$sess/g; s/@UNIT@/$unit/g; s/@ID@/$sid/g" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
   else
-    printf '[%s] host=h session=%s remote=%s backend=codex workdir=w model=m profile=p event=%s\n' \
-      "$now" "$sess" "$unit" "${KSTUB_EVENT:-started}" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
+    printf '[%s] host=h session=%s remote=%s backend=codex workdir=w model=m profile=p start_id=%s event=%s\n' \
+      "$now" "$sess" "$unit" "$sid" "${KSTUB_EVENT:-started}" >> "$HOME/.sessions/session-starts.log" 2>/dev/null
   fi ;;
 esac
 exit 0
@@ -146,7 +148,7 @@ ok "codex-grouped-args-count" "$grp_n" "4"
 ok "codex-grouped-arg-intact" "$(bash -c "$(grep -m1 '^CODEX_ARGS=(' "$GRP_SCRIPT" 2>/dev/null); printf '[%s]' \"\${CODEX_ARGS[3]}\"")" '[k="a b"]'
 
 # K2: a codex spawn is reported created only from a fresh, well-formed `event=started` line.
-CMD_LINE='[@NOW@] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p event'
+CMD_LINE='[@NOW@] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p start_id=@ID@ event'
 k2() { # <label> <raw-lines or ''> [extra env assignments...]; sets kout/krc; the log may be pre-made in $KHOME
   local lbl="$1" raw="$2"; shift 2
   kout="$(env HOME="$KHOME" KSTUB_RAW="$raw" "$@" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "k-$lbl" sessions --alias "k$lbl" 2>&1)"; krc=$?
@@ -159,7 +161,7 @@ newk b; k2 b "${OLDL}=started-FAIL-CLOSED reason=pin-invalid"$'\n'"${CMD_LINE}=s
 ok "K2: an older fail-closed plus a fresh started exits 0" "$krc" "0"
 newk c; k2 c "${OLDL}=started"
 ok "K2: only an older started exits 3" "$krc" "3"; has "K2: ...NOT verified" "$kout" 'start NOT verified for px-kc-0101-0000'
-newk d; k2 d "[ts] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p event=started"
+newk d; k2 d "[ts] host=h session=@SESS@ remote=@UNIT@ backend=codex workdir=w model=m profile=p start_id=@ID@ event=started"
 ok "K2: a malformed timestamp exits 3" "$krc" "3"; has "K2: ...NOT verified (malformed timestamp)" "$kout" 'start NOT verified'
 newk e; k2 e "${CMD_LINE}=started-FAIL-CLOSED reason=helper-missing"
 ok "K2: a fresh fail-closed exits 3" "$krc" "3"; has "K2: ...names the reason" "$kout" 'FAIL-CLOSED \(reason=helper-missing\)'; has "K2: ...and the session" "$kout" 'px-ke-0101-0000'
@@ -189,6 +191,43 @@ ok "K'-task: exit 3" "$kt_rc" "3"
 ok "K'-task: no readiness polling or send reached tmux" "$(grep -cE 'send-keys|paste-buffer|load-buffer|capture-pane|display-message' "$KHOME/tmux.calls" 2>/dev/null)" "0"
 has "K'-task: says the task was not sent and why" "$kt_out" 'task NOT sent: the lane.s start was not verified'
 not_has "K'-task: never says is running" "$kt_out" 'is running'
+
+# S: the verdict needs THIS spawn's start_id. Stale lines (no id, another id, another session's line)
+# never verify a start; a line carrying the generated script's id does.
+OTHERID=0123456789abcdef0123456789abcdef
+s_spawn() { # <label> <log-line or ''> [env...]: pre-write the line, then spawn with no verdict from the stub
+  local lbl="$1" line="$2"; shift 2
+  [ -z "$line" ] || printf '%s\n' "$line" >> "$KHOME/.sessions/session-starts.log"
+  kout="$(env HOME="$KHOME" KSTUB_NONE=1 "$@" PATH="$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex "k-$lbl" sessions --alias "k$lbl" 2>&1)"; krc=$?
+}
+newk sr; s_spawn sr '[2099-01-01T00:00:00Z] host=h session=px_ksr-0101-0000 remote=px-ksr-0101-0000 backend=codex workdir=w model=m profile=p event=started'
+ok "S-red: a stale same-session started line with no start_id exits 3" "$krc" "3"
+has "S-red: ...NOT verified" "$kout" 'start NOT verified for px-ksr-0101-0000'
+not_has "S-red: ...never says Session created" "$kout" 'Session created'
+newk so; s_spawn so "[2099-01-01T00:00:00Z] host=h session=px_kso-0101-0000 remote=px-kso-0101-0000 backend=codex workdir=w model=m profile=p start_id=$OTHERID event=started"
+ok "S-other-id: a started line with a different start_id exits 3" "$krc" "3"
+# S-other-session: the right id is only known once the script exists, so the stub writes the line (@ID@).
+newk ss; k2 ss "[@NOW@] host=h session=px_other-0101-0000 remote=px-other-0101-0000 backend=codex workdir=w model=m profile=p start_id=@ID@ event=started"
+ok "S-other-session: this spawn's id on another session's line exits 3" "$krc" "3"
+newk sk; k2 sk "${CMD_LINE}=started"
+ok "S-ok: a started line carrying this spawn's start_id exits 0" "$krc" "0"; has "S-ok: ...says created" "$kout" 'Session created: px-ksk-0101-0000'
+ok "S-ok: the generated script carries a 32-hex START_ID" "$(grep -cE '^START_ID=[0-9a-f]{32}$' "$KHOME/.local/bin/px-ksk-0101-0000-start.sh")" "1"
+ok "S-ok: log_start writes start_id immediately before event" "$(grep -cF 'start_id=$START_ID event=$1' "$KHOME/.local/bin/px-ksk-0101-0000-start.sh")" "1"
+# S-task: the stale line plus --task: exit 3, nothing reaches tmux, message says NOT verified
+newk st; mkdir -p "$KHOME/.local/bin"
+cat > "$KHOME/.local/bin/tmux" <<'TT'
+#!/usr/bin/env bash
+echo "$*" >> "$HOME/tmux.calls"
+case "$1" in has-session) exit 1 ;; esac
+exit 0
+TT
+chmod +x "$KHOME/.local/bin/tmux"
+printf '%s\n' '[2099-01-01T00:00:00Z] host=h session=px_kst-0101-0000 remote=px-kst-0101-0000 backend=codex workdir=w model=m profile=p event=started' >> "$KHOME/.sessions/session-starts.log"
+kout="$(HOME="$KHOME" KSTUB_NONE=1 PATH="$KHOME/.local/bin:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex k-st sessions --alias kst --task 'do the thing' 2>&1)"; krc=$?
+ok "S-task: exit 3" "$krc" "3"
+ok "S-task: no send-keys/paste-buffer/load-buffer reached tmux" "$(grep -cE 'send-keys|paste-buffer|load-buffer' "$KHOME/tmux.calls" 2>/dev/null)" "0"
+has "S-task: says start NOT verified" "$kout" 'start NOT verified'
+not_has "S-task: never says is running" "$kout" 'is running'
 
 # M: a verified start whose tmux session vanishes during task readiness
 for mb in codex claude; do

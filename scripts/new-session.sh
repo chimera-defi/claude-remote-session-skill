@@ -541,6 +541,10 @@ HUB_CONSULT_PROMPT_FILE=""
 [ "$BACKEND" = claude ] && [ "$PROFILE" = hub ] && HUB_CONSULT_PROMPT_FILE="${SCRIPT%.sh}-hub-consult-prompt.txt"
 SERVICE="$HOME/.config/systemd/user/${REMOTE_NAME}.service"
 SESSION_LITERAL="$(_shell_quote "$SESSION")"
+# One id per start attempt, logged on every start-script line and required by the Codex start
+# verdict below, so a stale or concurrent line can never stand in for THIS spawn.
+START_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+[[ "$START_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "new-session: could not generate a start id from /dev/urandom" >&2; exit 1; }
 WORKDIR_LITERAL="$(_shell_quote "$WORKDIR")"
 REMOTE_NAME_LITERAL="$(_shell_quote "$REMOTE_NAME")"
 BACKEND_LITERAL="$(_shell_quote "$BACKEND")"
@@ -579,12 +583,13 @@ REMOTE_NAME=${REMOTE_NAME_LITERAL}
 BACKEND=${BACKEND_LITERAL}
 MODEL=${MODEL_LITERAL}
 PROFILE=${PROFILE_LITERAL}
+START_ID=${START_ID}
 CODEX_ARGS=(${CODEX_ARGS_LITERAL})
 export PATH="${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="${HOME}"
 LOG_FILE="\$HOME/.sessions/session-starts.log"
 mkdir -p "\$(dirname "\$LOG_FILE")"
-log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME backend=\$BACKEND workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE event=\$1" | tee -a "\$LOG_FILE"; }
+log_start() { echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] host=\$(hostname) session=\$SESSION remote=\$REMOTE_NAME backend=\$BACKEND workdir=\$WORKDIR model=\$MODEL profile=\$PROFILE start_id=\$START_ID event=\$1" | tee -a "\$LOG_FILE"; }
 if tmux has-session -t "${SESSION}" 2>/dev/null; then log_start "already-running"; exit 0; fi
 log_start "starting"
 # Resolve the run directory: canonical tree (clean+free) or a fresh worktree.
@@ -876,14 +881,16 @@ if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basena
 fi
 
 # A Codex lane is reported started only from explicit evidence: the LAST well-formed log line for
-# this session written at or after t0 must end exactly in ` event=started`. A fresh fail-closed
-# line, any UNVERIFIED line, a stale line, a malformed timestamp, or no line at all exits 3.
+# this session written at or after t0 AND carrying THIS start attempt's start_id (so a stale or
+# concurrent same-second line cannot count) must end exactly in ` event=started`. A fresh
+# fail-closed line, any UNVERIFIED line, a stale line, a line from another attempt, a malformed
+# timestamp, or no line at all exits 3.
 START_FAIL_CLOSED=""; START_UNVERIFIED=""; START_VERDICT=""
 if [ "$BACKEND" = codex ]; then
   _sl="$HOME/.sessions/session-starts.log"; _last=""
   if [ -f "$_sl" ]; then
     _last="$(grep -aF "session=${SESSION} " "$_sl" | grep -aE '^\[[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] ' \
-      | grep -aF ' event=started' | awk -v t0="$t0" '{ ts = substr($1, 2, 20); if ((ts "") >= (t0 "")) last = $0 } END { print last }')" || _last=""
+      | grep -aF " start_id=${START_ID} event=started" | awk -v t0="$t0" '{ ts = substr($1, 2, 20); if ((ts "") >= (t0 "")) last = $0 } END { print last }')" || _last=""
   fi
   case "$_last" in
     *" event=started") ;;
