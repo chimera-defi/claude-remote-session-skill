@@ -16,7 +16,7 @@
 # from the real file the next time it's edited — the exact failure mode this
 # repo's CLAUDE.md warns about), this EXTRACTS the literal lines from the
 # CURRENT scripts/new-session.sh between the unique anchors `    ready=no`
-# and the first post-loop `if [ "$trust_dialog" = yes ]` (verified unique —
+# and the first post-loop `if [ "$trust_dialog" = yes ] && tmux capture-pane` (verified unique —
 # see the grep below) and sources that
 # extract directly, so what's under test is always byte-identical to what
 # ships. A fake `session-handoff.sh` (fake-handoff-sequence.sh, same
@@ -33,16 +33,16 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 START="$(grep -n '^    ready=no$' "$NS" | head -1 | cut -d: -f1)"
-END="$(grep -n '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS" | head -1 | cut -d: -f1)"
+END="$(grep -n '^    if \[ "\$trust_dialog" = yes \] && tmux capture-pane' "$NS" | head -1 | cut -d: -f1)"
 # Both anchors must be unique in the file — a future edit that introduces a
 # second bare `    ready=no` or post-loop trust-dialog branch would
 # silently extract the wrong span rather than fail loudly, so check that
 # explicitly instead of trusting `head -1`.
 START_COUNT="$(grep -c '^    ready=no$' "$NS")"
-END_COUNT="$(grep -c '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS")"
+END_COUNT="$(grep -c '^    if \[ "\$trust_dialog" = yes \] && tmux capture-pane' "$NS")"
 if [ -z "$START" ] || [ -z "$END" ] || [ "$START_COUNT" != 1 ] || [ "$END_COUNT" != 1 ]; then
-  echo "session-handoff-settle-loop: SKIP (extraction anchors not uniquely found in $NS — has the loop been restructured? update this test's anchors)"
-  exit 0
+  echo "FAIL: test-new-session-settle-loop: extraction anchors not uniquely found in $NS; update this test's anchors"
+  exit 1
 fi
 EXTRACTED="$WORK/settle-loop.sh"
 sed -n "${START},$((END-1))p" "$NS" > "$EXTRACTED"
