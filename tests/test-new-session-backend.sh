@@ -470,6 +470,27 @@ else
   done
 fi
 
+# C4: an enterable but read-only run directory (chmod 555), the lane's own or one supplied by session-git-prep.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP: C4 rundir chmod 555 (root)"
+else
+  for cb in codex claude; do
+    for cw in own prep; do
+      ch="$(mkhome)"; mkdir -p "$ch/.sessions/cw-lane" "$ch/prepdir"
+      lane_spawn "$ch" "$cb" cw-lane sessions "cw$cb$cw"; stub_tmux "$ch"
+      if [ "$cw" = prep ]; then stub_prep "$ch" "$ch/prepdir"; chmod 555 "$ch/prepdir"; else stub_prep "$ch" ""; chmod 555 "$ch/.sessions/cw-lane"; fi
+      lane_run "$ch"
+      chmod 755 "$ch/prepdir" "$ch/.sessions/cw-lane"
+      ok "C4($cb,$cw) read-only RUNDIR exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+      ok "C4($cb,$cw) no tmux call but has-session" "$(tmux_calls_other_than_has "$ch")" "0"
+      clog="$(cat "$ch/.sessions/session-starts.log" 2>/dev/null)"
+      has "C4($cb,$cw) logs rundir-unwritable" "$clog" 'event=rundir-unwritable rundir='
+      hasnt "C4($cb,$cw) not reported started" "$clog" 'event=started'
+      hasnt "C4($cb,$cw) is not rundir-unusable" "$clog" 'event=rundir-unusable'
+    done
+  done
+fi
+
 # T2: the claude backend aborts dynamically too (a file where the run directory goes), not just textually.
 th="$(mkhome)"; lane_spawn "$th" claude t2-lane sessions t2c; stub_tmux "$th"; stub_prep "$th" ""
 : > "$th/.sessions/t2-lane"
