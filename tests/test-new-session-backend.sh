@@ -442,10 +442,10 @@ wh="$(mkhome)"; mkdir -p "$wh/workspace/wc-plain"; lane_spawn "$wh" codex wc-pla
 lane_run "$wh"
 ok "W control: plain workspace dir starts" "$LANE_RC" "0"
 ok "W control: tmux -c dir is usable" "$(cat "$wh/tmux.cstate" 2>/dev/null)" "usable"
-has "W control: started" "$(cat "$wh/.sessions/session-starts.log" 2>/dev/null)" 'event=started'
+has "W control: started" "$(cat "$wh/.sessions/session-starts.log" 2>/dev/null)" 'event=started$'
 # control: a missing sessions lane is still created and starts
 wh="$(mkhome)"; lane_spawn "$wh" codex ws-new sessions wsnew; stub_tmux "$wh"; stub_prep "$wh" ""
-has "W control: sessions header" "$(cat "$LANE_SCRIPT")" '^LANE_TYPE=(["'\'']?)sessions\1$'
+has "W header: a sessions lane bakes LANE_TYPE=sessions" "$(cat "$LANE_SCRIPT")" '^LANE_TYPE=(["'\'']?)sessions\1$'
 lane_run "$wh"
 ok "W control: missing sessions lane starts" "$LANE_RC" "0"
 ok "W control: sessions dir created" "$([ -d "$wh/.sessions/ws-new" ] && echo dir || echo missing)" "dir"
