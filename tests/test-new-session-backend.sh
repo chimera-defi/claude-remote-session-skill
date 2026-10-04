@@ -16,6 +16,7 @@ export CRSS_LEGACY_PREFIXES=oldhost
 BIN="$(mktemp -d)"
 WORKHOME="$(mktemp -d)"
 trap 'rm -rf "$BIN" "$WORKHOME"' EXIT
+export TMPDIR="$WORKHOME"   # every later mktemp lands under $WORKHOME, so the trap removes it
 ln -sf "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 cat > "$BIN/systemctl" <<'CTLEOF'
 #!/usr/bin/env bash
@@ -133,7 +134,11 @@ cat > "$WD_HOME/.local/bin/tmux" <<'WDTMUX'
 #!/usr/bin/env bash
 case "$1" in
   has-session) exit 1 ;;
-  new-session) prev=""; for a in "$@"; do [ "$prev" = -c ] && printf '%s' "$a" > "$HOME/tmux.c"; prev="$a"; done ;;
+  new-session) prev=""; for a in "$@"; do
+      if [ "$prev" = -c ]; then
+        printf '%s' "$a" > "$HOME/tmux.c"
+        if [ -d "$a" ] && (cd "$a") 2>/dev/null; then echo usable > "$HOME/tmux.cstate"; else echo missing > "$HOME/tmux.cstate"; fi
+      fi; prev="$a"; done ;;
   display-message)
     n="$(cat "$HOME/tmux.n" 2>/dev/null || echo 0)"; echo $((n+1)) > "$HOME/tmux.n"
     if [ "$n" -eq 0 ]; then echo bash; else echo codex; fi ;;
@@ -145,6 +150,8 @@ chmod +x "$WD_HOME/.local/bin/tmux" "$WD_HOME/.local/bin/session-git-prep"
 HOME="$WD_HOME" bash "$WD_SCRIPT" >/dev/null 2>&1
 ok "workdir-created-by-start-script" "$([ -d "$WD_HOME/.sessions/wd-nomk" ] && echo dir || echo missing)" "dir"
 ok "workdir-tmux-got-existing-dir" "$(cat "$WD_HOME/tmux.c" 2>/dev/null)" "$WD_HOME/.sessions/wd-nomk"
+# the path alone also matches at origin/main (tmux was handed a dir that did not exist yet): assert it was enterable
+ok "workdir-tmux-dir-usable-at-call-time" "$(cat "$WD_HOME/tmux.cstate" 2>/dev/null)" "usable"
 # claude backend: the common-section mkdir must not disturb it
 WDC_HOME="$(mktemp -d)"; mkdir -p "$WDC_HOME/.sessions"
 wdc_out="$(HOME="$WDC_HOME" PATH="$DATESTUB:$PATH" bash "$NS" wd-claude sessions --alias wdclaude 2>&1)"
@@ -284,5 +291,48 @@ else
     hasnt "U($ub) is not the mkdir failure" "$ulog" 'event=rundir-mkdir-FAILED'
   done
 fi
+
+# T2: the claude backend aborts dynamically too (a file where the run directory goes), not just textually.
+th="$(mkhome)"; lane_spawn "$th" claude t2-lane sessions t2c; stub_tmux "$th"; stub_prep "$th" ""
+: > "$th/.sessions/t2-lane"
+lane_run "$th"
+ok "T2 claude: file at RUNDIR exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+ok "T2 claude: no tmux call but has-session" "$(tmux_calls_other_than_has "$th")" "0"
+tlog="$(cat "$th/.sessions/session-starts.log" 2>/dev/null)"
+has "T2 claude: logs rundir-mkdir-FAILED" "$tlog" 'event=rundir-mkdir-FAILED rundir='
+hasnt "T2 claude: not reported started" "$tlog" 'event=started'
+
+# T3: a literal unwritable parent (the sessions root is read-only), so mkdir -p itself fails.
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP: T3 unwritable sessions root (root)"
+else
+  for tb in codex claude; do
+    th="$(mkhome)"; mkdir -p "$th/sroot"
+    CRSS_SESSIONS_DIR="$th/sroot" lane_spawn "$th" "$tb" t3-lane sessions "t3$tb"; stub_tmux "$th"; stub_prep "$th" ""
+    chmod 555 "$th/sroot"
+    lane_run "$th"
+    chmod 755 "$th/sroot"
+    ok "T3 $tb: unwritable parent exits non-zero" "$([ "$LANE_RC" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+    ok "T3 $tb: no tmux call but has-session" "$(tmux_calls_other_than_has "$th")" "0"
+    tlog="$(cat "$th/.sessions/session-starts.log" 2>/dev/null)"
+    has "T3 $tb: logs rundir-mkdir-FAILED" "$tlog" 'event=rundir-mkdir-FAILED rundir='
+    hasnt "T3 $tb: not reported started" "$tlog" 'event=started'
+    ok "T3 $tb: run directory not created" "$([ -e "$th/sroot/t3-lane" ] && echo exists || echo absent)" "absent"
+  done
+fi
+
+# T4: a failing `systemctl enable --now` makes new-session exit non-zero and say the session was NOT started.
+FAILCTL="$(mktemp -d)"
+cat > "$FAILCTL/systemctl" <<'FCEOF'
+#!/usr/bin/env bash
+case "$*" in *enable*) echo "stub: enable failed" >&2; exit 1 ;; esac
+exit 0
+FCEOF
+chmod +x "$FAILCTL/systemctl"
+th="$(mkhome)"
+t4_out="$(HOME="$th" PATH="$FAILCTL:$DATESTUB:$PATH" CRSS_CODEX_BIN="$CODEX_STUB" CRSS_CODEX_ARGS='-m m -s read-only' bash "$NS" --backend codex t4-lane sessions --alias t4 2>&1)"; t4_rc=$?
+ok "T4: failing systemctl exits non-zero" "$([ "$t4_rc" -ne 0 ] && echo nonzero || echo zero)" "nonzero"
+has "T4: says the session was NOT started" "$t4_out" 'the session was NOT started'
+not_has "T4: does not claim success" "$t4_out" 'Session created'
 
 finish "new-session-backend"
