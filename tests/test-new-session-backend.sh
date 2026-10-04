@@ -173,6 +173,7 @@ not_has "K2: a not-verified start never says is running" "$kout" 'is running'
 newk i; mkdir -p "$KHOME/.sessions/k-claude"
 kcl_out="$(HOME="$KHOME" KSTUB_NONE=1 PATH="$DATESTUB:$PATH" bash "$NS" k-claude sessions --alias kclaude 2>&1)"; kcl_rc=$?
 ok "K2: a claude spawn with no verdict line is unchanged (exit 0)" "$kcl_rc" "0"
+not_has "K2: ...and never says NOT verified" "$kcl_out" 'NOT verified'
 
 # K'-task: an unverified start never gets a task delivered
 newk t; mkdir -p "$KHOME/.local/bin"
