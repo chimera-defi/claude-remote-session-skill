@@ -41,8 +41,8 @@ END="$(grep -n '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS" | head -1 | c
 START_COUNT="$(grep -c '^    ready=no$' "$NS")"
 END_COUNT="$(grep -c '^    if \[ "\$trust_dialog" = yes \]; then$' "$NS")"
 if [ -z "$START" ] || [ -z "$END" ] || [ "$START_COUNT" != 1 ] || [ "$END_COUNT" != 1 ]; then
-  echo "session-handoff-settle-loop: SKIP (extraction anchors not uniquely found in $NS — has the loop been restructured? update this test's anchors)"
-  exit 0
+  echo "FAIL: test-new-session-settle-loop: extraction anchors not uniquely found in $NS; update this test's anchors"
+  exit 1
 fi
 EXTRACTED="$WORK/settle-loop.sh"
 sed -n "${START},$((END-1))p" "$NS" > "$EXTRACTED"
