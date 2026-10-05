@@ -135,7 +135,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
-| `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
+| `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku (no effort flag: Haiku 4.5 ignores it) |
 | `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
@@ -143,7 +143,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` win over the tier, one value at a time.
-  Effort has no default flag except `light` = low; raise it explicitly.
+  No tier sets effort; pass `CLAUDE_SESSION_EFFORT` explicitly (Sonnet/Opus only).
 - **Advisor.** Every session that has the advisor tool (Sonnet/Haiku, with or without `--tier`) gets
   `--advisor $CRSS_OPUS_MODEL`; `CLAUDE_SESSION_ADVISOR=<model>|none` overrides. `CRSS_OPUS_MODEL`
   (overlay `config.sh`) is the one place `new-session` takes the Opus id from; `references/fallback-recipe.md`
@@ -151,6 +151,12 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
   call it before committing to an approach and before declaring done, while context is small. Escalation for a
   hard fork: advisor (Opus) → cross-family check → Fable as a one-shot `Agent(model:"fable")` from the parent,
   never a spawn profile.
+- **Unsure which tier?** Default `standard`; for a real fork (standard vs heavy, or whether Opus is worth it)
+  ask your own advisor once, with a short summary, before spawning. Obvious cases skip it.
+- **Wide or multi-faceted work** (many independent slices, or a change that needs adversarial review): plan
+  first, then fan out. That needs `Workflow` (only `heavy`/owner/orchestrator sessions have it, and only on an
+  explicit operator opt-in) or parallel `builder` subagents, not a serial edit-and-wait loop. Narrow work stays
+  a single `standard` session.
 
 ## Writing the kickoff task
 
