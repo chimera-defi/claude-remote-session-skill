@@ -44,6 +44,16 @@ o="$(dry A=1 -- --tier heavy --approve-opus)"
 want "opus-tier-needs-task" "$o" "pass --task"
 o="$(dry A=1 -- --tier heavy --approve-opus --task "x")"; nowant "opus-tier-no-advisor" "$o" '--advisor'
 
+E="$WORKHOME/empty.txt"; : > "$E"; printf '  \n' > "$WORKHOME/blank.txt"; echo "do the thing" > "$WORKHOME/task.txt"
+o="$(dry A=1 -- --tier heavy --approve-opus --task-file "$E")"; want "opus-empty-taskfile-refused" "$o" "pass --task"
+o="$(dry A=1 -- --tier heavy --approve-opus --task-file "$WORKHOME/blank.txt")"; want "opus-blank-taskfile-refused" "$o" "pass --task"
+o="$(dry A=1 -- --tier heavy --approve-opus --task "   ")"; want "opus-blank-task-refused" "$o" "pass --task"
+o="$(dry A=1 -- --tier heavy --approve-opus --task-file "$WORKHOME/task.txt")"; want "opus-real-taskfile-ok" "$o" '^PROFILE=orchestrator$'
+o="$(dry CLAUDE_SESSION_PROFILE=bulder -- --tier light)"; want "typo-profile-refused-under-tier" "$o" "not a valid profile"
+o="$(dry CLAUDE_SESSION_PROFILE=bulder -- )"; want "typo-profile-legacy-fallback-no-tier" "$o" '^PROFILE=orchestrator$'
+o="$(dry CRSS_OPUS_MODEL='a b' -- --backend codex)"; want "bad-opus-id-ok-for-codex" "$o" '^BACKEND=codex$'
+o="$(CRSS_OPUS_MODEL='a b' bash "$NS" --help 2>&1)"; want "bad-opus-id-help-ok" "$o" '^Usage:'
+
 # advisor: Opus by default for sessions that have the advisor tool; none for Opus/Fable/codex.
 o="$(dry A=1 -- --tier standard)"; want "advisor-default-opus" "$o" 'CLAUDE_EXTRA_FLAGS=.*--advisor claude-opus-5-5'; want "advisor-field" "$o" '^ADVISOR=claude-opus-5-5$'
 o="$(dry CRSS_OPUS_MODEL=claude-opus-9-9 -- --tier standard)"; want "opus-id-single-source" "$o" '--advisor claude-opus-9-9'
