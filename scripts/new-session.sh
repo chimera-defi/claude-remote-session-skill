@@ -135,6 +135,12 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
+  --tier <t>          Right-size the spawn: light|standard|heavy -> profile + model +
+                      effort (see SKILL.md "Choosing a tier"). Explicit
+                      CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win piecewise.
+  --tier-reason <s>   One line on why; recorded in spawn telemetry.
+  --needs-fanout      Task must call Workflow/Agent: lifts builder/copywriter to owner.
+  --approve-opus      Lets --tier heavy use the Opus orchestrator profile.
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
                       verify it landed (reuses session-handoff's send+verify
@@ -160,7 +166,12 @@ Environment:
                                 Set it to override: a bare alias tracks latest,
                                 or pass an exact id (e.g. claude-opus-4-8) to
                                 pin one spawn reproducibly.
-  CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
+  CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort level (low|medium|high|xhigh|max).
+                                Unset → no flag (CLI/settings baseline), except
+                                --tier light which sets low.
+CRSS_TIER_CODEX_TIERS=<list>  Space-separated tiers routed to the codex backend
+                                (default: none; --needs-fanout stays on claude).
+CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 orchestrator).
                                 orchestrator — full built-in tool set; needed for
                                   multi-agent fan-out (Workflow/Agent/…).
@@ -201,6 +212,7 @@ fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
 FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
+TIER_ARG=""; TIER_REASON=""; NEEDS_FANOUT=no; APPROVE_OPUS=no
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
@@ -208,6 +220,10 @@ while [ $# -gt 0 ]; do
     --set-default-alias) SETDEFAULT_ALIAS=yes; shift ;;
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
+    --tier)      TIER_ARG="${2:?--tier needs a value}"; shift 2 ;;
+    --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
+    --needs-fanout) NEEDS_FANOUT=yes; shift ;;
+    --approve-opus) APPROVE_OPUS=yes; shift ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
     --task-file) TASK_FILE_ARG="${2:?--task-file needs a value}"; shift 2 ;;
     # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
@@ -231,6 +247,11 @@ case "$TYPE" in
   auto|workspace|sessions) ;;
   *) echo "new-session: unknown session type '$TYPE' (valid: workspace|sessions|auto) — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
 esac
+case "$TIER_ARG" in
+  ""|light|standard|heavy) ;;
+  *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy)" >&2; exit 2 ;;
+esac
+[ -z "$TIER_REASON" ] || [ -n "$TIER_ARG" ] || { echo "new-session: --tier-reason needs --tier" >&2; exit 2; }
 # The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
 # directory under whatever cwd the start script has. Refuse before any side effect.
 for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
@@ -241,7 +262,17 @@ for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
 done
 
 # ── Backend selection ────────────────────────────────────────────────────────
-BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-claude}}"
+# --tier may route a tier to the codex backend (CRSS_TIER_CODEX_TIERS, a space-separated list
+# of tiers, default empty) -- unless the task needs fan-out, which only the Claude full-tool
+# profiles can do. An explicit --backend or CRSS_SESSION_BACKEND always wins.
+TIER_RULES=""
+BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-}}"
+if [ -z "$BACKEND" ]; then
+  BACKEND=claude
+  if [ -n "$TIER_ARG" ] && [ "$NEEDS_FANOUT" != yes ]; then
+    case " ${CRSS_TIER_CODEX_TIERS:-} " in *" $TIER_ARG "*) BACKEND=codex; TIER_RULES="backend=codex(CRSS_TIER_CODEX_TIERS)" ;; esac
+  fi
+fi
 case "$BACKEND" in
   claude|codex) ;;
   *) echo "new-session: unknown backend '$BACKEND' (valid: claude|codex)" >&2; exit 2 ;;
@@ -347,7 +378,27 @@ preflight_capacity || exit 1
 if [ "$BACKEND" = claude ]; then
   # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
   # the default model for the spawned Claude session.
-  PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
+  # --tier fills only what CLAUDE_SESSION_PROFILE / _MODEL / _EFFORT leave unset (explicit wins):
+  #   light -> copywriter (haiku, effort low)   standard -> builder (sonnet)   heavy -> owner (sonnet)
+  # Floors/ceilings: --needs-fanout lifts a trimmed profile to owner (builder/copywriter cannot
+  # call Workflow/Agent fan-out); Opus (orchestrator) only via heavy + --approve-opus or an explicit
+  # CLAUDE_SESSION_MODEL. Effort only moves DOWN from the CLI baseline (light=low); raise it
+  # explicitly with CLAUDE_SESSION_EFFORT. Pinned by tests/test-new-session-tier.sh.
+  PROFILE="${CLAUDE_SESSION_PROFILE:-}"
+  if [ -z "$PROFILE" ]; then
+    PROFILE=orchestrator
+    case "$TIER_ARG" in
+      light) PROFILE=copywriter ;;
+      standard) PROFILE=builder ;;
+      heavy) if [ "$APPROVE_OPUS" = yes ]; then PROFILE=orchestrator; else PROFILE=owner; fi ;;
+    esac
+    [ -z "$TIER_ARG" ] || TIER_RULES="${TIER_RULES:+$TIER_RULES,}profile=$PROFILE"
+    if [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
+      PROFILE=owner; TIER_RULES="${TIER_RULES:+$TIER_RULES,}fanout-floor=owner"
+    fi
+  elif [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
+    echo "note: --needs-fanout but CLAUDE_SESSION_PROFILE=$PROFILE has no Workflow/Agent fan-out tools" >&2
+  fi
   case "$PROFILE" in
     orchestrator|owner|hub|builder|copywriter) ;;
     *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|hub|builder|copywriter" >&2
@@ -366,6 +417,17 @@ if [ "$BACKEND" = claude ]; then
     esac
     MODEL_SRC=profile-default
   fi
+  EFFORT=""; EFFORT_SRC=""
+  if [ -n "${CLAUDE_SESSION_EFFORT:-}" ]; then
+    EFFORT="$CLAUDE_SESSION_EFFORT"; EFFORT_SRC=explicit
+  elif [ "$TIER_ARG" = light ]; then
+    EFFORT=low; EFFORT_SRC=tier
+  fi
+  case "$EFFORT" in
+    ""|low|medium|high|xhigh|max) ;;
+    *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (valid: low|medium|high|xhigh|max)" >&2; exit 2 ;;
+  esac
+  [ "$EFFORT_SRC" != tier ] || TIER_RULES="${TIER_RULES:+$TIER_RULES,}effort=low"
   if [ "$MODEL_SRC" = explicit ]; then
     case "$MODEL" in
       opus|sonnet|haiku|fable|default|opusplan)
@@ -373,7 +435,7 @@ if [ "$BACKEND" = claude ]; then
     esac
   fi
 else
-  PROFILE=codex
+  PROFILE=codex; EFFORT=""; EFFORT_SRC=""
   MODEL="$(_codex_model_from_args)"
   if [ -n "$MODEL" ]; then
     MODEL_SRC=codex-args
@@ -420,6 +482,7 @@ HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Age
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
 if [ "$BACKEND" = claude ]; then
+  [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
@@ -559,8 +622,8 @@ CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nCODEX_ARGS=%s\n%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nTIER_RULES=%s\nEFFORT=%s\nCODEX_ARGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${TIER_RULES:-none}" "${EFFORT:-default}" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
 
@@ -973,7 +1036,7 @@ if [ -f "$SPAWN_LOG" ]; then
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" || true
+  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "${TIER_RULES:-}" "$TIER_REASON" || true
 fi
 
 # ── Kickoff task (--task/--task-file) ───────────────────────────────────────

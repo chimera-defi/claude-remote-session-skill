@@ -126,6 +126,29 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   family is available, pause and report rather than approving on one family's say-so. An
   orchestrator's own sanity check (the Fable bullet above) is not that review.
 
+## Choosing a tier (right-size the model, save quota)
+
+The launcher knows the task; the script cannot guess it. Pick `--tier` from the signals below and
+say why with `--tier-reason "<one line>"` (logged to spawn telemetry so the rubric can be tuned
+from outcomes). The resolver (`scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`)
+applies the floors and ceilings; do not restate its rules here.
+
+| Tier | Pick it when the task is | Resolves to |
+|---|---|---|
+| `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
+| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet |
+| `heavy` | ambiguous design, long-lived lane, gating review, destructive/outward-facing steps | owner profile, sonnet (full tools) |
+
+- `--needs-fanout` when the session must call `Workflow`/`Agent`: lifts a trimmed profile to `owner`.
+- Opus is never chosen implicitly. `--tier heavy --approve-opus` (or an explicit
+  `CLAUDE_SESSION_MODEL`) is the only route; reserve it for decisions Sonnet cannot settle.
+- Effort only moves **down** from the CLI baseline (light = low). Raise it with
+  `CLAUDE_SESSION_EFFORT=low|medium|high|xhigh|max`; that is an explicit spend decision.
+- Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` always win over the tier, piecewise.
+- No `--tier` means today's default (orchestrator on Opus); a bare spawn is the expensive path, so pass a tier.
+- A host overlay can route tiers to the Codex backend (no Claude quota) with
+  `CRSS_TIER_CODEX_TIERS="light standard"` in `$CRSS_HOME/config.sh`; `--needs-fanout` stays on Claude.
+
 ## Writing the kickoff task
 
 A spawned session starts with none of your context and works unattended for a long time;
