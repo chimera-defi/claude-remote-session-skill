@@ -13,6 +13,7 @@ A change is done when **all** of these are true — not before:
 1. Full suite passes locally (same as CI's `shell-tests`):
    ```bash
    for t in tests/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
+   for t in tests/test-*.py; do python3 "$t" || echo "FAILED: $t"; done
    shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh
    ```
    `tests/test-no-host-leaks.sh` is in that loop — this is a public repo, so it fails the
