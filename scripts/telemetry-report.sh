@@ -82,13 +82,15 @@ for e in events[-5:]:
           f"skills={meta.get('global_skills_count')}  skills_md_bytes={meta.get('global_skills_md_bytes')}  "
           f"claude_md_bytes={meta.get('claude_md_bytes')}")
 
-# Per-tier outcomes. A tmux name (ah_x-0056) and a registry/remote name
-# (ah-x-0056) are the same session; normalize both sides of the join. Spawns with
+# Per-tier outcomes. A tmux name (<prefix>_x-0056) and a registry/remote name
+# (<prefix>-x-0056) are the same session; normalize both sides of the join. Spawns with
 # no routing field, and reaps with no matching spawn, land in "none" / unmatched.
 import datetime, statistics
 def norm(n): return (n or "").lower().replace("_", "-")
 def ts(e):
-    try: return datetime.datetime.fromisoformat(e["timestamp"])
+    try:
+        d = datetime.datetime.fromisoformat(e["timestamp"])
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
     except Exception: return None
 by_session = {}
 for e in spawns:
