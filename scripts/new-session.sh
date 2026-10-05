@@ -44,6 +44,15 @@ if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
     CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
   fi
 fi
+# Single source of truth for "the Opus we pin to": bump it here (or in $CRSS_HOME/config.sh,
+# which wins) when a newer Opus ships. The orchestrator default model and the default advisor
+# both read it. Validated because the advisor id lands unquoted in the start script.
+: "${CRSS_OPUS_MODEL:=claude-opus-5-5}"
+: "${CRSS_ADVISOR_MODEL:=$CRSS_OPUS_MODEL}"
+for _m_var in CRSS_OPUS_MODEL CRSS_ADVISOR_MODEL; do
+  [[ "${!_m_var}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: ${_m_var}='${!_m_var}' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
+done
+
 if [ -z "${CRSS_CODEX_BIN:-}" ]; then
   CRSS_CODEX_BIN="$(command -v codex 2>/dev/null || echo codex)"
 fi
@@ -139,7 +148,8 @@ Options:
                       effort (see SKILL.md "Choosing a tier"). Explicit
                       CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win piecewise.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
-  --needs-fanout      Task must call Workflow/Agent: lifts builder/copywriter to owner.
+  --needs-fanout      Task must call Workflow (builder/copywriter drop it; they keep Agent
+                      + advisor): lifts them to owner.
   --approve-opus      Lets --tier heavy use the Opus orchestrator profile.
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
@@ -263,8 +273,7 @@ done
 
 # ── Backend selection ────────────────────────────────────────────────────────
 # --tier may route a tier to the codex backend (CRSS_TIER_CODEX_TIERS, a space-separated list
-# of tiers, default empty) -- unless the task needs fan-out, which only the Claude full-tool
-# profiles can do. An explicit --backend or CRSS_SESSION_BACKEND always wins.
+# of tiers, default empty) -- unless the task needs fan-out, which needs the Workflow tool (Claude full-tool profiles only). An explicit --backend or CRSS_SESSION_BACKEND always wins.
 TIER_RULES=""
 BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-}}"
 if [ -z "$BACKEND" ]; then
@@ -380,8 +389,8 @@ if [ "$BACKEND" = claude ]; then
   # the default model for the spawned Claude session.
   # --tier fills only what CLAUDE_SESSION_PROFILE / _MODEL / _EFFORT leave unset (explicit wins):
   #   light -> copywriter (haiku, effort low)   standard -> builder (sonnet)   heavy -> owner (sonnet)
-  # Floors/ceilings: --needs-fanout lifts a trimmed profile to owner (builder/copywriter cannot
-  # call Workflow/Agent fan-out); Opus (orchestrator) only via heavy + --approve-opus or an explicit
+  # Floors/ceilings: --needs-fanout lifts a trimmed profile to owner (builder/copywriter drop the
+  # Workflow tool but keep Agent + advisor); Opus (orchestrator) only via heavy + --approve-opus or an explicit
   # CLAUDE_SESSION_MODEL. Effort only moves DOWN from the CLI baseline (light=low); raise it
   # explicitly with CLAUDE_SESSION_EFFORT. Pinned by tests/test-new-session-tier.sh.
   PROFILE="${CLAUDE_SESSION_PROFILE:-}"
@@ -396,8 +405,27 @@ if [ "$BACKEND" = claude ]; then
     if [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
       PROFILE=owner; TIER_RULES="${TIER_RULES:+$TIER_RULES,}fanout-floor=owner"
     fi
+    # A tier that reaches Opus must be a bounded job: Opus is expensive per resident turn, so it
+    # is only born with a task, and the launcher reaps it when done (nothing here enforces that).
+    if [ -n "$TIER_ARG" ] && [ "$PROFILE" = orchestrator ] && [ -z "$TASK_ARG$TASK_FILE_ARG" ]; then
+      echo "new-session: --tier $TIER_ARG --approve-opus resolves to Opus; pass --task/--task-file so it is a bounded job (or set CLAUDE_SESSION_PROFILE explicitly)" >&2; exit 2
+    fi
   elif [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
-    echo "note: --needs-fanout but CLAUDE_SESSION_PROFILE=$PROFILE has no Workflow/Agent fan-out tools" >&2
+    echo "note: --needs-fanout but CLAUDE_SESSION_PROFILE=$PROFILE has no Workflow tool" >&2
+  fi
+  # Cheap pre-classifier: compare the task text with the declared tier and FLAG a mismatch
+  # (note + telemetry rule); it never overrides the launcher. Disagreement rate is the signal for
+  # tuning the rubric.
+  if [ -n "$TIER_ARG" ]; then
+    _task_text="$TASK_ARG"
+    [ -z "$TASK_FILE_ARG" ] || [ ! -r "$TASK_FILE_ARG" ] || _task_text="$_task_text $(head -c 4000 "$TASK_FILE_ARG")"
+    _hint=""
+    if [ "$TIER_ARG" != heavy ] && grep -qiE 'migrat|architect|security|force-push|delete|destructive|production|irreversib' <<<"$_task_text"; then _hint=heavy
+    elif [ "$TIER_ARG" != light ] && [ "${#_task_text}" -gt 0 ] && [ "${#_task_text}" -lt 200 ] && grep -qiE '\b(typo|rename|reformat|docs?[- ]only|comment)\b' <<<"$_task_text"; then _hint=light; fi
+    if [ -n "$_hint" ]; then
+      echo "note: task text looks '$_hint' but --tier $TIER_ARG was declared (kept; recorded as heuristic=$_hint)" >&2
+      TIER_RULES="${TIER_RULES:+$TIER_RULES,}heuristic=$_hint"
+    fi
   fi
   case "$PROFILE" in
     orchestrator|owner|hub|builder|copywriter) ;;
@@ -409,7 +437,7 @@ if [ "$BACKEND" = claude ]; then
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
   else
     case "$PROFILE" in
-      orchestrator) MODEL=claude-opus-5-5 ;;
+      orchestrator) MODEL="$CRSS_OPUS_MODEL" ;;
       owner)        MODEL=sonnet ;;
       hub)          MODEL=sonnet ;;
       builder)      MODEL=sonnet ;;
@@ -435,7 +463,7 @@ if [ "$BACKEND" = claude ]; then
     esac
   fi
 else
-  PROFILE=codex; EFFORT=""; EFFORT_SRC=""
+  PROFILE=codex; EFFORT=""; EFFORT_SRC=""; ADVISOR=none
   MODEL="$(_codex_model_from_args)"
   if [ -n "$MODEL" ]; then
     MODEL_SRC=codex-args
@@ -482,11 +510,18 @@ HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Age
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
 if [ "$BACKEND" = claude ]; then
-  [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
   esac
+  [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
+  # Advisor: Opus first (CRSS_ADVISOR_MODEL, default = CRSS_OPUS_MODEL). Fable is the last rung and
+  # is called one-shot by the parent, not set here. Only sessions that HAVE the advisor tool (not
+  # Opus/Fable themselves) get the flag. CLAUDE_SESSION_ADVISOR overrides; "none" omits the flag.
+  ADVISOR="${CLAUDE_SESSION_ADVISOR:-$CRSS_ADVISOR_MODEL}"
+  case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
+  [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id/alias or none)" >&2; exit 2; }
+  [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"
 else
   CLAUDE_EXTRA_FLAGS=""
 fi
@@ -622,8 +657,8 @@ CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nTIER_RULES=%s\nEFFORT=%s\nCODEX_ARGS=%s\n%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${TIER_RULES:-none}" "${EFFORT:-default}" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nTIER_RULES=%s\nEFFORT=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${TIER_RULES:-none}" "${EFFORT:-default}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
 

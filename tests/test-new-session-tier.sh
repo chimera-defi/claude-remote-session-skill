@@ -12,7 +12,7 @@ export HOME="$WORKHOME"; mkdir -p "$HOME/workspace/proj"
 # dry ENV... -- ARGS...: run a dry-run spawn, print its resolved fields.
 dry() {
   local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
-  env -u CLAUDE_SESSION_PROFILE -u CLAUDE_SESSION_MODEL -u CLAUDE_SESSION_EFFORT -u CRSS_SESSION_BACKEND -u CRSS_TIER_CODEX_TIERS \
+  env -u CLAUDE_SESSION_PROFILE -u CLAUDE_SESSION_MODEL -u CLAUDE_SESSION_EFFORT -u CRSS_SESSION_BACKEND -u CRSS_TIER_CODEX_TIERS -u CLAUDE_SESSION_ADVISOR -u CRSS_OPUS_MODEL -u CRSS_ADVISOR_MODEL \
     "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
 }
 want() { # name output pattern
@@ -35,10 +35,30 @@ nowant "standard-no-effort-flag" "$o" '--effort'
 # heavy never reaches Opus implicitly; needs --approve-opus.
 o="$(dry A=1 -- --tier heavy)"
 want "heavy-owner" "$o" '^PROFILE=owner$'; want "heavy-sonnet" "$o" '^MODEL=sonnet$'
-o="$(dry A=1 -- --tier heavy --approve-opus)"
+o="$(dry A=1 -- --tier heavy --approve-opus --task "decide the schema")"
 want "heavy-opus-approved" "$o" '^PROFILE=orchestrator$'; want "heavy-opus-model" "$o" '^MODEL=claude-opus-5-5$'
 o="$(dry A=1 -- --tier standard --approve-opus)"
 want "approve-opus-only-heavy" "$o" '^PROFILE=builder$'
+
+o="$(dry A=1 -- --tier heavy --approve-opus)"
+want "opus-tier-needs-task" "$o" "pass --task"
+o="$(dry A=1 -- --tier heavy --approve-opus --task "x")"; nowant "opus-tier-no-advisor" "$o" '--advisor'
+
+# advisor: Opus by default for sessions that have the advisor tool; none for Opus/Fable/codex.
+o="$(dry A=1 -- --tier standard)"; want "advisor-default-opus" "$o" 'CLAUDE_EXTRA_FLAGS=.*--advisor claude-opus-5-5'; want "advisor-field" "$o" '^ADVISOR=claude-opus-5-5$'
+o="$(dry CRSS_OPUS_MODEL=claude-opus-9-9 -- --tier standard)"; want "opus-id-single-source" "$o" '--advisor claude-opus-9-9'
+o="$(dry CRSS_OPUS_MODEL=claude-opus-9-9 -- --task x)"; want "opus-id-orchestrator" "$o" '^MODEL=claude-opus-9-9$'
+o="$(dry CRSS_ADVISOR_MODEL=fable -- --tier standard)"; want "advisor-overlay-override" "$o" '--advisor fable'
+o="$(dry CLAUDE_SESSION_ADVISOR=none -- --tier standard)"; nowant "advisor-none" "$o" '--advisor'
+o="$(dry CLAUDE_SESSION_ADVISOR='x;y' -- --tier standard)"; want "advisor-bad-id" "$o" "invalid"
+o="$(dry CRSS_OPUS_MODEL='a b' -- --tier standard)"; want "opus-bad-id" "$o" "must match"
+o="$(dry A=1 -- --backend codex)"; want "codex-advisor-none" "$o" '^ADVISOR=none$'
+
+# heuristic flags a mismatch, never overrides.
+o="$(dry A=1 -- --tier light --task "migrate the production database")"
+want "heuristic-flags-heavy" "$o" 'heuristic=heavy'; want "heuristic-keeps-tier" "$o" '^PROFILE=copywriter$'
+o="$(dry A=1 -- --tier heavy --approve-opus --task "fix a typo")"
+want "heuristic-flags-light" "$o" 'heuristic=light'
 
 # fan-out floor: trimmed profiles lifted to owner, effort of the tier kept.
 o="$(dry A=1 -- --tier light --needs-fanout)"
