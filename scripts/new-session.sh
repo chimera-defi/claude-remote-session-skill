@@ -151,7 +151,7 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
-  --tier <t>          Right-size the spawn: light|standard|heavy -> profile/effort
+  --tier <t>          Right-size the spawn: light|standard|heavy -> profile/model
                       defaults (see SKILL.md "Choosing a tier"); never Opus.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
   --escalate-from <n> Respawn one tier above session <n>'s recorded tier (explicit --tier wins).
@@ -277,7 +277,6 @@ if [ -n "$ESCALATE_FROM" ]; then
     esac
     case "$TIER_REASON" in "") TIER_REASON="escalated from $ESCALATE_FROM ($_prev_tier)" ;; esac
   fi
-  export CRSS_ESCALATED_FROM="$ESCALATE_FROM"
 fi
 # The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
 # directory under whatever cwd the start script has. Refuse before any side effect.
@@ -1088,7 +1087,7 @@ if [ -f "$SPAWN_LOG" ]; then
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" || true
+  CRSS_ESCALATED_FROM="$ESCALATE_FROM" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" || true
 fi
 
 # ── Kickoff task (--task/--task-file) ───────────────────────────────────────

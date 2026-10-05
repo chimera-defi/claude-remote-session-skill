@@ -56,6 +56,9 @@ ok "tier-of-underscore" "$(rec --tier-of ah_e-1)" light; ok "tier-of-hyphen" "$(
 # The recorder is bounded: a stuck events file (e.g. a FIFO) must not stall teardown.
 has "recorder-bounded" "$(cat "$HERE/../scripts/session-doctor.sh")" 'timeout 5 bash "$rt" --reap'
 
+# Named reap passes the audit result (clean) to the recorder; forced reaps are never "yes".
+has "reap-passes-clean" "$(cat "$HERE/../scripts/session-doctor.sh")" '"$([ "$FORCE" = yes ] && echo unknown || echo yes)"'
+
 # session-doctor refuses an unknown outcome before touching anything.
 o="$(bash "$HERE/../scripts/session-doctor.sh" reap ah_nope-0001 --outcome bogus 2>&1)"; rc=$?
 ok "doctor-bad-outcome-rc" "$rc" "2"; has "doctor-bad-outcome-msg" "$o" "--outcome must be"
