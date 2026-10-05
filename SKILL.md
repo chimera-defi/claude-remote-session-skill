@@ -140,7 +140,7 @@ applies the floors and ceilings; do not restate its rules here.
 | `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet |
 | `heavy` | ambiguous design, long-lived lane, gating review, destructive/outward-facing steps | owner profile, sonnet (full tools) |
 
-- `--needs-fanout` when the session must call `Workflow` (trimmed profiles drop it but keep `Agent` and `advisor`): lifts them to `owner`.
+- `--needs-fanout` when the session must call `Workflow` (trimmed profiles drop it but keep `Agent` and `advisor`): lifts them to `owner` (an explicit trimmed `CLAUDE_SESSION_PROFILE` plus `--needs-fanout` is refused as a contradiction).
 - Opus is never chosen implicitly (a convention any launcher could bypass, not an access gate), and a tier that reaches Opus via `--approve-opus` must come with `--task`/`--task-file` so it is a bounded job; the launcher reaps it when done (nothing enforces that). `--tier heavy --approve-opus` (or an explicit
   `CLAUDE_SESSION_MODEL`) is the only route; reserve it for decisions Sonnet cannot settle.
 - Effort only moves **down** from the CLI baseline (light = low; baseline is the `effortLevel` in settings, which can differ per model). Raise it with

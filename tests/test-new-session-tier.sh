@@ -68,6 +68,9 @@ o="$(dry A=1 -- --tier light --needs-fanout)"
 want "fanout-floor" "$o" '^PROFILE=owner$'; want "fanout-floor-rule" "$o" 'fanout-floor=owner'
 want "fanout-keeps-effort" "$o" '--effort low'
 
+o="$(dry CLAUDE_SESSION_PROFILE=builder -- --needs-fanout)"; want "fanout-vs-explicit-trimmed-refused" "$o" "contradicts"
+o="$(dry CLAUDE_SESSION_PROFILE=owner -- --needs-fanout)"; want "fanout-explicit-owner-ok" "$o" '^PROFILE=owner$'
+
 # explicit env wins piecewise.
 o="$(dry CLAUDE_SESSION_MODEL=claude-opus-5-5 -- --tier standard)"
 want "explicit-model-wins" "$o" '^MODEL=claude-opus-5-5$'; want "explicit-model-src" "$o" '^MODEL_SRC=explicit$'
