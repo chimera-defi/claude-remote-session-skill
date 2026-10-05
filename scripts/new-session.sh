@@ -49,9 +49,6 @@ fi
 # both read it. Validated because the advisor id lands unquoted in the start script.
 : "${CRSS_OPUS_MODEL:=claude-opus-5-5}"
 : "${CRSS_ADVISOR_MODEL:=$CRSS_OPUS_MODEL}"
-for _m_var in CRSS_OPUS_MODEL CRSS_ADVISOR_MODEL; do
-  [[ "${!_m_var}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: ${_m_var}='${!_m_var}' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
-done
 
 if [ -z "${CRSS_CODEX_BIN:-}" ]; then
   CRSS_CODEX_BIN="$(command -v codex 2>/dev/null || echo codex)"
@@ -393,7 +390,21 @@ if [ "$BACKEND" = claude ]; then
   # Workflow tool but keep Agent + advisor); Opus (orchestrator) only via heavy + --approve-opus or an explicit
   # CLAUDE_SESSION_MODEL. Effort only moves DOWN from the CLI baseline (light=low); raise it
   # explicitly with CLAUDE_SESSION_EFFORT. Pinned by tests/test-new-session-tier.sh.
+  # Validated here (Claude backend only) so a bad overlay value cannot break --help or codex spawns.
+  for _m_var in CRSS_OPUS_MODEL CRSS_ADVISOR_MODEL; do
+    [[ "${!_m_var}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: ${_m_var}='${!_m_var}' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
+  done
+  # A bounded task = non-blank --task text, or a --task-file with non-blank content.
+  _has_task() {
+    [ -z "${TASK_ARG//[[:space:]]/}" ] || return 0
+    [ -n "$TASK_FILE_ARG" ] && [ -r "$TASK_FILE_ARG" ] && grep -q '[^[:space:]]' "$TASK_FILE_ARG"
+  }
   PROFILE="${CLAUDE_SESSION_PROFILE:-}"
+  # With a tier, a misspelled explicit profile must not fall through to the Opus orchestrator default.
+  if [ -n "$PROFILE" ] && [ -n "$TIER_ARG" ]; then
+    case "$PROFILE" in orchestrator|owner|hub|builder|copywriter) ;;
+      *) echo "new-session: CLAUDE_SESSION_PROFILE='$PROFILE' is not a valid profile (orchestrator|owner|hub|builder|copywriter); refusing to fall back to Opus under --tier $TIER_ARG" >&2; exit 2 ;; esac
+  fi
   if [ -z "$PROFILE" ]; then
     PROFILE=orchestrator
     case "$TIER_ARG" in
@@ -407,7 +418,7 @@ if [ "$BACKEND" = claude ]; then
     fi
     # A tier that reaches Opus must be a bounded job: Opus is expensive per resident turn, so it
     # is only born with a task, and the launcher reaps it when done (nothing here enforces that).
-    if [ -n "$TIER_ARG" ] && [ "$PROFILE" = orchestrator ] && [ -z "$TASK_ARG$TASK_FILE_ARG" ]; then
+    if [ -n "$TIER_ARG" ] && [ "$PROFILE" = orchestrator ] && ! _has_task; then
       echo "new-session: --tier $TIER_ARG --approve-opus resolves to Opus; pass --task/--task-file so it is a bounded job (or set CLAUDE_SESSION_PROFILE explicitly)" >&2; exit 2
     fi
   elif [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
