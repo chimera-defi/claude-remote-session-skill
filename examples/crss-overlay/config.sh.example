@@ -145,7 +145,7 @@
 #CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.local/state/server-health/runs
 
 # CRSS_OPUS_MODEL — the one place that names "the Opus we pin to". The orchestrator profile's
-# default model and the default advisor both read it, so bumping Opus is a one-line change.
+# default model and the default advisor both read it, so bumping Opus here is one line. (references/fallback-recipe.md and README.md also name the id and are bumped by hand.)
 # Default: claude-opus-5-5 (set in new-session.sh). CRSS_ADVISOR_MODEL (default = CRSS_OPUS_MODEL)
 # overrides just the advisor.
 #CRSS_OPUS_MODEL=claude-opus-5-5
