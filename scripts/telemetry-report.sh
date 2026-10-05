@@ -92,19 +92,25 @@ def ts(e):
     except Exception: return None
 by_session = {}
 for e in spawns:
-    for k in (e.get("session"), e.get("remote_name")):
-        if norm(k): by_session[norm(k)] = e
-rows, unmatched = {}, 0
-for r in reaps:
-    sp = by_session.get(norm(r.get("session")))
+    for k in {norm(e.get("session")), norm(e.get("remote_name"))} - {""}:
+        by_session.setdefault(k, []).append(e)
+rows, unmatched, used = {}, 0, set()
+for r in sorted(reaps, key=lambda x: x.get("timestamp") or ""):
+    # A name can be reused: pair a reap with the latest not-yet-paired spawn of that
+    # name that started at or before it, never with a later respawn.
+    t1 = ts(r)
+    cands = [sp for sp in by_session.get(norm(r.get("session")), [])
+             if id(sp) not in used and (t1 is None or ts(sp) is None or ts(sp) <= t1)]
+    sp = max(cands, key=lambda x: x.get("timestamp") or "") if cands else None
     if sp is None:
         unmatched += 1
         continue
+    used.add(id(sp))
     tier = (sp.get("routing") or {}).get("tier") or "none"
     row = rows.setdefault(tier, {"n": 0, "forced": 0, "life": [], "out": {}})
     row["n"] += 1
     row["forced"] += 1 if r.get("forced") else 0
-    t0, t1 = ts(sp), ts(r)
+    t0 = ts(sp)
     if t0 and t1: row["life"].append((t1 - t0).total_seconds() / 60)
     o = r.get("outcome", "unknown")
     row["out"][o] = row["out"].get(o, 0) + 1
