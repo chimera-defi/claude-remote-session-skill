@@ -64,6 +64,9 @@ with open(path, encoding="utf-8") as fh:
         except json.JSONDecodeError:
             continue
 
+spawns = [e for e in events if e.get("event", "spawn") == "spawn"]
+reaps = [e for e in events if e.get("event") == "reap"]
+events = spawns
 print(f"spawns recorded: {len(events)}")
 if not events:
     sys.exit(0)
@@ -78,4 +81,50 @@ for e in events[-5:]:
     print(f"  {e.get('timestamp')}  {e.get('remote_name')}  type={e.get('type')}  "
           f"skills={meta.get('global_skills_count')}  skills_md_bytes={meta.get('global_skills_md_bytes')}  "
           f"claude_md_bytes={meta.get('claude_md_bytes')}")
+
+# Per-tier outcomes. A tmux name (<prefix>_x-0056) and a registry/remote name
+# (<prefix>-x-0056) are the same session; normalize both sides of the join. Spawns with
+# no routing field, and reaps with no matching spawn, land in "none" / unmatched.
+import datetime, statistics
+def norm(n): return (n or "").lower().replace("_", "-")
+def ts(e):
+    try:
+        d = datetime.datetime.fromisoformat(e["timestamp"])
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except Exception: return None
+by_session = {}
+for e in spawns:
+    for k in {norm(e.get("session")), norm(e.get("remote_name"))} - {""}:
+        by_session.setdefault(k, []).append(e)
+rows, unmatched, used = {}, 0, set()
+for r in sorted(reaps, key=lambda x: x.get("timestamp") or ""):
+    # A name can be reused: pair a reap with the latest not-yet-paired spawn of that
+    # name that started at or before it, never with a later respawn.
+    t1 = ts(r)
+    cands = [sp for sp in by_session.get(norm(r.get("session")), [])
+             if id(sp) not in used and (t1 is None or ts(sp) is None or ts(sp) <= t1)]
+    sp = max(cands, key=lambda x: x.get("timestamp") or "") if cands else None
+    if sp is None:
+        unmatched += 1
+        continue
+    used.add(id(sp))
+    tier = (sp.get("routing") or {}).get("tier") or "none"
+    row = rows.setdefault(tier, {"n": 0, "forced": 0, "life": [], "out": {}})
+    row["n"] += 1
+    row["forced"] += 1 if r.get("forced") else 0
+    t0 = ts(sp)
+    if t0 and t1: row["life"].append((t1 - t0).total_seconds() / 60)
+    o = r.get("outcome", "unknown")
+    row["out"][o] = row["out"].get(o, 0) + 1
+print(f"reaps recorded: {len(reaps)} (unmatched to a spawn: {unmatched})")
+tiers = {}
+for e in spawns:
+    t = (e.get("routing") or {}).get("tier") or "none"
+    tiers[t] = tiers.get(t, 0) + 1
+print("by tier (spawned / reaped / forced / median-life-min / outcomes):")
+for t in sorted(tiers):
+    row = rows.get(t, {"n": 0, "forced": 0, "life": [], "out": {}})
+    med = f"{statistics.median(row['life']):.0f}" if row["life"] else "-"
+    outs = ",".join(f"{k}={v}" for k, v in sorted(row["out"].items())) or "-"
+    print(f"  {t:9} {tiers[t]:4} {row['n']:4} {row['forced']:4} {med:>6}  {outs}")
 PYEOF
