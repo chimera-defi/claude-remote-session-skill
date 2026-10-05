@@ -153,11 +153,14 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
   never a spawn profile.
 - **Unsure which tier?** Default `standard`; for a real fork (standard vs heavy, or whether Opus is worth it)
   ask your own advisor once, with a short summary, before spawning. Obvious cases skip it.
-- **Outcome logging and escalation.** Reap records a teardown event (lifetime, forced) that
-  `telemetry-report.sh` joins to the spawn by tier. Teardown cannot tell success from failure, so
-  state it: `session-doctor reap <name> --outcome ok|failed|escalated|abandoned [--outcome-note "..."]`
-  (default `unknown`). If a `light`/`standard` session misses its finish line, reap it with
-  `--outcome escalated` and respawn one tier up with the failure in the kickoff; nothing automates this.
+- **Outcome logging and escalation.** Reap records a teardown event (lifetime, forced, and `clean` = the
+  unlanded-work audit passed; never set under `--force`) that `telemetry-report.sh` joins to the spawn by tier.
+  Teardown cannot tell success from failure, so state it: `session-doctor reap <name> --outcome
+  ok|failed|escalated|abandoned [--outcome-note "..."]` (default `unknown`; the idle reaper cannot say, so its
+  events stay `unknown`). If a `light`/`standard` session misses its finish line, reap it with `--outcome
+  escalated`, then `new-session <folder> --escalate-from <name> --task-file <path>` respawns one tier up
+  (explicit `--tier` wins; `heavy` and untiered sessions are refused) with the failure in the kickoff. You
+  initiate it; nothing escalates on its own.
 - **Wide or multi-faceted work** (many independent slices, or a change that needs adversarial review): plan
   first, then fan out. That needs `Workflow` (only `heavy`/owner/orchestrator sessions have it, and only on an
   explicit operator opt-in) or parallel `builder` subagents, not a serial edit-and-wait loop. Narrow work stays

@@ -154,6 +154,7 @@ Options:
   --tier <t>          Right-size the spawn: light|standard|heavy -> profile/effort
                       defaults (see SKILL.md "Choosing a tier"); never Opus.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
+  --escalate-from <n> Respawn one tier above session <n>'s recorded tier (explicit --tier wins).
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
                       verify it landed (reuses session-handoff's send+verify
@@ -180,7 +181,7 @@ Environment:
                                 or pass an exact id (e.g. claude-opus-4-8) to
                                 pin one spawn reproducibly.
   CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort (low|medium|high|xhigh|max). Unset → no flag
-                                (--tier light sets low).
+                                (no tier sets it).
 CLAUDE_SESSION_ADVISOR=<m>    Advisor model for sessions that have the advisor tool.
                                 Default: CRSS_OPUS_MODEL; "none" omits the flag.
 CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
@@ -224,7 +225,7 @@ fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
 FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
-TIER_ARG=""; TIER_REASON=""
+TIER_ARG=""; TIER_REASON=""; ESCALATE_FROM=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
@@ -233,6 +234,7 @@ while [ $# -gt 0 ]; do
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
     --tier)      TIER_ARG="${2:?--tier needs a value}"; shift 2 ;;
+    --escalate-from) ESCALATE_FROM="${2:?--escalate-from needs a session name}"; shift 2 ;;
     --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
     --task-file) TASK_FILE_ARG="${2:?--task-file needs a value}"; shift 2 ;;
@@ -261,6 +263,22 @@ case "$TIER_ARG" in
   ""|light|standard|heavy) ;;
   *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy)" >&2; exit 2 ;;
 esac
+# --escalate-from <session>: respawn one tier above that session's recorded tier (an
+# explicit --tier wins). Launcher-initiated, never automatic; recorded in telemetry.
+if [ -n "$ESCALATE_FROM" ]; then
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+  if [ -z "$TIER_ARG" ]; then
+    _prev_tier="$("$SELF_DIR/record-spawn-telemetry.sh" --tier-of "$ESCALATE_FROM" 2>/dev/null || true)"
+    case "$_prev_tier" in
+      light) TIER_ARG=standard ;;
+      standard) TIER_ARG=heavy ;;
+      heavy) echo "new-session: '$ESCALATE_FROM' already ran at tier heavy — nothing above it; choose Opus explicitly (CLAUDE_SESSION_PROFILE=orchestrator) or fix the task" >&2; exit 2 ;;
+      *) echo "new-session: no recorded tier for '$ESCALATE_FROM' — pass --tier explicitly with --escalate-from" >&2; exit 2 ;;
+    esac
+    case "$TIER_REASON" in "") TIER_REASON="escalated from $ESCALATE_FROM ($_prev_tier)" ;; esac
+  fi
+  export CRSS_ESCALATED_FROM="$ESCALATE_FROM"
+fi
 # The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
 # directory under whatever cwd the start script has. Refuse before any side effect.
 for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
