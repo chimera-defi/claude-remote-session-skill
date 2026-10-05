@@ -144,13 +144,7 @@
 # Default: empty (the section prints a one-line note and is skipped)
 #CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.local/state/server-health/runs
 
-# CRSS_OPUS_MODEL — the one place that names "the Opus we pin to". The orchestrator profile's
-# default model and the default advisor both read it, so bumping Opus here is one line. (references/fallback-recipe.md and README.md also name the id and are bumped by hand.)
-# Default: claude-opus-5-5 (set in new-session.sh). CRSS_ADVISOR_MODEL (default = CRSS_OPUS_MODEL)
-# overrides just the advisor.
+# CRSS_OPUS_MODEL — the one place new-session names "the Opus we pin to": the orchestrator default
+# model and the default advisor both read it. Default claude-opus-5-5. (references/fallback-recipe.md
+# and README.md also name the id and are bumped by hand.)
 #CRSS_OPUS_MODEL=claude-opus-5-5
-#CRSS_ADVISOR_MODEL=claude-opus-5-5
-
-# CRSS_TIER_CODEX_TIERS — space-separated `--tier` values routed to the codex backend (no Claude
-# quota). Default empty. --needs-fanout always stays on Claude.
-#CRSS_TIER_CODEX_TIERS=light standard

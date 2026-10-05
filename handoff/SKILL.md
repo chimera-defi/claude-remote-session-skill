@@ -75,7 +75,7 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
 | list live targets + model | `session-handoff targets` |
 | health of one target | `session-handoff check <tmux-session>` |
 | relay a prompt + verify it landed | `session-handoff send <tmux-session> --file <path>` |
-| spawn a target (Opus by default; pass `--tier light\|standard\|heavy` to right-size, rubric in the root `SKILL.md`) | `new-session <folder> [sessions\|workspace] [--tier <t>]` |
+| spawn a target (Opus by default; `--tier light\|standard\|heavy` right-sizes, see root `SKILL.md`) | `new-session <folder> [sessions\|workspace] [--tier <t>]` |
 
 `session-handoff` with no args prints usage. See also `gstack-session-spawn` (the
 `new-session`/`session-doctor`/`session-alias` family).
