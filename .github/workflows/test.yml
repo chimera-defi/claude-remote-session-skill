@@ -21,6 +21,13 @@ jobs:
             echo "=== $t ==="
             bash "$t"
           done
+      - name: Run python test suite
+        run: |
+          set -e
+          for t in tests/test-*.py; do
+            echo "=== $t ==="
+            python3 "$t"
+          done
       - name: shellcheck
         run: |
           # SC2010 (ls | grep) excluded: session-doctor.sh globs
