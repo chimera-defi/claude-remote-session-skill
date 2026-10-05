@@ -41,6 +41,7 @@ new-session <foldername> --alias x --set-default-alias   # ...and make it the fo
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session <foldername> --force      # spawn despite the low-RAM preflight refusal (the gate is advisory otherwise)
 new-session <foldername> --backend codex  # launch Codex CLI instead of Claude Code
+new-session <foldername> --tier standard --tier-reason "..."  # right-size (see "Choosing a tier"); bare spawn = Opus
 new-session --help                    # print usage and exit (no session spawned)
 
 new-session <foldername> --task "..."        # spawn AND kick off, in one shot
@@ -125,6 +126,37 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   a merge or an operator-facing decision never rests on a single model family; if only one
   family is available, pause and report rather than approving on one family's say-so. An
   orchestrator's own sanity check (the Fable bullet above) is not that review.
+
+## Choosing a tier (right-size the model, save quota)
+
+The launcher knows the task; the script cannot guess it. Pass `--tier` and a one-line
+`--tier-reason` (logged in spawn telemetry: the decision, not the outcome). Resolution lives in
+`scripts/new-session.sh` and is pinned by `tests/test-new-session-tier.sh`; do not restate it here.
+
+| Tier | Pick it when the task is | Defaults |
+|---|---|---|
+| `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku (no effort flag: Haiku 4.5 ignores it) |
+| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet |
+| `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
+
+- A tier never selects Opus. Opus is the no-tier default or an explicit
+  `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
+  bounded jobs, give it a task, and reap it when done (nothing enforces that).
+- Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` win over the tier, one value at a time.
+  No tier sets effort; pass `CLAUDE_SESSION_EFFORT` explicitly (Sonnet/Opus only).
+- **Advisor.** Every session that has the advisor tool (Sonnet/Haiku, with or without `--tier`) gets
+  `--advisor $CRSS_OPUS_MODEL`; `CLAUDE_SESSION_ADVISOR=<model>|none` overrides. `CRSS_OPUS_MODEL`
+  (overlay `config.sh`) is the one place `new-session` takes the Opus id from; `references/fallback-recipe.md`
+  and README also name it and are bumped by hand. The advisor sees the whole transcript, so tell kickoffs to
+  call it before committing to an approach and before declaring done, while context is small. Escalation for a
+  hard fork: advisor (Opus) → cross-family check → Fable as a one-shot `Agent(model:"fable")` from the parent,
+  never a spawn profile.
+- **Unsure which tier?** Default `standard`; for a real fork (standard vs heavy, or whether Opus is worth it)
+  ask your own advisor once, with a short summary, before spawning. Obvious cases skip it.
+- **Wide or multi-faceted work** (many independent slices, or a change that needs adversarial review): plan
+  first, then fan out. That needs `Workflow` (only `heavy`/owner/orchestrator sessions have it, and only on an
+  explicit operator opt-in) or parallel `builder` subagents, not a serial edit-and-wait loop. Narrow work stays
+  a single `standard` session.
 
 ## Writing the kickoff task
 

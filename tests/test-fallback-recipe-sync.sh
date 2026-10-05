@@ -61,7 +61,7 @@ ok "fallback-no-unconditional-skills-rm" "$(grep -cE '^rm -rf "\$RUNDIR/\.claude
 # claude-opus-5, pinned), but neither that commit nor the later doc-sync
 # commit (9d4c420) touched fallback-recipe.md, so the documented emergency
 # path still silently spawned sonnet instead of the intended opus default.
-ns_default_model="$(grep -oE 'orchestrator\) MODEL=[a-zA-Z0-9._-]+' "$NS" | sed -E 's/.*MODEL=//')"
+ns_default_model="$(grep -oE 'CRSS_OPUS_MODEL:=[a-zA-Z0-9._-]+' "$NS" | head -1 | sed -E 's/.*:=//')"
 ok "fallback-model-default-matches-new-session" \
   "$(grep -cF "CLAUDE_SESSION_MODEL:-${ns_default_model}}" "$FB")" "1"
 ok "fallback-model-default-not-stale-sonnet" \
