@@ -23,7 +23,7 @@ hasre "default-tier" "$o" '^TIER=none$'; hasre "default-advisor-none" "$o" '^ADV
 
 o="$(dry A=1 -- --tier light)"
 hasre "light" "$o" '^PROFILE=copywriter$'; hasre "light-model" "$o" '^MODEL=haiku$'
-hasre "light-effort" "$o" 'CLAUDE_EXTRA_FLAGS=.*--effort low'; hasre "light-advisor" "$o" '--advisor claude-opus-5-5'
+hasnt "light-no-effort" "$o" '--effort'; hasre "light-effort-unset" "$o" '^EFFORT=default$'; hasre "light-advisor" "$o" '--advisor claude-opus-5-5'
 o="$(dry A=1 -- --tier standard)"
 hasre "standard" "$o" '^PROFILE=builder$'; hasre "standard-model" "$o" '^MODEL=sonnet$'; hasre "standard-effort-unset" "$o" '^EFFORT=default$'
 o="$(dry A=1 -- --tier heavy)"

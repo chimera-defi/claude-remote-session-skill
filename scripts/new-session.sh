@@ -366,10 +366,10 @@ if [ "$BACKEND" = claude ]; then
   # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
   # the default model for the spawned Claude session.
   # --tier picks defaults only (explicit CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win): light = copywriter
-  # (haiku, effort low), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
+  # (haiku; no effort default, Haiku 4.5 doesn't support it), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
   # no-tier default or an explicit profile/model. Pinned by tests/test-new-session-tier.sh.
   [[ "$CRSS_OPUS_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CRSS_OPUS_MODEL='$CRSS_OPUS_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
-  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT=low ;; standard) T_PROFILE=builder; T_EFFORT="" ;;
+  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT="" ;; standard) T_PROFILE=builder; T_EFFORT="" ;;
     heavy) T_PROFILE=owner; T_EFFORT="" ;; *) T_PROFILE=orchestrator; T_EFFORT="" ;; esac
   PROFILE="${CLAUDE_SESSION_PROFILE:-$T_PROFILE}"
   case "$PROFILE" in
