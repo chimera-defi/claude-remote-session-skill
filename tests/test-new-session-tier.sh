@@ -54,5 +54,22 @@ o="$(dry CLAUDE_SESSION_PROFILE=bulder --)"; hasre "typo-profile-fallback-withou
 T="$(mktemp -d)"
 CLAUDE_SKILLS_DIR="$T/s" TELEMETRY_ROOT="$T/r" bash "$HERE/../scripts/record-spawn-telemetry.sh" f a r s workspace haiku "$T" light low "doc typo fix" >/dev/null
 hasre "telemetry-routing" "$(cat "$T/r/artifacts/telemetry/events.jsonl")" '"routing": \{"effort": "low", "reason": "doc typo fix", "tier": "light"\}'
+CRSS_ESCALATED_FROM=px_l-1 CLAUDE_SKILLS_DIR="$T/s" TELEMETRY_ROOT="$T/r" bash "$HERE/../scripts/record-spawn-telemetry.sh" f a r s2 workspace sonnet "$T" standard "" "why" >/dev/null
+hasre "telemetry-escalated-from" "$(tail -1 "$T/r/artifacts/telemetry/events.jsonl")" '"escalated_from": "px_l-1"'
 rm -rf "$T"
+# --escalate-from: one tier above the recorded tier; explicit --tier wins; top and unknown refused.
+TR="$(mktemp -d)"; mkdir -p "$TR/artifacts/telemetry"
+cat > "$TR/artifacts/telemetry/events.jsonl" <<'J'
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"px_l-1","remote_name":"px-l-1","routing":{"tier":"light"},"meta":{}}
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"px_s-1","remote_name":"px-s-1","routing":{"tier":"standard"},"meta":{}}
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"px_h-1","remote_name":"px-h-1","routing":{"tier":"heavy"},"meta":{}}
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"px_n-1","remote_name":"px-n-1","meta":{}}
+J
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_l-1)"; hasre "esc-light-to-standard" "$o" '^TIER=standard$'
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px-s-1)"; hasre "esc-standard-to-heavy" "$o" '^TIER=heavy$'
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_h-1)"; has "esc-heavy-refused" "$o" "already ran at tier heavy"
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_n-1)"; has "esc-unknown-refused" "$o" "no recorded tier"
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_l-1 --tier heavy)"; hasre "esc-explicit-wins" "$o" '^TIER=heavy$'
+rm -rf "$TR"
+
 finish test-new-session-tier

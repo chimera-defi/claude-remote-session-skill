@@ -4,7 +4,8 @@
 # caller running under `set -e` can safely skip checking its result.
 #
 # Usage: record-spawn-telemetry.sh <foldername> <alias> <remote_name> <session> <type> <model> <workdir> [tier] [effort] [tier_reason]
-#        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note]
+#        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note] [clean:yes|no|unknown]
+#        record-spawn-telemetry.sh --tier-of <session>   # prints the tier of its latest spawn, else nothing
 #   --reap appends a teardown event (called by session-doctor) through this same
 #   path resolution. outcome is only what the caller states (ok|failed|escalated|
 #   abandoned); default "unknown" — teardown cannot tell whether the task succeeded.
@@ -66,11 +67,28 @@ fi
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
 
+if [ "${1:-}" = --tier-of ]; then
+  [ -f "$EVENTS_FILE" ] || exit 0
+  python3 - "$EVENTS_FILE" "${2:-}" <<'PYEOF' 2>/dev/null || exit 0
+import json, sys
+path, want = sys.argv[1], sys.argv[2].lower().replace("_", "-")
+tier = ""
+for line in open(path, encoding="utf-8"):
+    try: e = json.loads(line)
+    except ValueError: continue
+    if e.get("event", "spawn") != "spawn": continue
+    if want in {(e.get("session") or "").lower().replace("_", "-"), (e.get("remote_name") or "").lower().replace("_", "-")}:
+        tier = (e.get("routing") or {}).get("tier") or ""
+print(tier)
+PYEOF
+  exit 0
+fi
+
 if [ "${1:-}" = --reap ]; then
   mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
-  python3 - "$EVENTS_FILE" "${2:-}" "${3:-no}" "${4:-}" "${5:-}" <<'PYEOF' 2>/dev/null || exit 0
+  python3 - "$EVENTS_FILE" "${2:-}" "${3:-no}" "${4:-}" "${5:-}" "${6:-}" <<'PYEOF' 2>/dev/null || exit 0
 import json, sys, datetime
-events_file, session, forced, outcome, note = sys.argv[1:6]
+events_file, session, forced, outcome, note, clean = sys.argv[1:7]
 payload = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "event": "reap",
@@ -79,6 +97,7 @@ payload = {
     "forced": forced == "yes",
     "outcome": outcome if outcome in ("ok", "failed", "escalated", "abandoned") else "unknown",
     "note": note[:200],
+    "clean": clean if clean in ("yes", "no") else "unknown",
 }
 with open(events_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(payload, sort_keys=True) + "\n")
@@ -112,11 +131,11 @@ fi
 
 mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
 
-python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" <<'PYEOF' 2>/dev/null || exit 0
+python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" "${CRSS_ESCALATED_FROM:-}" <<'PYEOF' 2>/dev/null || exit 0
 import json, sys, datetime
 
 (events_file, foldername, alias, remote_name, session, typ, model, workdir,
- skills_count, skills_bytes, claude_md_bytes, tier, effort, tier_reason) = sys.argv[1:15]
+ skills_count, skills_bytes, claude_md_bytes, tier, effort, tier_reason, escalated_from) = sys.argv[1:16]
 
 payload = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -137,6 +156,8 @@ payload = {
 }
 if tier or effort:
     payload["routing"] = {"tier": tier, "effort": effort, "reason": tier_reason[:200]}
+    if escalated_from:
+        payload["routing"]["escalated_from"] = escalated_from[:100]
 with open(events_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(payload, sort_keys=True) + "\n")
 PYEOF

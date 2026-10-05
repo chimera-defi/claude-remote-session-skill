@@ -524,14 +524,14 @@ _find_helper() {
   return 1
 }
 
-# _record_reap_event <session> <forced yes|no> — append a teardown event to the spawn
+# _record_reap_event <session> <forced yes|no> [clean yes|no|unknown] — append a teardown event to the spawn
 # telemetry file (same path resolution as spawn events). Best-effort: never changes
 # reap's exit status or blocks teardown. Callers invoke it only after something was
 # actually torn down, so a no-op reap leaves no event.
 _record_reap_event() {
   local rt
   rt="$(_find_helper record-spawn-telemetry)" || return 0
-  timeout 5 bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" >/dev/null 2>&1 || true
+  timeout 5 bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" "${3:-unknown}" >/dev/null 2>&1 || true
 }
 
 # ── worktree-stale / land-check shared helpers ────────────────────────────────
@@ -1988,7 +1988,7 @@ else:
       echo "  '$NAME' does not match a recognised session prefix (${_crss_prefix_re}) — no systemd unit to tear down" >&2
     fi
     echo "reaped '$NAME'"
-    [ "$torn" = yes ] && _record_reap_event "${base:-$NAME}" "$FORCE"
+    [ "$torn" = yes ] && _record_reap_event "${base:-$NAME}" "$FORCE" "$([ "$FORCE" = yes ] && echo unknown || echo yes)"
     # Registry cleanup: this session's registry entry (matched by title ==
     # base name — the hyphenated form (configured prefix or a
     # CRSS_LEGACY_PREFIXES entry) the registry uses for a remote-control
