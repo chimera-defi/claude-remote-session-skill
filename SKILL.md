@@ -41,6 +41,7 @@ new-session <foldername> --alias x --set-default-alias   # ...and make it the fo
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session <foldername> --force      # spawn despite the low-RAM preflight refusal (the gate is advisory otherwise)
 new-session <foldername> --backend codex  # launch Codex CLI instead of Claude Code
+new-session <foldername> --tier standard --tier-reason "..."  # right-size model/effort (see "Choosing a tier"); bare spawn = Opus
 new-session --help                    # print usage and exit (no session spawned)
 
 new-session <foldername> --task "..."        # spawn AND kick off, in one shot
@@ -129,8 +130,8 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
 ## Choosing a tier (right-size the model, save quota)
 
 The launcher knows the task; the script cannot guess it. Pick `--tier` from the signals below and
-say why with `--tier-reason "<one line>"` (logged to spawn telemetry so the rubric can be tuned
-from outcomes). The resolver (`scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`)
+say why with `--tier-reason "<one line>"` (logged to spawn telemetry: the decision, not the outcome,
+so tuning still needs a human read of how the sessions went). The resolver (`scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`)
 applies the floors and ceilings; do not restate its rules here.
 
 | Tier | Pick it when the task is | Resolves to |
@@ -140,9 +141,9 @@ applies the floors and ceilings; do not restate its rules here.
 | `heavy` | ambiguous design, long-lived lane, gating review, destructive/outward-facing steps | owner profile, sonnet (full tools) |
 
 - `--needs-fanout` when the session must call `Workflow`/`Agent`: lifts a trimmed profile to `owner`.
-- Opus is never chosen implicitly. `--tier heavy --approve-opus` (or an explicit
+- Opus is never chosen implicitly (a convention any launcher could bypass, not an access gate). `--tier heavy --approve-opus` (or an explicit
   `CLAUDE_SESSION_MODEL`) is the only route; reserve it for decisions Sonnet cannot settle.
-- Effort only moves **down** from the CLI baseline (light = low). Raise it with
+- Effort only moves **down** from the CLI baseline (light = low; baseline is the `effortLevel` in settings, which can differ per model). Raise it with
   `CLAUDE_SESSION_EFFORT=low|medium|high|xhigh|max`; that is an explicit spend decision.
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` always win over the tier, piecewise.
 - No `--tier` means today's default (orchestrator on Opus); a bare spawn is the expensive path, so pass a tier.
