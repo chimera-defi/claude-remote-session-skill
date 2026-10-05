@@ -10,7 +10,7 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run]
+#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run] [--outcome ok|failed|escalated|abandoned] [--outcome-note <s>]
 #                                           # one-shot teardown of a named ALIVE session (tmux+unit);
 #                                           # refuses on unlanded work unless --force; also deletes
 #                                           # that session's registry entry (by title == base name)
@@ -201,6 +201,8 @@ APPLY=no
 KEEP_REGISTRY=no
 KEEP_WORKTREE=no
 DRY_RUN=no
+OUTCOME=""
+OUTCOME_NOTE=""
 MINUTES=""
 DAYS_SET=no
 MINUTES_SET=no
@@ -219,6 +221,8 @@ while [ $# -gt 0 ]; do
     --keep-registry) KEEP_REGISTRY=yes; shift;;
     --keep-worktree) KEEP_WORKTREE=yes; shift;;
     --dry-run) DRY_RUN=yes; shift;;
+    --outcome) OUTCOME="${2:?--outcome needs ok|failed|escalated|abandoned}"; shift 2;;
+    --outcome-note) OUTCOME_NOTE="${2:?--outcome-note needs a value}"; shift 2;;
     # An unrecognized --flag must fail closed: a typo'd or assumed flag such as
     # `reap <name> --dry-run` was silently treated as a positional and the reap ran.
     --*) echo "session-doctor: unknown option '$1'" >&2; exit 2;;
@@ -226,6 +230,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 set -- "${ARGS[@]}"
+case "$OUTCOME" in ""|ok|failed|escalated|abandoned) ;; *) echo "session-doctor: --outcome must be ok|failed|escalated|abandoned (got '$OUTCOME')" >&2; exit 2;; esac
 # --dry-run is only accepted where it is honored: reap (preview) and the two
 # modes that are already dry by default. Anywhere else (e.g. archive-ignored,
 # which writes under ~/backups) it would be silently ignored, so refuse it.
@@ -517,6 +522,16 @@ _find_helper() {
   if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
   if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
   return 1
+}
+
+# _record_reap_event <session> <forced yes|no> — append a teardown event to the spawn
+# telemetry file (same path resolution as spawn events). Best-effort: never changes
+# reap's exit status or blocks teardown. Callers invoke it only after something was
+# actually torn down, so a no-op reap leaves no event.
+_record_reap_event() {
+  local rt
+  rt="$(_find_helper record-spawn-telemetry)" || return 0
+  timeout 5 bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" >/dev/null 2>&1 || true
 }
 
 # ── worktree-stale / land-check shared helpers ────────────────────────────────
@@ -1434,12 +1449,16 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
   reap-local)
     [ "$FORCE" = yes ] || echo "(DRY-RUN — re-run with --force to actually reap)"
     do_reap() {  # $1=tmux-name-or-empty $2=service $3=start-script
+      local acted=no
       if [ "$FORCE" = yes ]; then
+        { [ -n "$UD" ] && [ -f "$UD/$2" ]; } && acted=yes
+        { [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ]; } && acted=yes
         systemctl --user disable --now "$2" >/dev/null 2>&1 || true
         [ -n "$UD" ] && [ -f "$UD/$2" ] && rm -f "$UD/$2"
         [ -n "$UD" ] && [ -L "$UD/default.target.wants/$2" ] && rm -f "$UD/default.target.wants/$2"
         [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ] && rm -f "$BIN/$3"
-        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null || true
+        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null && acted=yes
+        [ "$acted" = yes ] && _record_reap_event "${2%.service}" yes
       fi
     }
     reaped=0
@@ -1955,18 +1974,21 @@ else:
       echo "would-reap '$NAME'"
       exit 0
     fi
+    torn=no
+    if [ -n "$base" ] && { [ -f "${UD:-/nonexistent}/${base}.service" ] || [ -f "${BIN:-/nonexistent}/${base}-start.sh" ]; }; then torn=yes; fi
     tmux kill-session -t "$NAME" 2>/dev/null \
-      && echo "  tmux session killed: $NAME" || echo "  no live tmux session '$NAME' (ok)"
+      && { torn=yes; echo "  tmux session killed: $NAME"; } || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
       _REAP_ARCHIVE_DIR=""
       systemctl --user disable --now "${base}.service" >/dev/null 2>&1 \
-        && echo "  unit disabled: ${base}.service" || echo "  unit '${base}.service' not active/installed (ok)"
+        && { torn=yes; echo "  unit disabled: ${base}.service"; } || echo "  unit '${base}.service' not active/installed (ok)"
       systemctl --user reset-failed "${base}.service" >/dev/null 2>&1 || true
       _reap_archive_unit_files "$base"
     else
       echo "  '$NAME' does not match a recognised session prefix (${_crss_prefix_re}) — no systemd unit to tear down" >&2
     fi
     echo "reaped '$NAME'"
+    [ "$torn" = yes ] && _record_reap_event "${base:-$NAME}" "$FORCE"
     # Registry cleanup: this session's registry entry (matched by title ==
     # base name — the hyphenated form (configured prefix or a
     # CRSS_LEGACY_PREFIXES entry) the registry uses for a remote-control

@@ -4,6 +4,10 @@
 # caller running under `set -e` can safely skip checking its result.
 #
 # Usage: record-spawn-telemetry.sh <foldername> <alias> <remote_name> <session> <type> <model> <workdir> [tier] [effort] [tier_reason]
+#        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note]
+#   --reap appends a teardown event (called by session-doctor) through this same
+#   path resolution. outcome is only what the caller states (ok|failed|escalated|
+#   abandoned); default "unknown" — teardown cannot tell whether the task succeeded.
 #
 # Env overrides (for testing / non-standard installs):
 #   CLAUDE_SKILLS_DIR   default: $HOME/.claude/skills
@@ -61,6 +65,26 @@ if [ -z "$REPO_ROOT" ]; then
 fi
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
+
+if [ "${1:-}" = --reap ]; then
+  mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
+  python3 - "$EVENTS_FILE" "${2:-}" "${3:-no}" "${4:-}" "${5:-}" <<'PYEOF' 2>/dev/null || exit 0
+import json, sys, datetime
+events_file, session, forced, outcome, note = sys.argv[1:6]
+payload = {
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "event": "reap",
+    "skill": "gstack-session-spawn",
+    "session": session,
+    "forced": forced == "yes",
+    "outcome": outcome if outcome in ("ok", "failed", "escalated", "abandoned") else "unknown",
+    "note": note[:200],
+}
+with open(events_file, "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(payload, sort_keys=True) + "\n")
+PYEOF
+  exit 0
+fi
 
 # Context-size proxies: how much a freshly spawned session's global skill
 # catalog and project CLAUDE.md weigh, so a future scoping change has a
