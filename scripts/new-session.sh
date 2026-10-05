@@ -413,15 +413,15 @@ if [ "$BACKEND" = claude ]; then
   elif [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
     echo "note: --needs-fanout but CLAUDE_SESSION_PROFILE=$PROFILE has no Workflow tool" >&2
   fi
-  # Cheap pre-classifier: compare the task text with the declared tier and FLAG a mismatch
+  # Cheap pre-classifier: flag a SHORT task that looks mechanical but was given a heavier tier. (A heavy-direction
+  # keyword check was dropped: it fired on guardrail wording in ordinary kickoff text.) It FLAGS
   # (note + telemetry rule); it never overrides the launcher. Disagreement rate is the signal for
   # tuning the rubric.
   if [ -n "$TIER_ARG" ]; then
     _task_text="$TASK_ARG"
     [ -z "$TASK_FILE_ARG" ] || [ ! -r "$TASK_FILE_ARG" ] || _task_text="$_task_text $(head -c 4000 "$TASK_FILE_ARG")"
     _hint=""
-    if [ "$TIER_ARG" != heavy ] && grep -qiE 'migrat|architect|security|force-push|delete|destructive|production|irreversib' <<<"$_task_text"; then _hint=heavy
-    elif [ "$TIER_ARG" != light ] && [ "${#_task_text}" -gt 0 ] && [ "${#_task_text}" -lt 200 ] && grep -qiE '\b(typo|rename|reformat|docs?[- ]only|comment)\b' <<<"$_task_text"; then _hint=light; fi
+    if [ "$TIER_ARG" != light ] && [ "${#_task_text}" -gt 0 ] && [ "${#_task_text}" -lt 200 ] && grep -qiE '\b(typo|rename|reformat|docs?[- ]only|comment)\b' <<<"$_task_text"; then _hint=light; fi
     if [ -n "$_hint" ]; then
       echo "note: task text looks '$_hint' but --tier $TIER_ARG was declared (kept; recorded as heuristic=$_hint)" >&2
       TIER_RULES="${TIER_RULES:+$TIER_RULES,}heuristic=$_hint"
@@ -519,6 +519,7 @@ if [ "$BACKEND" = claude ]; then
   # is called one-shot by the parent, not set here. Only sessions that HAVE the advisor tool (not
   # Opus/Fable themselves) get the flag. CLAUDE_SESSION_ADVISOR overrides; "none" omits the flag.
   ADVISOR="${CLAUDE_SESSION_ADVISOR:-$CRSS_ADVISOR_MODEL}"
+  [ -n "${CLAUDE_SESSION_ADVISOR:-}" ] || [ "$TIER_ARG" != light ] || ADVISOR=none   # light = cheap tier: no Opus advisor unless asked
   case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
   [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id/alias or none)" >&2; exit 2; }
   [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"

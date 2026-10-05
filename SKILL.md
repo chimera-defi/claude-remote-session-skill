@@ -141,14 +141,15 @@ applies the floors and ceilings; do not restate its rules here.
 | `heavy` | ambiguous design, long-lived lane, gating review, destructive/outward-facing steps | owner profile, sonnet (full tools) |
 
 - `--needs-fanout` when the session must call `Workflow` (trimmed profiles drop it but keep `Agent` and `advisor`): lifts them to `owner`.
-- Opus is never chosen implicitly (a convention any launcher could bypass, not an access gate), and a tier that reaches Opus must come with `--task`/`--task-file` so it is a bounded job; the launcher reaps it when done (nothing enforces that). `--tier heavy --approve-opus` (or an explicit
+- Opus is never chosen implicitly (a convention any launcher could bypass, not an access gate), and a tier that reaches Opus via `--approve-opus` must come with `--task`/`--task-file` so it is a bounded job; the launcher reaps it when done (nothing enforces that). `--tier heavy --approve-opus` (or an explicit
   `CLAUDE_SESSION_MODEL`) is the only route; reserve it for decisions Sonnet cannot settle.
 - Effort only moves **down** from the CLI baseline (light = low; baseline is the `effortLevel` in settings, which can differ per model). Raise it with
   `CLAUDE_SESSION_EFFORT=low|medium|high|xhigh|max`; that is an explicit spend decision.
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` always win over the tier, piecewise.
 - No `--tier` means today's default (orchestrator on Opus); a bare spawn is the expensive path, so pass a tier.
 - **Advisor first, Opus session last.** Sessions on Sonnet/Haiku get `--advisor <CRSS_ADVISOR_MODEL>` (default = `CRSS_OPUS_MODEL`, the single place the pinned Opus id lives, overridable in `$CRSS_HOME/config.sh`; `CLAUDE_SESSION_ADVISOR=none` omits it). Escalation order for a hard fork: advisor (Opus) → a cross-family check → Fable as a one-shot `Agent(model:"fable")` from the parent (never a spawn profile). The advisor sees the whole transcript, so tell kickoffs to call it before committing to an approach and before declaring done, while context is small.
-- `--tier` also runs a cheap keyword check on the task text and notes (never overrides) a mismatch, recorded as `heuristic=` in telemetry.
+- `--tier` also notes (never overrides) a short mechanical-looking task given a heavier tier, recorded as `heuristic=light` in telemetry. `light` gets no advisor by default (cheap tier); `CLAUDE_SESSION_ADVISOR` overrides.
+- The advisor default applies to every Sonnet/Haiku spawn, with or without `--tier`: the advisor sees the whole transcript, so a long-lived owner on an Opus advisor is Opus spend by another route. Use `CLAUDE_SESSION_ADVISOR=none` (or overlay `CRSS_ADVISOR_MODEL`) to change it.
 - A host overlay can route tiers to the Codex backend (no Claude quota) with
   `CRSS_TIER_CODEX_TIERS="light standard"` in `$CRSS_HOME/config.sh`; `--needs-fanout` stays on Claude.
 

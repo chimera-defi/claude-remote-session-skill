@@ -54,11 +54,14 @@ o="$(dry CLAUDE_SESSION_ADVISOR='x;y' -- --tier standard)"; want "advisor-bad-id
 o="$(dry CRSS_OPUS_MODEL='a b' -- --tier standard)"; want "opus-bad-id" "$o" "must match"
 o="$(dry A=1 -- --backend codex)"; want "codex-advisor-none" "$o" '^ADVISOR=none$'
 
-# heuristic flags a mismatch, never overrides.
-o="$(dry A=1 -- --tier light --task "migrate the production database")"
-want "heuristic-flags-heavy" "$o" 'heuristic=heavy'; want "heuristic-keeps-tier" "$o" '^PROFILE=copywriter$'
-o="$(dry A=1 -- --tier heavy --approve-opus --task "fix a typo")"
-want "heuristic-flags-light" "$o" 'heuristic=light'
+# heuristic flags a short mechanical task given a heavier tier; never overrides; quiet on guardrail words.
+o="$(dry A=1 -- --tier standard --task "fix a typo in the readme")"
+want "heuristic-flags-light" "$o" 'heuristic=light'; want "heuristic-keeps-tier" "$o" '^PROFILE=builder$'
+o="$(dry A=1 -- --tier standard --task "never force-push or delete branches; migrate the schema in production")"
+nowant "heuristic-quiet-on-guardrails" "$o" 'heuristic='
+# light = no advisor by default (cheap tier), explicit wins.
+o="$(dry A=1 -- --tier light)"; nowant "light-no-advisor" "$o" '--advisor'; want "light-advisor-field" "$o" '^ADVISOR=none$'
+o="$(dry CLAUDE_SESSION_ADVISOR=opus -- --tier light)"; want "light-advisor-explicit" "$o" '--advisor opus'
 
 # fan-out floor: trimmed profiles lifted to owner, effort of the tier kept.
 o="$(dry A=1 -- --tier light --needs-fanout)"
