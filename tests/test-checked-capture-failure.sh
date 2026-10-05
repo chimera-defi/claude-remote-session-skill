@@ -2,7 +2,7 @@
 # A process substitution (`grep -q PAT < <(producer)`) feeds grep but drops the producer's exit status:
 # a producer that prints a match and then FAILS reads as a match. The old pipe under pipefail said
 # "false". Every repaired site captures the producer's complete output with its status checked, then
-# matches, so on producer failure it returns exactly what the old pipe returned (brief 3e2).
+# matches, so on producer failure it returns exactly what the old pipe returned.
 #
 # Part A compares each repaired function with main's pipe (written without -q, so grep reads the whole
 # stream and cannot take SIGPIPE; pipefail still reports a failed producer, which is the point) over the four producer

@@ -532,7 +532,7 @@ _backend_of() {
 # foreground, non-stopped descendant of the pane's pid (wrapper-bash Codex
 # start scripts).
 _codex_live() {
-  local root ptty kids k comm queue="" n=0
+  local root ptty kids k c comm st pg tpg ctty queue="" n=0
   read -r root ptty <<< "$(tmux display-message -p -t "$1" '#{pane_pid} #{pane_tty}' 2>/dev/null)"
   case "$root" in ''|*[!0-9]*) return 1;; esac
   ptty="${ptty#/dev/}"; [ -n "$ptty" ] || return 1

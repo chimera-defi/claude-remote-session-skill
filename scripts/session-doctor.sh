@@ -530,7 +530,7 @@ _find_helper() {
 # doesn't look dirty just because the spawner touched it. Before this fix,
 # EVERY worktree was reported DIRTY unconditionally.
 _wt_dirty() {
-  local out; out="$(git -C "$1" status --porcelain 2>/dev/null)"
+  local out; out="$(git -C "$1" status --porcelain 2>/dev/null)" || { echo DIRTY; return; }
   if [ -n "$out" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$out"; then
     echo DIRTY
   else

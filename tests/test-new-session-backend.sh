@@ -355,7 +355,7 @@ wb_log="$(cat "$WB_HOME/.sessions/session-starts.log" 2>/dev/null)"
 has "workdir-mkdir-failure-logged" "$wb_log" 'event=rundir-mkdir-FAILED rundir='
 not_has "workdir-mkdir-failure-not-reported-started" "$wb_log" 'event=started'
 
-# ── Lane helpers (brief 3b). Homes live under $WORKHOME so the EXIT trap removes them. ──
+# ── Lane helpers. Homes live under $WORKHOME so the EXIT trap removes them. ──
 # The start script resets PATH to $HOME/.local/bin:…:/usr/bin, so stubs go in <home>/.local/bin.
 mkhome() { local h; h="$(mktemp -d "$WORKHOME/h.XXXXXX")"; mkdir -p "$h/.sessions" "$h/.local/bin"; echo "$h"; }
 # stub tmux: logs every call; for new-session records the -c dir and whether it is enterable NOW.
