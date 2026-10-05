@@ -89,6 +89,19 @@
 # completion could not be verified, the message is NOT sent.
 set -uo pipefail
 
+# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
+# control retain their existing behavior. No provider/model fallback here.
+_crss_admit() {
+  local helper_dir helper
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
+    helper="$helper_dir/autonomous-admission.sh"
+  else
+    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
+  fi
+  bash "$helper" "$@"
+}
+
 # ── pure-ish helpers (source-guarded below so tests can exercise them) ───────
 
 # _find_helper <basename> — resolve a sibling script co-located first (repo/
@@ -788,6 +801,9 @@ _do_compact() {
     echo "session-compact: INTERNAL — refusing to send /compact to '$session' a second time in this invocation" >&2
     echo send-failed
     return 1
+  fi
+  if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ "${MODE:-}" = sweep ]; then
+    _crss_admit compact "$session" >&2 || { echo admission-denied; return 1; }
   fi
   _COMPACT_ISSUED[$session]=1
 

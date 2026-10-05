@@ -518,7 +518,7 @@ for how in blocked POST_sandbox_of_2; do
   ( cd "$LANE" && env HOME="$H/hm" CODEX_HOME="$H/codex" ARGV_OUT="$ARGV" CALLS="$CALLS" RP_REAL="$RP" CASE_DIR="$H" LOG_F="$LOG" PATH="$H/wrapbin:$PATH_H" "${hk[@]}" \
       bash --norc -i < <(cat "$H/loop.sh"; echo 'echo SHELL-ALIVE') ) >"$H/out" 2>&1
   has "L: interactive shell survives a broken log ($how)" "$(cat "$H/out")" "SHELL-ALIVE"
-  ok "L: interactive ($how): codex launched on every pass" "$(calls)" "2"
+  ok "L: interactive ($how): automatic pass 2 is denied" "$(calls)" "1"
 done
 
 # ---- G': a pin that changes during the archive is put back
@@ -531,8 +531,8 @@ ok "G': nothing left archived" "$(pinarc)" "0"
 PINREL="$PR" PASSES="1 2" setup_case "-m m -s read-only"; printf '%s\n' "$U1" > "$PIN"
 mk_rollout "$U2" "$LANE" codex-tui "$H/codex/sessions/2026/10/03"
 go POST_read_pin_2='printf "%s\n" "$U2" > "$PIN_FILE"'
-ok "G': pass 2 launches once" "$(calls)" "1"
-argv_is "G': pass 2 resumes U2" -c "$(trust)" resume "$U2" -m m -s read-only
+ok "G': automatic pass 2 launches nothing" "$(calls)" "0"
+has "G': automatic pass 2 is admission-denied" "$(cat "$H/out")" "autonomous admission denied"
 mkdir -p "$WORK/mvdir"
 cat > "$WORK/mvdir/mv" <<'EOS'
 #!/usr/bin/env bash
