@@ -8,6 +8,7 @@ Follow the full recipe in `~/.claude/skills/gstack-session-spawn/SKILL.md` (or t
 2. Run the `new-session` script for the whole recipe in one Bash call:
    ```bash
    new-session "$FOLDERNAME"              # auto-detects workspace/ vs .sessions/
+   # add --tier light|standard|heavy --tier-reason "<why>" to right-size model/effort (a bare spawn is Opus)
    ```
    If `~/.local/bin/new-session` is missing, install it from `scripts/new-session.sh` (copy to `~/.local/bin/new-session`, `chmod +x`) and re-run the command above — do not hand-roll the start script/systemd unit inline; the script already handles aliasing (`session-alias`), git-aware run-dir resolution (`session-git-prep`), sentinel-file/backoff logic, and the first-party `ANTHROPIC_BASE_URL` settings override. Only if the repo itself is unavailable, fall back to the one-off manual recipe in `references/fallback-recipe.md` (paste its whole block in a single Bash call) — that file documents what the reduced last resort drops vs. the installed script.
    If the user also gave the session something to do, pass it in the same call with `--task "..."` (or `--task-file <path>`) rather than typing it into the pane afterwards — `--task` waits for the session to be ready and verifies the message landed. Shape the task per `handoff/references/massaging.md`: a checkable finish line, a stop rule, concrete anti-patterns.
