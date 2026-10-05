@@ -411,7 +411,7 @@ if [ "$BACKEND" = claude ]; then
       echo "new-session: --tier $TIER_ARG --approve-opus resolves to Opus; pass --task/--task-file so it is a bounded job (or set CLAUDE_SESSION_PROFILE explicitly)" >&2; exit 2
     fi
   elif [ "$NEEDS_FANOUT" = yes ] && { [ "$PROFILE" = builder ] || [ "$PROFILE" = copywriter ]; }; then
-    echo "note: --needs-fanout but CLAUDE_SESSION_PROFILE=$PROFILE has no Workflow tool" >&2
+    echo "new-session: --needs-fanout contradicts CLAUDE_SESSION_PROFILE=$PROFILE (it has no Workflow tool); use owner/orchestrator or drop one of the two" >&2; exit 2
   fi
   # Cheap pre-classifier: flag a SHORT task that looks mechanical but was given a heavier tier. (A heavy-direction
   # keyword check was dropped: it fired on guardrail wording in ordinary kickoff text.) It FLAGS
