@@ -184,7 +184,8 @@ _find_rollout() {
     [ -z "$m" ] || { echo "codex-resume-pin: broken symlink under sessions: $(printf %q "$m"): cannot prove absence" >&2; return 2; }
     return 11
   fi
-  mapfile -d '' -t uniq < <(printf '%s\0' "${res[@]}" | sort -zu)
+  local -A seen=(); local r; uniq=()
+  for r in "${res[@]}"; do [ -n "${seen[$r]:-}" ] || { seen[$r]=1; uniq+=("$r"); }; done
   if [ "${#uniq[@]}" -ne 1 ]; then echo "codex-resume-pin: ${#uniq[@]} distinct rollouts match $id" >&2; return 2; fi
   [ -f "${uniq[0]}" ] || { echo "codex-resume-pin: rollout is not a regular file" >&2; return 2; }
   printf '%s\n' "${uniq[0]}"

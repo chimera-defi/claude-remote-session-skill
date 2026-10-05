@@ -286,7 +286,7 @@ has "cli-ready-no-session-msg" "$out" "no such tmux session"
 # --- pipefail + grep -q: detection must not depend on how big the capture is ---
 # `producer | grep -q` under pipefail fails when grep exits on the first match and the producer's
 # next chunk hits a closed pipe (only for output over ~4 KiB). A 64 KiB capture with the marker
-# on its FIRST line is the worst case; every call must still detect (brief 3e).
+# on its FIRST line is the worst case; every call must still detect.
 BIGPAD="$(head -c 65536 /dev/zero | tr '\0' 'x' | fold -w 80)"
 BIG_TRANSCRIPT="$(printf 'MARKER-LINE-ONE\n%s\n❯\n' "$BIGPAD")"
 BIG_BUSY="$(printf '✢ Incubating… (esc to interrupt)\n%s\n❯\n' "$BIGPAD")"

@@ -464,7 +464,7 @@ setup_case "-m m -a never"; printf '%s\n' "$U2" > "$PIN"; cp "$PIN" "$H/pin.befo
 go PATH="$WORK/mvnoop:$PATH_H"
 closed "S: mv that exits 0 without moving is caught" "pin-archive-failed"; same "S: pin still in place"
 
-# ======================================================= brief 2b (P, X, L, G', A', F', D')
+# ======================================================= resume-pin edge cases
 PR=".sessions/resume/lane.codex-thread"   # the production pin location, under ~/.sessions
 pinarc() { ls "$H"/hm/.sessions/resume/lane.codex-thread.stale.* 2>/dev/null | wc -l | tr -d ' '; }
 
