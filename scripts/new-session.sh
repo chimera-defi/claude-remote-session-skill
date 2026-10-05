@@ -6,6 +6,18 @@
 #   workspace (default when $CRSS_WORKSPACE/<name> exists) — repo sessions
 #   sessions  — utility sessions (monitors, managers, etc.)
 set -e
+# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
+# control retain their existing behavior. No provider/model fallback here.
+_crss_admit() {
+  local helper_dir helper
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
+    helper="$helper_dir/autonomous-admission.sh"
+  else
+    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
+  fi
+  bash "$helper" "$@"
+}
 
 # ── Host-local overlay config ────────────────────────────────────────────────
 # See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
@@ -419,6 +431,10 @@ HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Age
 # user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
+if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
+  HUB_CONSULT_PROMPT='Autonomous bounded session: no child agents, advisor fanout, compaction, polling or self-restarts. Finish one finite task, record its result and stop. Operator judgment requires a separately admitted frozen packet.'
+  CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --disallowedTools Agent"
+fi
 if [ "$BACKEND" = claude ]; then
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
@@ -544,6 +560,27 @@ if command -v tmux >/dev/null 2>&1; then
     done
   fi
 fi
+# Persist admission configuration in generated loops, including after reboot.
+ADMISSION_SUBJECT="${CRSS_ADMISSION_SUBJECT:-$SESSION}"
+ADMISSION_CONFIG_INVALID=0
+[[ "$ADMISSION_SUBJECT" =~ ^[a-zA-Z0-9_./:-]+$ ]] || ADMISSION_CONFIG_INVALID=1
+ADMISSION_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/autonomous-admission.sh"
+if [ ! -f "$ADMISSION_HELPER" ]; then ADMISSION_HELPER="$(command -v autonomous-admission 2>/dev/null || true)"; fi
+for admission_path in "$ADMISSION_HELPER" "${AGENT_HOST_ADMISSION_CLI:-}" "${AGENT_HOST_ADMISSION_DB:-}" "${AGENT_HOST_ADMISSION_EVIDENCE:-}"; do
+  if [ -n "$admission_path" ] && [[ ! "$admission_path" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+    ADMISSION_CONFIG_INVALID=1
+  fi
+done
+if [ "$ADMISSION_CONFIG_INVALID" = 1 ]; then
+  if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$DRYRUN" != yes ]; then
+    echo "new-session: invalid admission configuration" >&2; exit 2
+  fi
+  # Bad spending configuration must not brick a human launch or preview.
+  # Serialize only safe empty configuration: future automatic passes deny.
+  ADMISSION_SUBJECT=manual
+  ADMISSION_HELPER=""
+  AGENT_HOST_ADMISSION_CLI=""; AGENT_HOST_ADMISSION_DB=""; AGENT_HOST_ADMISSION_EVIDENCE=""
+fi
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 HUB_CONSULT_PROMPT_FILE=""
 [ "$BACKEND" = claude ] && [ "$PROFILE" = hub ] && HUB_CONSULT_PROMPT_FILE="${SCRIPT%.sh}-hub-consult-prompt.txt"
@@ -562,6 +599,10 @@ if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
+fi
+
+if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
+  _crss_admit launch "$ADMISSION_SUBJECT" --packet-chars "${#TASK}" >&2 || exit 2
 fi
 
 # One id per start attempt, logged on every start-script line and required by the Codex start
@@ -720,16 +761,28 @@ tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
+MANUAL_LAUNCH="$HOME/.sessions/resume/${REMOTE_NAME}.manual-launch"
+ADMISSION_FIRST=1
 while true; do
+  MANUAL_ONCE=0
+  if [ "\$ADMISSION_FIRST" = 1 ] && [ -s "\$MANUAL_LAUNCH" ] && [ -s "\$RESUME_PIN" ] && [ "\$(cat "\$MANUAL_LAUNCH")" = "\$(cat "\$RESUME_PIN")" ]; then
+    rm -f "\$MANUAL_LAUNCH" && MANUAL_ONCE=1
+  fi
+  if [ "\$MANUAL_ONCE" != 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
+    ADMISSION_ACTION=restart
+    [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
+    AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
+  fi
+  ADMISSION_FIRST=0
   START=\$(date +%s)
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
-    RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL"
+    RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
   else
-    touch "\$SENTINEL"
+    touch "\$SENTINEL" || break
     ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
@@ -755,7 +808,16 @@ SESSION=${SESSION_LITERAL}
 CODEX_BIN=${CODEX_BIN_LITERAL}
 CODEX_ARGS=(${CODEX_ARGS_LITERAL})
 CODEX_PIN="\$HOME/.sessions/resume/${REMOTE_NAME}.codex-thread"
+SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
+ADMISSION_FIRST=1
 while true; do
+  if [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; then
+    ADMISSION_ACTION=restart
+    [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
+    AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
+  fi
+  ADMISSION_FIRST=0
+  touch "\$SENTINEL" || break
   START=\$(date +%s)
   _codex_trust_dir="\${PWD//\\\\/\\\\\\\\}"
   _codex_trust_dir="\${_codex_trust_dir//\"/\\\\\"}"

@@ -29,6 +29,19 @@
 # `_is_safe_to_inject`'s comment for what's left.
 set -uo pipefail
 
+# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
+# control retain their existing behavior. No provider/model fallback here.
+_crss_admit() {
+  local helper_dir helper
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
+    helper="$helper_dir/autonomous-admission.sh"
+  else
+    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
+  fi
+  bash "$helper" "$@"
+}
+
 # ── Host-local overlay config ────────────────────────────────────────────────
 # See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
 # for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
@@ -491,6 +504,9 @@ _capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 # hand-copy of this loop silently drifting from it over time.
 _paste_and_wait() {
   local s="$1" frag="$2" msg="$3" verdict=unverified _try _j
+  if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
+    _crss_admit wake "${CRSS_ADMISSION_SUBJECT:-$s}" --packet-chars "${#msg}" >&2 || { echo admission-denied; return 2; }
+  fi
   # Bracketed paste so a multi-line prompt lands as one input, not N submits.
   printf '%s' "$msg" | tmux load-buffer -b handoff -
   tmux paste-buffer -t "$s" -b handoff -p -d
@@ -678,6 +694,7 @@ case "$MODE" in
     # false "unverified".
     [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
     verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
+    [ "$verdict" != admission-denied ] || { echo "send: autonomous admission denied" >&2; exit 2; }
     # ── dropped-first-paste recovery (a real dropped-first-send
     # incident) ────────────────────────────────────────
     # On a freshly booted Claude Code, `check` (and new-session.sh's ready
