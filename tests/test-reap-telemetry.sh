@@ -26,8 +26,8 @@ cat > "$ev" <<'J'
 {"event":"reap","timestamp":"2026-10-05T11:00:00+00:00","session":"ah_ghost-9","forced":true,"outcome":"unknown"}
 J
 o="$(TELEMETRY_ROOT="$T/r" bash "$HERE/../scripts/telemetry-report.sh")"
-hasre "report-join-light" "$o" 'light +1 +1 +0 +30 +ok=1'
-hasre "report-none-row" "$o" 'none +1 +1 +1 +60 +unknown=1'
+hasre "report-join-light" "$o" 'light +1 +1 +0 +0 +30 +ok=1'
+hasre "report-none-row" "$o" 'none +1 +1 +1 +0 +60 +unknown=1'
 has "report-unmatched" "$o" "unmatched to a spawn: 1"
 
 # A reused name pairs each reap with its own spawn, never a later respawn.
@@ -38,10 +38,26 @@ cat > "$ev" <<'J'
 {"event":"reap","timestamp":"2026-10-05T10:50:00+00:00","session":"ah-r-1","forced":false,"outcome":"failed"}
 J
 o="$(TELEMETRY_ROOT="$T/r" bash "$HERE/../scripts/telemetry-report.sh")"
-hasre "reuse-light" "$o" 'light +1 +1 +0 +10 +ok=1'; hasre "reuse-heavy" "$o" 'heavy +1 +1 +0 +30 +failed=1'
+hasre "reuse-light" "$o" 'light +1 +1 +0 +0 +10 +ok=1'; hasre "reuse-heavy" "$o" 'heavy +1 +1 +0 +0 +30 +failed=1'
+
+# clean fact: only an audited (non-forced) reap says yes; default unknown.
+rec --reap ah_c-1 no ok "" yes; rec --reap ah_c-2 yes ok
+ok "clean-fields" "$(tail -2 "$ev" | grep -o '"clean": "[a-z]*"' | tr '\n' ' ')" '"clean": "yes" "clean": "unknown" '
+
+# --tier-of / --escalate-from: tier lookup across spellings, one tier up, top refused.
+rm -f "$ev"
+cat > "$ev" <<'J'
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"ah_e-1","remote_name":"ah-e-1","routing":{"tier":"light"},"meta":{}}
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"ah_e-2","remote_name":"ah-e-2","routing":{"tier":"heavy"},"meta":{}}
+{"event":"spawn","timestamp":"2026-10-05T10:00:00+00:00","session":"ah_e-3","remote_name":"ah-e-3","meta":{}}
+J
+ok "tier-of-underscore" "$(rec --tier-of ah_e-1)" light; ok "tier-of-hyphen" "$(rec --tier-of ah-e-2)" heavy; ok "tier-of-unknown" "$(rec --tier-of ah_e-3)" ""
 
 # The recorder is bounded: a stuck events file (e.g. a FIFO) must not stall teardown.
 has "recorder-bounded" "$(cat "$HERE/../scripts/session-doctor.sh")" 'timeout 5 bash "$rt" --reap'
+
+# Named reap passes the audit result (clean) to the recorder; forced reaps are never "yes".
+has "reap-passes-clean" "$(cat "$HERE/../scripts/session-doctor.sh")" '"$([ "$FORCE" = yes ] && echo unknown || echo yes)"'
 
 # session-doctor refuses an unknown outcome before touching anything.
 o="$(bash "$HERE/../scripts/session-doctor.sh" reap ah_nope-0001 --outcome bogus 2>&1)"; rc=$?

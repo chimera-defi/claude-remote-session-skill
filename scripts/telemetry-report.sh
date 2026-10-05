@@ -109,9 +109,10 @@ for r in sorted(reaps, key=lambda x: x.get("timestamp") or ""):
         continue
     used.add(id(sp))
     tier = (sp.get("routing") or {}).get("tier") or "none"
-    row = rows.setdefault(tier, {"n": 0, "forced": 0, "life": [], "out": {}})
+    row = rows.setdefault(tier, {"n": 0, "forced": 0, "clean": 0, "life": [], "out": {}})
     row["n"] += 1
     row["forced"] += 1 if r.get("forced") else 0
+    row["clean"] += 1 if r.get("clean") == "yes" else 0
     t0 = ts(sp)
     if t0 and t1: row["life"].append((t1 - t0).total_seconds() / 60)
     o = r.get("outcome", "unknown")
@@ -121,10 +122,10 @@ tiers = {}
 for e in spawns:
     t = (e.get("routing") or {}).get("tier") or "none"
     tiers[t] = tiers.get(t, 0) + 1
-print("by tier (spawned / reaped / forced / median-life-min / outcomes):")
+print("by tier (spawned / reaped / forced / audited-clean / median-life-min / outcomes):")
 for t in sorted(tiers):
-    row = rows.get(t, {"n": 0, "forced": 0, "life": [], "out": {}})
+    row = rows.get(t, {"n": 0, "forced": 0, "clean": 0, "life": [], "out": {}})
     med = f"{statistics.median(row['life']):.0f}" if row["life"] else "-"
     outs = ",".join(f"{k}={v}" for k, v in sorted(row["out"].items())) or "-"
-    print(f"  {t:9} {tiers[t]:4} {row['n']:4} {row['forced']:4} {med:>6}  {outs}")
+    print(f"  {t:9} {tiers[t]:4} {row['n']:4} {row['forced']:4} {row['clean']:4} {med:>6}  {outs}")
 PYEOF
