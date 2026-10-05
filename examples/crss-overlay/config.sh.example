@@ -143,3 +143,8 @@
 # written to it — it is not a hard dependency.
 # Default: empty (the section prints a one-line note and is skipped)
 #CRSS_HEALTH_SNAPSHOT_DIR=/home/youruser/.local/state/server-health/runs
+
+# CRSS_OPUS_MODEL — the one place new-session names "the Opus we pin to": the orchestrator default
+# model and the default advisor both read it. Default claude-opus-5-5. (references/fallback-recipe.md
+# and README.md also name the id and are bumped by hand.)
+#CRSS_OPUS_MODEL=claude-opus-5-5

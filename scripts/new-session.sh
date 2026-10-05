@@ -56,6 +56,10 @@ if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
     CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
   fi
 fi
+# The one place new-session names "the Opus we pin to" (orchestrator default + default advisor);
+# $CRSS_HOME/config.sh overrides it.
+: "${CRSS_OPUS_MODEL:=claude-opus-5-5}"
+
 if [ -z "${CRSS_CODEX_BIN:-}" ]; then
   CRSS_CODEX_BIN="$(command -v codex 2>/dev/null || echo codex)"
 fi
@@ -147,6 +151,9 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
+  --tier <t>          Right-size the spawn: light|standard|heavy -> profile/effort
+                      defaults (see SKILL.md "Choosing a tier"); never Opus.
+  --tier-reason <s>   One line on why; recorded in spawn telemetry.
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
                       verify it landed (reuses session-handoff's send+verify
@@ -172,7 +179,11 @@ Environment:
                                 Set it to override: a bare alias tracks latest,
                                 or pass an exact id (e.g. claude-opus-4-8) to
                                 pin one spawn reproducibly.
-  CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
+  CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort (low|medium|high|xhigh|max). Unset → no flag
+                                (--tier light sets low).
+CLAUDE_SESSION_ADVISOR=<m>    Advisor model for sessions that have the advisor tool.
+                                Default: CRSS_OPUS_MODEL; "none" omits the flag.
+CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 orchestrator).
                                 orchestrator — full built-in tool set; needed for
                                   multi-agent fan-out (Workflow/Agent/…).
@@ -213,6 +224,7 @@ fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
 FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
+TIER_ARG=""; TIER_REASON=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
@@ -220,6 +232,8 @@ while [ $# -gt 0 ]; do
     --set-default-alias) SETDEFAULT_ALIAS=yes; shift ;;
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
+    --tier)      TIER_ARG="${2:?--tier needs a value}"; shift 2 ;;
+    --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
     --task-file) TASK_FILE_ARG="${2:?--task-file needs a value}"; shift 2 ;;
     # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
@@ -242,6 +256,10 @@ esac
 case "$TYPE" in
   auto|workspace|sessions) ;;
   *) echo "new-session: unknown session type '$TYPE' (valid: workspace|sessions|auto) — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
+esac
+case "$TIER_ARG" in
+  ""|light|standard|heavy) ;;
+  *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy)" >&2; exit 2 ;;
 esac
 # The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
 # directory under whatever cwd the start script has. Refuse before any side effect.
@@ -359,18 +377,27 @@ preflight_capacity || exit 1
 if [ "$BACKEND" = claude ]; then
   # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
   # the default model for the spawned Claude session.
-  PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"
+  # --tier picks defaults only (explicit CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win): light = copywriter
+  # (haiku; no effort default, Haiku 4.5 doesn't support it), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
+  # no-tier default or an explicit profile/model. Pinned by tests/test-new-session-tier.sh.
+  [[ "$CRSS_OPUS_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CRSS_OPUS_MODEL='$CRSS_OPUS_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
+  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT="" ;; standard) T_PROFILE=builder; T_EFFORT="" ;;
+    heavy) T_PROFILE=owner; T_EFFORT="" ;; *) T_PROFILE=orchestrator; T_EFFORT="" ;; esac
+  PROFILE="${CLAUDE_SESSION_PROFILE:-$T_PROFILE}"
   case "$PROFILE" in
     orchestrator|owner|hub|builder|copywriter) ;;
-    *) echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|hub|builder|copywriter" >&2
+    *) if [ -n "$TIER_ARG" ]; then echo "new-session: unknown CLAUDE_SESSION_PROFILE='$PROFILE' (valid: orchestrator|owner|hub|builder|copywriter)" >&2; exit 2; fi
+       echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|hub|builder|copywriter" >&2
        PROFILE="orchestrator" ;;
   esac
+  EFFORT="${CLAUDE_SESSION_EFFORT:-$T_EFFORT}"
+  case "$EFFORT" in ""|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
 
   if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
   else
     case "$PROFILE" in
-      orchestrator) MODEL=claude-opus-5-5 ;;
+      orchestrator) MODEL="$CRSS_OPUS_MODEL" ;;
       owner)        MODEL=sonnet ;;
       hub)          MODEL=sonnet ;;
       builder)      MODEL=sonnet ;;
@@ -385,7 +412,7 @@ if [ "$BACKEND" = claude ]; then
     esac
   fi
 else
-  PROFILE=codex
+  PROFILE=codex; EFFORT=""
   MODEL="$(_codex_model_from_args)"
   if [ -n "$MODEL" ]; then
     MODEL_SRC=codex-args
@@ -440,8 +467,16 @@ if [ "$BACKEND" = claude ]; then
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
   esac
+  [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
+  # Default advisor = the pinned Opus, for any session that HAS the advisor tool (not Opus/Fable
+  # themselves). The advisor sees the whole transcript, so on a long session this is Opus spend:
+  # CLAUDE_SESSION_ADVISOR=none (or another model id) changes it.
+  ADVISOR="${CLAUDE_SESSION_ADVISOR:-$CRSS_OPUS_MODEL}"
+  case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
+  [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id or none)" >&2; exit 2; }
+  [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"
 else
-  CLAUDE_EXTRA_FLAGS=""
+  CLAUDE_EXTRA_FLAGS=""; ADVISOR=none
 fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
@@ -596,8 +631,8 @@ CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nCODEX_ARGS=%s\n%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
 
@@ -1035,7 +1070,7 @@ if [ -f "$SPAWN_LOG" ]; then
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" || true
+  "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" || true
 fi
 
 # ── Kickoff task (--task/--task-file) ───────────────────────────────────────
