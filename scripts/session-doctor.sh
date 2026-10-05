@@ -222,7 +222,7 @@ while [ $# -gt 0 ]; do
     --keep-worktree) KEEP_WORKTREE=yes; shift;;
     --dry-run) DRY_RUN=yes; shift;;
     --outcome) OUTCOME="${2:?--outcome needs ok|failed|escalated|abandoned}"; shift 2;;
-    --outcome-note) OUTCOME_NOTE="${2:-}"; shift 2;;
+    --outcome-note) OUTCOME_NOTE="${2:?--outcome-note needs a value}"; shift 2;;
     # An unrecognized --flag must fail closed: a typo'd or assumed flag such as
     # `reap <name> --dry-run` was silently treated as a positional and the reap ran.
     --*) echo "session-doctor: unknown option '$1'" >&2; exit 2;;
@@ -531,7 +531,7 @@ _find_helper() {
 _record_reap_event() {
   local rt
   rt="$(_find_helper record-spawn-telemetry)" || return 0
-  bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" >/dev/null 2>&1 || true
+  timeout 5 bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" >/dev/null 2>&1 || true
 }
 
 # ── worktree-stale / land-check shared helpers ────────────────────────────────
@@ -1449,13 +1449,16 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
   reap-local)
     [ "$FORCE" = yes ] || echo "(DRY-RUN — re-run with --force to actually reap)"
     do_reap() {  # $1=tmux-name-or-empty $2=service $3=start-script
+      local acted=no
       if [ "$FORCE" = yes ]; then
+        { [ -n "$UD" ] && [ -f "$UD/$2" ]; } && acted=yes
+        { [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ]; } && acted=yes
         systemctl --user disable --now "$2" >/dev/null 2>&1 || true
         [ -n "$UD" ] && [ -f "$UD/$2" ] && rm -f "$UD/$2"
         [ -n "$UD" ] && [ -L "$UD/default.target.wants/$2" ] && rm -f "$UD/default.target.wants/$2"
         [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ] && rm -f "$BIN/$3"
-        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null || true
-        _record_reap_event "${2%.service}" yes
+        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null && acted=yes
+        [ "$acted" = yes ] && _record_reap_event "${2%.service}" yes
       fi
     }
     reaped=0
@@ -1972,6 +1975,7 @@ else:
       exit 0
     fi
     torn=no
+    if [ -n "$base" ] && { [ -f "${UD:-/nonexistent}/${base}.service" ] || [ -f "${BIN:-/nonexistent}/${base}-start.sh" ]; }; then torn=yes; fi
     tmux kill-session -t "$NAME" 2>/dev/null \
       && { torn=yes; echo "  tmux session killed: $NAME"; } || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
