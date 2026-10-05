@@ -119,7 +119,7 @@ outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/n
 has "profile-owner"                 "$outw" 'PROFILE=owner'
 has "owner-default-model-sonnet"    "$outw" '^MODEL=sonnet$'
 has "owner-model-src-profile"       "$outw" '^MODEL_SRC=profile-default$'
-has "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+hasre "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections( --effort [a-z]+)?( --advisor [a-z0-9.-]+)?$'
 errw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>&1 1>/dev/null)"
 if grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE' <<<"$errw"; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
 
