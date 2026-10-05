@@ -35,6 +35,26 @@
 # — inspect it before retrying).
 set -uo pipefail
 
+# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
+# control retain their existing behavior. No provider/model fallback here.
+_crss_admit() {
+  local helper_dir helper
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
+    helper="$helper_dir/autonomous-admission.sh"
+  else
+    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
+  fi
+  bash "$helper" "$@"
+}
+_admission_read_only=0
+for _admission_arg in "$@"; do
+  case "$_admission_arg" in --dry-run|--help|-h) _admission_read_only=1;; esac
+done
+if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$_admission_read_only" = 0 ]; then
+  _crss_admit restart "${CRSS_ADMISSION_SUBJECT:-${1:-unknown}}" >&2 || exit 2
+fi
+
 # ── Host-local overlay config ────────────────────────────────────────────────
 # See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
 # for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
@@ -385,6 +405,12 @@ PY
 fi
 
 mkdir -p "$(dirname "$PIN")" && printf '%s\n' "$UUID" > "$PIN" || { echo "session-resume: cannot write $PIN" >&2; exit 1; }
+# A human resume gets one exact-UUID launch on the generated script; automatic
+# relaunches cannot reuse the intent once consumed. Older scripts ignore it.
+MANUAL_LAUNCH="$(field MANUAL_LAUNCH)" || MANUAL_LAUNCH=""
+if [ "${CRSS_AUTONOMOUS:-0}" != 1 ] && [ -n "$MANUAL_LAUNCH" ]; then
+  printf '%s\n' "$UUID" > "$MANUAL_LAUNCH" || { echo "session-resume: cannot record manual launch intent" >&2; exit 1; }
+fi
 say "pin:          $PIN"
 systemctl --user reset-failed "$UNIT" 2>/dev/null || true
 systemctl --user enable "$UNIT" || { echo "session-resume: enable $UNIT failed" >&2; exit 1; }

@@ -277,14 +277,14 @@ has "cli-sweep-dryrun-would-compact" "$outd" "would-compact: readysess"
 has "cli-sweep-dryrun-pane-check-happened" "$(cat "$STUB_LOG")" "ready readysess"
 hasnt "cli-sweep-dryrun-no-send" "$(cat "$STUB_LOG")" "send"
 
-# --- sweep --apply actually compacts an eligible row + writes a marker -----
+# --- autonomous sweep --apply refuses before paste without admission -----
 : > "$STUB_LOG"
 STUB_BUSY_POLLS=1
-outa="$(_run sweep --apply --timeout 20)"; rca=$?
+outa="$(_run sweep --apply --timeout 20 2>&1)"; rca=$?
 ok  "cli-sweep-apply-exit0" "$rca" "0"
-has "cli-sweep-apply-compacted" "$outa" "compacted: readysess"
-has "cli-sweep-apply-sent-compact" "$(cat "$STUB_LOG")" "send readysess /compact"
-has "cli-sweep-apply-marker-written" "$(cat "$CLI_HOME/.sessions/compact-markers/readysess.json" 2>&1)" '"result": "compacted"'
+has "cli-sweep-apply-admission-denied" "$outa" "admission-denied"
+hasnt "cli-sweep-apply-no-compact" "$(cat "$STUB_LOG")" "send readysess /compact"
+nofile "cli-sweep-apply-no-marker" "$CLI_HOME/.sessions/compact-markers/readysess.json"
 STUB_BUSY_POLLS=0
 
 # --- both flags at once: still rejected --------------------------------------
