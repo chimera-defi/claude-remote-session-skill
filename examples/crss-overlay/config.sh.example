@@ -148,3 +148,11 @@
 # model and the default advisor both read it. Default claude-opus-5-5. (references/fallback-recipe.md
 # and README.md also name the id and are bumped by hand.)
 #CRSS_OPUS_MODEL=claude-opus-5-5
+
+# CRSS_COMPACT_WINDOW_{LIGHT,STANDARD,HEAVY} — per-tier auto-compact window (tokens) that new-session
+# --tier exports as CLAUDE_CODE_AUTO_COMPACT_WINDOW in the launch environment of the spawned claude
+# (the only place that overrides a settings.json `env` value; see references/troubleshooting.md).
+# Empty/unset = export nothing = the host's own default. Per-spawn override:
+# CLAUDE_SESSION_COMPACT_WINDOW=<n|host>. Range 100000..2000000. New spawns only.
+# Default: (empty)
+#CRSS_COMPACT_WINDOW_HEAVY=600000
