@@ -144,6 +144,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` win over the tier, one value at a time.
   No tier sets effort; pass `CLAUDE_SESSION_EFFORT` explicitly (Sonnet/Opus only).
+  Auto-compact window is per tier too: overlay `CRSS_COMPACT_WINDOW_<TIER>` (per spawn `CLAUDE_SESSION_COMPACT_WINDOW=<n|host>`); empty = host default. See `references/troubleshooting.md` (Precedence).
 - **Advisor.** Every session that has the advisor tool (Sonnet/Haiku, with or without `--tier`) gets
   `--advisor $CRSS_OPUS_MODEL`; `CLAUDE_SESSION_ADVISOR=<model>|none` overrides. `CRSS_OPUS_MODEL`
   (overlay `config.sh`) is the one place `new-session` takes the Opus id from; `references/fallback-recipe.md`
