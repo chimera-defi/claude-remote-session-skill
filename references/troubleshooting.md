@@ -37,10 +37,10 @@ measurements and managed-orchestrator exceptions: [`docs/session-compaction.md`]
 in `claude --help` on 2.1.285). `autoCompactEnabled` and `autoCompactWindow` are real
 `settings.json`-schema fields. Evidence:
 
-- `autoCompactWindow` is causally confirmed: `claude -p ... --settings '{"autoCompactWindow": N}'`
-  gave the same `effectiveWindow` in `-d config,settings,compact --debug-file <f>` output as
-  the `--autocompact N` flag (`N=105000` -> `85000`; `N=500000` -> `180000`, clamped to the
-  200k model window, both ways).
+- `autoCompactWindow` is causally confirmed for a plain host: `claude -p ... --settings '{"autoCompactWindow": N}'`
+  gave the same `effectiveWindow` in `-d config,settings,compact --debug-file <f>` output as the
+  `--autocompact N` flag (`N=105000` -> `85000`). The clamp is the model's context window (200k
+  for older models; Sonnet 5.5 reports 1M, so `N=500000` is no longer clamped).
 - `autoCompactEnabled` sits in the same schema object as `autoCompactWindow` (both on the same
   ~118KB minified schema line, ~12.4KB apart, no object boundary between), not in the global
   `~/.claude.json` preferences schema. Its `.describe()`: "Automatically compact conversation
@@ -49,11 +49,23 @@ in `claude --help` on 2.1.285). `autoCompactEnabled` and `autoCompactWindow` are
   run): strong but not causally confirmed.
 
 Other controls: launch flag `--autocompact <auto|tokens>`, in-session `/autocompact` and
-`/config`, env `CLAUDE_CODE_DISABLE_1M_CONTEXT`. The window scales with model context (Sonnet 5
-on 1M auto-compacts near ~967K), so a session at 200-300k uncompacted tokens is not evidence
-it's broken. There is no `new-session` flag to make it more aggressive; compact-before-relay is
-the lever for proactive cost control. Lesson: verify a specific claim yourself before
-repeating it, in either direction.
+`/config`, env `CLAUDE_CODE_DISABLE_1M_CONTEXT`. A session at 200-300k uncompacted tokens is
+not evidence it's broken.
+
+**Precedence (CLI 2.1.287, probed with `claude -p ok --model claude-sonnet-5-5 -d config,settings,compact
+--debug-file <f>` and `grep effectiveWindow <f>`):** if the host's `~/.claude/settings.json`
+`env` sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then `--autocompact`, `--settings '{"env":...}'` and
+`--settings '{"autoCompactWindow":...}'` are all ignored. Only the same variable exported in the
+launch environment wins (host 300000 -> `effectiveWindow=280000`; launch export 600000 ->
+`580000`). `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=P` makes the compact trigger `min(floor(effectiveWindow*P/100),
+effectiveWindow-13000)` tokens (read from the 2.1.287 binary), so P=70 means ~196k at a 300000
+window and ~406k at 600000. `new-session` now sets the window per tier from the overlay
+(`CRSS_COMPACT_WINDOW_<TIER>`, per-spawn `CLAUDE_SESSION_COMPACT_WINDOW`); see
+`scripts/new-session.sh`, pinned by `tests/test-new-session-compact-window.sh`, and
+`examples/crss-overlay/config.sh.example`. It affects new spawns only. A larger window is not
+free: every advisor call forwards the whole transcript and cache reads scale with context, so
+keep durable TASKS/DECISIONS files and call advisor while context is small. Lesson: verify a
+specific claim yourself before repeating it, in either direction.
 
 ## Preserve before reaping (recycling a bloated session)
 

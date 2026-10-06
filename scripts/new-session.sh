@@ -182,6 +182,10 @@ Environment:
                                 pin one spawn reproducibly.
   CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort (low|medium|high|xhigh|max). Unset → no flag
                                 (no tier sets it).
+  CLAUDE_SESSION_COMPACT_WINDOW=<n|host>
+                                Auto-compact window (tokens) exported to claude at launch.
+                                Unset → the tier's CRSS_COMPACT_WINDOW_{LIGHT,STANDARD,HEAVY}
+                                overlay value, else nothing (host default). "host" forces nothing.
 CLAUDE_SESSION_ADVISOR=<m>    Advisor model for sessions that have the advisor tool.
                                 Default: CRSS_OPUS_MODEL; "none" omits the flag.
 CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
@@ -479,7 +483,24 @@ if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
   HUB_CONSULT_PROMPT='Autonomous bounded session: no child agents, advisor fanout, compaction, polling or self-restarts. Finish one finite task, record its result and stop. Operator judgment requires a separately admitted frozen packet.'
   CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --disallowedTools Agent"
 fi
+COMPACT_WINDOW=""
 if [ "$BACKEND" = claude ]; then
+  # Auto-compact window: per-spawn CLAUDE_SESSION_COMPACT_WINDOW=<n|host> wins, else the tier's
+  # CRSS_COMPACT_WINDOW_<TIER> overlay value; empty/"host" = export nothing (host settings.json
+  # default). Only a launch-environment export reaches claude; see references/troubleshooting.md.
+  if [ -n "${CLAUDE_SESSION_COMPACT_WINDOW:-}" ]; then
+    COMPACT_WINDOW="$CLAUDE_SESSION_COMPACT_WINDOW"
+  elif [ -n "$TIER_ARG" ]; then
+    _cw_var="CRSS_COMPACT_WINDOW_$(printf '%s' "$TIER_ARG" | tr '[:lower:]' '[:upper:]')"
+    COMPACT_WINDOW="${!_cw_var:-}"
+  fi
+  [ "$COMPACT_WINDOW" != host ] || COMPACT_WINDOW=""
+  case "$COMPACT_WINDOW" in
+    "") ;;
+    *[!0-9]*) echo "new-session: compact window '$COMPACT_WINDOW' invalid (an integer token count in 100000..2000000, or 'host')" >&2; exit 2 ;;
+    *) if [ "$COMPACT_WINDOW" -lt 100000 ] || [ "$COMPACT_WINDOW" -gt 2000000 ]; then
+         echo "new-session: compact window '$COMPACT_WINDOW' out of range (100000..2000000, or 'host')" >&2; exit 2; fi ;;
+  esac
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
@@ -648,8 +669,8 @@ CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
 if [ "$DRYRUN" = yes ]; then
-  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
-    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
+  printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
+    "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   exit 0
 fi
 
@@ -809,7 +830,8 @@ SCRIPT_EOF
 #                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
   cat >> "$SCRIPT" << SCRIPT_EOF
-tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
+${COMPACT_WINDOW:+tmux send-keys -t "${SESSION}" 'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=$COMPACT_WINDOW' Enter
+}tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
@@ -1087,7 +1109,7 @@ if [ -f "$SPAWN_LOG" ]; then
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  CRSS_ESCALATED_FROM="$ESCALATE_FROM" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" || true
+  CRSS_ESCALATED_FROM="$ESCALATE_FROM" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" "$COMPACT_WINDOW" || true
 fi
 
 # ── Kickoff task (--task/--task-file) ───────────────────────────────────────
