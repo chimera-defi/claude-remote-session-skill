@@ -3,7 +3,7 @@
 # artifacts/telemetry/events.jsonl. Best-effort: never exits non-zero, so a
 # caller running under `set -e` can safely skip checking its result.
 #
-# Usage: record-spawn-telemetry.sh <foldername> <alias> <remote_name> <session> <type> <model> <workdir> [tier] [effort] [tier_reason]
+# Usage: record-spawn-telemetry.sh <foldername> <alias> <remote_name> <session> <type> <model> <workdir> [tier] [effort] [tier_reason] [compact_window]
 #        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note] [clean:yes|no|unknown]
 #        record-spawn-telemetry.sh --tier-of <session>   # prints the tier of its latest spawn, else nothing
 #   --reap appends a teardown event (called by session-doctor) through this same
@@ -47,7 +47,7 @@ _crss_load_config
 : "${CRSS_WORKSPACE:=$HOME/workspace}"
 
 FOLDERNAME="${1:-}"; ALIAS="${2:-}"; REMOTE_NAME="${3:-}"; SESSION="${4:-}"; TYPE="${5:-}"; MODEL="${6:-}"; WORKDIR="${7:-}"
-TIER="${8:-}"; EFFORT="${9:-}"; TIER_REASON="${10:-}"
+TIER="${8:-}"; EFFORT="${9:-}"; TIER_REASON="${10:-}"; COMPACT_WINDOW="${11:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # This script is deployed as a flat copy to ~/.local/bin (see SKILL.md — "Scripts
@@ -131,11 +131,11 @@ fi
 
 mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
 
-python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" "${CRSS_ESCALATED_FROM:-}" <<'PYEOF' 2>/dev/null || exit 0
+python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" "${CRSS_ESCALATED_FROM:-}" "$COMPACT_WINDOW" <<'PYEOF' 2>/dev/null || exit 0
 import json, sys, datetime
 
 (events_file, foldername, alias, remote_name, session, typ, model, workdir,
- skills_count, skills_bytes, claude_md_bytes, tier, effort, tier_reason, escalated_from) = sys.argv[1:16]
+ skills_count, skills_bytes, claude_md_bytes, tier, effort, tier_reason, escalated_from, compact_window) = sys.argv[1:17]
 
 payload = {
     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -154,8 +154,10 @@ payload = {
         "claude_md_bytes": int(claude_md_bytes or 0),
     },
 }
-if tier or effort:
+if tier or effort or compact_window:
     payload["routing"] = {"tier": tier, "effort": effort, "reason": tier_reason[:200]}
+    if compact_window:
+        payload["routing"]["compact_window"] = compact_window
     if escalated_from:
         payload["routing"]["escalated_from"] = escalated_from[:100]
 with open(events_file, "a", encoding="utf-8") as fh:
