@@ -124,6 +124,20 @@ cat <<SCRIPT_EOF
         p=self.run_shell(helper+source[start:end]+'\n_do_compact fake 1')
         self.assertNotEqual(p.returncode,0); self.assertIn('admission-denied',p.stdout); self.assertEqual(self.calls(),'')
 
+    def test_denial_is_logged_to_starts_log(self):
+        helper=str(ROOT/'scripts/autonomous-admission.sh'); log=self.home/'.sessions/session-starts.log'
+        p=self.run_shell(f'bash {helper} launch subj-a')
+        self.assertEqual(p.returncode,2); self.assertIn('DENY',p.stdout)
+        self.assertRegex(log.read_text(),r'event=admission-denied action=launch subject=subj-a rc=2')
+        q=self.run_shell(f'bash {helper} wake subj-b',AGENT_HOST_ADMISSION_CLI='')
+        self.assertEqual(q.returncode,2); self.assertIn('authority unavailable',q.stderr)
+        self.assertIn('action=wake subject=subj-b rc=2',log.read_text())
+    def test_allow_writes_no_denial_line(self):
+        (self.bin/'ok.py').write_text('import sys\nprint("{}")\n')
+        helper=str(ROOT/'scripts/autonomous-admission.sh')
+        p=self.run_shell(f'bash {helper} launch s',AGENT_HOST_ADMISSION_CLI=str(self.bin/'ok.py'))
+        self.assertEqual(p.returncode,0); self.assertFalse((self.home/'.sessions/session-starts.log').exists())
+
     def test_invalid_admission_config_preserves_manual_launch_only(self):
         self.env['AGENT_HOST_ADMISSION_CLI']='/tmp/invalid authority.py'
         self.env['CRSS_ADMISSION_SUBJECT']="invalid subject"
