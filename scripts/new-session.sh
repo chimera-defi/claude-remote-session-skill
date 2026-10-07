@@ -771,7 +771,7 @@ mkdir -p "\$RUNDIR/.claude"
 # committed .claude/skills/ on every spawn.)
 if [ -L "\$RUNDIR/.claude/skills" ] || [ ! -e "\$RUNDIR/.claude/skills" ]; then
   rm -f "\$RUNDIR/.claude/skills"
-  ln -sf ${CRSS_CLAUDE_HOME}/skills "\$RUNDIR/.claude/skills"
+  ln -sfn ${CRSS_CLAUDE_HOME}/skills "\$RUNDIR/.claude/skills"
 else
   echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION note=preserving project .claude/skills (real dir; not clobbering global catalog over it)" | tee -a "\$LOG_FILE"
 fi
