@@ -10,7 +10,12 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run] [--outcome ok|failed|escalated|abandoned] [--outcome-note <s>]
+#   MIN-AGE GATE: reap, reap-local (dead tmux only; orphan units have nothing alive) and reap-merged
+#                                           # refuse any session younger than CRSS_REAP_MIN_AGE_H hours (default 24, 0
+#                                           # disables; age = first spawn in session-starts.log via session-registry
+#                                           # --first-seen). Override: `reap <name> --allow-young` or the env var.
+#                                           # --force does NOT bypass it. See _reap_age_gate; tests/test-reap-min-age.sh.
+#   session-doctor.sh reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run] [--outcome ok|failed|escalated|abandoned] [--outcome-note <s>]
 #                                           # one-shot teardown of a named ALIVE session (tmux+unit);
 #                                           # refuses on unlanded work unless --force; also deletes
 #                                           # that session's registry entry (by title == base name)
@@ -204,6 +209,7 @@ MODE="${1:-report}"; shift || true
 # with --days — see the DAYS_SET/MINUTES_SET check below.
 case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
+ALLOW_YOUNG=no
 TSV=no
 APPLY=no
 KEEP_REGISTRY=no
@@ -227,6 +233,7 @@ while [ $# -gt 0 ]; do
     --idle-min) IDLE_MIN="${2:-}"; shift 2;;
     --tsv) TSV=yes; shift;;
     --force) FORCE=yes; shift;;
+    --allow-young) ALLOW_YOUNG=yes; shift;;
     --apply) APPLY=yes; shift;;
     --keep-registry) KEEP_REGISTRY=yes; shift;;
     --keep-worktree) KEEP_WORKTREE=yes; shift;;
@@ -241,6 +248,18 @@ while [ $# -gt 0 ]; do
 done
 set -- "${ARGS[@]}"
 case "$OUTCOME" in ""|ok|failed|escalated|abandoned) ;; *) echo "session-doctor: --outcome must be ok|failed|escalated|abandoned (got '$OUTCOME')" >&2; exit 2;; esac
+if [ "$ALLOW_YOUNG" = yes ]; then
+  case "$MODE" in reap|reap-local|reap-merged) ;; *) echo "session-doctor: --allow-young is not supported for $MODE" >&2; exit 2;; esac
+fi
+# CRSS_REAP_MIN_AGE_H: fail closed on a malformed value (an empty/garbage floor must not silently disable the gate).
+REAP_MIN_AGE_H="${CRSS_REAP_MIN_AGE_H:-24}"
+case "$REAP_MIN_AGE_H" in
+  ''|*[!0-9]*) echo "session-doctor: CRSS_REAP_MIN_AGE_H must be a non-negative integer (hours), got '$REAP_MIN_AGE_H'" >&2; exit 2;;
+esac
+# Bound BEFORE arithmetic: a huge digit string wraps (2^64 -> 0 disables the gate) or goes negative.
+[ "${#REAP_MIN_AGE_H}" -le 9 ] && [ "$((10#$REAP_MIN_AGE_H))" -le 8760 ] || { echo "session-doctor: CRSS_REAP_MIN_AGE_H must be <= 8760 hours, got '$REAP_MIN_AGE_H'" >&2; exit 2; }
+REAP_MIN_AGE_H=$((10#$REAP_MIN_AGE_H))
+AY_FLAG=""; [ "$ALLOW_YOUNG" = yes ] && AY_FLAG=--allow-young   # forwarded to reap-merged's `reap` subprocesses
 # --dry-run is only accepted where it is honored: reap (preview) and the two
 # modes that are already dry by default. Anywhere else (e.g. archive-ignored,
 # which writes under ~/backups) it would be silently ignored, so refuse it.
@@ -1477,6 +1496,30 @@ _rm_gh_prs() {
   (cd "$1" && timeout 30 gh pr list --state "$2" --head "$3" --json number,headRefOid --limit 30 2>/dev/null)
 }
 
+# _reap_age_gate <tmux-session> — minimum-age gate for every auto/explicit reap of a LIVE session. Returns 0 if
+# the reap may proceed, 1 (message in REAP_AGE_MSG) if the session is younger than CRSS_REAP_MIN_AGE_H hours or its
+# age is unknown. Age = first-ever spawn time, read through `session-registry --first-seen` (same session-starts.log
+# source as `session-registry --older-than`). Bypass: CRSS_REAP_MIN_AGE_H=0 or --allow-young; --force deliberately
+# does NOT bypass (it is about unlanded work, a different concern). Tests: tests/test-reap-min-age.sh.
+REAP_AGE_MSG=""
+_reap_age_gate() {
+  local name="$1" sr start age_s min_s
+  REAP_AGE_MSG=""
+  [ "$REAP_MIN_AGE_H" -gt 0 ] || return 0
+  [ "$ALLOW_YOUNG" = yes ] && return 0
+  min_s=$((REAP_MIN_AGE_H * 3600))
+  sr="$(_find_helper session-registry)" && start="$(bash "$sr" --first-seen "$name" 2>/dev/null)" || start=""
+  case "$start" in ''|*[!0-9]*)
+    REAP_AGE_MSG="age unknown (no spawn record in session-starts.log), use --allow-young or CRSS_REAP_MIN_AGE_H=0"; return 1;;
+  esac
+  age_s=$(( $(date -u +%s) - start ))
+  if [ "$age_s" -lt "$min_s" ]; then
+    REAP_AGE_MSG="age $((age_s / 3600))h$(( (age_s % 3600) / 60 ))m < minimum ${REAP_MIN_AGE_H}h; override with --allow-young or CRSS_REAP_MIN_AGE_H=0 (--force does not bypass)"
+    return 1
+  fi
+  return 0
+}
+
 # _reap_merged_check <tmux-session> — sets RM_VERDICT=candidate|skipped and RM_REASON. Checks run
 # cheapest/safest first; every unknown (gh failure, missing signal) is a skip, never a candidate.
 # The final gate is `reap <name> --dry-run` (session-preserve audit) run as a subprocess because
@@ -1492,6 +1535,7 @@ _reap_merged_check() {
     me="$(tmux display-message -p '#S' 2>/dev/null)"
     [ "$me" = "$name" ] && { RM_REASON="caller's own session"; return; }
   fi
+  _reap_age_gate "$name" || { RM_REASON="min-age gate: $REAP_AGE_MSG"; return; }
   cwd="$(tmux display-message -p -t "$name" '#{pane_current_path}' 2>/dev/null)"
   [ -n "$cwd" ] || { RM_REASON="no pane cwd"; return; }
   case "$cwd" in "$HOME/.claude/worktrees/"*) ;; *) RM_REASON="not in a crss worktree"; return ;; esac
@@ -1516,7 +1560,7 @@ for p in json.load(sys.stdin):
   [ "$idle" -ge "$IDLE_MIN" ] || { RM_REASON="active ${idle}m ago (< ${IDLE_MIN}m)"; return; }
   _rm_pane_state "$name"
   [ "$RM_PANE" = ok ] || { RM_REASON="$RM_PANE_WHY"; return; }
-  out="$(bash "${BASH_SOURCE[0]}" reap "$name" --dry-run 2>&1)"; rc=$?
+  out="$(bash "${BASH_SOURCE[0]}" reap "$name" --dry-run $AY_FLAG 2>&1)"; rc=$?
   if [ "$rc" -ne 0 ]; then
     RM_REASON="reap audit refused: $(grep -iE -m1 'REFUSING|unlanded|uncommitted|NOT-SAFE' <<<"$out" | cut -c1-100)"; return
   fi
@@ -1573,7 +1617,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         [ -n "$UD" ] && [ -f "$UD/$2" ] && rm -f "$UD/$2"
         [ -n "$UD" ] && [ -L "$UD/default.target.wants/$2" ] && rm -f "$UD/default.target.wants/$2"
         [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ] && rm -f "$BIN/$3"
-        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null && acted=yes
+        [ -n "$1" ] && tmux kill-session -t "=$1" 2>/dev/null && acted=yes
         [ "$acted" = yes ] && _record_reap_event "${2%.service}" yes
       fi
     }
@@ -1583,6 +1627,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       grep -qiE "$PROTECT" <<<"$s" && continue
       base="$(tmux_to_base "$s")"; [ -z "$base" ] && continue   # not ours (e.g. codexhost_) → leave it
       proc_alive "$s" && continue                                # alive → keep
+      if ! _reap_age_gate "$s"; then
+        echo "SKIPPED young/unknown-age dead tmux: $s — $REAP_AGE_MSG"; continue
+      fi
       echo "DEAD tmux (no claude proc): $s"
       do_reap "$s" "${base}.service" "${base}-start.sh"
       reaped=$((reaped+1))
@@ -2049,7 +2096,7 @@ else:
       if [ "$APPLY" != yes ]; then
         printf 'candidate  %s  %s\n' "$rm_s" "$RM_REASON"; continue
       fi
-      if rm_out="$(bash "${BASH_SOURCE[0]}" reap "$rm_s" --outcome "${OUTCOME:-ok}" --outcome-note "$RM_REASON" 2>&1)"; then
+      if rm_out="$(bash "${BASH_SOURCE[0]}" reap "$rm_s" $AY_FLAG --outcome "${OUTCOME:-ok}" --outcome-note "$RM_REASON" 2>&1)"; then
         # reap soft-fails its worktree step (kept, never an error); surface that instead of hiding it
         printf 'reaped     %s  %s%s\n' "$rm_s" "$RM_REASON" "$(grep -iE -m1 'worktree.*(kept|refus)|kept' <<<"$rm_out" | sed -E 's/^ +/ -- /')"
       else
@@ -2067,6 +2114,11 @@ else:
     # installed systemd unit does not fail the rest of the teardown.
     NAME="${1:?usage: session-doctor.sh reap <tmux-session> [--force]}"
     grep -qiE "$PROTECT" <<<"$NAME" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
+    # Min-age gate (before any audit or mutation, also under --dry-run). --force does not bypass.
+    if ! _reap_age_gate "$NAME"; then
+      echo "session-doctor: REFUSING to reap '$NAME' — $REAP_AGE_MSG" >&2
+      exit 1
+    fi
     # Safety gate: refuse a session with unlanded/uncommitted work unless
     # --force. Reuses session-preserve.sh's own audit (exit 0 = safe to reap)
     # rather than re-deriving dirty/unpushed/reachability logic here. If the
@@ -2095,7 +2147,7 @@ else:
     # before the first mutation. No registry call: the preview stays offline.
     if [ "$DRY_RUN" = yes ]; then
       echo "(DRY-RUN — nothing changed; re-run without --dry-run to reap)"
-      if tmux has-session -t "$NAME" 2>/dev/null; then
+      if tmux has-session -t "=$NAME" 2>/dev/null; then
         echo "  would kill tmux session: $NAME"
       else
         echo "  no live tmux session '$NAME' (ok)"
@@ -2119,7 +2171,7 @@ else:
     fi
     torn=no
     if [ -n "$base" ] && { [ -f "${UD:-/nonexistent}/${base}.service" ] || [ -f "${BIN:-/nonexistent}/${base}-start.sh" ]; }; then torn=yes; fi
-    tmux kill-session -t "$NAME" 2>/dev/null \
+    tmux kill-session -t "=$NAME" 2>/dev/null \
       && { torn=yes; echo "  tmux session killed: $NAME"; } || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
       _REAP_ARCHIVE_DIR=""

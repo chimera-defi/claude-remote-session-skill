@@ -6,6 +6,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 isolate_overlay
+export CRSS_REAP_MIN_AGE_H=0   # min-age gate is pinned in tests/test-reap-min-age.sh; this suite tests other reap behavior
 # Fixture shape: configured prefix "px", legacy "oldhost".
 export CRSS_SESSION_PREFIX=px
 export CRSS_LEGACY_PREFIXES=oldhost
