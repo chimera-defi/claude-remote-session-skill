@@ -181,7 +181,7 @@ Environment:
                                 or pass an exact id (e.g. claude-opus-4-8) to
                                 pin one spawn reproducibly.
   CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort (low|medium|high|xhigh|max). Unset → no flag
-                                (no tier sets it).
+                                (--tier standard sets low).
   CLAUDE_SESSION_COMPACT_WINDOW=<n|host>
                                 Auto-compact window (tokens) exported to claude at launch.
                                 Unset → the tier's CRSS_COMPACT_WINDOW_{LIGHT,STANDARD,HEAVY}
@@ -402,7 +402,7 @@ if [ "$BACKEND" = claude ]; then
   # (haiku; no effort default, Haiku 4.5 doesn't support it), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
   # no-tier default or an explicit profile/model. Pinned by tests/test-new-session-tier.sh.
   [[ "$CRSS_OPUS_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CRSS_OPUS_MODEL='$CRSS_OPUS_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
-  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT="" ;; standard) T_PROFILE=builder; T_EFFORT="" ;;
+  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT="" ;; standard) T_PROFILE=builder; T_EFFORT=low ;;
     heavy) T_PROFILE=owner; T_EFFORT="" ;; *) T_PROFILE=orchestrator; T_EFFORT="" ;; esac
   PROFILE="${CLAUDE_SESSION_PROFILE:-$T_PROFILE}"
   case "$PROFILE" in
