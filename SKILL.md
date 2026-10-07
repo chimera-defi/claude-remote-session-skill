@@ -283,6 +283,7 @@ a broken repo.
 | Recycle a bloated session | `session-preserve <s> --rescue --wip` → must print `SAFE-TO-REAP` | then stop the unit and respawn; **never reap before this** |
 | Session went silent | `tmux capture-pane -p -t <s>` | bloat vs. hook wedge vs. stuck menu — see runbooks |
 | Clean up stale registry entries | `session-doctor registry-prune [--days N] [--apply]` | dry-run by default; `reap <name>` also prunes its own entry unless `--keep-registry` |
+| Reap sessions whose PR already merged | `session-doctor reap-merged [--apply] [--idle-min N]` | dry-run by default, one candidate/skipped line each; `--apply` runs plain `reap` only (never `--force`); rules in `_reap_merged_check`, pinned by `tests/test-reap-merged.sh` |
 | Clean up a reaped session's leftover worktree | `session-doctor worktree-stale` | only for one NOT already handled — `reap <name>` removes its own worktree (`--keep-worktree` to skip) |
 
 Both: `references/session-lifecycle.md`. Host-specific ops tooling lives outside this repo.
