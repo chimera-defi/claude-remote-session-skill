@@ -67,8 +67,8 @@ cat > "$TR/artifacts/telemetry/events.jsonl" <<'J'
 J
 o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_l-1)"; hasre "esc-light-to-standard" "$o" '^TIER=standard$'
 o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px-s-1)"; hasre "esc-standard-to-heavy" "$o" '^TIER=heavy$'
-o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_h-1)"; has "esc-heavy-refused" "$o" "already ran at tier heavy"
-o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_n-1)"; has "esc-unknown-refused" "$o" "no recorded tier"
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_h-1)"; has "esc-heavy-to-opus" "$o" "escalating past it to Opus"; hasre "esc-heavy-opus-profile" "$o" '^PROFILE=orchestrator$'
+o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_n-1)"; has "esc-unknown-assumes-standard" "$o" "assuming standard"; hasre "esc-unknown-heavy" "$o" '^TIER=heavy$'
 o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_l-1 --tier heavy)"; hasre "esc-explicit-wins" "$o" '^TIER=heavy$'
 rm -rf "$TR"
 
