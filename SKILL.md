@@ -124,7 +124,7 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   reviewer goes first (for example a cheaper strong model), which gives a different-family
   cross-check, and which expensive reviewer goes last. Whatever the order, a review that gates
   a merge or an operator-facing decision never rests on a single model family; if only one
-  family is available, pause and report rather than approving on one family's say-so. An
+  family is available, merge anyway and record `models_ran` in the PR body. An
   orchestrator's own sanity check (the Fable bullet above) is not that review.
 
 ## Choosing a tier (right-size the model, save quota)
@@ -160,7 +160,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
   ok|failed|escalated|abandoned [--outcome-note "..."]` (default `unknown`; the idle reaper cannot say, so its
   events stay `unknown`). If a `light`/`standard` session misses its finish line, reap it with `--outcome
   escalated`, then `new-session <folder> --escalate-from <name> --task-file <path>` respawns one tier up
-  (explicit `--tier` wins; `heavy` and untiered sessions are refused) with the failure in the kickoff. You
+  (explicit `--tier` wins; a `heavy` source escalates to Opus, an untiered one is assumed `standard`) with the failure in the kickoff. You
   initiate it; nothing escalates on its own.
 - **Wide or multi-faceted work** (many independent slices, or a change that needs adversarial review): plan
   first, then fan out. That needs `Workflow` (only `heavy`/owner/orchestrator sessions have it, and only on an
