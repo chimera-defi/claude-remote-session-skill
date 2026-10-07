@@ -57,8 +57,9 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
-session-doctor reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run]
-                                       # teardown (tmux + unit) + registry entry + worktree
+session-doctor reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run]
+                                       # teardown (tmux + unit) + registry entry + worktree; refuses young sessions
+                                       # (CRSS_REAP_MIN_AGE_H, default 24h; see _reap_age_gate, tests/test-reap-min-age.sh)
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
                                        # bring a DEAD session back on its own unit + transcript
