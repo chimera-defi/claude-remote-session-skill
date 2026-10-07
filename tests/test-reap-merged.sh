@@ -14,6 +14,7 @@ mkdir -p "$HOME/.local/bin" "$HOME/.claude/worktrees" "$HOME/.config/systemd/use
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.com
 isolate_overlay
+export CRSS_REAP_MIN_AGE_H=0   # min-age gate is pinned in tests/test-reap-min-age.sh; this suite tests other reap behavior
 export CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost CRSS_PROTECT_NAMES='px_keep'
 export TMUX_TMPDIR="$T/no-tmux-here"; mkdir -p "$TMUX_TMPDIR"
 export FIX
@@ -156,7 +157,7 @@ outa="$(FAKE_SELF=px_self-0101-0900 TMUX=/fake bash "$DOCTOR" reap-merged --appl
 ok "apply-rc" "$rca" 0
 hasre "apply-ok-reaped" "$(grep -E "^reaped +px_ok-0101-0900" <<<"$outa")" 'merged PR #'
 hasre "apply-ghost-reaped" "$(grep -E "^reaped +px_ghost-0101-0900" <<<"$outa")" 'reaped'
-ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t px_ghost-0101-0900 tmux kill-session -t px_ok-0101-0900 "
+ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t =px_ghost-0101-0900 tmux kill-session -t =px_ok-0101-0900 "
 nodir "apply-ok-worktree-removed" "$HOME/.claude/worktrees/px-ok-0101-0900"
 ok "apply-branch-kept" "$(yn git -C "$T/repo" show-ref --verify --quiet refs/heads/session/px-ok-0101-0900)" yes
 for keep in px-desk-0101-0900 px-open-0101-0900 px-busy-0101-0900 px-typed-0101-0900 px-active-0101-0900 px-dirty-0101-0900 px-audit-0101-0900; do
