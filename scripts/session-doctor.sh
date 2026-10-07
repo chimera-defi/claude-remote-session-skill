@@ -23,6 +23,14 @@
 #                                           # own cwd, primary checkout) that make this safe.
 #                                           # --dry-run runs the same refusal checks, then prints
 #                                           # what would be torn down and changes nothing
+#   session-doctor.sh reap-merged [--apply] [--idle-min N] [--outcome ok]
+#                                           # DRY-RUN by default: one candidate/skipped line per live session.
+#                                           # A candidate has a MERGED PR whose head == the worktree's HEAD
+#                                           # (gh merge record, never patch-ids), no open PR, an idle pane
+#                                           # >= N min (default 120) with no busy marker or typed input, and
+#                                           # a passing `reap <name> --dry-run` audit. --apply runs only that
+#                                           # plain `reap` (never --force, never deletes a branch). Rules
+#                                           # live in _reap_merged_check; tests/test-reap-merged.sh pins them.
 #   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
 #   session-doctor.sh registry-prune [--days N] [--apply]
 #                                           # same candidate set as registry-stale; DRY-RUN by default
@@ -204,6 +212,7 @@ DRY_RUN=no
 OUTCOME=""
 OUTCOME_NOTE=""
 MINUTES=""
+IDLE_MIN=120
 DAYS_SET=no
 MINUTES_SET=no
 # Positional args past MODE (e.g. `reap <name>`) must survive this loop, not
@@ -215,6 +224,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --days) DAYS="$2"; DAYS_SET=yes; shift 2;;
     --minutes) MINUTES="$2"; MINUTES_SET=yes; shift 2;;
+    --idle-min) IDLE_MIN="${2:-}"; shift 2;;
     --tsv) TSV=yes; shift;;
     --force) FORCE=yes; shift;;
     --apply) APPLY=yes; shift;;
@@ -236,7 +246,7 @@ case "$OUTCOME" in ""|ok|failed|escalated|abandoned) ;; *) echo "session-doctor:
 # which writes under ~/backups) it would be silently ignored, so refuse it.
 if [ "$DRY_RUN" = yes ]; then
   case "$MODE" in
-    reap|reap-local|registry-prune) ;;
+    reap|reap-local|registry-prune|reap-merged) ;;
     *) echo "session-doctor: --dry-run is not supported for $MODE" >&2; exit 2;;
   esac
 fi
@@ -269,6 +279,13 @@ esac
 # `10#` pattern session-alias.sh uses for the same class of problem) so the
 # spliced value is always a plain, leading-zero-free literal.
 DAYS=$((10#$DAYS))
+# --idle-min (reap-merged) is validated the same way; 0 is refused, since a zero idle floor would
+# let a session that is still mid-turn qualify.
+case "$IDLE_MIN" in
+  ''|*[!0-9]*) echo "session-doctor: --idle-min requires a positive integer, got '$IDLE_MIN'" >&2; exit 2 ;;
+esac
+IDLE_MIN=$((10#$IDLE_MIN))
+[ "$IDLE_MIN" -gt 0 ] || { echo "session-doctor: --idle-min must be > 0" >&2; exit 2; }
 # --minutes gets the identical validate-then-canonicalize treatment, but only
 # when actually given — an empty/unset MINUTES is the "not requested" sentinel
 # idle-report's dispatch below checks for (MINUTES_SET), not a value to validate.
@@ -1407,6 +1424,105 @@ _crss_overlay_report() {
   return 0
 }
 
+# ── reap-merged ──────────────────────────────────────────────────────────────
+# _rm_strip_ansi — drop CSI escape sequences from stdin.
+_rm_strip_ansi() { sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g'; }
+
+# _rm_pane_state <tmux-session> -> sets RM_PANE=busy|typed|ok and RM_PANE_WHY.
+# Reads the pane with capture-pane -e so dim (ESC[2m) autosuggest ghost text after the prompt can
+# be told from real typed input. "busy" = a spinner/interrupt hint or a background agent/task/shell
+# counter in the last lines of the TUI; fails closed (busy) if the pane cannot be read.
+_rm_pane_state() {
+  local raw plain tail_ line after
+  RM_PANE=ok; RM_PANE_WHY=""
+  raw="$(tmux capture-pane -p -e -t "$1" 2>/dev/null)" || { RM_PANE=busy; RM_PANE_WHY="pane unreadable"; return; }
+  plain="$(printf '%s\n' "$raw" | _rm_strip_ansi)"
+  # The footer's "← N agents" is a constant navigation hint on every idle pane (live-calibrated), so
+  # drop it; a running background shell/task/monitor shows as its own "N shell(s)"-style counter.
+  tail_="$(printf '%s\n' "$plain" | tail -n 8 | sed -E 's/← *[0-9]+ agents?//g')"
+  busy_re='esc to interrupt|ctrl\+c to interrupt|[0-9]+ (local )?(agents?|background|bg|shells?|tasks?|monitors?)\b|running in the background|Running…'
+  if grep -qiE "$busy_re" <<<"$tail_"; then
+    RM_PANE=busy; RM_PANE_WHY="busy marker visible: $(grep -iE -m1 "$busy_re" <<<"$tail_" | tr -s ' ' | sed -E 's/^ //' | cut -c1-60)"
+    return
+  fi
+  line="$(printf '%s\n' "$raw" | grep -E '❯|›' | tail -n 1)"
+  if [ -n "$line" ]; then
+    case "$line" in *❯*) after="${line#*❯}" ;; *) after="${line#*›}" ;; esac
+    # mark dim-start with \001, strip every other escape, then trim whitespace incl. NBSP
+    after="$(printf '%s' "$after" | sed -E $'s/\x1b\\[2m/\x01/g' | _rm_strip_ansi | sed -E $'s/^([[:space:]]|\xc2\xa0)+//; s/([[:space:]]|\xc2\xa0)+$//')"
+    if [ -n "$after" ] && [ "${after:0:1}" != $'\x01' ]; then
+      RM_PANE=typed; RM_PANE_WHY="unsent text at the prompt"
+    fi
+  fi
+}
+
+# _rm_idle_minutes <tmux-session> <cwd> -> prints whole minutes since the NEWEST of the session's
+# transcript mtime and tmux window activity; returns 1 (prints nothing) if either signal is
+# unavailable, so a session is never judged idle on one signal alone.
+_rm_idle_minutes() {
+  local pdir f t_tr t_win now newest
+  pdir="$HOME/.claude/projects/${2//[\/.]/-}"
+  f="$(ls -t "$pdir"/*.jsonl 2>/dev/null | head -n 1)"
+  [ -n "$f" ] && t_tr="$(stat -c %Y "$f" 2>/dev/null)" || return 1
+  t_win="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)"
+  case "$t_win" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  newest=$t_tr; [ "$t_win" -gt "$newest" ] && newest=$t_win
+  echo $(( (now - newest) / 60 ))
+}
+
+# _rm_gh_prs <wt> <state> <branch> -> JSON [{number,headRefOid}] from gh, run inside the worktree
+# (so the repo is inferred); non-zero if gh failed or timed out.
+_rm_gh_prs() {
+  (cd "$1" && timeout 30 gh pr list --state "$2" --head "$3" --json number,headRefOid --limit 30 2>/dev/null)
+}
+
+# _reap_merged_check <tmux-session> — sets RM_VERDICT=candidate|skipped and RM_REASON. Checks run
+# cheapest/safest first; every unknown (gh failure, missing signal) is a skip, never a candidate.
+# The final gate is `reap <name> --dry-run` (session-preserve audit) run as a subprocess because
+# reap's dispatch calls exit.
+_reap_merged_check() {
+  local name="$1" base cwd wt br def head mj oj pr idle me out rc
+  RM_VERDICT=skipped; RM_REASON=""
+  base="$(tmux_to_base "$name")"
+  [ -n "$base" ] || { RM_REASON="not a crss-prefixed session"; return; }
+  if grep -qiE "$PROTECT" <<<"$name"; then RM_REASON="protected name"; return; fi
+  case "$name" in *desk*) RM_REASON="operator desk"; return ;; esac
+  if [ -n "${TMUX:-}" ]; then
+    me="$(tmux display-message -p '#S' 2>/dev/null)"
+    [ "$me" = "$name" ] && { RM_REASON="caller's own session"; return; }
+  fi
+  cwd="$(tmux display-message -p -t "$name" '#{pane_current_path}' 2>/dev/null)"
+  [ -n "$cwd" ] || { RM_REASON="no pane cwd"; return; }
+  case "$cwd" in "$HOME/.claude/worktrees/"*) ;; *) RM_REASON="not in a crss worktree"; return ;; esac
+  wt="$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)" || { RM_REASON="not a git worktree"; return; }
+  br="$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null)" || { RM_REASON="detached HEAD"; return; }
+  def="$(_default_branch "$(_wt_mainrepo "$wt")")"
+  [ "$br" != "$def" ] || { RM_REASON="on default branch $def"; return; }
+  [ "$(_wt_dirty "$wt")" = clean ] || { RM_REASON="uncommitted work in worktree"; return; }
+  head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)" || { RM_REASON="cannot read HEAD"; return; }
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 || { RM_REASON="no origin remote (no PR to verify)"; return; }
+  oj="$(_rm_gh_prs "$wt" open "$br")" || { RM_REASON="gh open-PR lookup failed"; return; }
+  [ "$(python3 -c 'import json,sys;print(len(json.load(sys.stdin)))' <<<"$oj" 2>/dev/null)" = 0 ] || { RM_REASON="open PR on $br"; return; }
+  mj="$(_rm_gh_prs "$wt" merged "$br")" || { RM_REASON="gh merged-PR lookup failed"; return; }
+  pr="$(python3 -c '
+import json,sys
+head=sys.argv[1]
+for p in json.load(sys.stdin):
+    if p.get("headRefOid")==head: print(p["number"]); break
+' "$head" <<<"$mj" 2>/dev/null)"
+  [ -n "$pr" ] || { RM_REASON="no merged PR whose head is this worktree's HEAD"; return; }
+  idle="$(_rm_idle_minutes "$name" "$cwd")" || { RM_REASON="idle time unknown (no transcript or tmux activity)"; return; }
+  [ "$idle" -ge "$IDLE_MIN" ] || { RM_REASON="active ${idle}m ago (< ${IDLE_MIN}m)"; return; }
+  _rm_pane_state "$name"
+  [ "$RM_PANE" = ok ] || { RM_REASON="$RM_PANE_WHY"; return; }
+  out="$(bash "${BASH_SOURCE[0]}" reap "$name" --dry-run 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    RM_REASON="reap audit refused: $(grep -iE -m1 'REFUSING|unlanded|uncommitted|NOT-SAFE' <<<"$out" | cut -c1-100)"; return
+  fi
+  RM_VERDICT=candidate; RM_REASON="merged PR #$pr, idle ${idle}m"
+}
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
   overlay)
@@ -1917,6 +2033,33 @@ else:
     }
     ;;
 
+  reap-merged)
+    # Automatic cleanup of finished sessions (cf. the desktop app archiving a session once its PR
+    # merges). DRY-RUN unless --apply; --apply only runs the plain `reap` below, which re-audits.
+    # Rules: _reap_merged_check above; tests/test-reap-merged.sh.
+    [ "$APPLY" = yes ] && echo "=== reap-merged: APPLY (idle >= ${IDLE_MIN}m) ===" || echo "=== reap-merged: DRY-RUN, nothing changed (idle >= ${IDLE_MIN}m) ==="
+    rm_cands=0; rm_fail=0
+    while IFS= read -r rm_s; do
+      [ -n "$rm_s" ] || continue
+      _reap_merged_check "$rm_s"
+      if [ "$RM_VERDICT" != candidate ]; then
+        printf 'skipped    %s  %s\n' "$rm_s" "$RM_REASON"; continue
+      fi
+      rm_cands=$((rm_cands+1))
+      if [ "$APPLY" != yes ]; then
+        printf 'candidate  %s  %s\n' "$rm_s" "$RM_REASON"; continue
+      fi
+      if rm_out="$(bash "${BASH_SOURCE[0]}" reap "$rm_s" --outcome "${OUTCOME:-ok}" --outcome-note "$RM_REASON" 2>&1)"; then
+        # reap soft-fails its worktree step (kept, never an error); surface that instead of hiding it
+        printf 'reaped     %s  %s%s\n' "$rm_s" "$RM_REASON" "$(grep -iE -m1 'worktree.*(kept|refus)|kept' <<<"$rm_out" | sed -E 's/^ +/ -- /')"
+      else
+        rm_fail=$((rm_fail+1)); printf 'failed     %s  reap exited non-zero (%s)\n' "$rm_s" "$RM_REASON"
+      fi
+    done < <(live_tmux)
+    echo "reap-merged: $rm_cands candidate(s)$([ "$APPLY" = yes ] && echo ", $rm_fail failed")"
+    [ "$rm_fail" -eq 0 ]
+    ;;
+
   reap)
     # One-shot clean teardown of a named ALIVE session — the missing live
     # counterpart to reap-local (which only handles sessions whose claude proc
@@ -2100,6 +2243,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
