@@ -276,8 +276,9 @@ if [ -n "$ESCALATE_FROM" ]; then
     case "$_prev_tier" in
       light) TIER_ARG=standard ;;
       standard) TIER_ARG=heavy ;;
-      heavy) echo "new-session: '$ESCALATE_FROM' already ran at tier heavy — nothing above it; choose Opus explicitly (CLAUDE_SESSION_PROFILE=orchestrator) or fix the task" >&2; exit 2 ;;
-      *) echo "new-session: no recorded tier for '$ESCALATE_FROM' — pass --tier explicitly with --escalate-from" >&2; exit 2 ;;
+      heavy) echo "new-session: '$ESCALATE_FROM' already ran at tier heavy — escalating past it to Opus (orchestrator)" >&2
+             TIER_ARG=heavy; CLAUDE_SESSION_PROFILE="${CLAUDE_SESSION_PROFILE:-orchestrator}"; export CLAUDE_SESSION_PROFILE ;;
+      *) echo "new-session: no recorded tier for '$ESCALATE_FROM' — assuming standard, escalating to heavy" >&2; TIER_ARG=heavy ;;
     esac
     case "$TIER_REASON" in "") TIER_REASON="escalated from $ESCALATE_FROM ($_prev_tier)" ;; esac
   fi

@@ -25,7 +25,7 @@ A change is done when **all** of these are true — not before:
    CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
-   PR, `shell-tests` is green, and it's merged. Never push to `main`; never self-approve.
+   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a second model family has reviewed, and say so in the PR body.
 3. Every changed deployable is redeployed and verified (see "Deploying" below). A fix that
    is merged but not redeployed is inert for the fleet.
 4. You've told the operator what landed, what was redeployed, and anything left undone.
@@ -36,13 +36,13 @@ if it doesn't, write the finish line down yourself before starting.
 ## When to keep going vs. stop and ask
 
 Keep going when a step doesn't need the operator; put status notes in the same message as
-your next action. Stop and ask **only** when:
+your next action. Default to acting on the recommended answer and reporting after. Stop and ask **only** when:
 - you can't continue without a decision that is genuinely the operator's (conflicting
   requirements, a trade-off the brief doesn't settle), or
-- the next step is destructive or outward-facing: deleting branches/worktrees/files you
-  didn't create, force-pushing, reaping or restarting a session you don't own, resetting a
-  shared checkout, deleting registry entries, or changing anything outside this repo other
-  than the documented redeploy targets.
+- the next step is destructive or outward-facing: deleting branches/files you didn't
+  create, force-pushing, resetting a shared checkout, or changing anything outside this repo
+  other than the documented redeploy targets. Reaps and registry prunes go through
+  `session-doctor` (dry-run, archive) and don't need asking.
 
 A test failing for a reason you can explain is not a reason to stop — fix it; one you
 *can't* explain is.
