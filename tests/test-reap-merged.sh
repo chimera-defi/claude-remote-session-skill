@@ -157,7 +157,7 @@ outa="$(FAKE_SELF=px_self-0101-0900 TMUX=/fake bash "$DOCTOR" reap-merged --appl
 ok "apply-rc" "$rca" 0
 hasre "apply-ok-reaped" "$(grep -E "^reaped +px_ok-0101-0900" <<<"$outa")" 'merged PR #'
 hasre "apply-ghost-reaped" "$(grep -E "^reaped +px_ghost-0101-0900" <<<"$outa")" 'reaped'
-ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t px_ghost-0101-0900 tmux kill-session -t px_ok-0101-0900 "
+ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t =px_ghost-0101-0900 tmux kill-session -t =px_ok-0101-0900 "
 nodir "apply-ok-worktree-removed" "$HOME/.claude/worktrees/px-ok-0101-0900"
 ok "apply-branch-kept" "$(yn git -C "$T/repo" show-ref --verify --quiet refs/heads/session/px-ok-0101-0900)" yes
 for keep in px-desk-0101-0900 px-open-0101-0900 px-busy-0101-0900 px-typed-0101-0900 px-active-0101-0900 px-dirty-0101-0900 px-audit-0101-0900; do

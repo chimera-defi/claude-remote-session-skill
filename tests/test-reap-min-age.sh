@@ -24,8 +24,11 @@ tgt=""; args=("$@"); i=0
 while [ $i -lt ${#args[@]} ]; do case "${args[$i]}" in -t) i=$((i+1)); tgt="${args[$i]}";; esac; i=$((i+1)); done
 case "$1" in
   ls|list-sessions) for f in "$FIX"/tmux/*; do [ -e "$f" ] && echo "$(basename "$f"): 1 windows"; done ;;
-  has-session) [ -e "$FIX/tmux/$tgt" ] ;;
-  kill-session) rm -f "$FIX/tmux/$tgt"; exit 0 ;;
+  # real tmux: bare -t is a PREFIX match (unique prefix -> that session), "=name" is exact
+  has-session|kill-session)
+    if [ "${tgt#=}" != "$tgt" ]; then real="${tgt#=}"; else real="$(ls "$FIX/tmux" | grep -F -m1 -- "$tgt")"; fi
+    [ -n "$real" ] && [ -e "$FIX/tmux/$real" ] || exit 1
+    [ "$1" = kill-session ] && rm -f "$FIX/tmux/$real"; exit 0 ;;
   display-message) echo bash ;;   # pane foreground = bash -> claude proc is gone (DEAD)
 esac
 STUB
@@ -85,6 +88,20 @@ out="$(doctor reap px_nolog-0101-0900 --force --allow-young)"; rc=$?
 ok "unknown-age-allow-young-exit0" "$rc" 0
 out="$(CRSS_REAP_MIN_AGE_H=abc doctor reap px_old-0101-0900 --force)"; rc=$?
 ok "bad-env-fails-closed-exit2" "$rc" 2
+# prefix collision: old logged name absent, fresh session whose name merely starts with it must survive
+spawn px_job-0101-0900 48
+touch "$FIX/tmux/px_job-0101-0900-new"; spawn px_job-0101-0900-new 1
+out="$(doctor reap px_job-0101-0900 --force)"; rc=$?
+ok "prefix-collision-young-tmux-survives" "$(yn test -e "$FIX/tmux/px_job-0101-0900-new")" yes
+# huge CRSS_REAP_MIN_AGE_H must not wrap/negate the gate
+out="$(CRSS_REAP_MIN_AGE_H=18446744073709551616 doctor reap px_young-0101-0900 --force)"; rc=$?
+ok "env-wraparound-rejected-exit2" "$rc" 2
+out="$(CRSS_REAP_MIN_AGE_H=5124095576030431 doctor reap px_young-0101-0900 --force)"; rc=$?
+ok "env-negative-wrap-rejected-exit2" "$rc" 2
+out="$(CRSS_REAP_MIN_AGE_H=8761 doctor reap px_young-0101-0900 --force)"; rc=$?
+ok "env-over-cap-rejected-exit2" "$rc" 2
+out="$(CRSS_REAP_MIN_AGE_H=8760 doctor reap px_young-0101-0900 --force)"; rc=$?
+ok "env-at-cap-accepted-then-refuses-young" "$rc" 1
 out="$(doctor report --allow-young)"; rc=$?
 ok "allow-young-rejected-elsewhere" "$rc" 2
 
