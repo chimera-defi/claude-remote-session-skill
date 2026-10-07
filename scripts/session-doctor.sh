@@ -256,6 +256,8 @@ REAP_MIN_AGE_H="${CRSS_REAP_MIN_AGE_H:-24}"
 case "$REAP_MIN_AGE_H" in
   ''|*[!0-9]*) echo "session-doctor: CRSS_REAP_MIN_AGE_H must be a non-negative integer (hours), got '$REAP_MIN_AGE_H'" >&2; exit 2;;
 esac
+# Bound BEFORE arithmetic: a huge digit string wraps (2^64 -> 0 disables the gate) or goes negative.
+[ "${#REAP_MIN_AGE_H}" -le 9 ] && [ "$((10#$REAP_MIN_AGE_H))" -le 8760 ] || { echo "session-doctor: CRSS_REAP_MIN_AGE_H must be <= 8760 hours, got '$REAP_MIN_AGE_H'" >&2; exit 2; }
 REAP_MIN_AGE_H=$((10#$REAP_MIN_AGE_H))
 AY_FLAG=""; [ "$ALLOW_YOUNG" = yes ] && AY_FLAG=--allow-young   # forwarded to reap-merged's `reap` subprocesses
 # --dry-run is only accepted where it is honored: reap (preview) and the two
@@ -1615,7 +1617,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         [ -n "$UD" ] && [ -f "$UD/$2" ] && rm -f "$UD/$2"
         [ -n "$UD" ] && [ -L "$UD/default.target.wants/$2" ] && rm -f "$UD/default.target.wants/$2"
         [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ] && rm -f "$BIN/$3"
-        [ -n "$1" ] && tmux kill-session -t "$1" 2>/dev/null && acted=yes
+        [ -n "$1" ] && tmux kill-session -t "=$1" 2>/dev/null && acted=yes
         [ "$acted" = yes ] && _record_reap_event "${2%.service}" yes
       fi
     }
@@ -2145,7 +2147,7 @@ else:
     # before the first mutation. No registry call: the preview stays offline.
     if [ "$DRY_RUN" = yes ]; then
       echo "(DRY-RUN — nothing changed; re-run without --dry-run to reap)"
-      if tmux has-session -t "$NAME" 2>/dev/null; then
+      if tmux has-session -t "=$NAME" 2>/dev/null; then
         echo "  would kill tmux session: $NAME"
       else
         echo "  no live tmux session '$NAME' (ok)"
@@ -2169,7 +2171,7 @@ else:
     fi
     torn=no
     if [ -n "$base" ] && { [ -f "${UD:-/nonexistent}/${base}.service" ] || [ -f "${BIN:-/nonexistent}/${base}-start.sh" ]; }; then torn=yes; fi
-    tmux kill-session -t "$NAME" 2>/dev/null \
+    tmux kill-session -t "=$NAME" 2>/dev/null \
       && { torn=yes; echo "  tmux session killed: $NAME"; } || echo "  no live tmux session '$NAME' (ok)"
     if [ -n "$base" ]; then
       _REAP_ARCHIVE_DIR=""
