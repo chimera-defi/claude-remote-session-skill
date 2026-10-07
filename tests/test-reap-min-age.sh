@@ -15,7 +15,7 @@ isolate_overlay
 export CRSS_SESSION_PREFIX=px CRSS_PROTECT_NAMES='px_keep'
 export TMUX_TMPDIR="$T/no-tmux-here"; mkdir -p "$TMUX_TMPDIR"
 export FIX
-unset TMUX CRSS_REAP_MIN_AGE_H
+unset TMUX CRSS_REAP_MIN_AGE_H XDG_CONFIG_HOME
 
 cat > "$HOME/.local/bin/tmux" <<'STUB'
 #!/usr/bin/env bash
