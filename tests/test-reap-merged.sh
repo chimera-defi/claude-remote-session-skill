@@ -14,6 +14,7 @@ mkdir -p "$HOME/.local/bin" "$HOME/.claude/worktrees" "$HOME/.config/systemd/use
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t.com
 isolate_overlay
+export CRSS_REAP_MIN_AGE_H=0   # min-age gate is pinned in tests/test-reap-min-age.sh; this suite tests other reap behavior
 export CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost CRSS_PROTECT_NAMES='px_keep'
 export TMUX_TMPDIR="$T/no-tmux-here"; mkdir -p "$TMUX_TMPDIR"
 export FIX

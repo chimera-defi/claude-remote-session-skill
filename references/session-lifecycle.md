@@ -28,8 +28,10 @@ in `scripts/session-doctor.sh`, `tests/test-session-doctor-reap-worktree.sh`.
 session-doctor.sh                       # read-only 3-layer audit (default)
 session-doctor.sh reap-local            # DRY-RUN: list dead local tmux + orphan units
 session-doctor.sh reap-local --force    # actually reap them
-session-doctor.sh reap <name> [--force] [--keep-registry] [--keep-worktree] [--dry-run]
-                                         # teardown (tmux + unit) + registry entry + worktree
+session-doctor.sh reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run]
+                                         # teardown (tmux + unit) + registry entry + worktree; reap, reap-local
+                                         # and reap-merged refuse sessions younger than CRSS_REAP_MIN_AGE_H
+                                         # (default 24h): see _reap_age_gate, tests/test-reap-min-age.sh
 session-doctor.sh registry-stale --days 30   # list registry entries disconnected > N days
 session-doctor.sh registry-prune --days 30   # DRY-RUN: same candidates, would-delete/skip/report
 session-doctor.sh registry-prune --apply     # actually delete the non-protected candidates

@@ -4,6 +4,7 @@
 # Usage:
 #   session-registry                     # report: every live session (recognised prefix), oldest first
 #   session-registry --older-than 3d     # filter to sessions older than N days (or Nh for hours)
+#   session-registry --first-seen NAME   # print NAME's first-spawn epoch from the log (exit 1, no output, if unlogged)
 #
 # SELF-REGISTRATION IS ALREADY WIRED: every new-session.sh spawn writes an
 # `event=starting`/`event=started` line to ~/.sessions/session-starts.log via
@@ -99,6 +100,7 @@ fi
 
 LOG="$HOME/.sessions/session-starts.log"
 OLDER_THAN_SEC=0
+FIRST_SEEN_NAME=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -124,7 +126,11 @@ while [ $# -gt 0 ]; do
       # guards against with the same fix).
       OLDER_THAN_SEC=$(( 10#$n * unit ))
       ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --first-seen)
+      FIRST_SEEN_NAME="${2:-}"; shift 2 || shift
+      [ -n "$FIRST_SEEN_NAME" ] || { echo "session-registry: --first-seen wants a session name" >&2; exit 2; }
+      ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "session-registry: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
@@ -138,6 +144,14 @@ first_seen() { # $1 = tmux session name -> epoch of earliest log line, or empty
   [ -n "$ts" ] || return 0
   date -u -d "$ts" +%s 2>/dev/null
 }
+
+# --first-seen NAME: log-derived epoch only (no tmux session_created fallback — that resets on restart and
+# would under-report age). Used by session-doctor's reap min-age gate (_reap_age_gate).
+if [ -n "$FIRST_SEEN_NAME" ]; then
+  fs="$(first_seen "$FIRST_SEEN_NAME")"
+  [ -n "$fs" ] || exit 1
+  echo "$fs"; exit 0
+fi
 
 rows=""
 for s in $(tmux ls -F '#{session_name}' 2>/dev/null | grep -E "^(${_crss_prefix_re})_"); do
