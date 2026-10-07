@@ -25,7 +25,8 @@ o="$(dry A=1 -- --tier light)"
 hasre "light" "$o" '^PROFILE=copywriter$'; hasre "light-model" "$o" '^MODEL=haiku$'
 hasnt "light-no-effort" "$o" '--effort'; hasre "light-effort-unset" "$o" '^EFFORT=default$'; hasre "light-advisor" "$o" '--advisor claude-opus-5-5'
 o="$(dry A=1 -- --tier standard)"
-hasre "standard" "$o" '^PROFILE=builder$'; hasre "standard-model" "$o" '^MODEL=sonnet$'; hasre "standard-effort-unset" "$o" '^EFFORT=default$'
+hasre "standard" "$o" '^PROFILE=builder$'; hasre "standard-model" "$o" '^MODEL=sonnet$'; hasre "standard-effort-low" "$o" '--effort low'
+o="$(dry CLAUDE_SESSION_EFFORT=high -- --tier standard)"; hasre "standard-explicit-effort-wins" "$o" '--effort high'
 o="$(dry A=1 -- --tier heavy)"
 hasre "heavy" "$o" '^PROFILE=owner$'; hasre "heavy-model" "$o" '^MODEL=sonnet$'
 
