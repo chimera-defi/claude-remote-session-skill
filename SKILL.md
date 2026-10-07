@@ -136,14 +136,14 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku (no effort flag: Haiku 4.5 ignores it) |
-| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet |
+| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` win over the tier, one value at a time.
-  No tier sets effort; pass `CLAUDE_SESSION_EFFORT` explicitly (Sonnet/Opus only).
+  Only `standard` sets effort (`low`); `light` is Haiku, which ignores it. Pass `CLAUDE_SESSION_EFFORT` to override or to set it on other tiers (Sonnet/Opus only).
   Auto-compact window is per tier too: overlay `CRSS_COMPACT_WINDOW_<TIER>` (per spawn `CLAUDE_SESSION_COMPACT_WINDOW=<n|host>`); empty = host default. See `references/troubleshooting.md` (Precedence).
 - **Advisor.** Every session that has the advisor tool (Sonnet/Haiku, with or without `--tier`) gets
   `--advisor $CRSS_OPUS_MODEL`; `CLAUDE_SESSION_ADVISOR=<model>|none` overrides. `CRSS_OPUS_MODEL`
