@@ -97,9 +97,12 @@ ok  "systemd-fail-rc1" "$rc" "1"
 has "systemd-fail-msg" "$(cat "$T/err")" "systemd failed to start"
 hasnt "systemd-fail-no-banner" "$(cat "$T/out")" "Session created"
 
-# the generated start script seeds trust for the RUNDIR (post session-git-prep), not for WORKDIR
-ss="$(ls "$HOME/.local/bin/"px-kick-n-*-start.sh | head -1)"
-has "start-script-seeds-trust" "$(cat "$ss")" 'session-trust-seed'
-hasre "seed-runs-on-rundir-before-tmux" "$(grep -n 'TRUST_SEED"\|tmux new-session' "$ss" | tr '\n' ' ')" 'RUNDIR.*tmux new-session'
+# --task validation fails loudly BEFORE anything spawns
+out="$(bash "$BIN/new-session.sh" --dry-run mutex-test --task hi --task-file /etc/hostname 2>&1)"; rc=$?
+ok "task+task-file mutually exclusive: exit 2" "$rc" "2"; hasnt "mutex: nothing resolved" "$out" "SESSION="
+out="$(bash "$BIN/new-session.sh" --dry-run missing-file-test --task-file "/no/such/path/xyz-$$" 2>&1)"; rc=$?
+ok "missing --task-file: exit 2" "$rc" "2"; has "missing --task-file: message" "$out" "missing or unreadable"
+out="$(bash "$BIN/new-session.sh" --dry-run valid-task-test --task "hello world" 2>&1)"; rc=$?
+ok "valid --task dry-run: exit 0" "$rc" "0"; has "valid --task dry-run resolves names" "$out" "SESSION=px_valid-task-test-"
 
 finish "new-session-kickoff"

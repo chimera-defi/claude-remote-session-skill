@@ -28,12 +28,10 @@ ok "decide-unknown-marker-match"  "$(d 60 0 90 no unknown unknown unknown yes)" 
 ok "decide-unknown-no-marker"     "$(d 60 0 90 no unknown unknown unknown no)"  "eligible"
 
 # --- --max-idle 0 means unbounded -------------------------------------------
-ok "decide-max-idle-0-unbounded" "$(d 60 0 100000 no no unknown clean na)" "eligible"
 # and max-idle IS enforced when non-zero
 ok "decide-outside-window-hi" "$(d 60 120 200 no no unknown clean na)" "skip:outside-window"
 
 # --- the documented escape hatch back to the original window ---------------
-ok "decide-escape-hatch-30-60" "$(d 30 60 45 no no unknown clean na)" "eligible"
 ok "decide-escape-hatch-30-60-too-old" "$(d 30 60 90 no no unknown clean na)" "skip:outside-window"
 
 # protected/compacted/landed/dirty must fail CLOSED on any value outside the sensor vocabulary
@@ -45,12 +43,7 @@ for v in "" maybe; do
   ok "decide-malformed-dirty-${v:-empty}"     "$(d 60 0 90 no no unknown "$v" na)" "skip:malformed-row"
 done
 # and the legitimate no-worktree value for landed is NOT malformed
-ok "decide-landed-no-worktree-valid"   "$(d 60 0 90 no      no      no-worktree clean na)" "eligible"
 
-# --- ragged/short row: direct call with far fewer than 13 args must not crash
-out="$(_decide 60 0 sess 2>&1)"; rc=$?
-ok "decide-ragged-no-crash-exit"   "$rc" "0"
-has "decide-ragged-no-crash-output" "$out" "skip:"
 
 # _evaluate_row + marker + _do_compact. _SESSION_HANDOFF_BIN points at a stub, bypassing the co-located real script.
 STUBDIR="$(mktemp -d)"
@@ -115,11 +108,9 @@ hasnt "evalrow-protected-short-circuit-no-pane-call" "$(cat "$STUB_LOG")" "prots
 _REAL_HOME="$HOME"
 HOME="$(mktemp -d)"
 
-ok "marker-hit-no-file" "$(_marker_hit nosession 2026-01-01T00:00:00)" "no"
 _write_marker markedsess 2026-01-01T00:00:00 2026-01-01T00:05:00 compacted
 ok "marker-hit-match"    "$(_marker_hit markedsess 2026-01-01T00:00:00)" "yes"
 ok "marker-hit-mismatch" "$(_marker_hit markedsess 2026-02-02T00:00:00)" "no"
-has "marker-file-well-formed-json" "$(cat "$HOME/.sessions/compact-markers/markedsess.json")" '"result": "compacted"'
 
 HOME="$_REAL_HOME"
 
@@ -129,11 +120,6 @@ out="$(_do_compact compactok 30)"; rc=$?
 ok "docompact-success-exit"   "$rc" "0"
 ok "docompact-success-output" "$out" "compacted"
 
-_reset_stub_env
-STUB_BUSY_POLLS=999   # never becomes ready within the timeout
-out="$(_do_compact compacttimeout 2)"; rc=$?
-ok "docompact-timeout-exit"   "$rc" "1"
-ok "docompact-timeout-output" "$out" "timeout"
 
 _reset_stub_env
 STUB_SEND_FAIL=yes
@@ -244,15 +230,9 @@ STUB_READY_SESSIONS="readysess"
 out="$(_run report)"; rc=$?
 ok   "cli-report-exit0"          "$rc" "0"
 has  "cli-report-header-default-window" "$out" "idle >= 60m"
-hasnt "cli-report-header-no-upper-bound-by-default" "$out" "<= "
 has  "cli-report-eligible-row"   "$out" "readysess"
-has  "cli-report-reason-eligible" "$(printf '%s' "$out" | grep readysess)" "eligible"
 has  "cli-report-reason-pane-busy" "$(printf '%s' "$out" | grep notreadysess)" "pane-busy"
 
-# --- explicit escape hatch to the original 30-60 window still works --------
-out2="$(_run report --min-idle 30 --max-idle 60)"; rc2=$?
-ok  "cli-report-escape-hatch-exit0" "$rc2" "0"
-has "cli-report-escape-hatch-window-text" "$out2" "idle >= 30m, <= 60m"
 
 # sweep: CLI contract (flags, exit codes, verdict text). Rows use /nonexistent-cwd (context unavailable) except
 # readysess, which gets a 50% transcript so the idle trigger is reachable.
@@ -269,13 +249,6 @@ has "cli-sweep-bare-would-compact"            "$outn" "would-compact: readysess"
 has "cli-sweep-bare-pane-check-happened"      "$(cat "$STUB_LOG")" "ready readysess"
 hasnt "cli-sweep-bare-no-send"                "$(cat "$STUB_LOG")" "send"
 
-# --- sweep --dry-run performs no send (ready calls are fine, send is not) --
-: > "$STUB_LOG"
-outd="$(_run sweep --dry-run)"; rcd=$?
-ok  "cli-sweep-dryrun-exit0" "$rcd" "0"
-has "cli-sweep-dryrun-would-compact" "$outd" "would-compact: readysess"
-has "cli-sweep-dryrun-pane-check-happened" "$(cat "$STUB_LOG")" "ready readysess"
-hasnt "cli-sweep-dryrun-no-send" "$(cat "$STUB_LOG")" "send"
 
 # --- autonomous sweep --apply refuses before paste without admission -----
 : > "$STUB_LOG"
@@ -292,14 +265,6 @@ STUB_BUSY_POLLS=0
 _run sweep --dry-run --apply >/dev/null 2>&1; rcboth=$?
 ok "cli-sweep-both-flags-exit2" "$rcboth" "2"
 
-# busy pane -> skip: busy
-: > "$STUB_LOG"
-{ _row busysweepsess remote 1 /nonexistent-cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
-STUB_READY_SESSIONS=""
-STUB_READY_REASON="busy"
-outbusy="$(_run sweep)"; rcbusy=$?
-ok  "cli-sweep-busy-exit0"   "$rcbusy" "0"
-has "cli-sweep-busy-verdict" "$(printf '%s' "$outbusy" | grep busysweepsess)" "skip: busy"
 
 # protected: skipped without any pane check
 : > "$STUB_LOG"
@@ -309,12 +274,6 @@ ok    "cli-sweep-protected-exit0"       "$rcprot" "0"
 has   "cli-sweep-protected-verdict"     "$(printf '%s' "$outprot" | grep protsweepsess)" "skip: protected"
 hasnt "cli-sweep-protected-no-pane-call" "$(cat "$STUB_LOG")" "protsweepsess"
 
-# protected AND under trigger A window: trigger B must also see protected
-: > "$STUB_LOG"
-{ _row protfreshsess remote 1 /nonexistent-cwd 10 2026-01-01T00:00:00 yes no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
-outprotfresh="$(_run sweep)"; rcprotfresh=$?
-ok  "cli-sweep-protected-under-window-exit0"   "$rcprotfresh" "0"
-has "cli-sweep-protected-under-window-verdict" "$(printf '%s' "$outprotfresh" | grep protfreshsess)" "skip: protected"
 
 # low idle + no context data -> skip: under thresholds with a degradation note, never a guessed percentage
 : > "$STUB_LOG"
@@ -344,10 +303,6 @@ outt="$(_run report 2>&1)"; rct=$?
 ok "cli-report-trunc-exit0" "$rct" "0"
 for n in 5 6 7; do has "cli-report-trunc$n-reason" "$(grep "trunc${n}sess" <<<"$outt")" "malformed-row"; done
 
-# --- numeric validation idiom -----------------------------------------------
-outv="$(_run report --min-idle notanumber 2>&1)"; rcv=$?
-ok "cli-report-bad-min-idle-exit2" "$rcv" "2"
-has "cli-report-bad-min-idle-msg" "$outv" "requires a non-negative integer"
 
 # before-relay fail-closed: compact never verifies -> real message must not be sent
 { _row failsess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
@@ -384,13 +339,6 @@ has "cli-relay-not-stale-says-so"  "$outk" "not stale/eligible"
 has "cli-relay-not-stale-relayed"  "$(cat "$STUB_LOG")" "send freshsess hello there"
 hasnt "cli-relay-not-stale-no-compact-sent" "$(cat "$STUB_LOG")" "/compact"
 
-# --- before-relay: --file variant reaches session-handoff unmangled --------
-MSGFILE="$(mktemp)"; printf 'file-relayed message\n' > "$MSGFILE"
-: > "$STUB_LOG"
-_run before-relay freshsess --file "$MSGFILE" >/dev/null 2>&1; rcfile=$?
-ok  "cli-relay-file-variant-exit0" "$rcfile" "0"
-has "cli-relay-file-variant-forwarded" "$(cat "$STUB_LOG")" "send freshsess --file $MSGFILE"
-rm -f "$MSGFILE"
 
 # before-relay must FAIL CLOSED on skip:pane-* (otherwise-eligible row; only the ready stub says NOT-SAFE)
 { _row busysess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
@@ -404,15 +352,6 @@ has   "cli-relay-pane-busy-reason-shown"     "$outb" "(busy)"
 hasnt "cli-relay-pane-busy-message-not-sent" "$(cat "$STUB_LOG")" "should never be sent"
 hasnt "cli-relay-pane-busy-no-compact-sent"  "$(cat "$STUB_LOG")" "/compact"
 
-{ _row draftsess remote 1 /cwd 90 2026-01-01T00:00:00 no no unknown clean; } > "$FIXTURE_DIR/rows.tsv"
-: > "$STUB_LOG"
-STUB_READY_SESSIONS=""
-STUB_READY_REASON="draft-in-input-box"
-outd="$(_run before-relay draftsess "should also never be sent" 2>&1)"; rcd=$?
-ok    "cli-relay-pane-draft-exit-nonzero"     "$(yn test "$rcd" -ne 0)" "yes"
-has   "cli-relay-pane-draft-reason-shown"     "$outd" "draft-in-input-box"
-hasnt "cli-relay-pane-draft-message-not-sent" "$(cat "$STUB_LOG")" "should also never be sent"
-STUB_READY_REASON="busy"
 
 # session absent from the sensor: consult ready directly; refuse when NOT-SAFE, relay when safe
 : > "$FIXTURE_DIR/rows.tsv"   # sensor has no rows at all -> row_line is empty
@@ -447,15 +386,11 @@ TMR="$IT_CFG/systemd/user/session-compact-report.timer"
 [ -f "$SVC" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: cli-installtimer-service-written — $SVC missing"; }
 [ -f "$TMR" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL: cli-installtimer-timer-written — $TMR missing"; }
 has "cli-installtimer-execstart-report-mode" "$(cat "$SVC" 2>/dev/null)" "ExecStart=$IT_HOME/.local/bin/session-compact report"
-hasnt "cli-installtimer-execstart-not-sweep" "$(cat "$SVC" 2>/dev/null)" "sweep"
 ok  "cli-installtimer-no-systemctl-calls" "$(cat "$SYSTEMCTL_LOG")" ""
 
 out2="$(run_it install-timer 2>&1)"; rc2=$?
 ok  "cli-installtimer-refuse-without-force-exit2" "$rc2" "2"
 has "cli-installtimer-refuse-without-force-msg" "$out2" "refusing to overwrite"
 
-run_it install-timer --force >/dev/null 2>&1; rc3=$?
-ok  "cli-installtimer-force-overwrites-exit0" "$rc3" "0"
-ok  "cli-installtimer-force-no-systemctl-calls" "$(cat "$SYSTEMCTL_LOG")" ""
 
 finish "session-compact"

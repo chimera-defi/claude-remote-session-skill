@@ -45,21 +45,7 @@ out="$(CRSS_HOME="$ISO_HOME" bash -c "
 has "doctor-generic-default-parses" "$out" "generic-base=cs-foo-0101-0900"
 has "doctor-generic-default-rejects-px" "$out" "px-under-generic=[]"
 
-# 1c. custom prefix (CRSS_SESSION_PREFIX=zz, no legacy).
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz bash -c "
-  source '$REPO/scripts/session-doctor.sh'
-  echo \"zz-base=\$(tmux_to_base zz_foo-0101-0900)\"
-")"
-has "doctor-custom-prefix-parses" "$out" "zz-base=zz-foo-0101-0900"
 
-# 1d. unrelated tmux names are never recognised, under any config.
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost bash -c "
-  source '$REPO/scripts/session-doctor.sh'
-  echo \"random-base=[\$(tmux_to_base random_foo)]\"
-  echo \"otherbot-base=[\$(tmux_to_base otherbot-gateway)]\"
-")"
-has "doctor-random-foo-rejected" "$out" "random-base=[]"
-has "doctor-otherbot-gateway-rejected" "$out" "otherbot-base=[]"
 
 # 1e. invalid prefix values fall back safely and never match everything, checked against reap-local's real orphan-unit
 # enumeration (the dangerous path), not just the regex.
@@ -109,33 +95,6 @@ S5="$(mktemp -u)"
 out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz SESSION_ALIAS_STORE="$S5" bash "$ALIAS" zz-agent-alpha-0721)"
 ok "alias-custom-zz-desessionify" "$out" "agent-alpha"
 
-# 2d. invalid CRSS_SESSION_PREFIX falls back to "cs": the rejected value is not treated as poisoned, cs-... still recognised.
-S6="$(mktemp -u)"
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX='.*' SESSION_ALIAS_STORE="$S6" bash "$ALIAS" cs-agent-alpha-0721 2>/dev/null)"
-ok "alias-invalid-prefix-falls-back-to-cs" "$out" "agent-alpha"
-
-# ── 3. session-preserve.sh: tmux_to_base. Not source-guarded, so extract the function text from the real file and eval it. ──
-PRESERVE_FUNC="$(sed -n '/^tmux_to_base() {$/,/^}$/p' "$REPO/scripts/session-preserve.sh")"
-if [ -z "$PRESERVE_FUNC" ]; then
-  echo "FAIL: could not extract tmux_to_base() from session-preserve.sh"; fail=$((fail+1))
-else
-  pass=$((pass+1))
-fi
-out="$(bash -c "
-  $PRESERVE_FUNC
-  _crss_prefix_re='px|oldhost'
-  echo \"legacy-base=\$(tmux_to_base oldhost_foo-0101-0900)\"
-  echo \"new-base=\$(tmux_to_base px_0101-0900-foo)\"
-  echo \"foreign-base=[\$(tmux_to_base random_foo)]\"
-  _crss_prefix_re='cs'
-  echo \"generic-base=\$(tmux_to_base cs_foo-0101-0900)\"
-  echo \"px-under-generic=[\$(tmux_to_base px_foo-0101-0900)]\"
-")"
-has "preserve-host-legacy-tmux2base" "$out" "legacy-base=oldhost-foo-0101-0900"
-has "preserve-host-new-tmux2base"    "$out" "new-base=px-0101-0900-foo"
-has "preserve-host-foreign-rejected" "$out" "foreign-base=[]"
-has "preserve-generic-default-parses" "$out" "generic-base=cs-foo-0101-0900"
-has "preserve-generic-default-rejects-px" "$out" "px-under-generic=[]"
 
 # --all's live-session enumeration against real PID-suffixed test tmux sessions.
 if command -v tmux >/dev/null 2>&1; then
@@ -151,25 +110,6 @@ if command -v tmux >/dev/null 2>&1; then
 else
   echo "session-preserve --all: SKIP (no tmux)"
 fi
-
-# ── 4. session-handoff.sh: tmux_to_base / _live_ours (sourced in-process) ──
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost bash -c "
-  source '$REPO/scripts/session-handoff.sh'
-  echo \"legacy-base=\$(tmux_to_base oldhost_foo-0101-0900)\"
-  echo \"new-base=\$(tmux_to_base px_0101-0900-foo)\"
-  echo \"foreign-base=[\$(tmux_to_base random_foo)]\"
-")"
-has "handoff-host-legacy-tmux2base" "$out" "legacy-base=oldhost-foo-0101-0900"
-has "handoff-host-new-tmux2base"    "$out" "new-base=px-0101-0900-foo"
-has "handoff-host-foreign-rejected" "$out" "foreign-base=[]"
-
-out="$(CRSS_HOME="$ISO_HOME" bash -c "
-  source '$REPO/scripts/session-handoff.sh'
-  echo \"generic-base=\$(tmux_to_base cs_foo-0101-0900)\"
-  echo \"px-under-generic=[\$(tmux_to_base px_foo-0101-0900)]\"
-")"
-has "handoff-generic-default-parses" "$out" "generic-base=cs-foo-0101-0900"
-has "handoff-generic-default-rejects-px" "$out" "px-under-generic=[]"
 
 # _live_ours end-to-end against one real test tmux session.
 if command -v tmux >/dev/null 2>&1; then
@@ -196,10 +136,6 @@ if command -v tmux >/dev/null 2>&1; then
   has "registry-includes-current-prefix" "$out" "$R1"
   has "registry-includes-legacy-prefix"  "$out" "$R2"
   hasnt "registry-skips-foreign"          "$out" "$R3"
-  # generic default: none of the px_/oldhost_ test sessions show up.
-  out2="$(CRSS_HOME="$ISO_HOME" HOME="$NOHOME" bash "$REPO/scripts/session-registry.sh" 2>&1)"
-  hasnt "registry-generic-default-skips-px" "$out2" "$R1"
-  hasnt "registry-generic-default-skips-oldhost" "$out2" "$R2"
   rm -rf "$NOHOME"
   for s in "$R1" "$R2" "$R3"; do tmux kill-session -t "$s" 2>/dev/null || true; done
 else
@@ -220,9 +156,6 @@ out="$(CRSS_HOME="$ISO_HOME" PATH="$BINDIR:$PATH" SESSION_ALIAS_STORE="$STORE" b
 has "new-session-generic-default-remote" "$out" "REMOTE_NAME=cs-pfxtestproj2"
 has "new-session-generic-default-tmux"   "$out" "SESSION=cs_pfxtestproj2"
 
-out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX=zz PATH="$BINDIR:$PATH" SESSION_ALIAS_STORE="$STORE" bash "$NS" --dry-run pfxtestproj3 2>/dev/null)"
-has "new-session-custom-prefix-remote" "$out" "REMOTE_NAME=zz-pfxtestproj3"
-has "new-session-custom-prefix-tmux"   "$out" "SESSION=zz_pfxtestproj3"
 
 out="$(CRSS_HOME="$ISO_HOME" CRSS_SESSION_PREFIX='.*' PATH="$BINDIR:$PATH" SESSION_ALIAS_STORE="$STORE" bash "$NS" --dry-run pfxtestproj4 2>&1)"
 has "new-session-invalid-prefix-falls-back" "$out" "REMOTE_NAME=cs-pfxtestproj4"

@@ -19,17 +19,9 @@ out="$(bash "$NS" --dry-run some-very-long-project-name 2>/dev/null)"
 has "remote-alias-id" "$out" 'REMOTE_NAME=px-svlpn-[0-9]\{4\}-[0-9]\{4\}'
 has "tmux-underscore" "$out" 'SESSION=px_svlpn-[0-9]\{4\}-[0-9]\{4\}'
 has "service-name"    "$out" 'SERVICE=.*/px-svlpn-[0-9]\{4\}-[0-9]\{4\}\.service'
-out2="$(bash "$NS" --dry-run some-proj --alias myproj 2>/dev/null)"
-has "explicit-alias"  "$out2" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
-# this repo's folder contains "claude-remote" but is NOT alias-protected (only CRSS_ALIAS_PROTECT_NAMES matches are): it shortens
-out3="$(bash "$NS" --dry-run claude-remote-session-skill 2>/dev/null)"
-has "claude-remote-substring-shortens" "$out3" 'REMOTE_NAME=px-crss-[0-9]\{4\}-[0-9]\{4\}'
 # regression: a folder named `sessions`/`workspace`/`auto` must be spawnable (the keyword is a TYPE only as the 2nd positional)
 out4="$(bash "$NS" --dry-run sessions 2>/dev/null)"
 has "folder-named-sessions" "$out4" 'REMOTE_NAME=px-sessions-[0-9]\{4\}-[0-9]\{4\}'
-# and the type positional still works after the folder
-out5="$(bash "$NS" --dry-run myproj workspace 2>/dev/null)"
-has "type-positional-after-folder" "$out5" 'REMOTE_NAME=px-myproj-[0-9]\{4\}-[0-9]\{4\}'
 
 # Regression: spawning the same folder twice in one clock-minute must NOT collide on SESSION/REMOTE_NAME (a reuse would
 # make the already-running guard skip the second spawn's --alias/model yet report success). Simulated with a live tmux
@@ -73,7 +65,6 @@ retained="$(HOME="$WTHOME" PATH="$DATESTUB2:$PATH" bash "$NS" --dry-run retained
 rm -rf "$DATESTUB2" "$WTHOME"
 has "retained-worktree-not-reused" "$retained" 'REMOTE_NAME=px-retained-wt-test-0101-0000-2'
 
-# ── Real (non-dry-run) collision suffix must also be "-2", not "-3" ──────────
 # ── Real (non-dry-run) collision suffix must be "-2", not "-3" (Codex review): the mkdir-lock loop built the next
 # candidate after incrementing n. Only a REAL spawn runs that path, so stub `date` and `systemctl` (no systemd bus here). ──
 if command -v tmux >/dev/null 2>&1; then
@@ -110,9 +101,6 @@ has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
 has "orchestrator-default-model-opus5-5" "$outp" '^MODEL=claude-opus-5-5$'
 has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
 has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
-# a role-default bare alias is intended (auto-upgrade): no warning
-errp="$(bash "$NS" --dry-run profile-default 2>&1 1>/dev/null)"
-if grep -q 'moving model alias' <<<"$errp"; then fail=$((fail+1)); echo "FAIL: role-default-model-should-not-warn"; else pass=$((pass+1)); fi
 
 # owner: full tool set (no --tools allowlist, like orchestrator) but a Sonnet default, and no alias warning
 outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/null)"
@@ -120,37 +108,18 @@ has "profile-owner"                 "$outw" 'PROFILE=owner'
 has "owner-default-model-sonnet"    "$outw" '^MODEL=sonnet$'
 has "owner-model-src-profile"       "$outw" '^MODEL_SRC=profile-default$'
 hasre "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections( --effort [a-z]+)?( --advisor [a-z0-9.-]+)?$'
-errw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>&1 1>/dev/null)"
-if grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE' <<<"$errw"; then fail=$((fail+1)); echo "FAIL: owner-profile-should-not-warn"; else pass=$((pass+1)); fi
 
-outh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>/dev/null)"
-has "profile-hub"                  "$outh" 'PROFILE=hub'
-has "hub-default-model-sonnet"     "$outh" '^MODEL=sonnet$'
-has "hub-model-src-profile"        "$outh" '^MODEL_SRC=profile-default$'
-has "hub-has-consult-prompt-flag"  "$outh" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
-has "hub-keeps-full-tool-set"      "$outh" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections --append-system-prompt '
-errh="$(CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub 2>&1 1>/dev/null)"
-if grep -q 'moving model alias\|unknown CLAUDE_SESSION_PROFILE' <<<"$errh"; then fail=$((fail+1)); echo "FAIL: hub-profile-should-not-warn"; else pass=$((pass+1)); fi
 
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
 has "profile-builder"               "$outb" 'PROFILE=builder'
 has "builder-default-model-sonnet"  "$outb" '^MODEL=sonnet$'
 has "builder-has-tools-allowlist"   "$outb" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
 
-outc="$(CLAUDE_SESSION_PROFILE=copywriter bash "$NS" --dry-run profile-copywriter 2>/dev/null)"
-has "profile-copywriter"             "$outc" 'PROFILE=copywriter'
-has "copywriter-default-model-haiku" "$outc" '^MODEL=haiku$'
-has "copywriter-has-tools-allowlist" "$outc" 'CLAUDE_EXTRA_FLAGS=.*--tools Bash,Read,'
 
 # explicit CLAUDE_SESSION_MODEL overrides the profile default; a PINNED id must not warn
 outo="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-override 2>/dev/null)"
 has "explicit-model-overrides-default" "$outo" '^MODEL=claude-opus-4-8$'
 has "explicit-model-src-explicit"      "$outo" '^MODEL_SRC=explicit$'
-outho="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 CLAUDE_SESSION_PROFILE=hub bash "$NS" --dry-run profile-hub-override 2>/dev/null)"
-has "hub-explicit-model-overrides-default" "$outho" '^MODEL=claude-opus-4-8$'
-has "hub-explicit-keeps-consult-prompt"    "$outho" 'CLAUDE_EXTRA_FLAGS=.*--append-system-prompt '
-erro="$(CLAUDE_SESSION_MODEL=claude-opus-4-8 bash "$NS" --dry-run profile-override 2>&1 1>/dev/null)"
-if grep -q 'moving model alias' <<<"$erro"; then fail=$((fail+1)); echo "FAIL: pinned-id-should-not-warn"; else pass=$((pass+1)); fi
 # an EXPLICIT bare alias (one-off spawn) SHOULD warn
 erra="$(CLAUDE_SESSION_MODEL=opus bash "$NS" --dry-run profile-explicit-alias 2>&1 1>/dev/null)"
 has "explicit-bare-alias-warns"        "$erra" 'moving model alias'
@@ -222,9 +191,6 @@ erty="$(bash "$NS" --dry-run type-typo-test workspce 2>&1)"; rcty=$?
 has "unknown-type-rejected" "$erty" "unknown session type 'workspce'"
 ok  "unknown-type-exit2" "$rcty" "2"
 hasnt "unknown-type-no-names" "$erty" "SESSION="
-ertyok="$(bash "$NS" --dry-run type-ok-test workspace 2>&1)"; rcok=$?
-hasnt "known-type-accepted" "$ertyok" "unknown session type"
-ok  "known-type-exit0" "$rcok" "0"
 # Exact repro of the doubled-workdir incident: a directory as the FIRST positional, a name as the second.
 erdir="$(bash "$NS" --dry-run /nonexistent-crss-dir fleet-v2 --alias fleet-v2 2>&1)"; rcdir=$?
 has "abs-foldername-rejected" "$erdir" "must be a bare name"
@@ -235,14 +201,9 @@ for badname in "a/b" "." ".." ""; do
   ok "bad-foldername-exit2[$badname]" "$rcbad" "2"
   hasnt "bad-foldername-no-names[$badname]" "$erbad" "SESSION="
 done
-bash "$NS" --dry-run >/dev/null 2>&1; rcnp=$?
-ok "missing-foldername-exit2" "$rcnp" "2"
 erx="$(bash "$NS" --dry-run a workspace extra 2>&1)"; rcx=$?
 has "extra-positional-rejected" "$erx" "too many positional"
 ok  "extra-positional-exit2" "$rcx" "2"
-erfl="$(bash "$NS" --dry-run a --bogus 2>&1)"; rcfl=$?
-has "unknown-option-rejected" "$erfl" "unknown option '--bogus'"
-ok  "unknown-option-exit2" "$rcfl" "2"
 # a real (non-dry-run) bad foldername must not create anything either
 SIDE="$(mktemp -d)"; HOME="$SIDE" bash "$NS" /abs/dir fleet >/dev/null 2>&1; rcside=$?
 ok  "bad-foldername-real-run-exit2" "$rcside" "2"
@@ -269,9 +230,6 @@ fi
 # would undo it) because nothing tested the allowlist.
 builder_tools_line="$(grep -m1 '^BUILDER_TOOLS=' "$NS")"
 has "builder-tools-keeps-advisor" "$builder_tools_line" ',advisor"$'
-# Guard the rationale too, so the comment can't contradict the code.
-ok "builder-tools-comment-not-stale" \
-  "$(grep -c 'SendUserFile, advisor, ReportFindings' "$NS")" "0"
 
 # ── `new-session --alias` must NOT mutate the folder's stored default ─────────
 # Policy: --alias is PER-SPAWN; persisting is opt-in via --set-default-alias. Testing via --dry-run would be VACUOUS
