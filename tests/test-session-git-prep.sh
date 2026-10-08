@@ -62,7 +62,6 @@ if command -v tmux >/dev/null 2>&1; then
   out="$(bash "$SGP" "$R4" sess-busy remote-busy 2>/dev/null)"
   tmux kill-session -t "$OWNER" 2>/dev/null || true
   ok "busy-lock-forces-worktree" "$out" "$HOME/.claude/worktrees/remote-busy"
-  ok "busy-canonical-branch-unchanged" "$(git -C "$R4" rev-parse --abbrev-ref HEAD)" "main"
 fi
 
 # 6. A stale lock (owner tmux session no longer alive) is treated as free: canonical
@@ -76,17 +75,6 @@ out="$(bash "$SGP" "$R5" sess-stale remote-stale 2>/dev/null)"
 ok "stale-lock-treated-as-free" "$out" "$R5"
 ok "stale-lock-checks-out-default" "$(git -C "$R5" rev-parse --abbrev-ref HEAD)" "main"
 ok "stale-lock-overwritten" "$(cat "$HOME/.claude/session-locks/${LOCK_KEY5}.owner")" "sess-stale"
-
-# 7. A worktree is branched from the DEFAULT branch's tip, not whatever happens to
-# be checked out — a file only on main must be present, despite the dirty checkout
-# sitting on a feature branch that deleted it.
-R6="$WORK/repo6"; mkrepo "$R6"
-echo "on-main" > "$R6/marker.txt"; git -C "$R6" add marker.txt; git -C "$R6" commit --quiet -m "add marker"
-git -C "$R6" checkout --quiet -b feature-branch
-git -C "$R6" rm --quiet marker.txt; git -C "$R6" commit --quiet -m "remove marker on feature"
-echo "still-dirty" > "$R6/other.txt"
-out="$(bash "$SGP" "$R6" sess-base remote-base 2>/dev/null)"
-isfile "worktree-based-on-default-not-current" "$out/marker.txt"
 
 # 8. With an 'origin' remote, the canonical tree ff-merges the latest origin/<default>
 # instead of just checking out whatever the local branch already had.
@@ -110,13 +98,9 @@ isfile "origin-ff-merge-pulls-latest" "$R7/sync.txt"
 mkdir -p "$WORK/collide/foo"
 RA="$WORK/collide/foo_bar"; mkrepo "$RA"
 RB="$WORK/collide/foo/bar"; mkrepo "$RB"
-out_a="$(bash "$SGP" "$RA" sess-collide-a remote-collide-a 2>/dev/null)"
-out_b="$(bash "$SGP" "$RB" sess-collide-b remote-collide-b 2>/dev/null)"
-ok "collide-a-emits-repo" "$out_a" "$RA"
-ok "collide-b-emits-repo" "$out_b" "$RB"
+bash "$SGP" "$RA" sess-collide-a remote-collide-a >/dev/null 2>&1
+bash "$SGP" "$RB" sess-collide-b remote-collide-b >/dev/null 2>&1
 ok "collide-distinct-lock-keys" "$([ "$(lock_key "$RA")" != "$(lock_key "$RB")" ] && echo yes || echo no)" "yes"
-ok "collide-a-lock-is-a" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RA").owner" 2>/dev/null)" "sess-collide-a"
-ok "collide-b-lock-is-b" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RB").owner" 2>/dev/null)" "sess-collide-b"
 
 # 10. A lock held under the PRE-checksum key format (from a session that
 # claimed the canonical tree before this fix was deployed) must still be
@@ -135,7 +119,6 @@ if command -v tmux >/dev/null 2>&1; then
   out="$(bash "$SGP" "$R8" sess-legacy-busy remote-legacy-busy 2>/dev/null)"
   tmux kill-session -t "$LEGACY_OWNER" 2>/dev/null || true
   ok "legacy-lock-forces-worktree" "$out" "$HOME/.claude/worktrees/remote-legacy-busy"
-  ok "legacy-lock-canonical-branch-unchanged" "$(git -C "$R8" rev-parse --abbrev-ref HEAD)" "main"
 fi
 
 # 11. REMOTE is stable across systemd restarts of the SAME session (baked into

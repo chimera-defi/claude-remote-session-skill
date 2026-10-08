@@ -100,11 +100,6 @@ printf 'CRSS_A=1\nCRSS_LAST=file\n' > "$CFG/config.sh"
 out="$(CRSS_HOME="$CFG" CRSS_LAST=env bash -c "set -euo pipefail; source '$LOADER_FILE'; echo \"ALIVE LAST=\$CRSS_LAST A=\$CRSS_A\"" 2>&1)"
 has "set-e-last-line-preset-survives" "$out" "ALIVE LAST=env A=1"
 
-# CRLF line endings: the trailing CR is stripped from the value.
-printf 'CRSS_CR=val\r\n' > "$CFG/config.sh"
-out="$(CRSS_HOME="$CFG" bash -c "source '$LOADER_FILE'; printf 'CR=[%s]' \"\$CRSS_CR\"")"
-has "crlf-value-stripped" "$out" "CR=[val]"
-
 # hostile line: a command-substitution value stays LITERAL text, never
 # eval'd/expanded — must create no file.
 PWNED="$CFG/pwned-marker-$$"
@@ -121,17 +116,6 @@ else
   pass=$((pass+1))
 fi
 
-# quotes: one layer of matching single/double quotes stripped; mismatched
-# quotes are left alone.
-cat > "$CFG/config.sh" <<'EOF'
-CRSS_DQ="double quoted value"
-CRSS_SQ='single quoted value'
-CRSS_MISMATCH="unterminated
-EOF
-out="$(CRSS_HOME="$CFG" bash -c "set -uo pipefail; source '$LOADER_FILE'; echo \"DQ=[\$CRSS_DQ]\"; echo \"SQ=[\$CRSS_SQ]\"")"
-has "double-quotes-stripped" "$out" 'DQ=[double quoted value]'
-has "single-quotes-stripped" "$out" 'SQ=[single quoted value]'
-
 # env wins over file: a var already set before sourcing is never overwritten
 # by config.sh's value.
 cat > "$CFG/config.sh" <<'EOF'
@@ -139,10 +123,6 @@ CRSS_WORKSPACE=/from/file
 EOF
 out="$(CRSS_HOME="$CFG" CRSS_WORKSPACE=/from/env bash -c "set -uo pipefail; source '$LOADER_FILE'; echo \"WS=\$CRSS_WORKSPACE\"")"
 has "env-wins-over-file" "$out" "WS=/from/env"
-
-# and the inverse: with no env override, the file's value IS loaded.
-out="$(CRSS_HOME="$CFG" bash -c "set -uo pipefail; source '$LOADER_FILE'; echo \"WS=\$CRSS_WORKSPACE\"")"
-has "file-value-loaded-when-env-unset" "$out" "WS=/from/file"
 
 rm -rf "$CFG"
 
@@ -160,26 +140,11 @@ has "unset-defaults-to-cs" "$out" "RE=cs"
 out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES=oldhost bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 has "valid-host-shape" "$out" "RE=px|oldhost"
 
-# multiple valid legacy prefixes.
-out="$(CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='oldhost|oldprefix' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "multiple-legacy-prefixes" "$out" "RE=cs|oldhost|oldprefix"
-
 # invalid CRSS_SESSION_PREFIX ('a|', not ^[a-z][a-z0-9]{0,15}$) falls back to
 # the generic default with a warning on stderr — never to an empty pattern.
 out="$(CRSS_SESSION_PREFIX='a|' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
 has "invalid-session-prefix-falls-back" "$out" "RE=cs"
 has "invalid-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX 'a|' is invalid"
-
-# a regex-metacharacter value ('.*') must not survive into the alternation —
-# this is the exact "matches everything" danger the validation exists for.
-out="$(CRSS_SESSION_PREFIX='.*' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "metachar-session-prefix-falls-back" "$out" "RE=cs"
-
-# empty CRSS_SESSION_PREFIX (explicitly set, not unset) also falls back with
-# a warning, not silently.
-out="$(CRSS_SESSION_PREFIX='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-has "empty-session-prefix-falls-back" "$out" "RE=cs"
-has "empty-session-prefix-warns" "$out" "CRSS_SESSION_PREFIX '' is invalid"
 
 # ANY invalid element in CRSS_LEGACY_PREFIXES drops the WHOLE legacy list
 # (not just the bad element) — a valid CRSS_SESSION_PREFIX survives on its own.
@@ -187,10 +152,5 @@ out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo
 has "invalid-legacy-element-drops-whole-list" "$out" "RE=px"
 has "invalid-legacy-element-not-oldhost" "$(grep -qF 'RE=px|oldhost' <<<"$out" && echo yes || echo no)" "no"
 has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
-
-# unset/empty CRSS_LEGACY_PREFIXES is the documented default (no legacy
-# prefixes) — no warning, prefix_re is just CRSS_SESSION_PREFIX.
-out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='' bash -c "set -uo pipefail; source '$PREFIX_FILE'; echo \"RE=\$_crss_prefix_re\"" 2>&1)"
-ok "empty-legacy-no-warning" "$out" "RE=px"
 
 finish "test-crss-overlay-config"

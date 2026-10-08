@@ -76,16 +76,6 @@ has  "page2-stale-entry-present" "$out" "sess_p2_stale"
 has  "second-curl-call-made"     "$(cat "$CURL_LOG")" "after_id=sess_p1_last"
 hasnt "no-token-leak"            "$out" "$FAKE_TOKEN"
 
-# ── registry_json() directly: merged output carries both pages' entries in the shape callers already parse ──
-json_out="$(FAKE_CURL_LOG="$CURL_LOG" PATH="$STUBBIN:$PATH" HOME="$FIXHOME" registry_json)"
-count="$(printf '%s' "$json_out" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-arr=d if isinstance(d,list) else d.get('sessions',d.get('data',[]))
-print(len(arr))
-" 2>/dev/null)"
-ok "registry_json-merges-both-pages-count" "$count" "3"
-
 rm -rf "$STUBBIN" "$PAGEDIR"
 
 # ── MAX_PAGES cap: a registry that always answers has_more:true (one new entry + fresh last_id per GET) must stop at

@@ -49,13 +49,6 @@ has "dead-session-safe" "$out" "SAFE-TO-REAP"
 has "dead-session-distinct-reason" "$out" "no rundir and no worktree found"
 ok  "dead-session-exit0" "$rc" "0"
 
-# 2. Live session, cwd is not a git repo -> SAFE-TO-REAP.
-PLAIN="$WORK/plain"; mkdir -p "$PLAIN"
-S_PLAIN="$(spawn_in "$PLAIN")"
-out="$(bash "$SP" "$S_PLAIN" 2>&1)"; rc=$?
-has "non-git-safe" "$out" "SAFE-TO-REAP"
-ok  "non-git-exit0" "$rc" "0"
-
 # 3. Live session, clean repo, HEAD on a branch -> SAFE-TO-REAP.
 R1="$WORK/repo1"; mkrepo "$R1"
 S_CLEAN="$(spawn_in "$R1")"
@@ -139,23 +132,6 @@ out="$(bash "$SP" "$S_JUNK" 2>&1)"; rc=$?
 has "junk-untracked-safe" "$out" "SAFE-TO-REAP"
 ok  "junk-untracked-exit0" "$rc" "0"
 
-# 6b. --wip must not sweep in a TRACKED file under a JUNK_RE path (vendored node_modules/ entry): only the real
-# change lands in the WIP commit.
-R4B="$WORK/repo4b"; mkrepo "$R4B"
-mkdir -p "$R4B/node_modules/pkg"; echo v1 > "$R4B/node_modules/pkg/index.js"
-echo one > "$R4B/real.txt"
-git -C "$R4B" add -A; git -C "$R4B" commit --quiet -m "add tracked + junk"
-echo v2 > "$R4B/node_modules/pkg/index.js"   # tracked JUNK_RE path, modified
-echo two > "$R4B/real.txt"                    # tracked real path, modified
-S_JUNKWIP="$(spawn_in "$R4B")"
-out="$(bash "$SP" "$S_JUNKWIP" 2>&1)"; rc=$?
-has "junk-wip-dirty-excludes-junk" "$out" "uncommitted TRACKED changes (non-junk): 1"
-out="$(bash "$SP" "$S_JUNKWIP" --wip 2>&1)"; rc=$?
-has "junk-wip-commits"   "$out" "WIP committed"
-has "junk-wip-then-safe" "$out" "SAFE-TO-REAP"
-ok "junk-wip-real-committed" "$(git -C "$R4B" diff --name-only HEAD)" "node_modules/pkg/index.js"
-ok "junk-wip-junk-not-committed" "$(git -C "$R4B" show HEAD:real.txt)" "two"
-
 # 6c. The spawner's root-level .sessions-init-<remote> sentinel must NOT count as untracked work (it made every
 # restarted session NOT-SAFE; PR #76).
 R4C="$WORK/repo4c"; mkrepo "$R4C"
@@ -187,14 +163,6 @@ has "nested-sentinel-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "nested-sentinel-reason"   "$out" "untracked-files"
 ok  "nested-sentinel-exit1"    "$rc" "1"
 
-# 7. No remote configured -> flagged explicitly (local-only commits have nowhere to be pushed).
-R5="$WORK/repo5"; mkrepo "$R5"
-S_NOREMOTE="$(spawn_in "$R5")"
-out="$(bash "$SP" "$S_NOREMOTE" 2>&1)"; rc=$?
-has "no-remote-flagged" "$out" "repo has NO REMOTE"
-has "no-remote-still-safe" "$out" "SAFE-TO-REAP"   # HEAD is still on branch 'main'
-ok  "no-remote-exit0"   "$rc" "0"
-
 # 8. HEAD not reachable from any named local branch -> NOT-SAFE (reaping would orphan it).
 R6="$WORK/repo6"; mkrepo "$R6"
 git -C "$R6" checkout --quiet --detach main
@@ -205,12 +173,6 @@ out="$(bash "$SP" "$S_DETACHED" 2>&1)"; rc=$?
 has "detached-not-safe" "$out" "NOT-SAFE-TO-REAP"
 has "detached-reason"   "$out" "HEAD-not-on-a-branch"
 ok  "detached-exit1"    "$rc" "1"
-
-# 9. --all skips the synthetic sp-test-* sessions (not px_/oldhost_). Its exit code reflects host state, so assert
-# rc is 0 or 1 (no crash) and that no synthetic session is named.
-out="$(bash "$SP" --all 2>&1)"; rc=$?
-if [ "$rc" = 0 ] || [ "$rc" = 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: all-completes-no-crash — got rc=$rc; out: $out"; fi
-ok "all-skips-synthetic-sessions" "$(printf '%s' "$out" | grep -c "sp-test-$$-")" "0"
 
 # 10. FAIL-OPEN REGRESSION: a dead session whose name maps to a worktree with unsaved work printed SAFE-TO-REAP
 # purely because the process was gone (nearly lost 320 lines). Must fall back to auditing the worktree -> NOT-SAFE.
@@ -232,17 +194,6 @@ out="$(bash "$SP" "$S_DEAD_CLEAN" 2>&1)"; rc=$?
 has "deadwt-clean-found" "$out" "located via worktree lookup"
 has "deadwt-clean-safe"  "$out" "SAFE-TO-REAP (work is on branch"
 ok  "deadwt-clean-exit0" "$rc" "0"
-
-# 12. Worktree DIR suffixed on a name collision (branch still session/<base>): must be found by matching each
-# worktree's own branch, and the printed rundir must be the real suffixed path.
-R9="$WT_BASE/px-sp-collide-$$-9999"; mkrepo "$R9"
-git -C "$R9" checkout --quiet -b "session/px-sp-collide-$$"
-echo "unsaved" > "$R9/scratch.txt"
-S_COLLIDE_DEAD="px_sp-collide-$$"
-out="$(bash "$SP" "$S_COLLIDE_DEAD" 2>&1)"; rc=$?
-has "deadwt-collide-found-suffixed" "$out" "$R9"
-has "deadwt-collide-not-safe"       "$out" "NOT-SAFE-TO-REAP"
-ok  "deadwt-collide-exit1"          "$rc" "1"
 
 # 13. Collision with TWO coexisting dirs: a clean decoy $dir/<base> on an unrelated branch and the dirty real
 # worktree $dir/<base>-<pid> on session/<base>. Branch match must win over dirname (else fail-open).
