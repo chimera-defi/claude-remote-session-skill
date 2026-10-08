@@ -166,4 +166,19 @@ if command -v tmux >/dev/null 2>&1; then
   pkill -f "$FB/codex" 2>/dev/null; rm -rf "$FB"
 fi
 
+# Static guard: no scripts/*.sh may contain a bracket expression with a non-ASCII char (byte locales split it
+# into bytes). grep -P under LC_ALL=C sees raw bytes. Comment lines and non-class literals are excluded.
+has_glyph_bracket() {
+  grep -vE '^[[:space:]]*#' | grep -vE '\$\{[A-Za-z_]+//[^}]*\}|\[no log entry |is LIVE now — ' |
+    LC_ALL=C grep -P '\[\^?\]?(?:[^\]]|\[:[^\]]*:\])*[\x80-\xff]' >/dev/null
+}
+for f in "$HERE"/../scripts/*.sh; do
+  if has_glyph_bracket < "$f"; then fail=$((fail+1)); echo "FAIL: no-nonascii-bracket-class in $f"; else pass=$((pass+1)); fi
+done
+for pat in '[❯]' '[ ❯›]' '[^❯›]' '[[:space:]❯]' '[]❯]' '[✻✽✶·]'; do
+  ok "guard-rejects-$pat" "$(printf '%s\n' "grep -E 'x$pat'" | has_glyph_bracket && echo yes || echo no)" yes
+done
+ok guard-accepts-ascii-class "$(printf '%s\n' "grep -E 'x[[:space:]]*y'" | has_glyph_bracket && echo yes || echo no)" no
+ok guard-ignores-comment "$(printf '%s\n' "# grep -E '[❯]'" | has_glyph_bracket && echo yes || echo no)" no
+
 finish "session-handoff-ready"
