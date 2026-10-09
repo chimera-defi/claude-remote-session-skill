@@ -39,7 +39,9 @@ if command -v tmux >/dev/null 2>&1; then
   hasnt "unreadable --file not misreported as empty" "$out" "empty or whitespace-only"
   MSGFILE="$(mktemp)"; printf 'relayed via --file\n' > "$MSGFILE"
   out="$(bash "$SEND" "$S" --file "$MSGFILE" 2>&1)"
-  hasre "--file content is sent (reaches a verdict)" "$out" 'landed on|UNVERIFIED on'
+  hasre "--file sent: reaches a verdict" "$out" 'landed on|UNVERIFIED on'
+  sleep 0.5   # the pane runs `cat`, so delivered bytes are echoed into the pane
+  has "--file contents reach the target pane" "$(tmux capture-pane -p -t "$S" -S -50)" "relayed via --file"
   rm -f "$MSGFILE"; tmux kill-session -t "$S" 2>/dev/null || true
 fi
 
