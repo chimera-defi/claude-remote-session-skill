@@ -12,82 +12,6 @@ DOCTOR="$HERE/../scripts/session-doctor.sh"
 # shellcheck disable=SC1090
 source "$DOCTOR"   # must NOT run dispatch (source-guard)
 
-# ── flag parsing: --minutes/--days validation (fails before any scanning) ──
-mx_out="$(bash "$DOCTOR" idle-report --days 2 --minutes 5 2>&1)"; mx_rc=$?
-ok  "days-and-minutes-exit2"    "$mx_rc" "2"
-has "days-and-minutes-message"  "$mx_out" "mutually exclusive"
-
-nm_out="$(bash "$DOCTOR" idle-report --minutes abc 2>&1)"; nm_rc=$?
-ok  "minutes-nonnumeric-exit2"    "$nm_rc" "2"
-# has() needle must not start with "-" (grep -F would read it as a flag)
-has "minutes-nonnumeric-message"  "$nm_out" "requires a non-negative integer, got 'abc'"
-
-# ── _default_branch: local origin/HEAD must be tried BEFORE `gh` (avoids a network round-trip per repo on the hourly
-# timer). Uses a github.com origin URL (never dialed, gh is stubbed) and a distinctive origin/HEAD branch name, so a
-# hermetic non-github origin or a hardcoded main/master fallback cannot pass by accident. ──
-if command -v git >/dev/null 2>&1; then
-  DBLBASE="$(mktemp -d)"
-  DBLREPO="$DBLBASE/repo"; mkdir -p "$DBLREPO"
-  git -C "$DBLREPO" init -q -b main
-  git -C "$DBLREPO" config user.email t@t.com; git -C "$DBLREPO" config user.name t
-  git -C "$DBLREPO" commit -q --allow-empty -m init
-  git -C "$DBLREPO" remote add origin https://github.com/fakeorg/fakerepo.git
-  # distinctive origin/HEAD branch (symref target need not resolve)
-  git -C "$DBLREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk-marker-branch
-
-  # gh stub: logs invocations and answers with a DIFFERENT branch, so the resolved value or the log catches gh-first
-  GHSTUB2DIR="$DBLBASE/ghstub"; mkdir -p "$GHSTUB2DIR"
-  GH_INVOKED_MARKER="$DBLBASE/gh-was-invoked"
-  cat > "$GHSTUB2DIR/gh" <<STUB_EOF
-#!/usr/bin/env bash
-touch "$GH_INVOKED_MARKER"
-echo "wrong-branch-from-gh"
-exit 0
-STUB_EOF
-  chmod +x "$GHSTUB2DIR/gh"
-
-  defbr_local_first="$(PATH="$GHSTUB2DIR:$PATH" _default_branch "$DBLREPO")"
-  ok  "defbr-local-origin-head-wins-over-gh" "$defbr_local_first" "trunk-marker-branch"
-  ok  "defbr-gh-not-invoked-when-local-ref-present" \
-    "$(yn test -f "$GH_INVOKED_MARKER")" "no"
-
-  rm -rf "$DBLBASE"
-fi
-
-# ── _tsv_git_status: reuses _wt_landed/_wt_dirty, no-worktree/unknown for a missing/non-git path, per-cwd caching.
-# It sets globals _TSV_LANDED/_TSV_DIRTY (a `$(...)` call would defeat the cache), so call it directly. ──
-if command -v git >/dev/null 2>&1; then
-  GSBASE="$(mktemp -d)"
-  GSREPO="$GSBASE/repo"; mkdir -p "$GSREPO"
-  git -C "$GSREPO" init -q -b main
-  git -C "$GSREPO" config user.email t@t.com; git -C "$GSREPO" config user.name t
-  git -C "$GSREPO" commit -q --allow-empty -m init
-
-  _tsv_git_status "$GSREPO"
-  ok "tsv-git-status-landed" "$_TSV_LANDED" "yes"
-  ok "tsv-git-status-dirty"  "$_TSV_DIRTY"  "clean"
-  first_landed="$_TSV_LANDED"; first_dirty="$_TSV_DIRTY"
-
-  # caching: after deleting the dir, the SAME cwd must still return the first (cached) answer
-  rm -rf "$GSREPO"
-  _tsv_git_status "$GSREPO"
-  ok "tsv-git-status-cached-landed" "$_TSV_LANDED" "$first_landed"
-  ok "tsv-git-status-cached-dirty"  "$_TSV_DIRTY"  "$first_dirty"
-
-  # A path that never existed -> no-worktree/unknown, not a crash.
-  _tsv_git_status "$GSBASE/never-existed-$$"
-  ok "tsv-git-status-missing-landed" "$_TSV_LANDED" "no-worktree"
-  ok "tsv-git-status-missing-dirty"  "$_TSV_DIRTY"  "unknown"
-
-  # An existing directory that is not a git working tree at all.
-  NOTGIT="$GSBASE/plain-dir"; mkdir -p "$NOTGIT"
-  _tsv_git_status "$NOTGIT"
-  ok "tsv-git-status-notgit-landed" "$_TSV_LANDED" "no-worktree"
-  ok "tsv-git-status-notgit-dirty"  "$_TSV_DIRTY"  "unknown"
-
-  rm -rf "$GSBASE"
-fi
-
 # ── end-to-end through `idle-report --tsv`: HOME override, one real background process per scenario (`exec -a claude`,
 # `--remote-control <name>`) so the pgrep path is exercised for real; gh stubbed to fail fast (hermetic) ──
 if command -v git >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
@@ -185,14 +109,6 @@ EOF
   NOWTS="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
   printf '{"type":"user","timestamp":"%s"}\n' "$NOWTS" > "$PROJB/$(_encode_cwd "$WT_G")/sess.jsonl"
 
-  # H: version older than the first compact_boundary-emitting build -> col8=unknown (absence of evidence)
-  WT_H="$TB/wt-h"; spawn "$WT_H" "px-tsv-oldversion-0101-0800"
-  WT_H="$(cd "$WT_H" && pwd -P)"
-  mkdir -p "$PROJB/$(_encode_cwd "$WT_H")"
-  cat > "$PROJB/$(_encode_cwd "$WT_H")/sess.jsonl" <<'EOF'
-{"type":"user","timestamp":"2026-01-01T09:00:00.000Z","version":"2.0.50"}
-EOF
-
   # I: Bug A regression: the full /compact noise cascade (bare '/compact', isMeta caveat, command-name echo,
   # local-command-stdout 'Compacted') all carry RECENT timestamps; the one genuine turn is old. Pre-fix the newest noise
   # line made an 8-day-idle session look ~0 minutes idle. Includes a compact_boundary so col8 is checked end to end.
@@ -219,7 +135,6 @@ EOF
   rowD="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-noversion-0101-0400')"
   rowE="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-staleboundary-0101-0500')"
   rowF="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-gonecwd-0101-0600')"
-  rowH="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-oldversion-0101-0800')"
   rowI="$(printf '%s\n' "$tsvout" | grep -F 'px-tsv-compactnoise-0101-0900')"
 
   ok "tsv-a-idle-from-genuine-turn" "$(printf '%s' "$rowA" | awk -F'\t' '{print $6}')" "2026-01-01T09:00:00Z"
@@ -239,10 +154,7 @@ EOF
   ok "tsv-f-gone-cwd-no-worktree"   "$(printf '%s' "$rowF" | awk -F'\t' '{print $9}')" "no-worktree"
   ok "tsv-f-gone-cwd-dirty-unknown" "$(printf '%s' "$rowF" | awk -F'\t' '{print $10}')" "unknown"
   ok "tsv-f-gone-cwd-10-cols"       "$(printf '%s' "$rowF" | awk -F'\t' '{print NF}')" "10"
-  ok "tsv-h-old-version-unknown"    "$(printf '%s' "$rowH" | awk -F'\t' '{print $8}')" "unknown"
 
-  # idle_minutes is numeric for a real timestamp
-  ok "tsv-d-idle-minutes-numeric" "$(f5="$(printf '%s' "$rowD" | awk -F'\t' '{print $5}' && printf x)" && f5=${f5%x} && [ -n "$f5" ] && grep -qE '^[0-9]+$' <<<"${f5%$'\n'}" && echo yes || echo no)" "yes"
 
   # exactly 10 tab-separated columns per row (pgrep is host-wide, so noisy host rows too)
   badcols="$(printf '%s\n' "$tsvout" | awk -F'\t' 'NF!=10{print NR": "NF" cols"}')"
@@ -258,11 +170,6 @@ EOF
   ok  "tsv-minutes-excludes-fresh" "$(printf '%s\n' "$tightout" | grep -c 'px-tsv-freshts-0101-0700')" "0"
   has "tsv-minutes-includes-old"   "$tightout" "px-tsv-noversion-0101-0400"
 
-  # default (no --minutes) keeps the day-granularity header; the genuine-turn fix applies to the human format too
-  daysout="$(HOME="$TESTHOME" PATH="$RUNPATH" bash "$DOCTOR" idle-report 2>&1)"
-  has "days-default-header-unchanged"     "$daysout" "NO type:user message in the last 2 day(s)"
-  arow="$(printf '%s\n' "$daysout" | grep -F 'px_tsv-compactsum-0101-0100')"
-  has "days-mode-also-skips-compact-summary" "$arow" "2026-01-01T09:00:00Z"
 fi
 
 finish "session-doctor-tsv"

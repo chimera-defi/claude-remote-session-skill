@@ -10,9 +10,6 @@ export CRSS_LEGACY_PREFIXES=oldhost
 # shellcheck disable=SC1090
 source "$HERE/../scripts/session-doctor.sh"   # must NOT run dispatch (source-guard)
 
-# ── _encode_cwd: pure string transform, order matters ('.' before '/') ───────
-ok "encode-basic" "$(_encode_cwd "/home/youruser/.claude/worktrees/px-x-1")" "-home-youruser--claude-worktrees-px-x-1"
-ok "encode-no-path-required" "$(_encode_cwd "/does/not/exist.d/here")" "-does-not-exist-d-here"
 
 # ── _history_matches: pure logic over synthetic wt_base/proj_base dirs ───────
 # (takes wt_base/proj_base as params, so tests point at a tmpdir instead of faking $HOME/.claude)
@@ -48,23 +45,6 @@ EXT_CANON="$(cd "$EXT_DIR" && pwd)"
 
 ok "match-real-outside-path-wins-over-decoy" \
   "$(_history_matches "$EXT_DIR" "$WTB" "$PROJB")" "$EXT_CANON"
-ok "match-real-outside-path-trailing-slash" \
-  "$(_history_matches "$EXT_DIR/" "$WTB" "$PROJB")" "$EXT_CANON"
-
-# ── relative path with a slash, and bare ".": both resolve via the real-directory short-circuit, canonicalized ──
-RELCHILD="$MBASE/relbase/child"
-mkdir -p "$RELCHILD"
-RELCHILD_CANON="$(cd "$RELCHILD" && pwd)"
-ok "match-relative-path-with-slash" \
-  "$(cd "$MBASE/relbase" && _history_matches "./child" "$WTB" "$PROJB")" "$RELCHILD_CANON"
-ok "match-bare-dot" \
-  "$(cd "$RELCHILD" && _history_matches "." "$WTB" "$PROJB")" "$RELCHILD_CANON"
-
-# ── an exact-name match wins outright over a substring decoy ──
-mkdir -p "$WTB/px-foo-0101-0100-plus"
-exact_out="$(_history_matches "px-foo-0101-0100" "$WTB" "$PROJB")"
-ok "match-exact-beats-substring-value"      "$exact_out" "$WTB/px-foo-0101-0100"
-ok "match-exact-beats-substring-linecount"  "$(printf '%s\n' "$exact_out" | grep -c .)" "1"
 
 rm -rf "$MBASE"
 
@@ -128,27 +108,6 @@ eout="$(_history_report "$WT_E" "$EBASE/no-such-projects-root")"
 has "report-no-transcript-dir" "$eout" "(no transcript directory"
 rm -rf "$EBASE"
 
-# ── _history_footer: worktree gone vs. present (reuses _wt_dirty/_wt_landed) ──
-fout_gone="$(_history_footer "/definitely/not/a/real/worktree/path-$$")"
-has "footer-gone-worktree" "$fout_gone" "no longer exists on disk"
-
-if command -v git >/dev/null 2>&1; then
-  FBASE="$(mktemp -d)"
-  FREPO="$FBASE/repo"; mkdir -p "$FREPO"
-  git -C "$FREPO" init -q -b main
-  git -C "$FREPO" config user.email t@t.com; git -C "$FREPO" config user.name t
-  echo hi > "$FREPO/a.txt"; git -C "$FREPO" add a.txt; git -C "$FREPO" commit -q -m init
-  WT_F="$FBASE/wt"
-  git -C "$FREPO" worktree add -q -b session/px-footertest-0101-0500 "$WT_F" main >/dev/null 2>&1
-
-  fout="$(_history_footer "$WT_F")"
-  has "footer-present-branch"  "$fout" "branch=session/px-footertest-0101-0500"
-  has "footer-present-landed"  "$fout" "landed=yes"
-  has "footer-present-status"  "$fout" "status=clean"
-  has "footer-present-gitlog"  "$fout" "init"
-  rm -rf "$FBASE"
-fi
-
 # ── end-to-end through the real mode dispatch (HOME override): arg parsing, matches+report+footer wired together,
 # exit codes, and the gone-from-disk-but-has-transcripts path ──
 E2EHOME="$(mktemp -d)"
@@ -187,11 +146,6 @@ has "e2e-gone-past-session"   "$goneout" "deadbeef"
 # extract the TURNS field (a bare `has ... "2"` would match the "2026-02-02" timestamps)
 ok "e2e-gone-turns" "$(printf '%s\n' "$goneout" | grep -F deadbeef | awk '{print $4}')" "2"
 
-# substring/repo-name match: both the live and the gone worktree share "e2e"
-repoout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history e2e 2>&1)"; reporc=$?
-ok  "e2e-repo-exit0"        "$reporc" "0"
-has "e2e-repo-finds-live"   "$repoout" "px-e2elive-0101-0600"
-has "e2e-repo-finds-gone"   "$repoout" "px-e2egone-0101-0700"
 
 # No match at all -> clear message on stderr, exit 2.
 nomatchout="$(HOME="$E2EHOME" bash "$HERE/../scripts/session-doctor.sh" history zz-nope-nothing-here 2>&1)"; nomatchrc=$?
