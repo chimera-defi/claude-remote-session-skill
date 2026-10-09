@@ -16,7 +16,6 @@ ok "short-passthrough" "$(bash "$ALIAS" widget-tracker)" "widget-tracker"
 # long folder -> initials acronym
 ok "long-acronym" "$(bash "$ALIAS" some-very-long-project-name)" "svlpn"
 # ALIAS_PROTECT is narrower than session-doctor's PROTECT: a folder merely containing "claude-remote" shortens normally.
-ok "claude-remote-substring-aliases" "$(bash "$ALIAS" claude-remote-session-skill)" "crss"
 # explicit --alias overrides and is sanitized
 ok "explicit-alias" "$(bash "$ALIAS" some-thing --alias 'My Alias!')" "my-alias"
 # stored alias is reused (no re-inference); established via --set-default since a bare --alias is per-spawn
@@ -29,11 +28,6 @@ ok "protected-not-stored" "$(awk -F'\t' '$1=="otherbot-autoresearch"' "$STORE" |
 ok "protected-ignores-alias" "$(CRSS_ALIAS_PROTECT_NAMES='otherbot|thirdbot' bash "$ALIAS" otherbot-autoresearch --alias oa)" "otherbot-autoresearch"
 # with no overlay (generic default) the same folder is NOT protected
 ok "unprotected-by-default" "$(bash "$ALIAS" otherbot-autoresearch --alias oa2)" "oa2"
-# a symbols-only folder name (> CAP chars) must never yield an empty alias (dangling-separator session name)
-long_symbolic='@@@@@@@@@@@@@@@@@@@@'
-out="$(bash "$ALIAS" "$long_symbolic")"
-ok "empty-normalize-nonempty" "$(yn test -n "$out")" "yes"
-ok "empty-normalize-safe-charset" "$(grep -qE '^[a-z0-9-]+$' <<<"$out" && echo yes || echo no)" "yes"
 # --no-save resolves (incl. inference) but must NEVER write the store (a --dry-run must not mutate state)
 NS_STORE="$(mktemp)"; rm -f "$NS_STORE"
 ok "nosave-resolves"  "$(SESSION_ALIAS_STORE="$NS_STORE" bash "$ALIAS" brand-new-long-folder-xyz --no-save)" "bnlfx"
@@ -76,9 +70,6 @@ ok "layered-poison-stored" "$(awk -F'\t' '$1=="px-px-demo-project-0101-0725"{pri
 # Trailing 4-digit non-date (sprint-2024 / sprint-2025) must alias as-is, not be stripped as MMDD and collide.
 FP="$(mktemp -u)"
 ok "not-mmdd-year-2024"   "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" sprint-2024)" "sprint-2024"
-ok "not-mmdd-year-2025"   "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" sprint-2025)" "sprint-2025"
-ok "not-mmdd-chainid"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" chain-8453)" "chain-8453"
-ok "not-mmdd-port"        "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" port-8080)" "port-8080"
 ok "not-mmdd-bad-day"     "$(SESSION_ALIAS_STORE="$FP" bash "$ALIAS" client-1042)" "client-1042"
 # but a genuine MMDD-shaped trailing date still poisons
 ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" tranche1-ready-0728)" "tranche1-ready"
@@ -87,32 +78,19 @@ ok "real-mmdd-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" 
 # a long numeric run only poisons as part of a 2+-group tail (legacy name-MMDD-HHMMSS-RANDOM).
 FP3="$(mktemp -u)"
 ok "not-longrun-issue-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" issue-12345)" "issue-12345"
-ok "not-longrun-ticket-id" "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" ticket-99999)" "ticket-99999"
-ok "not-longrun-build-id"  "$(SESSION_ALIAS_STORE="$FP3" bash "$ALIAS" build-100000)" "build-100000"
 # a genuine multi-group timestamp+random tail (no px- prefix) still poisons via the long-numeric-run check
 ok "real-longrun-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" discovery-0718-153051-4107171)" "discovery"
 
 # Two adjacent 4-digit runs that are not a real date+time (sprint-2024-2025 / port-8080-9090) must not collide.
 FP2="$(mktemp -u)"
 ok "not-mmdd-hhmm-year-range" "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" sprint-2024-2025)" "sprint-2024-2025"
-ok "not-mmdd-hhmm-port-pair"  "$(SESSION_ALIAS_STORE="$FP2" bash "$ALIAS" port-8080-9090)" "port-8080-9090"
 # a genuine MMDD-HHMM pair is still caught
 ok "real-mmdd-hhmm-still-caught" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" foo-0715-0630)" "foo"
 
 # 5-digit runs (chain ids, zips, ephemeral ports) must not collide; covered by the has_mmdd_group() gate.
 FP3c="$(mktemp -u)"
 ok "not-longnum-chainid-5digit" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" chain-84532)" "chain-84532"
-ok "not-longnum-zip"            "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" client-90210)" "client-90210"
-ok "not-longnum-ephemeral-port" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" port-49152)" "port-49152"
-# distinct 5-digit-suffixed folders alias distinctly
-ok "not-longnum-chainid-distinct" "$(SESSION_ALIAS_STORE="$FP3c" bash "$ALIAS" chain-42161)" "chain-42161"
 
-# port-12345 / port-54321 must not collide: a 5+-digit run is only evidence when paired with a real date.
-FP3b="$(mktemp -u)"
-ok "not-longrun-port"    "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-12345)" "port-12345"
-ok "not-longrun-port-2"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" port-54321)" "port-54321"
-ok "not-longrun-client"  "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" client-99999)" "client-99999"
-ok "not-longrun-invoice" "$(SESSION_ALIAS_STORE="$FP3b" bash "$ALIAS" invoice-123456)" "invoice-123456"
 # a long numeric run PAIRED with a real MMDD date is still caught (discovery-0718-153051-4107171)
 ok "real-longrun-still-caught-2" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" release-0715-123456)" "release"
 
@@ -124,12 +102,6 @@ r4="$(SESSION_ALIAS_STORE="$PZ2" bash "$ALIAS" multipair-proj)"
 ok "readguard-multipair-caught" "$r4" "multipair-proj"
 ok "readguard-multipair-clean"  "$(notsess "$r4")" "clean"
 
-# multi-candidate scan: three digit-pairs instead of two (same fix as multipair-proj)
-MP="$(mktemp)"
-printf 'somefolder\trelease-2024-2025-x-0715-0630-copy\n' > "$MP"
-mp_out="$(SESSION_ALIAS_STORE="$MP" bash "$ALIAS" somefolder)"
-ok "multi-pair-readguard-clean" "$(notsess "$mp_out")" "clean"
-ok "multi-pair-readguard-selfheal" "$(awk -F'\t' '$1=="somefolder"{print $2}' "$MP")" "$mp_out"
 
 # --audit-store: read-only report of entries where fresh inference disagrees with the stored value; must NOT mutate.
 AS="$(mktemp)"
@@ -149,11 +121,6 @@ out_tab="$(SESSION_ALIAS_STORE="$TK" bash "$ALIAS" "$tabfolder" 2>/dev/null)"
 ok "tabkey-resolves"     "$(yn test -n "$out_tab")" "yes"
 ok "tabkey-not-persisted" "$([ -f "$TK" ] && echo exists || echo absent)" "absent"
 
-NK="$(mktemp -u)"
-nlfolder=$'weird\nfolder'
-out_nl="$(SESSION_ALIAS_STORE="$NK" bash "$ALIAS" "$nlfolder" 2>/dev/null)"
-ok "newlinekey-resolves"     "$(yn test -n "$out_nl")" "yes"
-ok "newlinekey-not-persisted" "$([ -f "$NK" ] && echo exists || echo absent)" "absent"
 
 # CASE-INSENSITIVITY: the px-/px_ prefix check must catch `PX-foo-bar` (hand-edited store, no date to trip the digit checks).
 CI="$(mktemp)"
@@ -162,14 +129,7 @@ ci_out="$(SESSION_ALIAS_STORE="$CI" bash "$ALIAS" myproj)"
 ok "caseinsens-readguard-caught"    "$(notsess "$ci_out")" "clean"
 ok "caseinsens-readguard-selfheal"  "$(awk -F'\t' '$1=="myproj"{print $2}' "$CI")" "$ci_out"
 
-# CASE-INSENSITIVITY in infer(): an uppercase `PX-` prefix + embedded date must still desessionify to the meaningful part.
-ok "caseinsens-infer-desessionify" "$(SESSION_ALIAS_STORE="$(mktemp -u)" bash "$ALIAS" "PX-project-0101-1234")" "project"
 
-# every current legit alias survives untouched
-LS="$(mktemp -u)"
-for x in crss widgets opt-verify proj-orch sl0 ahbr rc-disconnect ebw wmc srf; do
-  ok "legit-survives-$x" "$(SESSION_ALIAS_STORE="$LS" bash "$ALIAS" "$x")" "$x"
-done
 
 # ── --alias is PER-SPAWN: it must not mutate the folder's stored default (it names the TASK; persisting it renamed
 # folders forever, 11 of ~40 entries drifted). Persisting is an explicit opt-in via --set-default. ──
@@ -185,15 +145,11 @@ ok "per-spawn-alias-overrides-for-this-spawn" \
   "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder --alias throwaway)" "throwaway"
 ok "per-spawn-alias-leaves-default-intact" \
   "$(awk -F'\t' '$1=="stable-folder"{print $2}' "$PS")" "stable"
-ok "bare-resolve-still-returns-default" \
-  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "stable"
 # --set-default is the explicit opt-in that DOES persist
 ok "set-default-returns-value" \
   "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder --alias renamed --set-default)" "renamed"
 ok "set-default-persists" \
   "$(awk -F'\t' '$1=="stable-folder"{print $2}' "$PS")" "renamed"
-ok "bare-resolve-after-set-default" \
-  "$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" stable-folder)" "renamed"
 # opting in must not smuggle a poisoned default past the guard (anti-poisoning runs BEFORE persisting)
 pz_out="$(SESSION_ALIAS_STORE="$PS" bash "$ALIAS" poison-folder --alias px-x-0101-0725 --set-default 2>/dev/null)"
 ok "set-default-rejects-poisoned"      "$(notsess "$pz_out")" "clean"

@@ -1,108 +1,48 @@
 #!/usr/bin/env bash
-# session-send.sh is a thin passthrough to `session-handoff.sh send` — this
-# confirms it forwards args/exit-codes/messages faithfully rather than
-# re-implementing (and so re-risking) the type/verify/Enter dance, and that it
-# resolves session-handoff in BOTH the repo layout (co-located .sh) and the
-# deployed layout (flat copy on PATH, .sh dropped).
+# session-send.sh is a thin passthrough to `session-handoff.sh send`: errors/exit codes come through
+# from the helper, the helper resolves in both the repo layout (co-located .sh) and the deployed layout
+# (flat copy on PATH), and a missing helper fails loudly.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/lib.sh"
 SEND="$HERE/../scripts/session-send.sh"
+NOSESS="no-such-session-send-test-$$"
 
-# 1. No such tmux session -> forwarded error + exit code from session-handoff,
-# not a session-send-specific message (proves it's a real passthrough).
-out="$(bash "$SEND" no-such-session-send-test-$$ hello 2>&1)"; rc=$?
-has "no-session-forwarded" "$out" "no such tmux session"
-ok  "no-session-exit2"     "$rc" "2"
+out="$(bash "$SEND" "$NOSESS" hello 2>&1)"; rc=$?
+has "forwards the helper's error" "$out" "no such tmux session"; ok "forwards exit 2" "$rc" "2"
 
-# 2. Deployed layout: session-handoff resolved via PATH (no .sh sibling next
-# to session-send), matching how scripts land flat in ~/.local/bin. Copy
-# session-send.sh ALONE (no session-handoff.sh next to it) so the co-located
-# check can't accidentally pass this — the PATH branch has to do the work.
-DEPLOY="$(mktemp -d)"; trap 'rm -rf "$DEPLOY"' EXIT
-cp "$HERE/../scripts/session-send.sh" "$DEPLOY/session-send.sh"
-cp "$HERE/../scripts/session-handoff.sh" "$DEPLOY/session-handoff"
-chmod +x "$DEPLOY/session-handoff"
-outp="$(PATH="$DEPLOY:$PATH" bash "$DEPLOY/session-send.sh" no-such-session-send-test-$$ hello 2>&1)"; rcp=$?
-has "path-fallback-forwarded" "$outp" "no such tmux session"
-ok  "path-fallback-exit2"     "$rcp" "2"
+# deployed layout: session-send alone next to a flat `session-handoff` on PATH
+DEPLOY="$(mktemp -d)"; ISOLATED="$(mktemp -d)"; trap 'rm -rf "$DEPLOY" "$ISOLATED"' EXIT
+cp "$SEND" "$DEPLOY/session-send.sh"
+cp "$HERE/../scripts/session-handoff.sh" "$DEPLOY/session-handoff"; chmod +x "$DEPLOY/session-handoff"
+out="$(PATH="$DEPLOY:$PATH" bash "$DEPLOY/session-send.sh" "$NOSESS" hello 2>&1)"; rc=$?
+has "PATH fallback resolves the helper" "$out" "no such tmux session"; ok "PATH fallback exit 2" "$rc" "2"
 
-# 3. Neither co-located nor on PATH -> session-send must fail clearly, not
-# silently do nothing. Copy session-send.sh ALONE into an empty dir (no
-# session-handoff sibling) and strip PATH, so co-located resolution (which
-# looks next to the script's OWN location, unaffected by PATH) also misses.
-ISOLATED="$(mktemp -d)"
-cp "$HERE/../scripts/session-send.sh" "$ISOLATED/session-send.sh"
-outm="$(env -i PATH=/usr/bin:/bin HOME="$HOME" bash "$ISOLATED/session-send.sh" missing-helper-test hello 2>&1)"; rcm=$?
-has "helper-missing-clear-error" "$outm" "could not locate session-handoff"
-ok  "helper-missing-exit2"       "$rcm" "2"
-rm -rf "$ISOLATED"
+# neither co-located nor on PATH
+cp "$SEND" "$ISOLATED/session-send.sh"
+out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" bash "$ISOLATED/session-send.sh" missing-helper-test hello 2>&1)"; rc=$?
+has "missing helper: clear error" "$out" "could not locate session-handoff"; ok "missing helper: exit 2" "$rc" "2"
 
-# 4. Whitespace-only message rejected up front (the exact false-"unverified"
-# fix already in session-handoff.sh — session-send must inherit it, not
-# re-derive its own weaker check). Needs a REAL (throwaway, synthetic) tmux
-# session whose pane foreground command is claude/node (`exec -a claude cat`
-# renames the pane's own process so _state_of sees "ready", not "starting" —
-# a bare login shell would be classified "starting" and refused before the
-# whitespace check is ever reached).
+# live throwaway pane whose foreground command is `claude`
 if command -v tmux >/dev/null 2>&1; then
-  S="sendtest-$$-ws"
+  S="sendtest-$$"
   tmux new-session -d -s "$S" 2>/dev/null
   tmux send-keys -t "$S" 'exec -a claude cat' Enter
-  # POLL, don't sleep. A fixed `sleep 1` raced on loaded CI runners: the pane was
-  # still a bare login shell, so _state_of classified it "starting" and
-  # session-send refused for THAT reason before ever reaching the whitespace
-  # check — failing this assertion with a misleading message
-  # ("... is still starting — refusing to send"). Wait for the renamed
-  # foreground command this fixture needs, which is what the comment above
-  # already said was required.
   for _ in $(seq 1 50); do
     [ "$(tmux list-panes -t "$S" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] && break
     sleep 0.2
   done
-  outw="$(bash "$SEND" "$S" "   " 2>&1)"; rcw=$?
-  has "whitespace-rejected" "$outw" "message is empty or whitespace-only"
-  ok  "whitespace-exit2"    "$rcw" "2"
-  tmux kill-session -t "$S" 2>/dev/null || true
-fi
-
-# 5. --file passthrough on a session that doesn't exist: the has-session check
-# runs before any file is read, so this only proves the flag reaches
-# session-handoff unmangled (same error as plain send). A REAL file-read
-# attempt is exercised in 5b against a live throwaway session.
-outf="$(bash "$SEND" no-such-session-send-test-$$ --file /no/such/path-$$ 2>&1)"; rcf=$?
-has "file-flag-forwarded-notfound" "$outf" "no such tmux session"
-ok  "file-flag-exit2"              "$rcf" "2"
-
-# 5b. --file content is actually read and sent (not a "no such session"/
-# "--file needs a path" short-circuit) — needs a live throwaway session so
-# dispatch reaches the file-read step. Outcome (landed vs UNVERIFIED) depends
-# on the pane's shape (a bare tmux pane isn't a real claude TUI), so only
-# assert it got PAST argument handling, not which verdict it reached.
-if command -v tmux >/dev/null 2>&1; then
-  S2="sendtest-$$-file"
-  tmux new-session -d -s "$S2" 2>/dev/null
-  tmux send-keys -t "$S2" 'exec -a claude cat' Enter
-  sleep 1
+  out="$(bash "$SEND" "$S" "   " 2>&1)"; rc=$?
+  has "whitespace-only message rejected" "$out" "message is empty or whitespace-only"; ok "whitespace exit 2" "$rc" "2"
+  out="$(bash "$SEND" "$S" --file "/no/such/path-$$" 2>&1)"; rc=$?
+  has "unreadable --file reported as such" "$out" "could not read --file path"; ok "unreadable --file exit 2" "$rc" "2"
+  hasnt "unreadable --file not misreported as empty" "$out" "empty or whitespace-only"
   MSGFILE="$(mktemp)"; printf 'relayed via --file\n' > "$MSGFILE"
-  outf2="$(bash "$SEND" "$S2" --file "$MSGFILE" 2>&1)"
-  if grep -qE 'landed on|UNVERIFIED on' <<<"$outf2"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL: file-flag-content-sent — got: $outf2"; fi
-  rm -f "$MSGFILE"
-
-  # 5c. --file pointing at a path that does not exist, on a session that DOES
-  # exist, must be reported as an unreadable file — not misreported as the
-  # unrelated "message is empty or whitespace-only" refusal (a failed `cat`
-  # used to leave MSG empty and fall through to that check silently).
-  outf3="$(bash "$SEND" "$S2" --file "/no/such/path-$$" 2>&1)"; rcf3=$?
-  has "unreadable-file-reported" "$outf3" "could not read --file path"
-  ok  "unreadable-file-exit2"    "$rcf3" "2"
-  if grep -q "empty or whitespace-only" <<<"$outf3"; then
-    fail=$((fail+1)); echo "FAIL: unreadable-file-not-misreported — got: $outf3"
-  else
-    pass=$((pass+1))
-  fi
-
-  tmux kill-session -t "$S2" 2>/dev/null || true
+  out="$(bash "$SEND" "$S" --file "$MSGFILE" 2>&1)"
+  hasre "--file sent: reaches a verdict" "$out" 'landed on|UNVERIFIED on'
+  sleep 0.5   # the pane runs `cat`, so delivered bytes are echoed into the pane
+  has "--file contents reach the target pane" "$(tmux capture-pane -p -t "$S" -S -50)" "relayed via --file"
+  rm -f "$MSGFILE"; tmux kill-session -t "$S" 2>/dev/null || true
 fi
 
 finish "session-send"
