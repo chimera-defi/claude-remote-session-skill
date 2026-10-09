@@ -116,6 +116,19 @@ cat <<SCRIPT_EOF
     def test_autonomous_resume_denies_before_control_commands(self):
         p=subprocess.run(['bash',str(ROOT/'scripts/session-resume.sh'),'fake'],env=dict(self.env,CRSS_AUTONOMOUS='1'),capture_output=True,text=True,timeout=10)
         self.assertEqual(p.returncode,2,p.stderr); self.assertEqual(self.calls(),'')
+    def test_resume_admission_subject_is_session_name_not_a_leading_flag(self):
+        # --uuid/--model may precede the positional session name (session-resume's own
+        # parser accepts either order); the admission subject must still be the session,
+        # never the literal flag token, or quota/admission tracking keys on the wrong subject.
+        (self.bin/'authority.py').write_text(
+            "import sys,os\n"
+            "open(os.environ['CALLS'],'a').write('subject:'+sys.argv[3]+chr(10))\n"
+            "print('{\"decision\":\"ALLOW\"}')\n"
+            "sys.exit(0)\n")
+        p=subprocess.run(['bash',str(ROOT/'scripts/session-resume.sh'),'--uuid',
+                           '12345678-1234-1234-1234-123456789012','fake'],
+                          env=dict(self.env,CRSS_AUTONOMOUS='1'),capture_output=True,text=True,timeout=10)
+        self.assertIn('subject:fake',self.calls(),p.stderr+p.stdout)
     def test_compact_sweep_denies_before_handoff(self):
         source=(ROOT/'scripts/session-compact.sh').read_text()
         start=source.index('_do_compact()'); end=source.index('\n}\n',start)+3

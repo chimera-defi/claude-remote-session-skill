@@ -48,11 +48,19 @@ _crss_admit() {
   bash "$helper" "$@"
 }
 _admission_read_only=0
+_admission_target=""
+_admission_skip_next=0
 for _admission_arg in "$@"; do
-  case "$_admission_arg" in --dry-run|--help|-h) _admission_read_only=1;; esac
+  if [ "$_admission_skip_next" = 1 ]; then _admission_skip_next=0; continue; fi
+  case "$_admission_arg" in
+    --dry-run|--help|-h) _admission_read_only=1 ;;
+    --uuid|--model) _admission_skip_next=1 ;;
+    -*) ;;
+    *) [ -n "$_admission_target" ] || _admission_target="$_admission_arg" ;;
+  esac
 done
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$_admission_read_only" = 0 ]; then
-  _crss_admit restart "${CRSS_ADMISSION_SUBJECT:-${1:-unknown}}" >&2 || exit 2
+  _crss_admit restart "${CRSS_ADMISSION_SUBJECT:-${_admission_target:-unknown}}" >&2 || exit 2
 fi
 
 # ── Host-local overlay config ────────────────────────────────────────────────
