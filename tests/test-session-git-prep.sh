@@ -76,6 +76,15 @@ ok "stale-lock-treated-as-free" "$out" "$R5"
 ok "stale-lock-checks-out-default" "$(git -C "$R5" rev-parse --abbrev-ref HEAD)" "main"
 ok "stale-lock-overwritten" "$(cat "$HOME/.claude/session-locks/${LOCK_KEY5}.owner")" "sess-stale"
 
+# 7. A worktree is branched from the DEFAULT branch's tip, not the checked-out feature branch.
+R6="$WORK/repo6"; mkrepo "$R6"
+echo "on-main" > "$R6/marker.txt"; git -C "$R6" add marker.txt; git -C "$R6" commit --quiet -m "add marker"
+git -C "$R6" checkout --quiet -b feature-branch
+git -C "$R6" rm --quiet marker.txt; git -C "$R6" commit --quiet -m "remove marker on feature"
+echo "still-dirty" > "$R6/other.txt"
+out="$(bash "$SGP" "$R6" sess-base remote-base 2>/dev/null)"
+isfile "worktree-based-on-default-not-current" "$out/marker.txt"
+
 # 8. With an 'origin' remote, the canonical tree ff-merges the latest origin/<default>
 # instead of just checking out whatever the local branch already had.
 SRC="$WORK/src"; mkrepo "$SRC"
@@ -101,6 +110,10 @@ RB="$WORK/collide/foo/bar"; mkrepo "$RB"
 bash "$SGP" "$RA" sess-collide-a remote-collide-a >/dev/null 2>&1
 bash "$SGP" "$RB" sess-collide-b remote-collide-b >/dev/null 2>&1
 ok "collide-distinct-lock-keys" "$([ "$(lock_key "$RA")" != "$(lock_key "$RB")" ] && echo yes || echo no)" "yes"
+# ...and the REAL script must have written two distinct lock files, one per owner.
+ok "collide-two-lock-files" "$(ls "$HOME/.claude/session-locks"/*foo*bar*.owner 2>/dev/null | wc -l | tr -d ' ')" "2"
+ok "collide-owner-a" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RA").owner" 2>/dev/null)" "sess-collide-a"
+ok "collide-owner-b" "$(cat "$HOME/.claude/session-locks/$(lock_key "$RB").owner" 2>/dev/null)" "sess-collide-b"
 
 # 10. A lock held under the PRE-checksum key format (from a session that
 # claimed the canonical tree before this fix was deployed) must still be
