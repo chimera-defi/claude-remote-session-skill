@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """fake-claude-tui.py — throwaway fixture standing in for a Claude Code TUI
-pane in tests/test-session-handoff-paste-race.sh (see that file for the full
+pane in tests/test-session-handoff-tui.sh (see that file for the full
 context: the dropped-first-paste race).
 
 Renders a minimal claude-like screen — a "-" status line, a bordered

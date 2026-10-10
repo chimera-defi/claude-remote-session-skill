@@ -946,7 +946,7 @@ case "$MODE" in
     # accidentally-deleted allowlist compacting the entire host is the exact
     # failure this flag exists to prevent, so "can't determine scope" and
     # "scope is the whole fleet" must never be reachable by the same code
-    # path. See tests/test-session-compact-managed.sh for the tamper-verified
+    # path. See tests/test-session-compact-sweep.sh for the tamper-verified
     # proof that breaking this exits somewhere other than here.
     MANAGED_FILE="$(_managed_allowlist_file)"
     n_managed=0
@@ -983,7 +983,7 @@ case "$MODE" in
     # (never `${TSV_FILTERED:-$TSV}` or similar) — an EMPTY filtered result
     # (every allowlist entry stale) must still leave TSV empty, not silently
     # revert to the fleet-wide fetch above. That "no coalescing fallback"
-    # property is exactly what tests/test-session-compact-managed.sh's
+    # property is exactly what tests/test-session-compact-sweep.sh's
     # tamper-verified fail-safe assertions exist to pin.
     scope_note=""
     if [ "$MANAGED_ONLY" = yes ]; then

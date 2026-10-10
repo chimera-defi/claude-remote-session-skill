@@ -14,10 +14,7 @@ this is a deliberately reduced last resort. Versus `new-session.sh` it:
 - reads `CRSS_*` from the environment only (no `$CRSS_HOME/config.sh` parsing) and ignores
   `CRSS_LEGACY_PREFIXES` (it only generates under `CRSS_SESSION_PREFIX`).
 
-Ported and kept in sync by `tests/test-fallback-recipe-sync.sh`: the kickoff-verification
-retry (wait for the pane's shell, retry the launch `Enter` with verification) and the
-universal `--exclude-dynamic-system-prompt-sections` flag. The alias guard is pinned by
-`tests/test-fallback-recipe-guard.sh`. Do not edit the block without running both.
+Ported from `new-session.sh`: the kickoff-verification retry (wait for the pane's shell, retry the launch `Enter` with verification) and the universal `--exclude-dynamic-system-prompt-sections` flag. Only the alias guard is pinned (`tests/test-fallback-recipe-guard.sh`); diff the other pieces against `scripts/new-session.sh` when editing.
 
 ```bash
 # Same CRSS_* vars/defaults as new-session.sh (examples/crss-overlay/README.md); env only.

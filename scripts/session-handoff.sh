@@ -722,7 +722,7 @@ case "$MODE" in
     # paste but stalled its own repaint before showing any trace of it — from
     # a pane-capture vantage point the two are identical, and a stalled
     # accept would then be double-delivered. That's a real, documented
-    # residual risk (see tests/test-session-handoff-paste-race.sh case 2),
+    # residual risk (see tests/test-session-handoff-tui.sh silent-accept case),
     # not a case this fix claims to solve — but the alternative, observed
     # 8/8 on first sends, is losing the message outright every time.
     if [ "$verdict" != landed ]; then
