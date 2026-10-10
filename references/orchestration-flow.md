@@ -8,13 +8,13 @@ kickoff brief instead of retyping it. Host model pins and quota rules live in th
 
 | Role | Model | Does | Never |
 |---|---|---|---|
-| Orchestrator | Opus (bare alias `opus`) | reads, diagnoses, decides, writes frozen packets, verifies, reports | hand-implements multi-file changes; large reads that a builder can summarise |
+| Orchestrator | Opus (the `orchestrator` profile's pinned id, see `SKILL.md` key rules) | reads, diagnoses, decides, writes frozen packets, verifies, reports | hand-implements multi-file changes; large reads that a builder can summarise |
 | Builder | Sonnet (`subagent_type: builder` or `model: "sonnet"`) | implements one independent slice in its own worktree off `origin/main`, opens a PR, does not merge | inherits the Opus model (it silently loses `advisor`) |
 | Mechanical | Haiku (`model: "haiku"`) | greps, inventories, log triage, doc moves | judgement calls, anything that edits shared state |
 | Adversarial reviewer | Opus (`model: "opus"`), a different context from the author | tries to break the diff: races, idempotency, partial failure, restart, rollback | reviewing its own work; "looks fine" without a failing scenario |
-| Fork tiebreak | Fable (`model: "fable"`) | one condensed packet at a real fork, or a last look before a risky action | routine review (shares the Claude spend limit with Opus) |
+| Second opinion / tiebreak | Fable (`subagent_type: reviewer`, `agents/reviewer.md`) | an independent read of a diff or decision after the Opus pass, at a real fork, or before a risky action; condensed packet only | pasting transcripts (it shares the Claude spend limit with Opus) |
 
-Codex (`codex exec -m gpt-6.1-sol`) is the preferred builder/reviewer when it has quota; when it is
+Codex is the preferred builder/reviewer when the host overlay says it has quota (model and flags live there); when it is
 out, say "Codex quota-out, operator-approved Claude-only review" in the PR and record `models_ran`.
 Never review on one model family alone when a second is available.
 
@@ -25,7 +25,7 @@ Never review on one model family alone when a second is available.
 2. **Packet.** For each slice: decided design, exact paths, constraints, tests to add, "open PR from
    `origin/main`, do not merge", and the safety rules that apply. A packet is self-contained; the
    builder has none of your context.
-3. **Fan out.** At most 3 concurrent subagents; subagents cannot nest. Independent slices only.
+3. **Fan out.** Keep concurrent subagents few (3 is a good ceiling here); subagents cannot nest. Independent slices only.
 4. **Verify claims.** A report is a claim. Re-run the cited command or open the cited file:line
    before relaying "done" or "no issues". No evidence means unverified.
 5. **Adversarial review.** Opus reviews each diff on its own packet (the diff, the claim, how to run
