@@ -48,16 +48,10 @@ property. Rows flagged `[P]` are protected (built-in `claude-remote` pattern plu
 
 ## Non-obvious details (verified empirically)
 
-1. **Enumeration**: `pgrep -af 'claude.*--remote-control'`, keeping only rows whose
-   executable basename is `claude` (or `node`). The pattern also matches the tmux launcher
-   and the bash supervisor loop, whose args carry the same string.
-2. **cwd** from `readlink /proc/<pid>/cwd`.
-3. **remote name -> tmux name** via `svc_to_tmux` (`<prefix>-X` -> `<prefix>_X` for
-   `CRSS_SESSION_PREFIX` and each `CRSS_LEGACY_PREFIXES` entry; others unchanged, so rows
-   outside those prefixes show an approximate name; they are `[P]` anyway).
-4. **Transcript dir** `~/.claude/projects/<encoded>`, `encoded = cwd.replace('.', '-').replace('/', '-')`
-   (holds for dotted paths too; undocumented in Claude Code, verified by checking dirs exist).
-5. **Idle signal** = max `timestamp` over `*.jsonl` entries with `type == "user"`, excluding
+Enumeration, cwd, remote-name to tmux-name mapping and transcript-dir encoding live in the idle-report
+scan of `scripts/session-doctor.sh` (pinned by `tests/test-session-doctor-tsv.sh`); not restated here.
+
+**Idle signal** = max `timestamp` over `*.jsonl` entries with `type == "user"`, excluding
    all FIVE artifacts one `/compact` writes. Excluding only the `isCompactSummary:true`
    entry was not enough: idle still reset from days to minutes because four more synthetic
    `type:user` entries land with it:
