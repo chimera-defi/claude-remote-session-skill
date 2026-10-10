@@ -112,6 +112,9 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](references/hub-opus-consult.md).
+- The standard lane shape (Opus orchestrates, Sonnet builders, Haiku for mechanical work, Opus
+  adversarial review) is in [`references/orchestration-flow.md`](references/orchestration-flow.md);
+  link it in kickoff briefs instead of restating it.
 - The Opus orchestrator has no `advisor` (Sonnet-only). For a second opinion it spawns a
   Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
   deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
