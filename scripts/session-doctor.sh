@@ -10,7 +10,7 @@
 # Usage:
 #   session-doctor.sh                      # report (read-only) — default
 #   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   MIN-AGE GATE: reap, reap-local (dead tmux only; orphan units have nothing alive) and reap-merged
+#   MIN-AGE GATE: reap, reap-local (dead tmux AND orphan units: a dead tmux server leaves young units that session-resume needs) and reap-merged
 #                                           # refuse any session younger than CRSS_REAP_MIN_AGE_H hours (default 24, 0
 #                                           # disables; age = first spawn in session-starts.log via session-registry
 #                                           # --first-seen). Override: `reap <name> --allow-young` or the env var.
@@ -153,6 +153,17 @@ PROTECT="$CRSS_PROTECT_NAMES"
 _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_crss_rc" -le 1 ] || {
   echo "session-doctor: CRSS_PROTECT_NAMES is not a valid regex ('$PROTECT'); treating EVERY session as protected until it's fixed" >&2
   PROTECT='.'
+}
+
+# _is_protected <text> — CRSS_PROTECT_NAMES against tmux names (ah_x), units and titles (ah-x) alike: try the
+# text as-is, all-hyphen and all-underscore so a term in either form protects every form. Tests: tests/test-reap-min-age.sh.
+_is_protected() {
+  local t="$1"
+  local v
+  for v in "$t" "${t//_/-}" "${t//-/_}"; do
+    grep -qiE "$PROTECT" <<<"$v" && return 0
+  done
+  return 1
 }
 
 # ── Session-name prefix recognition ─────────────────────────────────────────
@@ -434,7 +445,7 @@ _title_protected() {
   local t
   t="$(printf '%s' "$1" | tr -s '[:space:]' '-' && printf x)" || return 1
   t=${t%x}
-  [ -n "$t" ] && grep -qiE "$PROTECT" <<<"${t%$'\n'}"
+  [ -n "$t" ] && _is_protected "${t%$'\n'}"
 }
 
 # _registry_delete_one <id> <title> — protect-check + DELETE one registry
@@ -1271,7 +1282,7 @@ _history_report() {
       cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
       [ -n "$cwd" ] || continue
       [ "$cwd" = "$wt" ] || continue
-      prot=no; grep -qiE "$PROTECT" <<<"$rc $tm $cwd" && prot=yes
+      prot=no; _is_protected "$rc $tm $cwd" && prot=yes
       printf '%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$prot"
     done
   )"
@@ -1529,7 +1540,7 @@ _reap_merged_check() {
   RM_VERDICT=skipped; RM_REASON=""
   base="$(tmux_to_base "$name")"
   [ -n "$base" ] || { RM_REASON="not a crss-prefixed session"; return; }
-  if grep -qiE "$PROTECT" <<<"$name"; then RM_REASON="protected name"; return; fi
+  if _is_protected "$name"; then RM_REASON="protected name"; return; fi
   case "$name" in *desk*) RM_REASON="operator desk"; return ;; esac
   if [ -n "${TMUX:-}" ]; then
     me="$(tmux display-message -p '#S' 2>/dev/null)"
@@ -1576,7 +1587,7 @@ case "$MODE" in
     echo "=== LOCAL: tmux sessions ==="
     for s in $(live_tmux); do
       alive=$(proc_alive "$s" && echo yes || echo NO-PROC)
-      prot=$(grep -qiE "$PROTECT" <<<"$s" && echo " [PROTECTED]" || true)
+      prot=$(_is_protected "$s" && echo " [PROTECTED]" || true)
       printf "  %-52s proc=%s%s\n" "$s" "$alive" "$prot"
     done
     echo "=== LOCAL: systemd units without a live tmux (orphans) ==="
@@ -1613,6 +1624,11 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       if [ "$FORCE" = yes ]; then
         { [ -n "$UD" ] && [ -f "$UD/$2" ]; } && acted=yes
         { [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ]; } && acted=yes
+        # Archive unit + start script before any rm (as `reap` does); if the archive fails, delete nothing.
+        if ! _reap_archive_home_paths "${2%.service}" ".config/systemd/user/$2" ".local/bin/$3"; then
+          echo "  WARNING: unit/start-script archive failed for '$2' ($_REAP_ARCHIVE_ERR); leaving originals in place" >&2
+          return
+        fi
         systemctl --user disable --now "$2" >/dev/null 2>&1 || true
         [ -n "$UD" ] && [ -f "$UD/$2" ] && rm -f "$UD/$2"
         [ -n "$UD" ] && [ -L "$UD/default.target.wants/$2" ] && rm -f "$UD/default.target.wants/$2"
@@ -1624,7 +1640,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     reaped=0
     # 1. tmux sessions whose claude proc is gone (skip protected).
     for s in $(live_tmux); do
-      grep -qiE "$PROTECT" <<<"$s" && continue
+      _is_protected "$s" && continue
       base="$(tmux_to_base "$s")"; [ -z "$base" ] && continue   # not ours (e.g. codexhost_) → leave it
       proc_alive "$s" && continue                                # alive → keep
       if ! _reap_age_gate "$s"; then
@@ -1642,9 +1658,12 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     # (the exact case this loop exists to reap). Same liveness definition as
     # `report`'s ORPHAN listing above: no live tmux match.
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
-      grep -qiE "$PROTECT" <<<"$u" && continue
+      _is_protected "$u" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
       _tmux_live_has "$tm" && continue
+      if ! _reap_age_gate "$tm"; then
+        echo "SKIPPED young/unknown-age orphan unit: $u — $REAP_AGE_MSG"; continue
+      fi
       echo "ORPHAN unit (no tmux): $u"
       do_reap "" "$u" "${base}-start.sh"
       reaped=$((reaped+1))
@@ -1745,7 +1764,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         session/*) owned=yes; remote="${branch#session/}" ;;
         *)         owned=no;  remote="$(basename "$wt")" ;;
       esac
-      grep -qiE "$PROTECT" <<<"$remote" && continue
+      _is_protected "$remote" && continue
       tm="$(svc_to_tmux "$remote")"
       # Owning session still live (tmux present AND its claude proc running)? Keep it.
       if [ -n "$tm" ] && _tmux_live_has "$tm" && proc_alive "$tm"; then
@@ -1886,7 +1905,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         tm="$(svc_to_tmux "$rc")"                       # reuse existing name mapping
         cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null)"
         [ -n "$cwd" ] || continue                       # proc vanished mid-scan
-        prot=no; grep -qiE "$PROTECT" <<<"$rc $tm $cwd" && prot=yes
+        prot=no; _is_protected "$rc $tm $cwd" && prot=yes
         printf '%s\t%s\t%s\t%s\t%s\n' "$pid" "$rc" "$tm" "$cwd" "$prot"
       done
     } | python3 -c "
@@ -2113,7 +2132,7 @@ else:
     # is already gone). Idempotent: a missing tmux session or a missing/never-
     # installed systemd unit does not fail the rest of the teardown.
     NAME="${1:?usage: session-doctor.sh reap <tmux-session> [--force]}"
-    grep -qiE "$PROTECT" <<<"$NAME" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
+    _is_protected "$NAME" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
     # Min-age gate (before any audit or mutation, also under --dry-run). --force does not bypass.
     if ! _reap_age_gate "$NAME"; then
       echo "session-doctor: REFUSING to reap '$NAME' — $REAP_AGE_MSG" >&2
