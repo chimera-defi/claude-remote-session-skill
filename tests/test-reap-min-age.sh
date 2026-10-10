@@ -105,11 +105,15 @@ ok "env-at-cap-accepted-then-refuses-young" "$rc" 1
 out="$(doctor report --allow-young)"; rc=$?
 ok "allow-young-rejected-elsewhere" "$rc" 2
 
-# ── reap-local: dead tmux is gated, orphan units (no tmux) are not ──
+# ── reap-local: dead tmux AND orphan units (no tmux) are gated; reaped orphans are archived first ──
 touch "$FIX/tmux/px_deadyoung-0101-0900" "$FIX/tmux/px_deadold-0101-0900" "$FIX/tmux/px_deadnolog-0101-0900"
 spawn px_deadyoung-0101-0900 2; spawn px_deadold-0101-0900 30
 UD="$HOME/.config/systemd/user"
-echo "[Unit]" > "$UD/px-orphan-0101-0900.service"
+spawn px_orphan-0101-0900 30; spawn px_orphanyoung-0101-0900 2
+spawn px_keep-0101-0900 30   # PROTECT term is underscore-form (px_keep); the hyphen unit must still be protected
+for o in px-orphan-0101-0900 px-orphanyoung-0101-0900 px-keep-0101-0900; do
+  echo "[Unit] $o" > "$UD/$o.service"; echo "#!/bin/sh" > "$HOME/.local/bin/$o-start.sh"
+done
 out="$(doctor reap-local --force)"; rc=$?
 ok "reap-local-exit0" "$rc" 0
 has "reap-local-young-skipped" "$out" "SKIPPED young/unknown-age dead tmux: px_deadyoung-0101-0900"
@@ -117,9 +121,18 @@ has "reap-local-unknown-skipped" "$out" "SKIPPED young/unknown-age dead tmux: px
 ok "reap-local-young-tmux-kept" "$(yn test -e "$FIX/tmux/px_deadyoung-0101-0900")" yes
 ok "reap-local-unknown-tmux-kept" "$(yn test -e "$FIX/tmux/px_deadnolog-0101-0900")" yes
 ok "reap-local-old-tmux-killed" "$(yn test -e "$FIX/tmux/px_deadold-0101-0900")" no
+ok "protect-underscore-term-keeps-hyphen-unit" "$(yn test -e "$UD/px-keep-0101-0900.service")" yes
+has "reap-local-orphan-young-skipped" "$out" "SKIPPED young/unknown-age orphan unit: px-orphanyoung-0101-0900.service"
+ok "reap-local-orphan-young-unit-kept" "$(yn test -e "$UD/px-orphanyoung-0101-0900.service")" yes
+ok "reap-local-orphan-young-start-kept" "$(yn test -e "$HOME/.local/bin/px-orphanyoung-0101-0900-start.sh")" yes
 ok "reap-local-orphan-unit-removed" "$(yn test -e "$UD/px-orphan-0101-0900.service")" no
+ok "reap-local-orphan-start-removed" "$(yn test -e "$HOME/.local/bin/px-orphan-0101-0900-start.sh")" no
+arch="$HOME/backups/reaped-worktree-ignored"  # one archive dir per run, shared by all items reaped in it
+ok "reap-local-orphan-unit-archived" "$(yn bash -c 'compgen -G "$1/*/unit/.config/systemd/user/px-orphan-0101-0900.service"' _ "$arch")" yes
+ok "reap-local-orphan-start-archived" "$(yn bash -c 'compgen -G "$1/*/unit/.local/bin/px-orphan-0101-0900-start.sh"' _ "$arch")" yes
 out="$(doctor reap-local --force --allow-young)"
 ok "reap-local-allow-young-kills-young" "$(yn test -e "$FIX/tmux/px_deadyoung-0101-0900")" no
+sleep 1   # archive dir is <base>-<second>; a same-second same-base rerun would (safely) refuse to archive
 touch "$FIX/tmux/px_deadnolog-0101-0900"
 out="$(CRSS_REAP_MIN_AGE_H=0 doctor reap-local --force)"
 ok "reap-local-env0-kills-unknown" "$(yn test -e "$FIX/tmux/px_deadnolog-0101-0900")" no
