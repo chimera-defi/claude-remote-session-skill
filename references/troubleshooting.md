@@ -11,8 +11,8 @@ Each section is a diagnose -> recover recipe for one failure shape. Three shapes
 
 A `--task`/`--task-file` kickoff reporting `trust dialog open` or `claude not running in
 pane` is this same menu/not-ready detection firing during spawn, not a new shape (SKILL.md
-"Done for a spawn"; pinned by `tests/test-new-session-settle-loop.sh` and
-`tests/test-session-handoff-paste-race.sh`).
+"Done for a spawn"; pinned by `tests/test-new-session-kickoff.sh` and
+`tests/test-session-handoff-tui.sh`).
 
 ## Compact before relaying into an idle/stale session
 
@@ -61,7 +61,7 @@ launch environment wins (host 300000 -> `effectiveWindow=280000`; launch export 
 effectiveWindow-13000)` tokens (read from the 2.1.287 binary), so P=70 means ~196k at a 300000
 window and ~406k at 600000. `new-session` now sets the window per tier from the overlay
 (`CRSS_COMPACT_WINDOW_<TIER>`, per-spawn `CLAUDE_SESSION_COMPACT_WINDOW`); see
-`scripts/new-session.sh`, pinned by `tests/test-new-session-compact-window.sh`, and
+`scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`, and
 `examples/crss-overlay/config.sh.example`. It affects new spawns only. A larger window is not
 free: every advisor call forwards the whole transcript and cache reads scale with context, so
 keep durable TASKS/DECISIONS files and call advisor while context is small. Lesson: verify a
@@ -164,7 +164,7 @@ session usually has nothing to lose: it was mid a review pause, not an edit.
 
 **Workspace-trust dialog** ("Do you trust the files in this folder? ... Enter to confirm · Esc
 to cancel") is also classified `menu` (`_is_on_menu` / `_state_of` in
-`scripts/session-handoff.sh`, pinned by `tests/test-session-handoff-trust-dialog.sh`), since
+`scripts/session-handoff.sh`, pinned by `tests/test-session-handoff-tui.sh`), since
 blind text/Enter is unsafe there too. On CLI 2.1.285 the highlighted default is **"No, exit"**
 (so `1 Enter` quits claude), "Yes, I trust this folder" is the second option. Spawns avoid the
 dialog: the start script runs `scripts/session-trust-seed.sh` on the run directory first (it
