@@ -169,3 +169,31 @@ blind text/Enter is unsafe there too. On CLI 2.1.285 the highlighted default is 
 (so `1 Enter` quits claude), "Yes, I trust this folder" is the second option. Spawns avoid the
 dialog: the start script runs `scripts/session-trust-seed.sh` on the run directory first (it
 explains which key the CLI checks for git worktrees; pinned by `tests/test-session-trust-seed.sh`).
+
+## Autocomplete (prompt suggestions) missing in the desktop app
+
+Observed 2026-10-11 on one host (CLI 2.1.x); treat the mechanism as unconfirmed.
+
+**Symptom:** the app composer shows no suggested next prompt for a crss session, although
+the terminal shows one.
+
+- **Sessions created with the app's `+` button** run as an SDK stream-json child (entrypoint
+  `claude-desktop`, the app's bundled `ccd-cli` binary, no `--remote-control`). The app composer
+  shows suggestions for those.
+- **crss sessions** run the interactive TUI under tmux with `--remote-control`. The dim
+  suggestion does render on the TUI prompt line (`tmux capture-pane -e` shows `ESC[2m` on the
+  `❯` line), but the app composer does not show it for these sessions. OBSERVED, mechanism
+  unconfirmed: the Remote Control relay appears to drop it. Autocomplete in the app has only
+  ever worked for `+` sessions, so this is not a regression.
+- **Ruled out:** `--exclude-dynamic-system-prompt-sections` (per `claude --help` it only moves
+  cwd/env/memory-path/git sections from the system prompt into the first user message), and the
+  `promptSuggestionUnusedStreak` back-off counter (the binary skips the back-off when
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` is set).
+- **What the knobs control:** the `promptSuggestionEnabled` user setting and the
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` env var govern TUI display only; the in-session
+  `/config` toggle can override `settings.json`. `--prompt-suggestions` only works with
+  `--print` and `--output-format=stream-json` (the CLI errors otherwise), so do **not** add it
+  to `new-session`'s launch line.
+
+**Practical guidance:** for sessions you type into from the app, create them with `+` (SDK
+session) or accept no app autocomplete; the TUI shows suggestions only in the terminal.
