@@ -130,6 +130,9 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   a merge or an operator-facing decision never rests on a single model family; if only one
   family is available, merge anyway and record `models_ran` in the PR body. An
   orchestrator's own sanity check (the Fable bullet above) is not that review.
+- Before any `gh pr merge` under a general or standing auto-merge rule, run `merge-guard <pr>`
+  ([script](scripts/merge-guard.sh), [test](tests/test-merge-guard.sh)). On a nonzero exit,
+  leave the PR for the operator and report the reasons. A general rule never overrides a per-item veto.
 
 ## Choosing a tier (right-size the model, save quota)
 
