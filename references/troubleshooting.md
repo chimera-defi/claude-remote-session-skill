@@ -183,12 +183,14 @@ the terminal shows one.
 - **crss sessions** run the interactive TUI under tmux with `--remote-control`. The dim
   suggestion does render on the TUI prompt line (`tmux capture-pane -e` shows `ESC[2m` on the
   `❯` line), but the app composer does not show it for these sessions. In the TUI the
-  suggestion is only on-screen prompt-draft state. The `prompt_suggestion` message the app
-  composer consumes is written only on the SDK stream-json path, and only when
-  `promptSuggestions` is enabled there (via `--prompt-suggestions` or the host's `initialize`
-  request; checked in the binary strings). So a TUI session has nothing to relay. Still
-  unconfirmed: that the app sends that field for `+` sessions, and whether the Remote Control
-  bridge could carry it. There is no evidence autocomplete ever worked in the app for crss
+  suggestion goes to the terminal's own composer as on-screen draft state. The CLI binary has
+  two other routes to an app composer, both for headless/SDK sessions: a `prompt_suggestion`
+  message on the stream-json output (only when `promptSuggestions` is enabled, via
+  `--prompt-suggestions` or the host's `initialize` request), and a remote-surface
+  `ui_prompt_suggest` request, sent only to a client that named it in `ui_attach` (documented
+  as Tab-to-accept dim placeholder text for a headless session). Checked in the binary strings.
+  Unconfirmed: which route the app uses for `+` sessions, whether either applies to a TUI
+  session under `--remote-control`, and whether autocomplete ever worked in the app for crss
   sessions.
 - **Ruled out:** `--exclude-dynamic-system-prompt-sections` (per `claude --help` it only moves
   cwd/env/memory-path/git sections from the system prompt into the first user message), and a
