@@ -182,9 +182,13 @@ the terminal shows one.
   shows suggestions for those.
 - **crss sessions** run the interactive TUI under tmux with `--remote-control`. The dim
   suggestion does render on the TUI prompt line (`tmux capture-pane -e` shows `ESC[2m` on the
-  `❯` line), but the app composer does not show it for these sessions. OBSERVED, mechanism
-  unconfirmed: the Remote Control relay appears to drop it. Autocomplete in the app has only
-  ever worked for `+` sessions, so this is not a regression.
+  `❯` line), but the app composer does not show it for these sessions. In the TUI the
+  suggestion is only on-screen prompt-draft state. The `prompt_suggestion` message the app
+  composer consumes is written only on the SDK stream-json path, and only when the host's
+  `initialize` request sets `promptSuggestions` (a field in the CLI's schema; checked in the
+  binary strings). So a TUI session has nothing to relay. Still unconfirmed: that the app sends
+  that field for `+` sessions, and whether the Remote Control bridge could carry it. I found no
+  evidence autocomplete ever worked in the app for crss sessions.
 - **Ruled out:** `--exclude-dynamic-system-prompt-sections` (per `claude --help` it only moves
   cwd/env/memory-path/git sections from the system prompt into the first user message), and a
   suggestion back-off (the TUI still renders a suggestion, so a back-off is not suppressing them).
