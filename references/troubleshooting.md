@@ -186,14 +186,15 @@ the terminal shows one.
   unconfirmed: the Remote Control relay appears to drop it. Autocomplete in the app has only
   ever worked for `+` sessions, so this is not a regression.
 - **Ruled out:** `--exclude-dynamic-system-prompt-sections` (per `claude --help` it only moves
-  cwd/env/memory-path/git sections from the system prompt into the first user message), and the
-  `promptSuggestionUnusedStreak` back-off counter (the binary skips the back-off when
-  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` is set).
+  cwd/env/memory-path/git sections from the system prompt into the first user message), and a
+  suggestion back-off (the TUI still renders a suggestion, so a back-off is not suppressing them).
 - **What the knobs control:** the `promptSuggestionEnabled` user setting and the
-  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` env var govern TUI display only; the in-session
-  `/config` toggle can override `settings.json`. `--prompt-suggestions` only works with
-  `--print` and `--output-format=stream-json` (the CLI errors otherwise), so do **not** add it
-  to `new-session`'s launch line.
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` env var gate whether the CLI generates suggestions at
+  all (in the TUI, and ANDed with `--prompt-suggestions` in print/SDK mode); neither touches the
+  Remote Control relay. The in-session `/config` "Prompt suggestions" toggle writes the same
+  key to the user settings file. `--prompt-suggestions` only works with `--print` and
+  `--output-format=stream-json` (the CLI errors otherwise), so do **not** add it to
+  `new-session`'s launch line.
 
 **Practical guidance:** for sessions you type into from the app, create them with `+` (SDK
 session) or accept no app autocomplete; the TUI shows suggestions only in the terminal.
