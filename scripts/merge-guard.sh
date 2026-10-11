@@ -59,15 +59,20 @@ try:
     except FileNotFoundError:
         pass
     missing = set()
+    # Only change claims: the line (after list/bold markers) must START with the verb.
+    claim = re.compile(r"(delet|remov|drop|add|creat|renam|mov)\w*\b", re.I)
+    ext = r"\.(sh|py|md|js|jsx|ts|tsx|json|ya?ml|toml|txt|csv|html|css|go|rs|sql|cfg|ini)$"
+    bases = {f.rsplit("/", 1)[-1] for f in files}
     for line in pr["body"].splitlines():
-        if not re.search(r"\b(Delete|Remove|Drop|Add|Create|Rename|Move)\b", line, re.I):
+        if not claim.match(re.sub(r"^[\s>*+\-0-9.)#]*(\*\*)?", "", line)):
             continue
         for path in re.findall(r"`([^`]+)`", line):
-            if (re.search(r"\s", path) or re.match(r"[a-z][a-z0-9+.-]*://", path, re.I)
-                    or not ("/" in path or re.search(r"\.[A-Za-z0-9_]+$", path))):
+            if (re.search(r"[\s<>{}*$]", path) or re.match(r"[a-z][a-z0-9+.-]*://", path, re.I)
+                    or not re.search(ext, path, re.I) and not ("/" in path and not path.startswith("/"))):
                 continue
-            if (path not in files and not any(f.startswith(path.rstrip("/") + "/") for f in files)
-                    and path not in missing):
+            touched = (path in files or any(f.startswith(path.rstrip("/") + "/") for f in files)
+                       or ("/" not in path and path in bases))
+            if not touched and path not in missing:
                 reasons.append(f"body-vs-diff: {path} is not touched by the diff")
                 missing.add(path)
 except (ValueError, TypeError, KeyError, OSError, AttributeError) as exc:
