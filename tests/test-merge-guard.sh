@@ -20,7 +20,7 @@ cases = {
          "files": [{"path": "scripts/wrapper.py"}]},
     4: {"isDraft": True, "labels": [{"name": "HOLD"}]},
     5: {},
-    6: {"body": "Ports the rewrite (`docs/x.md`) into the tool. WIP is mentioned in context."},
+    6: {"body": "Ports the rewrite (`docs/x.md`) into the tool. WIP is mentioned in context.\nCovers worktree remove; `tests/other.sh` passes.\n- Remove the `subprocess.run` call and the `.venv` and `<fakeHOME>/bin` notes."},
     8: {"body": "Add `docs/`, `README.md`, `https://example.com/x.md`, and `two words.md`.",
         "files": [{"path": "docs/x.md"}, {"path": "README.md"}]},
     9: {"title": "WIP: rewrite", "body": "Needs the operator's approval.",
