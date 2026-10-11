@@ -154,6 +154,8 @@ Options:
   --tier <t>          Right-size the spawn: light|standard|heavy -> profile/model
                       defaults (see SKILL.md "Choosing a tier"); never Opus.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
+  --launcher <n>      Record <n> as this spawn's launcher (auto: tmux session name
+                      inside tmux; Claude session id when set). See telemetry-report.sh --kids
   --escalate-from <n> Respawn one tier above session <n>'s recorded tier (explicit --tier wins).
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
@@ -229,7 +231,7 @@ fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
 FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
-TIER_ARG=""; TIER_REASON=""; ESCALATE_FROM=""
+TIER_ARG=""; TIER_REASON=""; ESCALATE_FROM=""; LAUNCHER_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -a|--alias)  ALIAS_ARG="${2:?--alias needs a value}"; shift 2 ;;
@@ -238,6 +240,7 @@ while [ $# -gt 0 ]; do
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
     --tier)      TIER_ARG="${2:?--tier needs a value}"; shift 2 ;;
+    --launcher) LAUNCHER_ARG="${2:?--launcher needs a session name}"; shift 2 ;;
     --escalate-from) ESCALATE_FROM="${2:?--escalate-from needs a session name}"; shift 2 ;;
     --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
@@ -252,6 +255,9 @@ while [ $# -gt 0 ]; do
        NPOS=$((NPOS + 1)); shift ;;
   esac
 done
+if [ -n "$LAUNCHER_ARG" ] && { ! [[ "$LAUNCHER_ARG" =~ ^[A-Za-z0-9_.:-]{1,100}$ ]] || [[ "$LAUNCHER_ARG" = -* ]]; }; then
+  echo "--launcher: invalid session name '$LAUNCHER_ARG'" >&2; exit 1
+fi
 # Validate the positionals BEFORE any side effect (pinned by tests/test-new-session-names.sh).
 # FOLDERNAME is a bare name that gets joined onto the workspace/sessions root, never a
 # path: `new-session ~/.sessions fleet-v2` once made WORKDIR=<root>/<root> (the first
@@ -1110,7 +1116,7 @@ if [ -f "$SPAWN_LOG" ]; then
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
 if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
-  CRSS_ESCALATED_FROM="$ESCALATE_FROM" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" "$COMPACT_WINDOW" || true
+  CRSS_ESCALATED_FROM="$ESCALATE_FROM" CRSS_LAUNCHER="$LAUNCHER_ARG" CRSS_SPAWN_BACKEND="$BACKEND" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" "$COMPACT_WINDOW" || true
 fi
 
 # ── Kickoff task (--task/--task-file) ───────────────────────────────────────

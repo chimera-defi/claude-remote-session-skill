@@ -6,6 +6,7 @@
 # Usage: record-spawn-telemetry.sh <foldername> <alias> <remote_name> <session> <type> <model> <workdir> [tier] [effort] [tier_reason] [compact_window]
 #        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note] [clean:yes|no|unknown]
 #        record-spawn-telemetry.sh --tier-of <session>   # prints the tier of its latest spawn, else nothing
+#        record-spawn-telemetry.sh --whoami   # prints launcher name and session id, tab-separated
 #   --reap appends a teardown event (called by session-doctor) through this same
 #   path resolution. outcome is only what the caller states (ok|failed|escalated|
 #   abandoned); default "unknown" — teardown cannot tell whether the task succeeded.
@@ -67,6 +68,22 @@ fi
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
 
+# Shared launcher identity for spawn events and --whoami. Only ask tmux
+# inside a pane; Desktop callers must not inherit an unrelated session.
+# Never reads messaging, OAuth or account environment variables.
+_launcher_detect() {
+  L_NAME="${CRSS_LAUNCHER:-}"
+  if [ -z "$L_NAME" ] && [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
+    L_NAME="$(tmux display -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
+  fi
+  L_NAME="${L_NAME:0:100}"
+  L_ID="${CLAUDE_CODE_SESSION_ID:-}"
+  [[ "$L_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || L_ID=""
+  L_ENTRY="${CLAUDE_CODE_ENTRYPOINT:-}"
+  [[ "$L_ENTRY" =~ ^[A-Za-z0-9_.-]{1,40}$ ]] || L_ENTRY=""
+}
+if [ "${1:-}" = --whoami ]; then _launcher_detect; printf '%s\t%s\n' "$L_NAME" "$L_ID"; exit 0; fi
+
 if [ "${1:-}" = --tier-of ]; then
   [ -f "$EVENTS_FILE" ] || exit 0
   python3 - "$EVENTS_FILE" "${2:-}" <<'PYEOF' 2>/dev/null || exit 0
@@ -105,6 +122,8 @@ PYEOF
   exit 0
 fi
 
+case "${1:-}" in --*) echo "unknown flag $1" >&2; exit 0 ;; esac
+
 # Context-size proxies: how much a freshly spawned session's global skill
 # catalog and project CLAUDE.md weigh, so a future scoping change has a
 # before/after baseline instead of guessing. Every lookup is best-effort —
@@ -131,6 +150,8 @@ fi
 
 mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
 
+_launcher_detect
+export CRSS_L_NAME="$L_NAME" CRSS_L_ID="$L_ID" CRSS_L_ENTRY="$L_ENTRY"
 python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" "${CRSS_ESCALATED_FROM:-}" "$COMPACT_WINDOW" <<'PYEOF' 2>/dev/null || exit 0
 import json, sys, datetime
 
@@ -160,6 +181,12 @@ if tier or effort or compact_window:
         payload["routing"]["compact_window"] = compact_window
     if escalated_from:
         payload["routing"]["escalated_from"] = escalated_from[:100]
+import os
+b = os.environ.get("CRSS_SPAWN_BACKEND", "")
+if b: payload["backend"] = b[:20]
+n, i, e = (os.environ.get(k, "") for k in ("CRSS_L_NAME", "CRSS_L_ID", "CRSS_L_ENTRY"))
+if n or i:
+    payload["launcher"] = {"name": n, "session_id": i, "entry": e}
 with open(events_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(payload, sort_keys=True) + "\n")
 PYEOF
