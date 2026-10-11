@@ -48,6 +48,7 @@ EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
 MODE=summary; ME_NAME=""; ME_ID=""; OF=""; LIMIT=25
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    -h|--help) echo "Usage: telemetry-report.sh [--kids [--of <name|uuid>] [--limit N]]"; exit 0 ;;
     --kids) MODE=kids; shift ;;
     --of) OF="${2:?--of needs a name or uuid}"; shift 2 ;;
     --limit) LIMIT="${2:?--limit needs a number}"; shift 2 ;;
@@ -58,7 +59,11 @@ if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then echo "--limit needs a non-negative integer
 LIVE=""
 if [ "$MODE" = kids ]; then
   if [ -z "$OF" ]; then
-    ME="$("$SCRIPT_DIR/record-spawn-telemetry.sh" --whoami 2>/dev/null || true)"
+    ME=""
+    # Install the recorder before the reporter; old recorders treat flags as spawns.
+    if grep -q -- '--whoami' "$SCRIPT_DIR/record-spawn-telemetry.sh"; then
+      ME="$("$SCRIPT_DIR/record-spawn-telemetry.sh" --whoami 2>/dev/null || true)"
+    fi
     ME_NAME="${ME%%$'\t'*}"; ME_ID="${ME#*$'\t'}"
   fi
   LIVE="$(tmux list-sessions -F '#S' 2>/dev/null || true)"
@@ -139,11 +144,13 @@ def brief(fn):
             total += len(line)
             if total > 8 * 1024 * 1024: break
             try: e = json.loads(line)
-            except ValueError: continue
+            except (ValueError, TypeError): continue
+            if not isinstance(e, dict): continue
             if (e.get("type") != "user" or e.get("isMeta") or e.get("isCompactSummary")
                 or (e.get("origin") or {}).get("kind") == "task-notification" or "toolUseResult" in e): continue
             text = content(e).strip()
-            # Same command/artifact exclusions as idle-report in session-doctor;
+            # Superset of the idle-report exclusions in session-doctor
+            # (any command/stdout tag, not just /compact);
             # the end-to-end fixture pins the genuine first brief.
             if text.startswith(("<command-name>", "<local-command-stdout>")) or text == "/compact": continue
             text = re.sub(r"<task-notification\b[^>]*>.*?</task-notification>", "", text, flags=re.S)
@@ -152,14 +159,17 @@ def brief(fn):
     return ""
 def tail_report(fn):
     size = os.path.getsize(fn)
-    for window in (262144, 2 * 1024 * 1024):
+    for window in (262144, 2 * 1024 * 1024, max(size, 16 * 1024 * 1024)):
         final = fallback = summary = title = ""
         with open(fn, "rb") as fh:
             offset = max(0, size - window); fh.seek(offset)
-            if offset: fh.readline()  # discard a partial first line
+            if offset:
+                fh.seek(offset - 1)
+                if fh.read(1) != b"\n": fh.readline()  # discard only a partial line
             for line in fh:
                 try: e = json.loads(line)
-                except ValueError: continue
+                except (ValueError, TypeError): continue
+                if not isinstance(e, dict): continue
                 text = content(e)
                 blocks = (e.get("message") or {}).get("content")
                 if e.get("type") == "assistant" and isinstance(blocks, list):
@@ -189,9 +199,17 @@ def kids():
             matches.append(sp)
     matches = sorted(matches, key=lambda e: e.get("timestamp") or "", reverse=True)[:int(limit)]
     live = {norm(x) for x in os.environ.get("CRSS_LIVE_SESSIONS", "").splitlines() if x}
+    latest = {}
+    for sp in sorted(spawns, key=lambda e: e.get("timestamp") or ""):
+        for name in {norm(sp.get("session")), norm(sp.get("remote_name"))} - {""}:
+            latest[name] = sp
     def state(sp):
-        return "LIVE" if {norm(sp.get("session")), norm(sp.get("remote_name"))} & live else "REAPED" if id(sp) in reap_of else "GONE"
+        newest = latest.get(norm(sp.get("session"))) is sp
+        return "LIVE" if newest and {norm(sp.get("session")), norm(sp.get("remote_name"))} & live else "REAPED" if id(sp) in reap_of else "GONE"
     label = f"name={of or me_name or '-'} id={me_id[:8] or '-'}"
+    if int(limit) == 0:
+        print(f"=== kids of launcher {label} : 0 shown (--limit 0) — report only ===")
+        return
     if not matches:
         print(f"no spawn events attributed to launcher {label} (events before launcher recording are unattributed; try --of)")
         return
@@ -224,9 +242,9 @@ def kids():
                         with open(sf, encoding="utf-8") as fh: meta = json.load(fh)
                         uid = meta.get("sessionId", "")
                         candidate = os.path.join(proj, uid + ".jsonl")
-                        if meta.get("tmux", "").startswith(session + ":") and os.path.isfile(candidate):
+                        if (meta.get("tmux") or "").startswith(session + ":") and os.path.isfile(candidate):
                             fn = first = candidate; pick = "exact(live)"; break
-                    except (OSError, ValueError, TypeError): continue
+                    except (OSError, ValueError, TypeError, AttributeError): continue
             if not fn:
                 start = ts(sp)
                 later = [ts(e) for e in spawns if e.get("workdir") == sp.get("workdir") and ts(e) and start and ts(e) > start]
@@ -234,17 +252,24 @@ def kids():
                 candidates = []
                 for candidate in glob.glob(os.path.join(proj, "*.jsonl")):
                     try:
-                        with open(candidate, encoding="utf-8") as fh:
-                            for line in fh:
+                        first_ts = None; entry = None
+                        with open(candidate, "rb") as fh:
+                            for number, line in enumerate(fh):
+                                if number >= 200: break
                                 try: e = json.loads(line)
-                                except ValueError: continue
-                                if "timestamp" not in e: continue
-                                t = ts(e)
-                                if t and start and t >= start - datetime.timedelta(seconds=120) and (not end or t < end): candidates.append(candidate)
-                                break
-                    except OSError: continue
+                                except (ValueError, TypeError): continue
+                                if not isinstance(e, dict): continue
+                                if first_ts is None and "timestamp" in e: first_ts = e
+                                if entry is None and "entrypoint" in e: entry = e.get("entrypoint") or ""
+                                if first_ts is not None and entry is not None: break
+                        if entry not in (None, "", "cli"): continue
+                        t = ts(first_ts) if first_ts is not None else None
+                        if t and start and t >= start - datetime.timedelta(seconds=120) and (not end or t < end):
+                            candidates.append((t, candidate))
+                    except (OSError, ValueError, TypeError): continue
                 if candidates:
-                    candidates.sort(key=os.path.getmtime); first, fn = candidates[0], candidates[-1]
+                    first = min(candidates, key=lambda item: item[0])[1]
+                    fn = max((item[1] for item in candidates), key=os.path.getmtime)
                     pick = f"window({len(candidates)})"
             if fn: uuid = os.path.basename(fn)[:-6]
         report, final, title = tail_report(fn) if fn else ("", "none", "")
@@ -253,10 +278,14 @@ def kids():
         print(f"  report: {short(report, 400)}  [final={final}]")
         transcript = "n/a (codex backend)" if backend == "codex" else f"{fn} {os.path.getsize(fn)} pick={pick}" if fn else f"not found ({proj})"
         print(f"  transcript: {transcript}")
+        if first and first != fn: print(f"  brief-from: {first}")
         if status == "LIVE": print(f"  next: session-send {session} --file <f>")
         elif status == "GONE" and os.path.exists(os.path.join(unit_dir, base + ".service")) and uuid:
             print(f"  next: session-resume {base} --uuid {uuid}")
-        else: print(f"  next: unit removed at reap; transcript kept above; more: session-doctor history {base}")
+        elif status == "GONE":
+            print("  next: no unit file; " + ("transcript kept above; " if fn else "") + f"more: session-doctor history {base}")
+        else:
+            print("  next: unit removed at reap; " + ("transcript kept above; " if fn else "") + f"more: session-doctor history {base}")
 if mode == "kids":
     kids(); sys.exit(0)
 

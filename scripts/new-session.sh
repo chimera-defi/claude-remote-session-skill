@@ -154,7 +154,8 @@ Options:
   --tier <t>          Right-size the spawn: light|standard|heavy -> profile/model
                       defaults (see SKILL.md "Choosing a tier"); never Opus.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
-  --launcher <n>   Record <n> as this spawn's launcher (auto: tmux session name when inside tmux; Claude session id always). See telemetry-report.sh --kids
+  --launcher <n>      Record <n> as this spawn's launcher (auto: tmux session name
+                      inside tmux; Claude session id when set). See telemetry-report.sh --kids
   --escalate-from <n> Respawn one tier above session <n>'s recorded tier (explicit --tier wins).
   --task <text>       After the session boots, poll until claude is ready in
                       the pane, then send this as the first message and
@@ -254,6 +255,9 @@ while [ $# -gt 0 ]; do
        NPOS=$((NPOS + 1)); shift ;;
   esac
 done
+if [ -n "$LAUNCHER_ARG" ] && { ! [[ "$LAUNCHER_ARG" =~ ^[A-Za-z0-9_.:-]{1,100}$ ]] || [[ "$LAUNCHER_ARG" = -* ]]; }; then
+  echo "--launcher: invalid session name '$LAUNCHER_ARG'" >&2; exit 1
+fi
 # Validate the positionals BEFORE any side effect (pinned by tests/test-new-session-names.sh).
 # FOLDERNAME is a bare name that gets joined onto the workspace/sessions root, never a
 # path: `new-session ~/.sessions fleet-v2` once made WORKDIR=<root>/<root> (the first

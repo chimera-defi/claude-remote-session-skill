@@ -96,9 +96,9 @@ SH
   done_dir="$HOME/.claude/worktrees/px-done-0101"; gone_dir="$HOME/.claude/worktrees/px-gone-0101"
   CRSS_SPAWN_BACKEND=claude rec p p px-done-0101 px_done-0101 workspace sonnet "$done_dir"
   has "kids: launcher UUID shape" "$(tail -1 "$ev")" '"launcher": {"entry": "", "name": "", "session_id": "11111111-1111-1111-1111-111111111111"}'
-  CRSS_SPAWN_BACKEND=codex rec p p px-live-0101 px_live-0101 workspace codex "$T/live"
-  has "kids: backend recorded" "$(tail -1 "$ev")" '"backend": "codex"'
-  CRSS_LAUNCHER=px_hub rec p p px-named-0101 px_named-0101 workspace sonnet "$T/named"
+  CRSS_SPAWN_BACKEND=claude rec p p px-live-0101 px_live-0101 workspace sonnet "$T/live"
+  has "kids: backend recorded" "$(tail -1 "$ev")" '"backend": "claude"'
+  CRSS_SPAWN_BACKEND=codex CRSS_LAUNCHER=px_hub rec p p px-named-0101 px_named-0101 workspace sonnet "$T/named"
   CRSS_SPAWN_BACKEND=claude rec p p px-gone-0101 px_gone-0101 workspace sonnet "$gone_dir"
   touch "$CRSS_UNIT_DIR/px-gone-0101.service"
   CLAUDE_CODE_SESSION_ID=22222222-2222-2222-2222-222222222222 rec p p px-other-0101 px_other-0101 workspace sonnet "$T/other"
@@ -107,8 +107,8 @@ SH
   CLAUDE_CODE_SESSION_ID=not-a-uuid rec p p px-bad-0101 px_bad-0101 workspace sonnet "$T/bad"
   hasnt "kids: bad UUID dropped" "$(tail -1 "$ev")" '"launcher"'
   rec --reap px-done-0101 no ok "" yes
-  python3 - "$ev" "$CRSS_CLAUDE_HOME" "$done_dir" "$gone_dir" <<'PYFIX'
-import datetime, json, pathlib, re, sys
+  python3 - "$ev" "$CRSS_CLAUDE_HOME" "$done_dir" "$gone_dir" <<'PYFIX' || exit 1
+import datetime, json, os, pathlib, re, sys
 path, home, done, gone = sys.argv[1:]
 spawns = [json.loads(x) for x in pathlib.Path(path).read_text().splitlines()]
 def fixture(workdir, uuid, entries):
@@ -119,19 +119,42 @@ def fixture(workdir, uuid, entries):
     fn = proj / (uuid + ".jsonl")
     fn.write_text("".join(json.dumps(dict(e, timestamp=timestamp)) + "\n" for e in entries) + '{"partial":')
     decoy = proj / uuid / "subagents" / "agent-x.jsonl"
-    decoy.parent.mkdir(parents=True); decoy.write_text('DECOY-SUBAGENT\n')
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text(json.dumps(dict(assistant("DECOY-SUBAGENT", "end_turn"), timestamp=timestamp)) + "\n")
+    os.utime(decoy, (2000000100, 2000000100))
+    return fn
 def user(text, **kw): return dict(type="user", message={"content": text}, **kw)
 def assistant(text, stop): return dict(type="assistant", message={"content": [{"type": "text", "text": text}], "stop_reason": stop})
-fixture(done, "aaaaaaaa-0000-0000-0000-000000000001", [
+done_fn = fixture(done, "aaaaaaaa-0000-0000-0000-000000000001", [
     user("task-notification text", origin={"kind": "task-notification"}),
     user("isMeta text", isMeta=True), user("<command-name>/compact</command-name>"),
     user("<local-command-stdout>Compacted</local-command-stdout>"), user("/compact"),
-    user('<pasted_content id="x">\nLane: BRIEF-MARKER do the thing</pasted_content>', origin={"kind": "human"}),
+    user("compact decoy", isCompactSummary=True),
+    user("tool result decoy", toolUseResult={}),
+    user([{"type": "tool_result", "content": "tool-only decoy"}]),
+    user('<pasted_content id="x">\nLane: BRIEF-MARKER do the thing</pasted_content>', origin={"kind": "human"}, entrypoint="cli"),
     user([{"type": "tool_result", "content": "tool result"}], toolUseResult={}),
     assistant("mid narration", "tool_use"), {"type": "system", "subtype": "compact_boundary"},
     user("SUMMARY-MARKER", isCompactSummary=True), assistant("REPORT-MARKER done", "end_turn"),
+    assistant("later narration", "tool_use"),
     {"type": "ai-title", "aiTitle": "TITLE-MARKER"}, {"type": "last-prompt", "lastPrompt": "decoy"}])
 fixture(gone, "bbbbbbbb-0000-0000-0000-000000000002", [user("BRIEF-GONE"), assistant("REPORT-GONE", "end_turn")])
+# Older timestamp wins the brief even when its mtime is newer.
+start = datetime.datetime.fromisoformat(spawns[0]["timestamp"])
+def write_at(name, seconds, entries, mtime):
+    fn = done_fn.parent / (name + ".jsonl")
+    fn.write_text("".join(json.dumps(dict(e, timestamp=(start + datetime.timedelta(seconds=seconds)).isoformat())) + "\n" for e in entries))
+    os.utime(fn, (mtime, mtime))
+os.utime(done_fn, (2000000000, 2000000000))
+write_at("pre-window", -300, [user("DECOY-PRE"), assistant("DECOY-PRE", "end_turn")], 2000000300)
+write_at("sdk", 2, [{"type": "last-prompt"}, user("DECOY-SDK", entrypoint="sdk-cli"), assistant("DECOY-SDK", "end_turn")], 2000000200)
+# Malformed bytes/scalars and null tmux metadata must be harmless.
+(done_fn.parent / "bad.jsonl").write_bytes(b'null\n[]\n\xff\n')
+sessions = pathlib.Path(home) / "sessions"
+sessions.mkdir()
+(sessions / "null.json").write_text('{"tmux":null}')
+live_fn = fixture(next(e["workdir"] for e in spawns if e.get("session") == "px_live-0101"), "cccccccc-0000-0000-0000-000000000003", [user("LIVE-BRIEF"), assistant("LIVE-REPORT", "end_turn")])
+(sessions / "x.json").write_text(json.dumps({"sessionId": live_fn.stem, "tmux": "px_live-0101:@1.%1"}))
 PYFIX
   digest() { python3 - "$ev" "$CRSS_CLAUDE_HOME/projects" <<'PYHASH'
 import hashlib, pathlib, sys
@@ -145,9 +168,9 @@ PYHASH
   has "kids: counts" "$o" '4 matched (1 live, 1 reaped, 2 gone)'
   hasre "kids: normalized reap" "$o" 'px_done-0101 .*REAPED outcome=ok clean=yes'
   has "kids: genuine brief" "$o" 'brief:  Lane: BRIEF-MARKER do the thing'
-  for excluded in pasted_content task-notification 'isMeta text' 'mid narration' SUMMARY-MARKER DECOY-SUBAGENT; do
-    hasnt "kids: excludes $excluded" "$o" "$excluded"
-  done
+  hasnt "kids: window excludes decoys" "$o" 'DECOY-'
+  has "kids: cli window only" "$o" 'pick=window(1)'
+  has "kids: live exact transcript" "$o" 'pick=exact(live)'
   has "kids: final report" "$o" 'report: REPORT-MARKER done  [final=end_turn]'
   has "kids: title" "$o" 'title:  TITLE-MARKER'
   has "kids: reaped next" "$o" 'next: unit removed at reap'
@@ -163,6 +186,8 @@ PYHASH
   has "kids: normalized launcher name" "$named" px_named-0101
   has "kids: named count" "$named" '1 matched'
   hasnt "kids: named excludes UUID-only" "$named" px_done-0101
+  has "kids: zero limit" "$(bash "$REPORT" --kids --limit 0)" '0 shown (--limit 0)'
+  ok "kids: help" "$(bash "$REPORT" --help >/dev/null; echo $?)" 0
   ok "kids: limit" "$(bash "$REPORT" --kids --limit 1 | grep -c '^px_')" 1
   ok "kids: whoami UUID" "$(rec --whoami)" $'\t'11111111-1111-1111-1111-111111111111
   o="$(CLAUDE_CODE_SESSION_ID="" rec --whoami)"; rc=$?
@@ -171,20 +196,79 @@ PYHASH
   ok "kids: no identity exit" "$rc" 2
   has "kids: no identity message" "$o" 'pass --of <name|uuid>'
   ok "kids: scans read-only" "$(digest)" "$before"
-  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYPAD'
+  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYPAD' || exit 1
 import json, pathlib, sys
 fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
 original = fn.read_bytes()
-padding = (json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "PAD" * 1000}]}}) + "\n").encode()
-fn.write_bytes(padding * 1100 + original)
+padding = (json.dumps({"type": "progress", "padding": "x" * 1000}) + "\n").encode()
+fn.write_bytes(original + b"\n" + padding * 500)
 PYPAD
   before="$(digest)"
   has "kids: large file tail seek" "$(bash "$REPORT" --kids)" 'REPORT-MARKER done  [final=end_turn]'
   ok "kids: large scan read-only" "$(digest)" "$before"
+  # Make the 256KB seek land exactly on the final report's line boundary.
+  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYBOUNDARY' || exit 1
+import json, pathlib, sys
+fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
+lines = fn.read_bytes().splitlines(keepends=True)
+i = next(i for i, line in enumerate(lines) if b"REPORT-MARKER done" in line)
+report = lines[i]
+narration = json.dumps({"type":"assistant", "message":{"content":[{"type":"text", "text":"boundary narration"}], "stop_reason":"tool_use"}}).encode() + b"\n"
+prefix, suffix = b'{"type":"progress","padding":"', b'"}\n'
+pad = prefix + b'x' * (262144 - len(report) - len(narration) - len(prefix) - len(suffix)) + suffix
+assert len(report + narration + pad) == 262144
+fn.write_bytes(b''.join(lines[:i]) + report + narration + pad)
+PYBOUNDARY
+  has "kids: exact tail boundary keeps end_turn" "$(bash "$REPORT" --kids)" 'REPORT-MARKER done  [final=end_turn]'
+  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYHUGE' || exit 1
+import pathlib, sys
+fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
+with fn.open("ab") as fh: fh.write(b'{"type":"progress","padding":"' + b'x' * (3 * 1024 * 1024) + b'"}\n')
+PYHUGE
+  before="$(digest)"
+  has "kids: oversized trailing line regrows" "$(bash "$REPORT" --kids)" 'REPORT-MARKER done  [final=end_turn]'
+  ok "kids: oversized scan read-only" "$(digest)" "$before"
+  # A second CLI file has an older mtime but a later first-entry timestamp.
+  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYMULTI' || exit 1
+import json, os, pathlib, sys, datetime
+fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
+entries = [json.loads(x) for x in fn.read_bytes().splitlines() if x.startswith(b'{"type": "user"')]
+t = datetime.datetime.fromisoformat(entries[0]["timestamp"]) + datetime.timedelta(seconds=1)
+other = fn.with_name("dddddddd-0000-0000-0000-000000000004.jsonl")
+other.write_text(json.dumps({"type":"user", "timestamp":t.isoformat(), "entrypoint":"cli", "message":{"content":"WRONG-BRIEF"}}) + "\n" + json.dumps({"type":"assistant", "message":{"content":[{"type":"text","text":"NEW-REPORT"}], "stop_reason":"end_turn"}}) + "\n")
+os.utime(other, (2000000001, 2000000001))
+os.utime(fn, (2000000002, 2000000002))
+PYMULTI
+  o="$(bash "$REPORT" --kids)"
+  has "kids: timestamp chooses brief" "$o" 'brief:  Lane: BRIEF-MARKER do the thing'
+  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYMTIME' || exit 1
+import os, pathlib, sys
+fn = next(pathlib.Path(sys.argv[1]).glob("*/dddddddd*.jsonl"))
+os.utime(fn, (2000000003, 2000000003))
+PYMTIME
+  o="$(bash "$REPORT" --kids)"
+  has "kids: newest report and separate brief source" "$o" 'report: NEW-REPORT  [final=end_turn]'
+  has "kids: names separate brief source" "$o" 'brief-from:'
+  has "kids: both CLI windows" "$o" 'pick=window(2)'
+  # Reuse a live name: its old spawn must retain its reap, not inherit liveness.
+  rec --reap px-live-0101 no ok "" yes
+  CRSS_SPAWN_BACKEND=claude rec p p px-live-0101 px_live-0101 workspace sonnet "$T/live"
+  has "kids: reused live name" "$(bash "$REPORT" --kids)" '5 matched (1 live, 2 reaped, 2 gone)'
+  long_name="$(printf '%101s' '' | tr ' ' x)"
+  ok "kids: shared launcher truncation" "$(CRSS_LAUNCHER="$long_name" rec --whoami)" "${long_name:0:100}"$'\t'"$CLAUDE_CODE_SESSION_ID"
+  before="$(digest)"; rec --future-flag >/dev/null 2>&1
+  ok "kids: unknown recorder flag cannot write" "$(digest)" "$before"
+  mkdir -p "$T/skew"; cp "$REPORT" "$T/skew/telemetry-report.sh"
+  printf '#!/usr/bin/env bash\necho junk >> "$TELEMETRY_ROOT/artifacts/telemetry/events.jsonl"\n' > "$T/skew/record-spawn-telemetry.sh"
+  chmod +x "$T/skew/record-spawn-telemetry.sh"
+  env -u CLAUDE_CODE_SESSION_ID bash "$T/skew/telemetry-report.sh" --kids >/dev/null 2>&1
+  ok "kids: old recorder cannot write" "$(digest)" "$before"
   printf '%s %s\n' "$pass" "$fail" > "$T/kids-counts"
 ) > "$T/kids-results" 2>&1
 # Preserve the shared assertion counters: the isolated block runs in a subshell.
 cat "$T/kids-results"
-read -r pass fail < "$T/kids-counts"
+if ! read -r pass fail 2>/dev/null < "$T/kids-counts"; then
+  fail=$((fail+1)); echo "FAIL: kids block aborted before writing counters"
+fi
 
 finish "telemetry"
