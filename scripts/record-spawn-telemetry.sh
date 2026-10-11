@@ -76,6 +76,7 @@ _launcher_detect() {
   if [ -z "$L_NAME" ] && [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; then
     L_NAME="$(tmux display -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
   fi
+  L_NAME="${L_NAME:0:100}"
   L_ID="${CLAUDE_CODE_SESSION_ID:-}"
   [[ "$L_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || L_ID=""
   L_ENTRY="${CLAUDE_CODE_ENTRYPOINT:-}"
@@ -120,6 +121,8 @@ with open(events_file, "a", encoding="utf-8") as fh:
 PYEOF
   exit 0
 fi
+
+case "${1:-}" in --*) echo "unknown flag $1" >&2; exit 0 ;; esac
 
 # Context-size proxies: how much a freshly spawned session's global skill
 # catalog and project CLAUDE.md weigh, so a future scoping change has a
@@ -183,7 +186,7 @@ b = os.environ.get("CRSS_SPAWN_BACKEND", "")
 if b: payload["backend"] = b[:20]
 n, i, e = (os.environ.get(k, "") for k in ("CRSS_L_NAME", "CRSS_L_ID", "CRSS_L_ENTRY"))
 if n or i:
-    payload["launcher"] = {"name": n[:100], "session_id": i, "entry": e}
+    payload["launcher"] = {"name": n, "session_id": i, "entry": e}
 with open(events_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(payload, sort_keys=True) + "\n")
 PYEOF

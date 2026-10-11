@@ -261,4 +261,9 @@ else pass=$((pass+1)); fi
 recB="$(rec_args_for --alias renamed --set-default-alias)"
 has "set-default-alias-forwards-flag" "$recB" 'set-default'
 
+for launcher in --dry-run 'bad name' 'bad/name'; do
+  o="$(bash "$NS" proj --launcher "$launcher" --dry-run 2>&1)"; rc=$?
+  ok "invalid launcher rejected before spawning: $launcher" "$rc" 1
+  has "launcher validation message" "$o" 'invalid session name'
+done
 finish "new-session names"
