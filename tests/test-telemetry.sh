@@ -195,6 +195,9 @@ PYHASH
   o="$(env -u CLAUDE_CODE_SESSION_ID bash "$REPORT" --kids 2>&1)"; rc=$?
   ok "kids: no identity exit" "$rc" 2
   has "kids: no identity message" "$o" 'pass --of <name|uuid>'
+  # Deployed layout: report alone in its dir, recorder on PATH without .sh.
+  mkdir -p "$T/dep/rep" "$T/dep/bin"; cp "$REPORT" "$T/dep/rep/"; cp "$RECORD" "$T/dep/bin/record-spawn-telemetry"
+  has "kids: extensionless deployed recorder" "$(TELEMETRY_ROOT="$T/r" PATH="$T/dep/bin:$PATH" bash "$T/dep/rep/$(basename "$REPORT")" --kids)" 'px_done-0101'
   ok "kids: scans read-only" "$(digest)" "$before"
   python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYPAD' || exit 1
 import json, pathlib, sys
