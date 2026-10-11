@@ -9,6 +9,7 @@
 # patch is exercised end to end, not just grepped for.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib.sh"
 SR="$HERE/../scripts/session-resume.sh"
 NS="$HERE/../scripts/new-session.sh"
 pass=0; fail=0

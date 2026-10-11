@@ -192,7 +192,10 @@ generic defaults in those two files. What matters most for a fresh spawn:
   `AskUserQuestion` notification, so the operator never sees it. A blocked child therefore
   `session-send`s its launcher the exact command or decision needed. Launchers sweep their
   children's panes read-only for such stalls and alert the operator; they never answer a
-  permission denial on the operator's behalf.
+  permission denial on the operator's behalf. Pass `--launcher <your-session>` to
+  `new-session` (auto-detected inside tmux); `telemetry-report.sh --kids` lists your
+  children with state, brief, final report and next action — behaviour lives in
+  that script and `tests/test-telemetry.sh`.
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
