@@ -61,8 +61,11 @@ if [ "$MODE" = kids ]; then
   if [ -z "$OF" ]; then
     ME=""
     # Install the recorder before the reporter; old recorders treat flags as spawns.
-    if grep -q -- '--whoami' "$SCRIPT_DIR/record-spawn-telemetry.sh"; then
-      ME="$("$SCRIPT_DIR/record-spawn-telemetry.sh" --whoami 2>/dev/null || true)"
+    # Sibling .sh (repo layout) first, then PATH (deployed layout may drop the .sh).
+    REC="$SCRIPT_DIR/record-spawn-telemetry.sh"
+    [ -f "$REC" ] || REC="$(command -v record-spawn-telemetry.sh || command -v record-spawn-telemetry || true)"
+    if [ -n "$REC" ] && grep -q -- '--whoami' "$REC"; then
+      ME="$("$REC" --whoami 2>/dev/null || true)"
     fi
     ME_NAME="${ME%%$'\t'*}"; ME_ID="${ME#*$'\t'}"
   fi
