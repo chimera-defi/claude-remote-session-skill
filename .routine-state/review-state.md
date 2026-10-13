@@ -1,19 +1,20 @@
 # Nightly review state
-last_run: 2026-10-06   last_reviewed_sha: b18212247b179f0834b3b0af807c1e55809ed90d
+last_run: 2026-10-13   last_reviewed_sha: 8a2ad2ff754879abd077d45935b5211aa4498bfa
 
 ## open (found, PR not merged yet)
-- session-resume admission subject used a leading flag not the session name - PR (branch nightly-review-2026-10-06)
+- merge-guard: rename/move body claim false-positives (branch nightly-review-2026-10-13)
 
 ## fixed (last 30 days)
 - test-session-resume.sh leaked background processes across standalone runs - #122
 - tests/test-*.py never ran in CI or the local loop; wired in - #137
+- session-resume admission subject used a leading flag not the session name - #143
 
 ## rejected / wont_fix (keep; never retry)
 (none)
 
 ## next (max 5 lines)
-- Reviewed #138 (tier routing), #140 (reap telemetry), #141 (escalate-from) diffs
-  in depth; only the session-resume admission-subject bug (this PR) was a real
-  defect. Rest spot-checked clean: shellcheck, full shell+python suites, and
-  session-alias regression (81/81) all green.
-- session-alias poisoning guard: re-verified green (81/81), 7th night running.
+- Reviewed #138,#140,#141,#142,#144-#158 (tier routing, reap-merged, 24h min-age
+  gate, reap-local archive, telemetry-report deployed-path fallback, kids scan,
+  merge-guard). Only merge-guard's rename/move false-positive (this PR) was a
+  real defect; rest spot-checked clean against shellcheck + full suite.
+- session-alias poisoning guard: re-verified green (48/48), 8th night running.
