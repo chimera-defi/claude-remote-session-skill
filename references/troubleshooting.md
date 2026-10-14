@@ -205,3 +205,19 @@ the terminal shows one.
 
 **Practical guidance:** for sessions you type into from the app, create them with `+` (SDK
 session) or accept no app autocomplete; the TUI shows suggestions only in the terminal.
+
+## Every session stopped answering: dead login (silent on an idle fleet)
+
+All sessions on a host share one `~/.claude/.credentials.json`. If its OAuth refresh token is declared dead
+(the CLI then throws `OAuthRefreshDeadError`), every session fails the same way once the ~8 h access token
+expires, and idle remote-control sessions log nothing until someone prompts them. Exact texts seen:
+`Failed to authenticate: OAuth session expired and could not be refreshed` and
+`Login expired · Please run /login`.
+
+- Detect: `session-doctor auth-scan [--days N]` (also one line in the default `report`). It reads
+  transcripts only, never the credentials file; exit 1 means the newest auth failure is newer than every
+  successful turn. Tmux/units look healthy in this state — `proc=yes` proves nothing about auth.
+- Fix: the operator runs `/login` once (in the `claude-remote` pane). Agents never run the login or touch
+  credential files. After it, re-run `auth-scan`; a newer successful turn flips it to "recovered".
+- Not the same thing as a spend-limit stop (`You've hit your monthly spend limit`) — that one has its own
+  exact text and recovers on its own when the limit is raised.
