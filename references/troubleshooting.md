@@ -172,39 +172,39 @@ explains which key the CLI checks for git worktrees; pinned by `tests/test-sessi
 
 ## Autocomplete (prompt suggestions) missing in the desktop app
 
-Observed 2026-10-11 on one host (CLI 2.1.x); treat the mechanism as unconfirmed.
+**Verdict (operator-verified in the app, 2026-10-15, CLI 2.1.293 `/usr/bin/claude` under `--remote-control`
+and the app's `ccd-cli` 2.1.295): suggestions show in the app composer for BOTH app-started (`+`) sessions
+and crss TUI sessions. No crss change is needed.** The 2026-10-11 report (TUI showed one, app did not) was
+not reproduced and its cause is not established; the common cause of "no autocomplete" is that the model
+chose to say nothing.
 
-**Symptom:** the app composer shows no suggested next prompt for a crss session, although
-the terminal shows one.
-
-- **Sessions created with the app's `+` button** run as an SDK stream-json child (entrypoint
-  `claude-desktop`, the app's bundled `ccd-cli` binary, no `--remote-control`). The app composer
-  shows suggestions for those.
-- **crss sessions** run the interactive TUI under tmux with `--remote-control`. The dim
-  suggestion does render on the TUI prompt line (`tmux capture-pane -e` shows `ESC[2m` on the
-  `❯` line), but the app composer does not show it for these sessions. In the TUI the
-  suggestion goes to the terminal's own composer as on-screen draft state. The CLI binary has
-  two other routes to an app composer, both for headless/SDK sessions: a `prompt_suggestion`
-  message on the stream-json output (only when `promptSuggestions` is enabled, via
-  `--prompt-suggestions` or the host's `initialize` request), and a remote-surface
-  `ui_prompt_suggest` request, sent only to a client that named it in `ui_attach` (documented
-  as Tab-to-accept dim placeholder text for a headless session). Checked in the binary strings.
-  Unconfirmed: which route the app uses for `+` sessions, whether either applies to a TUI
-  session under `--remote-control`, and whether autocomplete ever worked in the app for crss
-  sessions.
-- **Ruled out:** `--exclude-dynamic-system-prompt-sections` (per `claude --help` it only moves
-  cwd/env/memory-path/git sections from the system prompt into the first user message), and a
-  suggestion back-off (the TUI still renders a suggestion, so a back-off is not suppressing them).
-- **What the knobs control:** the `promptSuggestionEnabled` user setting and the
-  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` env var gate whether the CLI generates suggestions at
-  all (in the TUI, and ANDed with `--prompt-suggestions` in print/SDK mode); neither touches the
-  Remote Control relay. The in-session `/config` "Prompt suggestions" toggle writes the same
-  key to the user settings file. `--prompt-suggestions` only works with `--print` and
-  `--output-format=stream-json` (the CLI errors otherwise), so do **not** add it to
-  `new-session`'s launch line.
-
-**Practical guidance:** for sessions you type into from the app, create them with `+` (SDK
-session) or accept no app autocomplete; the TUI shows suggestions only in the terminal.
+- **Why it looks missing:** the suggestion is a model call whose prompt says "Stay silent if the next step
+  isn't obvious" (also silent after errors and on sensitive topics). Open-ended turns ("reply ok", "list
+  three files") produced no suggestion on the TUI line either; "Write hello.py that prints hi. Do not run
+  it." produced the dim `run it`, in the TUI and in the app. Check the TUI line first
+  (`tmux capture-pane -e`, `ESC[2m` on the `❯` line): no dim text there means the model stayed silent,
+  not that the app is broken.
+  The app also hides the placeholder while the composer holds text or a turn is running.
+- **How each path gets it** (CLI strings, 2.1.295): app sessions run `ccd-cli --input-format stream-json`
+  with no `--prompt-suggestions` argv, so the host enables it in the `initialize` request's
+  `promptSuggestions` option (the `set_prompt_suggestions_paused` doc says it sits "on top of the
+  initialize request's promptSuggestions option and the user's own setting"). The `prompt_suggestion`
+  stream-json message and the `ui_prompt_suggest` request (headless sessions, Tab-to-accept) are the SDK
+  routes. Which route carries a crss TUI session's suggestion to the app was not traced; it works anyway.
+  2.1.293 and 2.1.300 carry the same strings.
+- **The knobs:** `promptSuggestionEnabled` (user setting) and `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`
+  gate whether the CLI generates suggestions at all; the app's `prompt_suggestions` setting (per the app UI) applies from
+  a session's next start or resume. Both CLI knobs are on for this host, in `~/.claude/settings.json`
+  (the setting and its `env` block). `--prompt-suggestions` only works with `--print` and
+  `--output-format=stream-json`, so do **not** add it to `new-session`'s launch line.
+- **Ruled out:** `--exclude-dynamic-system-prompt-sections` (it only moves cwd/env/memory-path/git
+  sections into the first user message), and a back-off (the TUI still renders a suggestion).
+- **Cost:** each suggestion is one extra model request per turn; enabling it fleet-wide adds that to every
+  session.
+- **Probe recipe:** `new-session x sessions --alias ac-probe --tier light`, send the hello.py prompt,
+  confirm the dim line in the pane, open it in the app, then reap with the tmux-style name
+  (`session-doctor reap ah_<alias>-<MMDD-HHMM> --allow-young --outcome ok`; the `ah-` name is a silent
+  no-op that still prints `reaped`; always pass the `ah_` tmux name).
 
 ## Every session stopped answering: dead login (silent on an idle fleet)
 
