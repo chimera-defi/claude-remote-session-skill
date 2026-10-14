@@ -61,6 +61,14 @@
 #                                           # separated columns, no header/summary) for actuator
 #                                           # scripts; report only
 #   session-doctor.sh history <foldername>        # NOW (live sessions) + PAST (transcript history) + status for a worktree; bare name, absolute path, or repo-name substring; report only
+#   session-doctor.sh auth-scan [--days N]  # scan transcripts under ~/.claude/projects touched in the last N days
+#                                           # (default 2) for CLI auth-failure turns ("Please run /login",
+#                                           # "OAuth session expired and could not be refreshed", ...) and
+#                                           # compare the newest one with the newest SUCCESSFUL assistant
+#                                           # turn. Exit 1 = an auth outage looks ONGOING (newest failure
+#                                           # is newer than the newest success); 0 = none or recovered.
+#                                           # Reads transcripts only — never ~/.claude/.credentials.json.
+#                                           # Also printed as one line by the default `report`. Report only.
 #   session-doctor.sh overlay              # host-local overlay ($CRSS_HOME) health check:
 #                                           # dir/config.sh/rules/local.md present, config.sh
 #                                           # lines that won't be loaded (warn); never fails
@@ -218,7 +226,7 @@ MODE="${1:-report}"; shift || true
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
 # report only) is a finer-grained alternate threshold and is mutually exclusive
 # with --days — see the DAYS_SET/MINUTES_SET check below.
-case "$MODE" in idle-report) DAYS=2;; *) DAYS=30;; esac
+case "$MODE" in idle-report|auth-scan) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
 ALLOW_YOUNG=no
 TSV=no
@@ -1578,10 +1586,76 @@ for p in json.load(sys.stdin):
   RM_VERDICT=candidate; RM_REASON="merged PR #$pr, idle ${idle}m"
 }
 
+# _auth_scan <proj_base> <days> — report-only scan of transcript JSONL for CLI auth-failure turns. A dead
+# OAuth refresh token is silent on an idle fleet (no turns, no logs) until someone prompts, so this is the
+# cheap tripwire: it reads transcripts only (never the credentials file) and prints counts, first/last failure
+# and the last successful assistant turn. rc 1 = failure newer than every success (ongoing), else 0.
+_auth_scan() {
+  local proj_base="$1" days="$2"
+  [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
+  # Trailing slash follows a symlinked projects dir (agent-memory layout); -type f skips symlinked FILES so a
+  # planted link can never make this open the credentials file.
+  find "${proj_base%/}/" -type f -name '*.jsonl' -mtime "-$days" -print0 2>/dev/null | python3 -I -c '
+import sys, json, datetime
+AUTH = ("Please run /login", "could not be refreshed", "Login expired", "OAuth token revoked",
+        "OAuth session expired", "Not logged in", "Invalid API key")
+days = int(sys.argv[1])
+def when(ts):
+    try:
+        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except (ValueError, AttributeError):
+        return None
+cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+fails, last_ok, files, unreadable = [], None, set(), 0
+for f in sys.stdin.buffer.read().split(b"\0"):
+    if not f: continue
+    f = f.decode(errors="replace")
+    try: fh = open(f, errors="replace")
+    except OSError: unreadable += 1; continue
+    with fh:
+        for line in fh:
+            if "isApiErrorMessage" not in line and "\"requestId\"" not in line: continue
+            try:
+                d = json.loads(line)
+                if not isinstance(d, dict): continue
+                w = when(d.get("timestamp") or "")
+                if w is None or w < cutoff: continue
+                if d.get("isApiErrorMessage"):
+                    m = d.get("message")
+                    c = m.get("content") if isinstance(m, dict) else None
+                    txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in (c or []) if isinstance(x, dict))
+                    if d.get("error") == "authentication_failed" or any(k in txt for k in AUTH):
+                        fails.append((w, txt[:90])); files.add(f)
+                elif d.get("type") == "assistant" and d.get("requestId") and (last_ok is None or w > last_ok):
+                    last_ok = w
+            except (ValueError, AttributeError, TypeError):
+                continue
+iso = lambda w: w.strftime("%Y-%m-%dT%H:%M:%SZ") if w else "none in window"
+if unreadable: print("  WARNING: %d transcript(s) unreadable — result may be incomplete" % unreadable)
+if not fails:
+    print("  no auth failures in the last %d day(s)" % days); sys.exit(0)
+fails.sort(key=lambda x: x[0])
+ongoing = last_ok is None or fails[-1][0] > last_ok
+print("  auth failures: %d across %d transcript(s); first %s, last %s" % (len(fails), len(files), iso(fails[0][0]), iso(fails[-1][0])))
+print("  last failure text: %s" % fails[-1][1])
+print("  last successful assistant turn: %s" % iso(last_ok))
+print("  AUTH OUTAGE LOOKS ONGOING — newest failure is newer than every success; operator must /login (see references/troubleshooting.md)" if ongoing else "  recovered: a successful turn is newer than the last failure")
+sys.exit(1 if ongoing else 0)
+' "$days"
+  local rc=$?
+  [ "$rc" -le 1 ] || echo "  auth-scan: internal error (rc=$rc)" >&2
+  return "$rc"
+}
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
   overlay)
     _crss_overlay_report
+    ;;
+  auth-scan)
+    echo "=== AUTH: transcript auth-failure scan (last $DAYS day(s)) ==="
+    _auth_scan "$HOME/.claude/projects" "$DAYS"
     ;;
   report)
     echo "=== LOCAL: tmux sessions ==="
@@ -1614,6 +1688,8 @@ print('  disconnected >%dd (reapable): %d' % (30, sum(1 for s in disc if agedays
 print('  \"connected\" but >7d (likely zombies): %d' % len(zomb))
 print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
 "
+    echo "=== AUTH: transcript auth-failure scan (last 2 days; auth-scan for detail) ==="
+    _auth_scan "$HOME/.claude/projects" 2 || true
     _crss_overlay_report
     ;;
 
@@ -2314,6 +2390,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
