@@ -30,6 +30,9 @@ cases = {
          "files": [{"path": "scripts/new.sh"}]},
     14: {"body": "Moved `docs/a.md` into `docs/sub/a.md`.",
          "files": [{"path": "docs/sub/a.md"}]},
+    15: {"body": "Renamed `scripts/old.sh` to `scripts/new.sh`.", "files": [{"path": "scripts/old.sh"}]},
+    16: {"body": "Moved `docs/a.md` into `docs/sub/a.md` and removed `docs/stale.md`.",
+         "files": [{"path": "docs/sub/a.md"}]},
 }
 for n, changes in cases.items():
     pr = dict(number=n, url=f"https://example.com/owner/repo/pull/{n}", title="Rewrite",
@@ -88,6 +91,10 @@ run 13
 ok renamed-path-clear "$rc" 0
 run 14
 ok moved-path-clear "$rc" 0
+run 15
+ok rename-destination-untouched-blocks "$rc" 3
+run 16
+ok move-then-untouched-removal-blocks "$rc" 3
 for n in 11 12; do
   run "$n"
   ok invalid-json-exit "$rc" 2; has invalid-json-output "$out" 'merge-guard: UNKNOWN'
@@ -98,7 +105,7 @@ for args in '' '1 --repo' '1 --unknown' '1 --repo owner' '1 2'; do
   ok usage-exit "$rc" 2
 done
 ok read-only "$(snapshot)" "$before"
-ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 14
+ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 16
 hasnt never-merge "$(cat "$GH_LOG")" merge
 has forwarded-repo "$(cat "$GH_LOG")" 'pr view 1 --repo owner/repo --json'
 finish merge-guard
