@@ -200,6 +200,9 @@ fi
 # ── worktree-stale / land-check end to end: base + landed reporting, branch -D policy, DIRTY rows ──
 if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   LCREPO="$TMP/lcrepo"; mkrepo "$LCREPO"
+  # hermetic gh: prints $GH_OIDS (one head oid per line) for `gh pr list`, nothing otherwise
+  mkdir -p "$TMP/ghshim"; printf '#!/bin/sh\nprintf "%%s\\n" "$GH_OIDS"\n' > "$TMP/ghshim/gh"; chmod +x "$TMP/ghshim/gh"
+  export PATH="$TMP/ghshim:$PATH"; export GH_OIDS=""
   LCHOME="$TMP/lchome"; WTD="$LCHOME/.claude/worktrees"; mkdir -p "$WTD"
   ws() { HOME="$LCHOME" bash "$SD" worktree-stale; }
   # Landed (off main, WITH the .claude/skills baseline: proves it is not read as DIRTY) and unlanded (own commit).
@@ -239,6 +242,18 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   mkwt "$LCREPO" px-lcmagic-0101-0900; WT_MG="$WTD/px-lcmagic-0101-0900"
   echo m > "$WT_MG/:(exclude)*"; git -C "$WT_MG" add -A; git -C "$WT_MG" commit -q -m "pathspec-looking name"
   ok "landed-pathspec-magic-name-is-no" "$(_wt_landed "$WT_MG" "$LCREPO")" "base=main landed=no"
+
+  # merged-PR fallback: main rewrote the file afterwards (content differs) but GitHub has a merged PR whose
+  # head contains the branch HEAD -> yes; a PR head that does not contain HEAD, or no PR -> no.
+  mkwt "$LCREPO" px-lcpr-0101-0900; WT_PR="$WTD/px-lcpr-0101-0900"
+  echo p1 > "$WT_PR/pr.txt"; git -C "$WT_PR" add pr.txt; git -C "$WT_PR" commit -q -m p1
+  PR_A="$(git -C "$WT_PR" rev-parse HEAD)"
+  echo p2 > "$WT_PR/pr.txt"; git -C "$WT_PR" commit -q -am p2; PR_B="$(git -C "$WT_PR" rev-parse HEAD)"
+  git -C "$WT_PR" reset -q --hard "$PR_A"
+  echo other > "$LCREPO/pr.txt"; git -C "$LCREPO" add pr.txt; git -C "$LCREPO" commit -q -m "main has its own pr.txt"
+  ok "landed-pr-none-is-no" "$(GH_OIDS="" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=no"
+  ok "landed-pr-descendant-head-is-yes" "$(GH_OIDS="$PR_B" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=yes"
+  ok "landed-pr-unrelated-oid-is-no" "$(GH_OIDS="$(git -C "$LCREPO" rev-parse HEAD)" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=no"
 
   # landed=unknown: a detached-HEAD main repo makes _default_branch answer the literal "HEAD" (no ref to compare).
   mkrepo "$TMP/repo-unknown" trunk; git -C "$TMP/repo-unknown" checkout -q --detach
