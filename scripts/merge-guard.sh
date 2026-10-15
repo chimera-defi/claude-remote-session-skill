@@ -68,7 +68,9 @@ try:
         if not match:
             continue
         # A rename/move names an old and a new path; gh's files list only ever
-        # carries the new one, so only the last (destination) path is checked.
+        # carries the new one. The new path is usually last ("X to/into Y"), but
+        # "Y from X" puts it first — so a path explicitly marked with "from" is
+        # the source and excluded, and the destination is the last of what's left.
         is_rename = match.group(1).lower() in ("renam", "mov")
         line_paths = []
         for path in re.findall(r"`([^`]+)`", line):
@@ -79,7 +81,9 @@ try:
                        or ("/" not in path and path in bases))
             line_paths.append((path, touched))
         if is_rename:
-            line_paths = line_paths[-1:]
+            non_source = [(p, t) for p, t in line_paths
+                          if not re.search(r"\bfrom\s+`" + re.escape(p) + "`", line, re.I)]
+            line_paths = (non_source or line_paths)[-1:]
         for path, touched in line_paths:
             if not touched and path not in missing:
                 reasons.append(f"body-vs-diff: {path} is not touched by the diff")
