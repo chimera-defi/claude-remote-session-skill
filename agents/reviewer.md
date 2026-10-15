@@ -26,6 +26,10 @@ different from the framing you were given; that disagreement is why this review 
 - Evidence for any claim that isn't obvious from the material itself: what you checked
   and what you found, not just an assertion.
 
+## When to use
+
+An Opus orchestrator's routine forks go to its native `advisor` (Opus 5.5 has it on CLI 2.1.300). Use this reviewer for risky or destructive forks, designs under real ambiguity, and before declaring a multi-step task done.
+
 ## Model pin
 
 You are pinned to Fable so this review is an independent perspective on another model's
