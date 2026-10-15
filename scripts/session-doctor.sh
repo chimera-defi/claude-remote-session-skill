@@ -676,10 +676,35 @@ _default_branch() {
   printf '%s\n' "$def"
 }
 
+# _wt_content_landed <worktree> <base_ref>: true when every file the branch changed since the
+# merge-base has the same content (or is absent) at HEAD and at <base_ref>. This is how a
+# squash/rebase merge reads (patch-ids and ancestry both differ); a file main changed again
+# afterwards reads as not landed, which only ever costs a suggestion, never a wrong delete.
+_wt_content_landed() {
+  local wt="$1" base_ref="$2" mb f n=0 tmp
+  mb="$(git -C "$wt" merge-base HEAD "$base_ref" 2>/dev/null)" || return 1
+  # NUL-delimited via a temp file so a failed diff is a "no" and odd filenames survive; an
+  # empty diff (nothing to compare) is a "no" too.
+  tmp="$(mktemp)" || return 1
+  if ! git -C "$wt" diff --name-only --no-renames -z "$mb" HEAD > "$tmp" 2>/dev/null; then rm -f "$tmp"; return 1; fi
+  local lh lb
+  while IFS= read -r -d '' f; do
+    n=$((n+1))
+    # ls-tree carries mode + object id (rev-parse alone would miss an exec-bit change); literal
+    # pathspecs so a filename like ":(exclude)*" is not magic; a failed ls-tree is a "no".
+    lh="$(git --literal-pathspecs -C "$wt" ls-tree HEAD -- "$f" 2>/dev/null)" || { rm -f "$tmp"; return 1; }
+    lb="$(git --literal-pathspecs -C "$wt" ls-tree "$base_ref" -- "$f" 2>/dev/null)" || { rm -f "$tmp"; return 1; }
+    [ "$lh" = "$lb" ] || { rm -f "$tmp"; return 1; }
+  done < "$tmp"
+  rm -f "$tmp"
+  [ "$n" -gt 0 ]
+}
+
 # _wt_landed <worktree> <mainrepo> -> "base=<branch> landed=yes|no|unknown".
 # landed=yes means HEAD is already an ancestor of the real default branch (safe
 # to forget about); unknown means neither origin/<default> nor a local
-# <default> branch exists in this repo to compare against.
+# <default> branch exists in this repo to compare against. A branch whose changes are
+# all present in the base by content (squash-merged) also reads yes.
 _wt_landed() {
   local wt="$1" mainrepo="$2" def base_ref landed
   def="$(_default_branch "$mainrepo")"
@@ -693,6 +718,8 @@ _wt_landed() {
   if [ -z "$base_ref" ]; then
     landed=unknown
   elif git -C "$wt" merge-base --is-ancestor HEAD "$base_ref" 2>/dev/null; then
+    landed=yes
+  elif _wt_content_landed "$wt" "$base_ref"; then
     landed=yes
   else
     landed=no
@@ -1890,8 +1917,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # `branch -D` only for a known-landed branch (landed=yes; unknown counts
           # as not known). The session/* ref is what keeps a dead session's commits
           # reachable once the worktree is gone — `reap` never deletes it either.
-          # A squash-merged branch reads landed=no (ancestry check): that costs a
-          # suggestion, never a wrong delete.
+          # A squash-merged branch reads landed=yes via the content fallback; a file
+          # main changed again afterwards reads no: a suggestion, never a wrong delete.
           if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
