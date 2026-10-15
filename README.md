@@ -69,8 +69,7 @@ owner/builder/copywriter default to a **bare alias** on purpose — it auto-trac
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
-before bumping it. Opus 5.x has no `advisor` tool (Sonnet does), which is why implementation
-subagents are pinned to Sonnet — see `agents/builder.md`.
+before bumping it. Subagents inherit the session model, so implementation subagents are pinned to Sonnet (cheaper; `advisor` is on Sonnet, and on Opus 5.5 since CLI 2.1.300) — see `agents/builder.md`.
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -78,7 +77,7 @@ Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — p
 CLAUDE_SESSION_PROFILE=copywriter new-session my-docs-pass sessions        # role default: haiku
 CLAUDE_SESSION_PROFILE=owner      new-session my-lane-owner sessions       # role default: sonnet, full tools
 CLAUDE_SESSION_MODEL=opus         new-session my-orchestrator sessions     # bare alias: still auto-tracks latest
-CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pinned: one reproducible spawn
+CLAUDE_SESSION_MODEL=claude-opus-5-5 new-session my-orchestrator sessions  # pinned: one reproducible spawn
 ```
 
 Use a **bare alias for defaults you want to auto-upgrade**; **pin an exact id only when a
