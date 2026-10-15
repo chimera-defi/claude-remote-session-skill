@@ -212,6 +212,34 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ok "wstale-reports-landed-yes" "$(grep -F "$WT_LANDED" <<<"$out" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=yes"
   ok "wstale-reports-landed-no" "$(grep -F "$WT_UNLANDED" <<<"$out" | grep -oE 'base=[a-z]+ landed=[a-z]+')" "base=main landed=no"
 
+  # squash-merged: same content lands on main as a different commit -> content fallback says yes;
+  # main changing the file again afterwards -> no (never a wrong delete).
+  mkwt "$LCREPO" px-lcsquash-0101-0900; WT_SQ="$WTD/px-lcsquash-0101-0900"
+  echo sq > "$WT_SQ/sq.txt"; git -C "$WT_SQ" add sq.txt; git -C "$WT_SQ" commit -q -m "branch work"
+  ok "landed-squash-before-merge" "$(_wt_landed "$WT_SQ" "$LCREPO")" "base=main landed=no"
+  echo sq > "$LCREPO/sq.txt"; git -C "$LCREPO" add sq.txt; git -C "$LCREPO" commit -q -m "squash of branch work (#1)"
+  ok "landed-squash-content-fallback" "$(_wt_landed "$WT_SQ" "$LCREPO")" "base=main landed=yes"
+  echo changed > "$LCREPO/sq.txt"; git -C "$LCREPO" commit -q -am "main edits it again"
+  ok "landed-squash-then-edited-is-no" "$(_wt_landed "$WT_SQ" "$LCREPO")" "base=main landed=no"
+
+  # exec-bit change and empty commit must NOT read as landed by content.
+  mkwt "$LCREPO" px-lcmode-0101-0900; WT_MD="$WTD/px-lcmode-0101-0900"
+  chmod +x "$WT_MD/a.txt"; git -C "$WT_MD" commit -q -am "exec bit only"
+  ok "landed-mode-commit-exists" "$(git -C "$WT_MD" diff --summary HEAD~1 HEAD | grep -c "mode change")" 1
+  ok "landed-mode-change-is-no" "$(_wt_landed "$WT_MD" "$LCREPO")" "base=main landed=no"
+  mkwt "$LCREPO" px-lcempty-0101-0900; WT_EM="$WTD/px-lcempty-0101-0900"
+  git -C "$WT_EM" commit -q --allow-empty -m "empty"
+  ok "landed-empty-commit-is-no" "$(_wt_landed "$WT_EM" "$LCREPO")" "base=main landed=no"
+
+  # a changed path with a newline in its name, not on main, must be "no" (NUL-safe path handling)
+  mkwt "$LCREPO" px-lcnl-0101-0900; WT_NL="$WTD/px-lcnl-0101-0900"
+  printf 'x\n' > "$WT_NL/$(printf 'foo\nbar')"; git -C "$WT_NL" add -A; git -C "$WT_NL" commit -q -m "newline name"
+  ok "landed-newline-filename-is-no" "$(_wt_landed "$WT_NL" "$LCREPO")" "base=main landed=no"
+
+  mkwt "$LCREPO" px-lcmagic-0101-0900; WT_MG="$WTD/px-lcmagic-0101-0900"
+  echo m > "$WT_MG/:(exclude)*"; git -C "$WT_MG" add -A; git -C "$WT_MG" commit -q -m "pathspec-looking name"
+  ok "landed-pathspec-magic-name-is-no" "$(_wt_landed "$WT_MG" "$LCREPO")" "base=main landed=no"
+
   # landed=unknown: a detached-HEAD main repo makes _default_branch answer the literal "HEAD" (no ref to compare).
   mkrepo "$TMP/repo-unknown" trunk; git -C "$TMP/repo-unknown" checkout -q --detach
   git -C "$TMP/repo-unknown" worktree add -q -b session/px-lcunknown-0101-0900 "$WTD/px-lcunknown-0101-0900" HEAD >/dev/null 2>&1
