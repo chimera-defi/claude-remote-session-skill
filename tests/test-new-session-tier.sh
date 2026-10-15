@@ -75,6 +75,18 @@ gen() {
 hasre "start script exports the window" "$(gen CRSS_COMPACT_WINDOW_HEAVY=600000)" "'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000' Enter$"
 hasnt "start script exports nothing by default" "$(gen A=1)" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'
 
+# prompt-suggestion off switch: the generated start script adds it to the --settings layer only when absent
+SCR="$(gen A=1)"
+BLK="$(awk '/^python3 -c "$/{f=1} f{print} f&&/^" /{exit}' <<<"$SCR")"
+has "start script carries the suggestion off-switch" "$BLK" "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION"
+RCF="$(sed -n 's/^" \(.*rc-firstparty.settings.json\).*/\1/p' <<<"$BLK")"
+mkdir -p "$(dirname "$RCF")"
+echo '{"env":{"ANTHROPIC_BASE_URL":"x"}}' > "$RCF"; bash -c "$BLK"
+has "off-switch added when absent" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "0"'
+has "other keys kept" "$(cat "$RCF")" '"ANTHROPIC_BASE_URL": "x"'
+echo '{"env":{"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"}}' > "$RCF"; bash -c "$BLK"
+has "explicit value kept" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"'
+
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"
 ABSENT="/tmp/crss-newsession-overlay-absent-$$-nonexistent"
