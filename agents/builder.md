@@ -13,9 +13,9 @@ minimal — you hold the details.
 
 You are pinned to Sonnet deliberately. Do not treat this as a downgrade:
 
-- `advisor` is gated on the agent's own model. Sonnet agents have it; Opus 5.x
-  agents (claude-opus-5, claude-opus-5-5) do not. Without this pin you would inherit the
-  orchestrator's model and silently lose the tool.
+- Without this pin you would inherit the orchestrator's (Opus) model and its cost. `advisor` is
+  gated on the agent's own model (`advisor_rank`); Sonnet has it, and Opus 5.5 has it on CLI 2.1.300
+  (it was absent on 2.1.280), so check `advisor` is in your tool list before relying on it.
 - Use `advisor` for a second opinion on a design call, a risky change, or an ambiguous
   requirement. That is the escape hatch this pin exists to keep.
 
