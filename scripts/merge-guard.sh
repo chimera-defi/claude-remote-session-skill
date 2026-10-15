@@ -67,8 +67,8 @@ try:
         match = claim.match(re.sub(r"^[\s>*+\-0-9.)#]*(\*\*)?", "", line))
         if not match:
             continue
-        # A rename/move names both an old and a new path; gh's files list only
-        # ever carries the new one, so the old side would always look "missing".
+        # A rename/move names an old and a new path; gh's files list only ever
+        # carries the new one, so only the last (destination) path is checked.
         is_rename = match.group(1).lower() in ("renam", "mov")
         line_paths = []
         for path in re.findall(r"`([^`]+)`", line):
@@ -78,8 +78,8 @@ try:
             touched = (path in files or any(f.startswith(path.rstrip("/") + "/") for f in files)
                        or ("/" not in path and path in bases))
             line_paths.append((path, touched))
-        if is_rename and any(touched for _, touched in line_paths):
-            continue
+        if is_rename:
+            line_paths = line_paths[-1:]
         for path, touched in line_paths:
             if not touched and path not in missing:
                 reasons.append(f"body-vs-diff: {path} is not touched by the diff")
