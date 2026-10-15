@@ -24,7 +24,7 @@ hasre "default: orchestrator on pinned Opus, no tier/advisor/effort" "$o" '^PROF
 hasre "default model" "$o" '^MODEL=claude-opus-5-5$'; hasre "default advisor" "$o" '^ADVISOR=none$'; hasre "default effort" "$o" '^EFFORT=default$'
 o="$(dry A=1 -- --tier light)"
 hasre "light: copywriter/haiku" "$o" '^PROFILE=copywriter$'; hasre "light model" "$o" '^MODEL=haiku$'
-hasre "light advisor is Opus" "$o" '--advisor claude-opus-5-5'; hasnt "light sets no effort flag" "$o" '--effort'
+hasre "light advisor is Opus" "$o" '--advisor claude-opus-5-5'; hasre "light effort low (Haiku 5.5 supports effort)" "$o" '--effort low'
 o="$(dry A=1 -- --tier standard)"; hasre "standard: builder/sonnet" "$o" '^PROFILE=builder$'; hasre "standard effort low" "$o" '--effort low'
 o="$(dry CLAUDE_SESSION_EFFORT=high -- --tier standard)"; hasre "explicit effort beats tier default" "$o" '--effort high'
 o="$(dry A=1 -- --tier heavy)"; hasre "heavy: owner/sonnet" "$o" '^PROFILE=owner$'

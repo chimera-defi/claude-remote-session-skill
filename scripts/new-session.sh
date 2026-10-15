@@ -180,7 +180,7 @@ Environment:
                                 for owner/hub/builder/copywriter — bare aliases that
                                 auto-track the latest release for their tier.
                                 Set it to override: a bare alias tracks latest,
-                                or pass an exact id (e.g. claude-opus-4-8) to
+                                or pass an exact id (e.g. claude-opus-5-5) to
                                 pin one spawn reproducibly.
   CLAUDE_SESSION_EFFORT=<lvl>   Claude --effort (low|medium|high|xhigh|max). Unset → no flag
                                 (--tier standard sets low).
@@ -224,7 +224,7 @@ Examples:
   new-session my-long-project-name --alias mpn
   CLAUDE_SESSION_PROFILE=builder new-session my-impl-task workspace          # trimmed tools + sonnet
   CLAUDE_SESSION_PROFILE=copywriter new-session my-docs-pass sessions        # trimmed tools + haiku
-  CLAUDE_SESSION_MODEL=claude-opus-4-8 new-session my-orchestrator sessions  # pin a specific spawn
+  CLAUDE_SESSION_MODEL=claude-opus-5-5 new-session my-orchestrator sessions  # pin a specific spawn
 HELP_EOF
   exit 0
 fi
@@ -406,10 +406,10 @@ if [ "$BACKEND" = claude ]; then
   # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
   # the default model for the spawned Claude session.
   # --tier picks defaults only (explicit CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win): light = copywriter
-  # (haiku; no effort default, Haiku 4.5 doesn't support it), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
+  # (haiku, effort low: Haiku 5.5 supports effort), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
   # no-tier default or an explicit profile/model. Pinned by tests/test-new-session-tier.sh.
   [[ "$CRSS_OPUS_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CRSS_OPUS_MODEL='$CRSS_OPUS_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
-  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT="" ;; standard) T_PROFILE=builder; T_EFFORT=low ;;
+  case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT=low ;; standard) T_PROFILE=builder; T_EFFORT=low ;;
     heavy) T_PROFILE=owner; T_EFFORT="" ;; *) T_PROFILE=orchestrator; T_EFFORT="" ;; esac
   PROFILE="${CLAUDE_SESSION_PROFILE:-$T_PROFILE}"
   case "$PROFILE" in
@@ -436,7 +436,7 @@ if [ "$BACKEND" = claude ]; then
   if [ "$MODEL_SRC" = explicit ]; then
     case "$MODEL" in
       opus|sonnet|haiku|fable|default|opusplan)
-        echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-4-8" >&2 ;;
+        echo "note: '$MODEL' is a moving model alias — it may resolve to different releases over time. For a reproducible pin set an exact id, e.g. CLAUDE_SESSION_MODEL=claude-opus-5-5" >&2 ;;
     esac
   fi
 else
