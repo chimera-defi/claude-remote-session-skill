@@ -174,8 +174,8 @@ explains which key the CLI checks for git worktrees; pinned by `tests/test-sessi
 
 **Verdict (operator-verified in the app, 2026-10-15, CLI 2.1.293 `/usr/bin/claude` under `--remote-control`
 and the app's `ccd-cli` 2.1.295): suggestions show in the app composer for BOTH app-started (`+`) sessions
-and crss TUI sessions. No crss change is needed.** The 2026-10-11 report (TUI showed one, app did not) was
-not reproduced and its cause is not established; the common cause of "no autocomplete" is that the model
+and crss TUI sessions, until the host-wide back-off counter (below) trips; crss now keeps its own sessions out of that counter.** The 2026-10-11 report (TUI showed one, app did not) was
+the back-off counter below (found 2026-10-15); the other common cause of "no autocomplete" is that the model
 chose to say nothing.
 
 - **Why it looks missing:** the suggestion is a model call whose prompt says "Stay silent if the next step
@@ -193,14 +193,29 @@ chose to say nothing.
   routes. Which route carries a crss TUI session's suggestion to the app was not traced; it works anyway.
   2.1.293 and 2.1.300 carry the same strings.
 - **The knobs:** `promptSuggestionEnabled` (user setting) and `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION`
-  gate whether the CLI generates suggestions at all; the app's `prompt_suggestions` setting (per the app UI) applies from
-  a session's next start or resume. Both CLI knobs are on for this host, in `~/.claude/settings.json`
-  (the setting and its `env` block). `--prompt-suggestions` only works with `--print` and
+  gate whether the CLI generates suggestions at all (env `false`/`0` = off for the session, `true`/`1` = on and
+  exempt from back-off; checked in the installed CLI 2.1.295/2.1.300). The app's `prompt_suggestions` setting
+  applies from a session's next start or resume. `--prompt-suggestions` only works with `--print` and
   `--output-format=stream-json`, so do **not** add it to `new-session`'s launch line.
+- **Back-off (the real cause when suggestions stop in the app and the TUI still shows one):** after 20
+  suggestions in a row go unused, the CLI writes `promptSuggestionUnusedStreak: 20` to `~/.claude.json`
+  (21 once the "Showing fewer prompt suggestions · use one to bring them back" notice has been shown) and
+  stops suggesting. That counter is **host-wide**, so the unattended fleet (nobody accepts its
+  suggestions) pushes the operator's app sessions into back-off. A session skips back-off only when its
+  parsed env has `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` true, and only counts as young for 14 days after
+  `firstStartTime`. Check: `jq .promptSuggestionUnusedStreak ~/.claude.json`; at 20 or 21 it is in back-off.
+  Reset (not a credentials file; back it up first): set it to 0 with `jq` and write the file back.
+- **Fix in `new-session`:** the `--settings` layer crss already passes (`rc-firstparty.settings.json`) now
+  carries `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` (added when the key is absent; an explicit value is kept),
+  so crss-spawned unattended sessions generate no suggestions and never touch the counter. Verified: that
+  layer overrides the `"1"` in `~/.claude/settings.json` (probe with the override showed no dim suggestion,
+  the control showed `run it`). Sessions already running keep generating until restarted. Pinned by
+  `tests/test-new-session-tier.sh`. To watch suggestions in a crss TUI session on purpose, set the key to
+  `"1"` in that file.
 - **Ruled out:** `--exclude-dynamic-system-prompt-sections` (it only moves cwd/env/memory-path/git
-  sections into the first user message), and a back-off (the TUI still renders a suggestion).
-- **Cost:** each suggestion is one extra model request per turn; enabling it fleet-wide adds that to every
-  session.
+  sections into the first user message). The earlier "ruled out: back-off" was wrong: the TUI line in a
+  fresh process can still render a suggestion while the shared counter holds app sessions in back-off.
+- **Cost:** each suggestion is one extra model request per turn; off for crss spawns saves that call.
 - **Probe recipe:** `new-session x sessions --alias ac-probe --tier light`, send the hello.py prompt,
   confirm the dim line in the pane, open it in the app, then reap with the tmux-style name
   (`session-doctor reap ah_<alias>-<MMDD-HHMM> --allow-young --outcome ok`; the `ah-` name is a silent
