@@ -700,6 +700,22 @@ _wt_content_landed() {
   [ "$n" -gt 0 ]
 }
 
+# _wt_pr_landed <worktree> <default-branch>: true when GitHub has a PR merged INTO the default branch whose head contains
+# the worktree HEAD (HEAD == head, or an ancestor of it), i.e. everything on the branch was in
+# the merged PR even if main later rewrote the files. Needs gh; any failure or no PR is a "no".
+_wt_pr_landed() {
+  local wt="$1" def="$2" br oid
+  [ -n "$def" ] || return 1
+  command -v gh >/dev/null 2>&1 || return 1
+  br="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || return 1
+  while IFS= read -r oid; do
+    [ -n "$oid" ] || continue
+    git -C "$wt" cat-file -e "$oid^{commit}" 2>/dev/null || continue
+    git -C "$wt" merge-base --is-ancestor HEAD "$oid" 2>/dev/null && return 0
+  done < <(cd "$wt" && timeout 10 gh pr list --state merged --base "$def" --head "$br" --json headRefOid -q '.[].headRefOid' 2>/dev/null)
+  return 1
+}
+
 # _wt_landed <worktree> <mainrepo> -> "base=<branch> landed=yes|no|unknown".
 # landed=yes means HEAD is already an ancestor of the real default branch (safe
 # to forget about); unknown means neither origin/<default> nor a local
@@ -719,7 +735,7 @@ _wt_landed() {
     landed=unknown
   elif git -C "$wt" merge-base --is-ancestor HEAD "$base_ref" 2>/dev/null; then
     landed=yes
-  elif _wt_content_landed "$wt" "$base_ref"; then
+  elif _wt_content_landed "$wt" "$base_ref" || _wt_pr_landed "$wt" "$def"; then
     landed=yes
   else
     landed=no
