@@ -789,6 +789,15 @@ fi
 # otherwise make claude silently ignore it, fall back to the proxy base URL, and
 # re-break registration with no error — so validate, don't just check existence.
 python3 -c "import json;json.load(open('${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json'))" 2>/dev/null || printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","DISABLE_AUTOUPDATER":"1"}}\n' > ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json
+# Unattended sessions never accept a prompt suggestion, and every unused one bumps the host-wide
+# promptSuggestionUnusedStreak in ~/.claude.json (20 in a row puts the operator's app sessions into
+# back-off). Add the off switch if the key is absent; an explicit value already there is kept.
+python3 -c "
+import json,sys
+f=sys.argv[1];d=json.load(open(f));e=d.setdefault('env',{})
+if 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' not in e:
+    e['CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION']='0';json.dump(d,open(f,'w'));open(f,'a').write('\\n')
+" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json 2>/dev/null || true
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
