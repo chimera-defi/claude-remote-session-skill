@@ -11,9 +11,9 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
   `git diff --stat` in its worktree before deciding anything. Then continue it with SendMessage,
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
-  consult contract in [`references/hub-opus-consult.md`](references/hub-opus-consult.md).
+  consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
 - The standard lane shape (Opus orchestrates, Sonnet builders, Haiku for mechanical work, Opus
-  adversarial review) is in [`references/orchestration-flow.md`](references/orchestration-flow.md);
+  adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
   tool and a call succeeded; the installed model table gates it on `advisor_rank >= 2`, Opus 5.5 is 7; 2.1.280
@@ -79,8 +79,8 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 
 A spawned session starts with none of your context and works unattended for a long time;
 the shape of the first message decides whether it succeeds, not how hard you tell it to try.
-Full contract: [`handoff/references/massaging.md`](handoff/references/massaging.md); fill-in
-starting shape: [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md)
+Full contract: [`handoff/references/massaging.md`](../handoff/references/massaging.md); fill-in
+starting shape: [`handoff/references/kickoff-templates.md`](../handoff/references/kickoff-templates.md)
 template (a). Before writing, read `$CRSS_HOME/local.md` if it exists — this host's real
 escalation channel, project guardrail index, and delegate routing; absent overlay, use the
 generic defaults in those two files. What matters most for a fresh spawn:
@@ -91,7 +91,7 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **A stop rule that names the channel.** Say when to keep going, when to stop and ask, and
   *through what*: a question left only in the child's own pane is a stall, not an
   escalation. Default wording (via `session-send <parent-session> --file <f>`, numbered list
-  with a recommended option): [`handoff/references/massaging.md`](handoff/references/massaging.md).
+  with a recommended option): [`handoff/references/massaging.md`](../handoff/references/massaging.md).
   A permission denial or a plain-text question in the child's pane does **not** raise an
   `AskUserQuestion` notification, so the operator never sees it. A blocked child therefore
   `session-send`s its launcher the exact command or decision needed. Launchers sweep their
@@ -117,9 +117,9 @@ generic defaults in those two files. What matters most for a fresh spawn:
   compaction, before acting."* Context gets summarized; the file doesn't.
 - **Eval/hillclimb campaigns need a budget gate.** For prompt/model/grader/harness loops,
   use the compact add-on in
-  [`handoff/references/kickoff-templates.md`](handoff/references/kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
+  [`handoff/references/kickoff-templates.md`](../handoff/references/kickoff-templates.md#e-evalhillclimb-campaign-kickoff-add-on)
   and the canonical protocol in
-  [`handoff/references/eval-hillclimb-protocol.md`](handoff/references/eval-hillclimb-protocol.md).
+  [`handoff/references/eval-hillclimb-protocol.md`](../handoff/references/eval-hillclimb-protocol.md).
   It covers eval splits, novelty reserve, budget, stop/revert, and
   `scripts/eval-hillclimb-decision.py` decisions.
 - **Leave out "think carefully / step by step / ultrathink".** Models decide how much to
