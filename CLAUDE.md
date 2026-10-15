@@ -95,15 +95,15 @@ Each of these has happened here. Don't repeat them.
 
 For work spanning many files or sessions (doc audit, fleet-wide check, multi-script
 migration), give each independent slice its own subagent, spawned with
-`subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model silently
-loses `advisor`.
+`subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model costs more
+(and, before CLI 2.1.300, silently lost `advisor`).
 
 **Check each subagent's evidence before accepting its report.** "Fixed" or "no issues" is a
 claim: re-run the command it cites, open the file:line it names, or diff the change. No
 evidence means unverified. Consolidate verified results in one table at the end.
 
 **The Opus orchestrator's second opinion is Fable, not a Sonnet builder** (which would just
-re-check its own reasoning; Opus 5.x has no `advisor`): `Agent({description, prompt, model:
+re-check its own reasoning; Opus 5.5 now has `advisor` too, but it is the same family): `Agent({description, prompt, model:
 "fable"})` at the forks `advisor` would cover — before a risky or destructive action, a
 design under real ambiguity, or declaring a multi-step task done. A Sonnet orchestrator
 keeps using `advisor`.
