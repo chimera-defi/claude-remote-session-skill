@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Implementation and deep-research subagent spawned by an orchestrator session. Use for building features out, multi-file changes, focused debugging, and deep-research fan-out. Pinned to Sonnet so it stays cheap and retains the model-gated `advisor` tool, which Opus 5.x agents (opus-5, opus-5-5) lack.
+description: Implementation and deep-research subagent spawned by an orchestrator session. Use for building features out, multi-file changes, focused debugging, and deep-research fan-out. Pinned to Sonnet so it stays cheap (advisor works on Sonnet; Opus 5.5 has it too on CLI 2.1.300).
 model: sonnet
 maxTurns: 250
 ---
