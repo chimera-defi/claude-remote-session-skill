@@ -17,13 +17,12 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
   tool and a call succeeded; the installed model table gates it on `advisor_rank >= 2`, Opus 5.5 is 7; 2.1.280
-  probes had it absent, and `claude -p` hides it for every model, so probe interactively). An Opus advisor on an
-  Opus orchestrator is still the same family checking itself, so for an independent second opinion the
-  orchestrator spawns a Fable subagent directly — `subagent_type: "reviewer"` (`agents/reviewer.md`, once
-  deployed to `~/.claude/agents/`) or an ad hoc `Agent({description, prompt, model:
-  "fable"})` — not a Sonnet builder, which would just be Sonnet checking its own
-  reasoning. `model: fable` is a valid agent-frontmatter value on the installed CLI (a probe
-  agent with it ran as a Fable model).
+  probes had it absent, and `claude -p` hides it for every model, so probe interactively). An Opus orchestrator uses its native `advisor` for routine forks (it is cheap and sees
+  the transcript). An independent second opinion is still a one-shot Fable — `subagent_type: "reviewer"`
+  (`agents/reviewer.md`) or `Agent({description, prompt, model: "fable"})` on a frozen packet — at risky or
+  destructive forks, designs under real ambiguity, and before declaring a multi-step task done; never a Sonnet
+  builder, which would just be Sonnet checking its own reasoning. `model: fable` is a valid agent-frontmatter
+  value on the installed CLI (a probe agent with it ran as a Fable model). (decided 2026-10-15)
 - ChatGPT is reached, if at all, through a project-specific relay subagent (not a standalone
   session), defined in that project's own `.claude/agents/` and roles table — don't copy its
   call-out details here. `$CRSS_HOME/local.md` says which projects have one.
