@@ -43,7 +43,7 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
      reaping" in [`../references/troubleshooting.md`](../references/troubleshooting.md)
      (`session-preserve --rescue --wip`, stop the unit, respawn fresh) and hand the compact
      version to the new session.
-2. **Verify healthy.** `session-handoff check <tmux-session>`; exit 0 = ready at the prompt.
+2. **Verify healthy.** `session-handoff check <tmux-session>`; exit 0 = ready at the prompt, 1 = not ready, 2 = no such tmux session.
    Don't send to a `starting`/`dead`/`menu` target (`menu` covers interactive widgets and the
    first-launch folder-trust dialog; `send` refuses these, it does not queue). `busy` queues
    behind current work. State list: `_state_of`'s comment in `scripts/session-handoff.sh`.
@@ -57,7 +57,7 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
    exists (this host's escalation channel and project index); otherwise use the generic defaults.
 4. **Relay + confirm.** Write the prompt to a file, then
    `session-handoff send <tmux-session> --file <path>`. It pastes (multi-line safe), presses
-   Enter, retries if buffered, and prints `landed` or `unverified`. On `unverified`, re-`check`
+   Enter, retries if buffered, and prints `send: landed` (exit 0) or `send: UNVERIFIED` (exit 1; refusals exit 2). On `UNVERIFIED`, re-`check`
    / capture the pane and confirm the session started working **before** claiming success.
 5. **Report.** Tell the human which session, one line on what you handed it, and **which
    guardrails you preserved** (e.g. "kept the `EXECUTION_APPROVED_HUMAN` gate; flag if you want
