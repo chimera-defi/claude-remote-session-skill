@@ -62,10 +62,11 @@ The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per ro
 |---|---|---|
 | `orchestrator` (default) | thinking / multi-agent fan-out | `claude-opus-5-5` (pinned) |
 | `owner` | long-lived campaign/lane owner (full tools, fans out to builders) | `sonnet` (bare alias) |
+| `hub` | review hub (Sonnet, one-shot Opus consult at forks; see `references/hub-opus-consult.md`) | `sonnet` (bare alias) |
 | `builder` | hands-on implementation | `sonnet` (bare alias) |
 | `copywriter` | lightweight doc/copy work | `haiku` (bare alias) |
 
-owner/builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
+owner/hub/builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
