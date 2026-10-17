@@ -258,6 +258,10 @@ done
 if [ -n "$LAUNCHER_ARG" ] && { ! [[ "$LAUNCHER_ARG" =~ ^[A-Za-z0-9_.:-]{1,100}$ ]] || [[ "$LAUNCHER_ARG" = -* ]]; }; then
   echo "--launcher: invalid session name '$LAUNCHER_ARG'" >&2; exit 1
 fi
+if [ -n "$LAUNCHER_ARG" ] && ! tmux has-session -t "=$LAUNCHER_ARG" 2>/dev/null; then
+  # A desktop/app launcher is no tmux session, so session-send cannot reach it: the kickoff must say to report on the bus/mailbox.
+  echo "new-session: note: launcher '$LAUNCHER_ARG' is not a live tmux session; session-send cannot reach it, so tell the lane to report via the host's bus/mailbox instead." >&2
+fi
 # Validate the positionals BEFORE any side effect (pinned by tests/test-new-session-names.sh).
 # FOLDERNAME is a bare name that gets joined onto the workspace/sessions root, never a
 # path: `new-session ~/.sessions fleet-v2` once made WORKDIR=<root>/<root> (the first
@@ -513,11 +517,12 @@ if [ "$BACKEND" = claude ]; then
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
   esac
   [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
-  # Default advisor = the pinned Opus, for any session that HAS the advisor tool (not Opus/Fable
-  # themselves). The advisor sees the whole transcript, so on a long session this is Opus spend:
-  # CLAUDE_SESSION_ADVISOR=none (or another model id) changes it.
+  # Default advisor = the pinned Opus, for sessions that are not Opus/Fable themselves (Opus advising
+  # Opus is self-advice, so those default to no --advisor flag). The advisor sees the whole transcript,
+  # so on a long session this is Opus spend: CLAUDE_SESSION_ADVISOR=none (or another model id) changes
+  # it, and an explicit id is honoured on Opus/Fable too (e.g. a Fable advisor on an Opus orchestrator).
   ADVISOR="${CLAUDE_SESSION_ADVISOR:-$CRSS_OPUS_MODEL}"
-  case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
+  [ -n "${CLAUDE_SESSION_ADVISOR:-}" ] || case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
   [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id or none)" >&2; exit 2; }
   [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"
 else

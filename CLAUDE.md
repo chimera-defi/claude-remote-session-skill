@@ -102,11 +102,7 @@ migration), give each independent slice its own subagent, spawned with
 claim: re-run the command it cites, open the file:line it names, or diff the change. No
 evidence means unverified. Consolidate verified results in one table at the end.
 
-**Opus orchestrator second opinions (decided 2026-10-15):** use the native `advisor`
-(Opus 5.5 has it since CLI 2.1.300) for routine forks. Independent review is a one-shot Fable,
-`Agent({description, prompt, model: "fable"})` on a frozen packet, at risky or destructive forks,
-designs under real ambiguity, and before declaring a multi-step task done — not a Sonnet builder,
-which would just re-check its own reasoning. A Sonnet orchestrator keeps using `advisor`.
+**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor).
 
 ## Long runs: keep a task file
 

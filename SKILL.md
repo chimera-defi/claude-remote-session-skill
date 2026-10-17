@@ -115,7 +115,7 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
 [`references/spawn-guide.md`](references/spawn-guide.md) holds the detail. The short form:
 
 - **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."` (right-size the model; a tier never selects Opus; resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
-- **Kickoff:** give a finish line, not an activity; a stop rule that names the channel (`session-send <launcher>`); concrete anti-patterns; Codex builders first; a `TASKS.md` for long runs. Prefer `--task`/`--task-file`.
+- **Kickoff:** give a finish line, not an activity; a stop rule that names the channel (`session-send <launcher>`, or the bus/mailbox when the launcher is not a tmux session; `new-session --launcher` warns); concrete anti-patterns; Codex builders first; a `TASKS.md` for long runs. Prefer `--task`/`--task-file`.
 - **Naming:** `<prefix>_<alias>-<MMDD-HHMM>`; `--alias` is per-spawn, add `--set-default-alias` only when the name describes the folder (rules: `scripts/session-alias.sh`, `tests/test-session-alias.sh`).
 
 ## Git-aware run directory (RUNDIR)

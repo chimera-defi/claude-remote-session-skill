@@ -32,6 +32,8 @@ o="$(dry CLAUDE_SESSION_PROFILE=orchestrator -- --tier heavy)"; hasre "explicit 
 
 # advisor: one Opus source, overridable, validated
 o="$(dry CRSS_OPUS_MODEL=claude-opus-9-9 -- --tier standard)"; hasre "Opus id feeds the advisor" "$o" '--advisor claude-opus-9-9'
+o="$(dry CLAUDE_SESSION_ADVISOR=claude-fable-5-1 -- )"; hasre "explicit advisor honoured on the Opus orchestrator" "$o" '--advisor claude-fable-5-1'
+o="$(dry A=1 -- --launcher no-such-tmux-session-xyz)"; has "unreachable launcher is flagged" "$o" "not a live tmux session"
 o="$(dry CLAUDE_SESSION_ADVISOR=none -- --tier standard)"; hasnt "advisor=none drops the flag" "$o" '--advisor'
 o="$(dry CLAUDE_SESSION_ADVISOR='x;y' -- --tier standard)"; hasre "bad advisor id refused" "$o" 'invalid'
 o="$(dry CRSS_OPUS_MODEL='a b' -- --backend codex)"; hasre "bad Opus id harmless for codex" "$o" '^BACKEND=codex$'
