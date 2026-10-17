@@ -55,6 +55,7 @@ while [ "$#" -gt 0 ]; do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if [ "$MODE" != kids ] && { [ -n "$OF" ] || [ "$LIMIT" != 25 ]; }; then echo "--of/--limit need --kids" >&2; exit 2; fi
 if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then echo "--limit needs a non-negative integer" >&2; exit 2; fi
 LIVE=""
 if [ "$MODE" = kids ]; then
