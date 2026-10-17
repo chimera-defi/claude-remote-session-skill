@@ -79,8 +79,6 @@ _launcher_detect() {
   L_NAME="${L_NAME:0:100}"
   L_ID="${CLAUDE_CODE_SESSION_ID:-}"
   [[ "$L_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || L_ID=""
-  L_ENTRY="${CLAUDE_CODE_ENTRYPOINT:-}"
-  [[ "$L_ENTRY" =~ ^[A-Za-z0-9_.-]{1,40}$ ]] || L_ENTRY=""
 }
 if [ "${1:-}" = --whoami ]; then _launcher_detect; printf '%s\t%s\n' "$L_NAME" "$L_ID"; exit 0; fi
 
@@ -151,7 +149,7 @@ fi
 mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
 
 _launcher_detect
-export CRSS_L_NAME="$L_NAME" CRSS_L_ID="$L_ID" CRSS_L_ENTRY="$L_ENTRY"
+export CRSS_L_NAME="$L_NAME" CRSS_L_ID="$L_ID"
 python3 - "$EVENTS_FILE" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$WORKDIR" "$skills_count" "$skills_bytes" "$claude_md_bytes" "$TIER" "$EFFORT" "$TIER_REASON" "${CRSS_ESCALATED_FROM:-}" "$COMPACT_WINDOW" <<'PYEOF' 2>/dev/null || exit 0
 import json, sys, datetime
 
@@ -184,9 +182,9 @@ if tier or effort or compact_window:
 import os
 b = os.environ.get("CRSS_SPAWN_BACKEND", "")
 if b: payload["backend"] = b[:20]
-n, i, e = (os.environ.get(k, "") for k in ("CRSS_L_NAME", "CRSS_L_ID", "CRSS_L_ENTRY"))
+n, i = (os.environ.get(k, "") for k in ("CRSS_L_NAME", "CRSS_L_ID"))
 if n or i:
-    payload["launcher"] = {"name": n, "session_id": i, "entry": e}
+    payload["launcher"] = {"name": n, "session_id": i}
 with open(events_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(payload, sort_keys=True) + "\n")
 PYEOF

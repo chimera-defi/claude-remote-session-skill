@@ -202,7 +202,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   LCREPO="$TMP/lcrepo"; mkrepo "$LCREPO"
   # hermetic gh: prints $GH_OIDS (one head oid per line) for `gh pr list`, nothing otherwise
   mkdir -p "$TMP/ghshim"; printf '#!/bin/sh\nprintf "%%s\\n" "$GH_OIDS"\n' > "$TMP/ghshim/gh"; chmod +x "$TMP/ghshim/gh"
-  export PATH="$TMP/ghshim:$PATH"; export GH_OIDS=""
+  export PATH="$TMP/ghshim:$PATH"; export GH_OIDS="" CRSS_PR_LANDED_ANY_REMOTE=1
   LCHOME="$TMP/lchome"; WTD="$LCHOME/.claude/worktrees"; mkdir -p "$WTD"
   ws() { HOME="$LCHOME" bash "$SD" worktree-stale; }
   # Landed (off main, WITH the .claude/skills baseline: proves it is not read as DIRTY) and unlanded (own commit).
@@ -252,6 +252,7 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   git -C "$WT_PR" reset -q --hard "$PR_A"
   echo other > "$LCREPO/pr.txt"; git -C "$LCREPO" add pr.txt; git -C "$LCREPO" commit -q -m "main has its own pr.txt"
   ok "landed-pr-none-is-no" "$(GH_OIDS="" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=no"
+  ok "landed-pr-non-github-origin-is-no" "$(GH_OIDS="$PR_B" CRSS_PR_LANDED_ANY_REMOTE='' _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=no"
   ok "landed-pr-descendant-head-is-yes" "$(GH_OIDS="$PR_B" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=yes"
   ok "landed-pr-unrelated-oid-is-no" "$(GH_OIDS="$(git -C "$LCREPO" rev-parse HEAD)" _wt_landed "$WT_PR" "$LCREPO")" "base=main landed=no"
 
