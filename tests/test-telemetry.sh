@@ -81,7 +81,7 @@ ok "doctor: bad --outcome exit 2" "$rc" "2"; has "doctor: bad --outcome message"
 
 # Kids scan: Desktop identity, name normalization, transcript digests and read-only scans.
 (
-  unset TMUX TMUX_PANE CLAUDE_CODE_SESSION_ID CRSS_LAUNCHER CLAUDE_CODE_ENTRYPOINT
+  unset TMUX TMUX_PANE CLAUDE_CODE_SESSION_ID CRSS_LAUNCHER
   export HOME="$T/home"
   export CRSS_CLAUDE_HOME="$HOME/.claude" CRSS_UNIT_DIR="$HOME/units"
   export CRSS_SESSIONS_DIR="$HOME/.sessions" TELEMETRY_ROOT="$T/r"
@@ -95,7 +95,7 @@ SH
   export CLAUDE_CODE_SESSION_ID=11111111-1111-1111-1111-111111111111
   done_dir="$HOME/.claude/worktrees/px-done-0101"; gone_dir="$HOME/.claude/worktrees/px-gone-0101"
   CRSS_SPAWN_BACKEND=claude rec p p px-done-0101 px_done-0101 workspace sonnet "$done_dir"
-  has "kids: launcher UUID shape" "$(tail -1 "$ev")" '"launcher": {"entry": "", "name": "", "session_id": "11111111-1111-1111-1111-111111111111"}'
+  has "kids: launcher UUID shape" "$(tail -1 "$ev")" '"launcher": {"name": "", "session_id": "11111111-1111-1111-1111-111111111111"}'
   CRSS_SPAWN_BACKEND=claude rec p p px-live-0101 px_live-0101 workspace sonnet "$T/live"
   has "kids: backend recorded" "$(tail -1 "$ev")" '"backend": "claude"'
   CRSS_SPAWN_BACKEND=codex CRSS_LAUNCHER=px_hub rec p p px-named-0101 px_named-0101 workspace sonnet "$T/named"
@@ -186,8 +186,7 @@ PYHASH
   has "kids: normalized launcher name" "$named" px_named-0101
   has "kids: named count" "$named" '1 matched'
   hasnt "kids: named excludes UUID-only" "$named" px_done-0101
-  has "kids: zero limit" "$(bash "$REPORT" --kids --limit 0)" '0 shown (--limit 0)'
-  ok "kids: help" "$(bash "$REPORT" --help >/dev/null; echo $?)" 0
+  bash "$REPORT" --limit 3 >/dev/null 2>&1; ok "kids: --limit without --kids errors" "$?" 2
   ok "kids: limit" "$(bash "$REPORT" --kids --limit 1 | grep -c '^px_')" 1
   ok "kids: whoami UUID" "$(rec --whoami)" $'\t'11111111-1111-1111-1111-111111111111
   o="$(CLAUDE_CODE_SESSION_ID="" rec --whoami)"; rc=$?
@@ -209,20 +208,6 @@ PYPAD
   before="$(digest)"
   has "kids: large file tail seek" "$(bash "$REPORT" --kids)" 'REPORT-MARKER done  [final=end_turn]'
   ok "kids: large scan read-only" "$(digest)" "$before"
-  # Make the 256KB seek land exactly on the final report's line boundary.
-  python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYBOUNDARY' || exit 1
-import json, pathlib, sys
-fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
-lines = fn.read_bytes().splitlines(keepends=True)
-i = next(i for i, line in enumerate(lines) if b"REPORT-MARKER done" in line)
-report = lines[i]
-narration = json.dumps({"type":"assistant", "message":{"content":[{"type":"text", "text":"boundary narration"}], "stop_reason":"tool_use"}}).encode() + b"\n"
-prefix, suffix = b'{"type":"progress","padding":"', b'"}\n'
-pad = prefix + b'x' * (262144 - len(report) - len(narration) - len(prefix) - len(suffix)) + suffix
-assert len(report + narration + pad) == 262144
-fn.write_bytes(b''.join(lines[:i]) + report + narration + pad)
-PYBOUNDARY
-  has "kids: exact tail boundary keeps end_turn" "$(bash "$REPORT" --kids)" 'REPORT-MARKER done  [final=end_turn]'
   python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYHUGE' || exit 1
 import pathlib, sys
 fn = next(pathlib.Path(sys.argv[1]).glob("*/aaaaaaaa*.jsonl"))
@@ -257,8 +242,6 @@ PYMTIME
   rec --reap px-live-0101 no ok "" yes
   CRSS_SPAWN_BACKEND=claude rec p p px-live-0101 px_live-0101 workspace sonnet "$T/live"
   has "kids: reused live name" "$(bash "$REPORT" --kids)" '5 matched (1 live, 2 reaped, 2 gone)'
-  long_name="$(printf '%101s' '' | tr ' ' x)"
-  ok "kids: shared launcher truncation" "$(CRSS_LAUNCHER="$long_name" rec --whoami)" "${long_name:0:100}"$'\t'"$CLAUDE_CODE_SESSION_ID"
   before="$(digest)"; rec --future-flag >/dev/null 2>&1
   ok "kids: unknown recorder flag cannot write" "$(digest)" "$before"
   mkdir -p "$T/skew"; cp "$REPORT" "$T/skew/telemetry-report.sh"

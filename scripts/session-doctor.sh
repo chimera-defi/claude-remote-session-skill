@@ -707,6 +707,8 @@ _wt_pr_landed() {
   local wt="$1" def="$2" br oid
   [ -n "$def" ] || return 1
   command -v gh >/dev/null 2>&1 || return 1
+  # Only a github.com origin is asked (same gate as _default_branch); CRSS_PR_LANDED_ANY_REMOTE=1 lifts it for hermetic tests.
+  [ -n "${CRSS_PR_LANDED_ANY_REMOTE:-}" ] || case "$(git -C "$wt" remote get-url origin 2>/dev/null)" in *github.com*) ;; *) return 1 ;; esac
   br="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || return 1
   while IFS= read -r oid; do
     [ -n "$oid" ] || continue
