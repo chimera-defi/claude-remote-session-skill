@@ -720,7 +720,8 @@ _wt_pr_landed() {
 # landed=yes means HEAD is already an ancestor of the real default branch (safe
 # to forget about); unknown means neither origin/<default> nor a local
 # <default> branch exists in this repo to compare against. A branch whose changes are
-# all present in the base by content (squash-merged) also reads yes.
+# all present in the base by content (squash-merged), or whose head is contained in a PR
+# GitHub shows merged into the default branch (_wt_pr_landed), also reads yes.
 _wt_landed() {
   local wt="$1" mainrepo="$2" def base_ref landed
   def="$(_default_branch "$mainrepo")"
@@ -1686,7 +1687,7 @@ print("  last successful assistant turn: %s" % iso(last_ok))
 print("  AUTH OUTAGE LOOKS ONGOING — newest failure is newer than every success; operator must /login (see references/troubleshooting.md)" if ongoing else "  recovered: a successful turn is newer than the last failure")
 sys.exit(1 if ongoing else 0)
 ' "$days"
-  local rc=$?
+  local rc=${PIPESTATUS[1]}  # python's status; a find error must not read as "outage ongoing"
   [ "$rc" -le 1 ] || echo "  auth-scan: internal error (rc=$rc)" >&2
   return "$rc"
 }
@@ -1933,8 +1934,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # `branch -D` only for a known-landed branch (landed=yes; unknown counts
           # as not known). The session/* ref is what keeps a dead session's commits
           # reachable once the worktree is gone — `reap` never deletes it either.
-          # A squash-merged branch reads landed=yes via the content fallback; a file
-          # main changed again afterwards reads no: a suggestion, never a wrong delete.
+          # A squash-merged branch reads landed=yes via the content fallback, or via
+          # a merged PR containing HEAD (_wt_pr_landed): a suggestion, never a wrong delete.
           if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
