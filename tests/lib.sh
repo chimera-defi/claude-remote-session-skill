@@ -5,6 +5,7 @@ pass=0; fail=0
 # All script tests inherit a private telemetry sink, including indirect spawns.
 TELEMETRY_ROOT="$(mktemp -d)"
 export TELEMETRY_ROOT
+trap 'rm -rf "$TELEMETRY_ROOT"' EXIT
 # isolate_overlay: point CRSS_HOME at a nonexistent dir so a script's config loader never reads the operator's real overlay.
 isolate_overlay() { export CRSS_HOME="/tmp/crss-test-isolation.$$.$RANDOM/does-not-exist"; }
 

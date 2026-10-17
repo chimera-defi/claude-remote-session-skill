@@ -61,4 +61,12 @@ run >/dev/null; rc=$?; ok "malformed-no-crash" "$([ "$rc" -le 1 ] && echo y)" "y
 OH="$(mktemp -d)"; mkdir -p "$OH/.claude/projects/-w-old"; auth_err 2026-01-01T00:00:00.000Z > "$OH/.claude/projects/-w-old/o.jsonl"
 out="$(HOME="$OH" bash "$SD" auth-scan --days 1 2>&1)"; has "old-events-ignored" "$out" "no auth failures"
 
+# an unreadable subdir (find error) must not read as an ongoing outage (rc 1)
+if [ "$(id -u)" != 0 ]; then
+  LH="$(mktemp -d)"; mkdir -p "$LH/.claude/projects/-w-ok" "$LH/.claude/projects/-w-locked"
+  ok_turn 2026-10-16T10:00:00.000Z > "$LH/.claude/projects/-w-ok/a.jsonl"; chmod 000 "$LH/.claude/projects/-w-locked"
+  HOME="$LH" bash "$SD" auth-scan --days 36500 >/dev/null 2>&1; ok "find-error-not-outage" "$?" "0"
+  chmod 700 "$LH/.claude/projects/-w-locked"; rm -rf "$LH"
+fi
+
 finish "session-doctor-auth-scan"
