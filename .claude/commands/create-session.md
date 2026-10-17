@@ -14,7 +14,7 @@ Follow the full recipe in `~/.claude/skills/gstack-session-spawn/SKILL.md` (or t
    If the user also gave the session something to do, pass it in the same call with `--task "..."` (or `--task-file <path>`) rather than typing it into the pane afterwards — `--task` waits for the session to be ready and verifies the message landed. Shape the task per `handoff/references/massaging.md`: a checkable finish line, a stop rule, concrete anti-patterns.
 3. The script prints the resolved `REMOTE_NAME` (`<prefix>-<alias>-<MMDD-HHMM>`) and enables + starts the systemd unit.
 
-You're done when `systemctl --user is-active "$REMOTE_NAME.service"` prints `active` and, if you passed `--task`, the script printed `Task sent to … and verified landed.` On `WARNING: task send UNVERIFIED` (common on first send), capture the pane (`tmux capture-pane -p -t <prefix>_<alias>-<MMDD-HHMM>`) and resend with `session-send` if the task isn't there. If either check fails, say so — don't report success.
+You're done when `systemctl --user is-active "$REMOTE_NAME.service"` prints `active` and, if you passed `--task`, the script printed `Task sent to … and verified landed.` On exit 3 with `the task was NOT delivered: task send UNVERIFIED` (common on first send), capture the pane (`tmux capture-pane -p -t <prefix>_<alias>-<MMDD-HHMM>`) and resend with `session-send` if the task isn't there. If either check fails, say so — don't report success.
 
 After success, tell the user the remote-control name to connect with (`<prefix>-<alias>-<MMDD-HHMM>`, printed by the script) and that it appears in Claude Code app → Remote sessions.
 
