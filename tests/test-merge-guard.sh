@@ -36,6 +36,7 @@ cases = {
     17: {"body": "Moved `scripts/new.sh` from `scripts/old.sh` for clarity.",
          "files": [{"path": "scripts/new.sh"}]},
     19: {"body": "Additionally, `scripts/new-session.sh` now exports FOO.", "files": [{"path": "README.md"}]},
+    20: {"body": "Dropped `scripts/old.sh`.", "files": [{"path": "README.md"}]},
     18: {"body": "Renamed `docs/new.md` from `docs/old.md`.", "files": [{"path": "docs/old.md"}]},
 }
 for n, changes in cases.items():
@@ -106,6 +107,8 @@ ok renamed-destination-first-untouched-blocks "$rc" 3
 has renamed-destination-first-flags-dest "$out" 'docs/new.md'
 run 19
 ok ordinary-prose-add-prefix-not-a-claim "$rc" 0
+run 20
+ok dropped-untouched-blocks "$rc" 3
 for n in 11 12; do
   run "$n"
   ok invalid-json-exit "$rc" 2; has invalid-json-output "$out" 'merge-guard: UNKNOWN'
@@ -116,7 +119,7 @@ for args in '' '1 --repo' '1 --unknown' '1 --repo owner' '1 2'; do
   ok usage-exit "$rc" 2
 done
 ok read-only "$(snapshot)" "$before"
-ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 19
+ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 20
 hasnt never-merge "$(cat "$GH_LOG")" merge
 has forwarded-repo "$(cat "$GH_LOG")" 'pr view 1 --repo owner/repo --json'
 finish merge-guard
