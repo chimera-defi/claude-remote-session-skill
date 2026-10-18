@@ -234,5 +234,6 @@ expires, and idle remote-control sessions log nothing until someone prompts them
   successful turn. Tmux/units look healthy in this state — `proc=yes` proves nothing about auth.
 - Fix: the operator runs `/login` once (in the `claude-remote` pane). Agents never run the login or touch
   credential files. After it, re-run `auth-scan`; a newer successful turn flips it to "recovered".
+- Resume stalled auth lanes after login: `session-doctor auth-heal` previews; add `--apply` to nudge.
 - Not the same thing as a spend-limit stop (`You've hit your monthly spend limit`) — that one has its own
   exact text and recovers on its own when the limit is raised.

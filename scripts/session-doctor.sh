@@ -69,6 +69,10 @@
 #                                           # is newer than the newest success); 0 = none or recovered.
 #                                           # Reads transcripts only — never ~/.claude/.credentials.json.
 #                                           # Also printed as one line by the default `report`. Report only.
+#   session-doctor.sh auth-heal [--apply] [--days N]
+#                                           # Nudge idle Claude lanes whose last turn failed auth, only when
+#                                           # host login is valid; DRY-RUN by default, window default 2 days.
+#                                           # Once per failure; a repeat within 6h requires operator /login.
 #   session-doctor.sh overlay              # host-local overlay ($CRSS_HOME) health check:
 #                                           # dir/config.sh/rules/local.md present, config.sh
 #                                           # lines that won't be loaded (warn); never fails
@@ -226,7 +230,7 @@ MODE="${1:-report}"; shift || true
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
 # report only) is a finer-grained alternate threshold and is mutually exclusive
 # with --days — see the DAYS_SET/MINUTES_SET check below.
-case "$MODE" in idle-report|auth-scan) DAYS=2;; *) DAYS=30;; esac
+case "$MODE" in idle-report|auth-scan|auth-heal) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
 ALLOW_YOUNG=no
 TSV=no
@@ -247,7 +251,7 @@ MINUTES_SET=no
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --days) DAYS="$2"; DAYS_SET=yes; shift 2;;
+    --days) [ $# -ge 2 ] || { echo "session-doctor: --days needs a value" >&2; exit 2; }; DAYS="$2"; DAYS_SET=yes; shift 2;;
     --minutes) MINUTES="$2"; MINUTES_SET=yes; shift 2;;
     --idle-min) IDLE_MIN="${2:-}"; shift 2;;
     --tsv) TSV=yes; shift;;
@@ -1632,6 +1636,125 @@ for p in json.load(sys.stdin):
   RM_VERDICT=candidate; RM_REASON="merged PR #$pr, idle ${idle}m"
 }
 
+# Shared transcript auth detection for auth-scan and auth-heal (no credential reads).
+_auth_python_common() {
+  cat <<'PY'
+import sys, json, datetime
+AUTH = ("Please run /login", "could not be refreshed", "Login expired", "OAuth token revoked",
+        "OAuth session expired", "OAuth access token has expired", "Not logged in", "Invalid API key")
+def when(ts):
+    try:
+        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except (ValueError, AttributeError):
+        return None
+def auth_text(d):
+    m = d.get("message")
+    c = m.get("content") if isinstance(m, dict) else None
+    return c if isinstance(c, str) else " ".join(x.get("text", "") for x in (c or []) if isinstance(x, dict))
+def auth_failure(d):
+    if d.get("type") == "system" and d.get("subtype") == "api_error":
+        error = d.get("error")
+        status = d.get("status", error.get("status") if isinstance(error, dict) else None)
+        if str(status) == "401": return True
+    return bool(d.get("isApiErrorMessage") and
+                (d.get("error") == "authentication_failed" or any(k in auth_text(d) for k in AUTH)))
+PY
+}
+
+# Only the newest top-level UUID transcript for this pane cwd is eligible. User/assistant
+# turns and system api_error are meaningful; skip system informational/progress records,
+# file-history-snapshot, summary, queue-operation and all other non-turn metadata.
+_auth_heal_failure() {
+  python3 -I -c "$(_auth_python_common)
+"'
+import pathlib, uuid
+project = pathlib.Path(sys.argv[1])
+try:
+    files = []
+    for f in project.glob("*.jsonl"):
+        try: uuid.UUID(f.stem)
+        except ValueError: continue
+        if not f.is_symlink() and f.is_file(): files.append(f)
+    if not files: sys.exit(0)
+    latest = max(files, key=lambda f: f.stat().st_mtime_ns)
+    last = None
+    with latest.open() as fh:
+        for line in fh:
+            try: d = json.loads(line)
+            except ValueError: continue
+            if not isinstance(d, dict): continue
+            if d.get("type") in ("assistant", "user") or (d.get("type") == "system" and d.get("subtype") == "api_error"):
+                last = d
+    if last and auth_failure(last):
+        ts = last.get("timestamp") or ""
+        w = when(ts)
+        if w and w >= datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(sys.argv[2])):
+            key = last.get("uuid") or ts
+            if isinstance(key, str) and not any(c in key + ts for c in "\t\r\n"):
+                print(key + "\t" + ts)
+except (OSError, ValueError, TypeError):
+    sys.exit(1)
+' "$1" "$DAYS"
+}
+
+_auth_heal() {
+  local here send handoff status state s cwd proj event key ts old_s old_key at heal_lock
+  local rc=0 considered=0 nudged=0 candidate_count=0 seen recent now
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  send="${CRSS_SESSION_SEND:-}"
+  if [ -z "$send" ]; then
+    send="$here/session-send.sh"
+    [ -f "$send" ] || send="$(command -v session-send)"
+  fi
+  handoff="$here/session-handoff.sh"
+  [ -f "$handoff" ] || handoff="$(command -v session-handoff)"
+  if ! status="$(timeout 20 "${CRSS_CLAUDE_BIN:-claude}" auth status 2>/dev/null)" ||
+     ! python3 -I -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("loggedIn") is True else 1)' <<<"$status" 2>/dev/null; then
+    echo 'host not logged in — operator must /login'
+    echo 'auth-heal: considered=0 candidates=0 nudged=0 operator=1'
+    return 1
+  fi
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/crss/auth-heal.tsv"
+  # Serialize apply callers across the read/send/record sequence. Dry-run creates nothing.
+  if [ "$APPLY" = yes ]; then
+    mkdir -p "$(dirname "$state")" && exec {heal_lock}>"$state.lock" && flock -x "$heal_lock" || return 1
+  fi
+  now="$(date +%s)"
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    considered=$((considered+1))
+    if _is_protected "$s"; then echo "$s skip(protected)"; continue; fi
+    cwd="$(tmux display-message -p -t "$s" '#{pane_current_path}' 2>/dev/null)"
+    if [ -z "$cwd" ]; then echo "$s skip(no-cwd)"; continue; fi
+    proj="${CRSS_CLAUDE_HOME:-$HOME/.claude}/projects/$(printf '%s' "$cwd" | sed 's/[^A-Za-z0-9]/-/g')"
+    if ! event="$(_auth_heal_failure "$proj")"; then echo "$s skip(transcript-unreadable)"; rc=1; continue; fi
+    if [ -z "$event" ]; then echo "$s skip(no-auth-failure)"; continue; fi
+    IFS=$'\t' read -r key ts <<<"$event"
+    seen=no; recent=no
+    if [ -f "$state" ]; then
+      while IFS=$'\t' read -r old_s old_key at; do
+        [ "$old_s" = "$s" ] || continue
+        [ "$old_key" = "$key" ] && seen=yes
+        if [[ "$at" =~ ^[0-9]{1,12}$ ]] && (( now - at < 21600 )); then recent=yes; fi
+      done < "$state"
+    fi
+    if [ "$seen" = yes ]; then echo "$s skip(already-nudged)"; continue; fi
+    if [ "$recent" = yes ]; then echo "$s skip(repeat-failure — login likely dead; operator /login)"; rc=1; continue; fi
+    if ! bash "$handoff" ready "$s" >/dev/null 2>&1; then echo "$s skip(busy)"; continue; fi
+    candidate_count=$((candidate_count+1))
+    if [ "$APPLY" != yes ]; then echo "would-nudge $s (failure $ts)"; continue; fi
+    if "$send" "$s" "Your last turn stopped on a Claude sign-in error; the host login is valid again (auto-heal by session-doctor). Please continue where you left off; re-read your TASKS.md if you have one." >/dev/null 2>&1; then
+      if printf '%s\t%s\t%s\n' "$s" "$key" "$(date +%s)" >> "$state"; then
+        echo "nudged $s (failure $ts)"; nudged=$((nudged+1))
+      else echo "$s failed(state-write)"; rc=1; fi
+    else echo "$s failed(send)"; rc=1; fi
+  done < <(live_tmux)
+  if [ "$APPLY" = yes ]; then exec {heal_lock}>&-; fi
+  echo "auth-heal: considered=$considered candidates=$candidate_count nudged=$nudged operator=$rc"
+  return "$rc"
+}
+
 # _auth_scan <proj_base> <days> — report-only scan of transcript JSONL for CLI auth-failure turns. A dead
 # OAuth refresh token is silent on an idle fleet (no turns, no logs) until someone prompts, so this is the
 # cheap tripwire: it reads transcripts only (never the credentials file) and prints counts, first/last failure
@@ -1641,17 +1764,9 @@ _auth_scan() {
   [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
   # Trailing slash follows a symlinked projects dir (agent-memory layout); -type f skips symlinked FILES so a
   # planted link can never make this open the credentials file.
-  find "${proj_base%/}/" -type f -name '*.jsonl' -mtime "-$days" -print0 2>/dev/null | python3 -I -c '
-import sys, json, datetime
-AUTH = ("Please run /login", "could not be refreshed", "Login expired", "OAuth token revoked",
-        "OAuth session expired", "Not logged in", "Invalid API key")
+  find "${proj_base%/}/" -type f -name '*.jsonl' -mtime "-$days" -print0 2>/dev/null | python3 -I -c "$(_auth_python_common)
+"'
 days = int(sys.argv[1])
-def when(ts):
-    try:
-        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
-    except (ValueError, AttributeError):
-        return None
 cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
 fails, last_ok, files, unreadable = [], None, set(), 0
 for f in sys.stdin.buffer.read().split(b"\0"):
@@ -1661,19 +1776,15 @@ for f in sys.stdin.buffer.read().split(b"\0"):
     except OSError: unreadable += 1; continue
     with fh:
         for line in fh:
-            if "isApiErrorMessage" not in line and "\"requestId\"" not in line: continue
+            if "isApiErrorMessage" not in line and "\"requestId\"" not in line and "api_error" not in line: continue
             try:
                 d = json.loads(line)
                 if not isinstance(d, dict): continue
                 w = when(d.get("timestamp") or "")
                 if w is None or w < cutoff: continue
-                if d.get("isApiErrorMessage"):
-                    m = d.get("message")
-                    c = m.get("content") if isinstance(m, dict) else None
-                    txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in (c or []) if isinstance(x, dict))
-                    if d.get("error") == "authentication_failed" or any(k in txt for k in AUTH):
-                        fails.append((w, txt[:90])); files.add(f)
-                elif d.get("type") == "assistant" and d.get("requestId") and (last_ok is None or w > last_ok):
+                if auth_failure(d):
+                    fails.append((w, auth_text(d)[:90])); files.add(f)
+                elif not d.get("isApiErrorMessage") and d.get("type") == "assistant" and d.get("requestId") and (last_ok is None or w > last_ok):
                     last_ok = w
             except (ValueError, AttributeError, TypeError):
                 continue
@@ -1698,6 +1809,10 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
   overlay)
     _crss_overlay_report
+    ;;
+  auth-heal)
+    [ $# -eq 0 ] || { echo "usage: session-doctor.sh auth-heal [--apply] [--days N]" >&2; exit 2; }
+    _auth_heal
     ;;
   auth-scan)
     echo "=== AUTH: transcript auth-failure scan (last $DAYS day(s)) ==="
@@ -2436,6 +2551,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
