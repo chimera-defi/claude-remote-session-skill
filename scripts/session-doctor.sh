@@ -1718,7 +1718,7 @@ _auth_heal() {
   state="${XDG_STATE_HOME:-$HOME/.local/state}/crss/auth-heal.tsv"
   # Serialize apply callers across the read/send/record sequence. Dry-run creates nothing.
   if [ "$APPLY" = yes ]; then
-    mkdir -p "$(dirname "$state")" && exec {heal_lock}>"$state.lock" && flock -x "$heal_lock" || return 1
+    mkdir -p "$(dirname "$state")" && exec {heal_lock}>"$state.lock" && flock -x "$heal_lock" || { echo "auth-heal: cannot lock $state.lock (flock missing?)" >&2; return 1; }
   fi
   now="$(date +%s)"
   while IFS= read -r s; do
@@ -1782,6 +1782,7 @@ for f in sys.stdin.buffer.read().split(b"\0"):
                 if not isinstance(d, dict): continue
                 w = when(d.get("timestamp") or "")
                 if w is None or w < cutoff: continue
+                if d.get("source") == "request_retry": continue  # retry record precedes the final error turn; count the incident once
                 if auth_failure(d):
                     fails.append((w, auth_text(d)[:90])); files.add(f)
                 elif not d.get("isApiErrorMessage") and d.get("type") == "assistant" and d.get("requestId") and (last_ok is None or w > last_ok):
