@@ -69,6 +69,8 @@
 #                                           # is newer than the newest success); 0 = none or recovered.
 #                                           # Reads transcripts only — never ~/.claude/.credentials.json.
 #                                           # Also printed as one line by the default `report`. Report only.
+#   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N
+#                                           # days, default 2); summary line in `report`. Report only.
 #   session-doctor.sh auth-heal [--apply] [--days N]
 #                                           # Nudge idle Claude lanes whose last turn failed auth, only when
 #                                           # host login is valid; DRY-RUN by default, window default 2 days.
@@ -230,7 +232,7 @@ MODE="${1:-report}"; shift || true
 # registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
 # report only) is a finer-grained alternate threshold and is mutually exclusive
 # with --days — see the DAYS_SET/MINUTES_SET check below.
-case "$MODE" in idle-report|auth-scan|auth-heal) DAYS=2;; *) DAYS=30;; esac
+case "$MODE" in idle-report|auth-scan|auth-heal|opus-subagents) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
 ALLOW_YOUNG=no
 TSV=no
@@ -1806,6 +1808,76 @@ sys.exit(1 if ongoing else 0)
   return "$rc"
 }
 
+# _opus_subagent_scan <proj_base> <days> — report-only: list parent sessions whose subagent transcripts
+# (<proj>/<session>/subagents/agent-*.jsonl) ran on an Opus model. The rule is builder/Sonnet subagents
+# (CLAUDE.md "Subagent models"); an Agent call with no subagent_type/model inherits the parent's Opus.
+# Same safety conventions as _auth_scan (symlinked dir followed, symlinked files never opened, event-time
+# window). Parent transcripts on Opus are expected and not scanned. rc 0, or >1 on an internal error.
+_opus_subagent_scan() {
+  local proj_base="$1" days="$2"
+  [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
+  find "${proj_base%/}/" -type f -path '*/subagents/agent-*.jsonl' -mtime "-$days" -print0 2>/dev/null | python3 -I -c '
+import sys, json, os, datetime
+def when(ts):
+    try:
+        d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except (ValueError, AttributeError):
+        return None
+days = int(sys.argv[1])
+cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+sessions, scanned, unreadable = {}, 0, 0
+for f in sys.stdin.buffer.read().split(b"\0"):
+    if not f: continue
+    f = f.decode(errors="replace"); scanned += 1
+    opus, out_tok, last, sid, cwd, atype = set(), 0, None, "", "", ""
+    try: fh = open(f, errors="replace")
+    except OSError: unreadable += 1; continue
+    with fh:
+        for line in fh:
+            if "\"assistant\"" not in line: continue
+            try:
+                d = json.loads(line)
+                if not isinstance(d, dict) or d.get("type") != "assistant": continue
+                w = when(d.get("timestamp") or "")
+                if w is None or w < cutoff: continue
+                m = d.get("message") if isinstance(d.get("message"), dict) else {}
+                model = m.get("model") or d.get("requestedModel") or ""
+                if not isinstance(model, str) or model == "<synthetic>" or "opus" not in model.lower(): continue
+                opus.add(model); u = m.get("usage") if isinstance(m.get("usage"), dict) else {}
+                out_tok += u.get("output_tokens", 0) if isinstance(u.get("output_tokens", 0), int) else 0
+                last = w if last is None or w > last else last
+                sid = sid or str(d.get("sessionId") or ""); cwd = cwd or str(d.get("cwd") or "")
+                atype = atype or str(d.get("attributionAgent") or "")
+            except (ValueError, AttributeError, TypeError):
+                continue
+    if not opus: continue
+    if not atype:
+        meta = f[:-len(".jsonl")] + ".meta.json"
+        try:
+            if os.path.isfile(meta) and not os.path.islink(meta):
+                with open(meta, errors="replace") as mh: atype = str(json.load(mh).get("agentType") or "")
+        except (OSError, ValueError, AttributeError):
+            pass
+    sid = sid or os.path.basename(os.path.dirname(os.path.dirname(f)))
+    s = sessions.setdefault(sid, {"n": 0, "out": 0, "types": set(), "models": set(), "cwd": cwd, "last": last})
+    s["n"] += 1; s["out"] += out_tok; s["types"].add(atype or "?"); s["models"] |= opus
+    s["last"] = max(s["last"], last); s["cwd"] = s["cwd"] or cwd
+if unreadable: print("  WARNING: %d transcript(s) unreadable — result may be incomplete" % unreadable)
+if not sessions:
+    print("  no Opus subagent transcripts in the last %d day(s) (%d subagent transcript(s) scanned)" % (days, scanned)); sys.exit(0)
+n = sum(s["n"] for s in sessions.values())
+print("  Opus subagents: %d across %d session(s) in the last %d day(s) (%d subagent transcript(s) scanned); use subagent_type: builder or model: sonnet" % (n, len(sessions), days, scanned))
+for sid, s in sorted(sessions.items(), key=lambda kv: -kv[1]["out"])[:10]:
+    print("  %-8s n=%-3d out=%-7d last=%s types=%s models=%s cwd=%s" % (sid[:8], s["n"], s["out"], s["last"].strftime("%Y-%m-%dT%H:%MZ"),
+          ",".join(sorted(s["types"])), ",".join(sorted(s["models"])), s["cwd"] or "?"))
+if len(sessions) > 10: print("  ... %d more session(s)" % (len(sessions) - 10))
+' "$days"
+  local rc=${PIPESTATUS[1]}
+  [ "$rc" -eq 0 ] || echo "  opus-subagents: internal error (rc=$rc)" >&2
+  return "$rc"
+}
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "$MODE" in
   overlay)
@@ -1818,6 +1890,10 @@ case "$MODE" in
   auth-scan)
     echo "=== AUTH: transcript auth-failure scan (last $DAYS day(s)) ==="
     _auth_scan "$HOME/.claude/projects" "$DAYS"
+    ;;
+  opus-subagents)
+    echo "=== OPUS SUBAGENTS: subagent transcripts on Opus (last $DAYS day(s)) ==="
+    _opus_subagent_scan "$HOME/.claude/projects" "$DAYS"
     ;;
   report)
     echo "=== LOCAL: tmux sessions ==="
@@ -1852,6 +1928,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
 "
     echo "=== AUTH: transcript auth-failure scan (last 2 days; auth-scan for detail) ==="
     _auth_scan "$HOME/.claude/projects" 2 || true
+    echo "=== OPUS SUBAGENTS: last 2 days (opus-subagents for detail) ==="
+    _osa_out="$(_opus_subagent_scan "$HOME/.claude/projects" 2)" || true
+    grep -m1 -E '^  (Opus subagents|no Opus|\(no transcript)' <<<"$_osa_out" || true
     _crss_overlay_report
     ;;
 
@@ -2552,6 +2631,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|opus-subagents [--days N]|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
