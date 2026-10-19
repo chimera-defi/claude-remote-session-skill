@@ -62,7 +62,6 @@
 #                                           # scripts; report only
 #   session-doctor.sh history <foldername>        # NOW (live sessions) + PAST (transcript history) + status for a worktree; bare name, absolute path, or repo-name substring; report only
 #   session-doctor.sh auth-scan [--days N]  # scan transcripts under ~/.claude/projects touched in the last N days
-#   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N days, default 2)
 #                                           # (default 2) for CLI auth-failure turns ("Please run /login",
 #                                           # "OAuth session expired and could not be refreshed", ...) and
 #                                           # compare the newest one with the newest SUCCESSFUL assistant
@@ -70,6 +69,8 @@
 #                                           # is newer than the newest success); 0 = none or recovered.
 #                                           # Reads transcripts only — never ~/.claude/.credentials.json.
 #                                           # Also printed as one line by the default `report`. Report only.
+#   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N
+#                                           # days, default 2); summary line in `report`. Report only.
 #   session-doctor.sh auth-heal [--apply] [--days N]
 #                                           # Nudge idle Claude lanes whose last turn failed auth, only when
 #                                           # host login is valid; DRY-RUN by default, window default 2 days.
@@ -1928,7 +1929,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     echo "=== AUTH: transcript auth-failure scan (last 2 days; auth-scan for detail) ==="
     _auth_scan "$HOME/.claude/projects" 2 || true
     echo "=== OPUS SUBAGENTS: last 2 days (opus-subagents for detail) ==="
-    _opus_subagent_scan "$HOME/.claude/projects" 2 | head -1 || true
+    _osa_out="$(_opus_subagent_scan "$HOME/.claude/projects" 2)" || true
+    grep -m1 -E '^  (Opus subagents|no Opus|\(no transcript)' <<<"$_osa_out" || true
     _crss_overlay_report
     ;;
 
