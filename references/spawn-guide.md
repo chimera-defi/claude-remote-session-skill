@@ -51,7 +51,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 - A `--launcher` that is not a live tmux session (a desktop/app launcher) cannot be reached by `session-send`; `new-session` warns on stderr, so tell the lane in its kickoff to report through the host's bus/mailbox.
 - Explicit `CLAUDE_SESSION_PROFILE` / `_MODEL` / `_EFFORT` win over the tier, one value at a time.
   `standard` and `light` set effort `low` (Haiku 5.5 supports effort; verified in the CLI model table 2026-10-15); `heavy` sets none. Pass `CLAUDE_SESSION_EFFORT` to override.
-  Auto-compact window is per tier too: overlay `CRSS_COMPACT_WINDOW_<TIER>` (per spawn `CLAUDE_SESSION_COMPACT_WINDOW=<n|host>`); empty = host default. See `references/troubleshooting.md` (Precedence).
+  Auto-compact window is per tier too: overlay `CRSS_COMPACT_WINDOW_<TIER>` (per spawn `CLAUDE_SESSION_COMPACT_WINDOW=<n|host>`), else `CRSS_COMPACT_WINDOW_DEFAULT` (234000, ~150k trigger at PCT=70). See `references/troubleshooting.md` (Precedence).
 - **Advisor.** Sonnet/Haiku sessions (with or without `--tier`) get
   `--advisor $CRSS_OPUS_MODEL`; `CLAUDE_SESSION_ADVISOR=<model>|none` overrides. Opus/Fable sessions default to no `--advisor` flag (self-advice), but an explicit id is honoured (probed 2026-10-17, CLI 2.1.300: an Opus 5.5 session with `--advisor claude-fable-5-1` showed "Advising using Fable 5.1"). `CRSS_OPUS_MODEL`
   (overlay `config.sh`) is the one place `new-session` takes the Opus id from; `references/fallback-recipe.md`

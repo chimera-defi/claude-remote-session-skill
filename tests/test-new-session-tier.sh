@@ -15,6 +15,7 @@ dry() {
   local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
   env -u CLAUDE_SESSION_PROFILE -u CLAUDE_SESSION_MODEL -u CLAUDE_SESSION_EFFORT -u CLAUDE_SESSION_ADVISOR \
     -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_STANDARD \
+    -u CRSS_COMPACT_WINDOW_LIGHT -u CRSS_COMPACT_WINDOW_DEFAULT \
     -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
 }
 
@@ -58,9 +59,12 @@ o="$(dry TELEMETRY_ROOT="$TR" -- --escalate-from px_l-1 --tier heavy)"; hasre "e
 rm -rf "$TR"
 
 # per-tier compact window
-o="$(dry A=1 -- --tier heavy)"; hasre "compact window unset = host" "$o" '^COMPACT_WINDOW=host$'
+o="$(dry A=1 -- --tier heavy)"; hasre "no tier value = built-in default" "$o" '^COMPACT_WINDOW=234000$'
+o="$(dry A=1 --)"; hasre "untiered spawn gets the default too" "$o" '^COMPACT_WINDOW=234000$'
 o="$(dry CRSS_COMPACT_WINDOW_HEAVY=600000 -- --tier heavy)"; hasre "heavy tier value applies" "$o" '^COMPACT_WINDOW=600000$'
-o="$(dry CRSS_COMPACT_WINDOW_HEAVY=600000 -- --tier standard)"; hasre "other tiers unaffected" "$o" '^COMPACT_WINDOW=host$'
+o="$(dry CRSS_COMPACT_WINDOW_HEAVY=600000 CRSS_COMPACT_WINDOW_DEFAULT=300000 -- --tier standard)"; hasre "other tiers take the overlay default" "$o" '^COMPACT_WINDOW=300000$'
+o="$(dry CRSS_COMPACT_WINDOW_DEFAULT=host -- --tier standard)"; hasre "default=host exports nothing" "$o" '^COMPACT_WINDOW=host$'
+o="$(dry CLAUDE_SESSION_COMPACT_WINDOW=host -- --tier standard)"; hasre "per-spawn host exports nothing" "$o" '^COMPACT_WINDOW=host$'
 o="$(dry CRSS_COMPACT_WINDOW_HEAVY=600000 CLAUDE_SESSION_COMPACT_WINDOW=450000 -- --tier heavy)"; hasre "explicit beats tier" "$o" '^COMPACT_WINDOW=450000$'
 o="$(dry CLAUDE_SESSION_COMPACT_WINDOW=50 -- --tier heavy)"; hasre "too small refused" "$o" 'out of range'
 o="$(dry CLAUDE_SESSION_COMPACT_WINDOW=abc -- --tier heavy)"; hasre "non-numeric refused" "$o" 'compact window .* invalid'
@@ -71,11 +75,11 @@ mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
 printf "#!/bin/sh\nexit 0\n" > "$HOME/.local/bin/systemctl"; chmod +x "$HOME/.local/bin/systemctl"
 gen() {
   rm -rf "$HOME/.sessions" "$HOME"/.local/bin/*-start.sh
-  env -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY "$@" PATH="$HOME/.local/bin:$PATH" bash "$NS" proj workspace --alias cw --tier heavy >/dev/null 2>&1
+  env -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_DEFAULT "$@" PATH="$HOME/.local/bin:$PATH" bash "$NS" proj workspace --alias cw --tier heavy >/dev/null 2>&1
   cat "$HOME"/.local/bin/*-start.sh 2>/dev/null
 }
 hasre "start script exports the window" "$(gen CRSS_COMPACT_WINDOW_HEAVY=600000)" "'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000' Enter$"
-hasnt "start script exports nothing by default" "$(gen A=1)" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'
+hasnt "start script exports nothing for host" "$(gen CRSS_COMPACT_WINDOW_DEFAULT=host)" 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'
 
 # prompt-suggestion off switch: the generated start script adds it to the --settings layer only when absent
 SCR="$(gen A=1)"

@@ -58,9 +58,11 @@ not evidence it's broken.
 `--settings '{"autoCompactWindow":...}'` are all ignored. Only the same variable exported in the
 launch environment wins (host 300000 -> `effectiveWindow=280000`; launch export 600000 ->
 `580000`). `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=P` makes the compact trigger `min(floor(effectiveWindow*P/100),
-effectiveWindow-13000)` tokens (read from the 2.1.287 binary), so P=70 means ~196k at a 300000
-window and ~406k at 600000. `new-session` now sets the window per tier from the overlay
-(`CRSS_COMPACT_WINDOW_<TIER>`, per-spawn `CLAUDE_SESSION_COMPACT_WINDOW`); see
+effectiveWindow-13000)` tokens, with `effectiveWindow = window - 20000` (read from the 2.1.287 binary,
+re-read on 2.1.300), so P=70 means ~150k at a 234000 window, ~196k at 300000 and ~406k at 600000.
+`new-session` exports a window for every claude spawn: per-spawn `CLAUDE_SESSION_COMPACT_WINDOW`,
+else the overlay's `CRSS_COMPACT_WINDOW_<TIER>`, else `CRSS_COMPACT_WINDOW_DEFAULT` (built-in 234000;
+`host` exports nothing); see
 `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`, and
 `examples/crss-overlay/config.sh.example`. It affects new spawns only. A larger window is not
 free: every advisor call forwards the whole transcript and cache reads scale with context, so
