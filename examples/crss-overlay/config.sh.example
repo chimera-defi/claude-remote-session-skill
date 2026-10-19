@@ -152,7 +152,13 @@
 # CRSS_COMPACT_WINDOW_{LIGHT,STANDARD,HEAVY} — per-tier auto-compact window (tokens) that new-session
 # --tier exports as CLAUDE_CODE_AUTO_COMPACT_WINDOW in the launch environment of the spawned claude
 # (the only place that overrides a settings.json `env` value; see references/troubleshooting.md).
-# Empty/unset = export nothing = the host's own default. Per-spawn override:
-# CLAUDE_SESSION_COMPACT_WINDOW=<n|host>. Range 100000..2000000. New spawns only.
+# Unset = CRSS_COMPACT_WINDOW_DEFAULT. Per-spawn override: CLAUDE_SESSION_COMPACT_WINDOW=<n|host>.
+# Range 100000..2000000. New spawns only.
 # Default: (empty)
 #CRSS_COMPACT_WINDOW_HEAVY=600000
+
+# CRSS_COMPACT_WINDOW_DEFAULT — window for claude spawns with no tier value. The trigger is
+# min((window-20000)*PCT/100, window-33000) under CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=PCT, so 234000
+# with PCT=70 compacts at ~150k. "host" = export nothing (the host settings.json default).
+# Default: 234000
+#CRSS_COMPACT_WINDOW_DEFAULT=234000

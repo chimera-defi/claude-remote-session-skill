@@ -17,7 +17,7 @@ class ActuationTests(unittest.TestCase):
         self.env=dict(os.environ, HOME=str(self.home), PATH=str(self.bin)+':/usr/bin:/bin',
                       CRSS_HOME=str(self.root/'no-overlay'), CRSS_SESSION_PREFIX='test',
                       CRSS_SESSIONS_DIR=str(self.root/'sessions'), CRSS_WORKSPACE=str(self.root/'workspace'),
-                      NEW_SESSION_MIN_AVAIL_MB='0', CALLS=str(self.log), TELEMETRY_ROOT=str(self.root/'telemetry'),
+                      NEW_SESSION_MIN_AVAIL_MB='0', CALLS=str(self.log), TELEMETRY_ROOT=str(self.root/'telemetry'), CRSS_TEST_SUITE='1',
                       AGENT_HOST_ADMISSION_CLI=str(self.bin/'authority.py'),
                       AGENT_HOST_ADMISSION_DB=str(self.root/'db'), AGENT_HOST_ADMISSION_EVIDENCE=str(self.root/'e'))
         self.stub('systemctl','echo systemctl >> "$CALLS"; exit 0')

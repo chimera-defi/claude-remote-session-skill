@@ -25,6 +25,13 @@ has "spawn: remote name" "$line" '"remote_name": "px-myp-0101-0000"'
 has "spawn: global skills counted" "$line" '"global_skills_count": 2'
 has "spawn: CLAUDE.md bytes" "$line" '"claude_md_bytes": 21'
 hasre "spawn: routing" "$line" '"routing": \{"compact_window": "600000", "effort": "low", "reason": "doc typo fix", "tier": "light"\}'
+# quarantine: under the test-suite flag a recorder with no TELEMETRY_ROOT (deployed flat copy -> live
+# checkout fallback) writes nothing, spawn or reap; --whoami still answers
+mkdir -p "$T/flat"; cp "$RECORD" "$T/flat/rst.sh"
+TELEMETRY_ROOT='' CRSS_WORKSPACE="$T/ws" bash "$T/flat/rst.sh" q q q q workspace sonnet "$T/workdir" >/dev/null 2>&1
+TELEMETRY_ROOT='' CRSS_WORKSPACE="$T/ws" bash "$T/flat/rst.sh" --reap q no ok >/dev/null 2>&1
+gone "quarantine: nothing written without TELEMETRY_ROOT" "$T/ws/claude-remote-session-skill/artifacts/telemetry/events.jsonl"
+ok "quarantine: --whoami still works" "$(TELEMETRY_ROOT='' CRSS_LAUNCHER=lx bash "$T/flat/rst.sh" --whoami | cut -f1)" lx
 CRSS_ESCALATED_FROM=px_l-1 rec myproj myp px-myp-0101-0001 px_myp-0101-0001 workspace sonnet "$T/workdir" standard "" why >/dev/null
 has "spawn: appends, records escalated_from" "$(tail -1 "$ev")" '"escalated_from": "px_l-1"'
 ok "spawn: second event appended" "$(wc -l < "$ev" | tr -d ' ')" 2
