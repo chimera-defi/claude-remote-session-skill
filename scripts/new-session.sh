@@ -187,7 +187,8 @@ Environment:
   CLAUDE_SESSION_COMPACT_WINDOW=<n|host>
                                 Auto-compact window (tokens) exported to claude at launch.
                                 Unset → the tier's CRSS_COMPACT_WINDOW_{LIGHT,STANDARD,HEAVY}
-                                overlay value, else nothing (host default). "host" forces nothing.
+                                overlay value, else CRSS_COMPACT_WINDOW_DEFAULT (234000).
+                                "host" exports nothing (host settings.json default).
 CLAUDE_SESSION_ADVISOR=<m>    Advisor model for sessions that have the advisor tool.
                                 Default: CRSS_OPUS_MODEL; "none" omits the flag.
 CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
@@ -497,13 +498,18 @@ fi
 COMPACT_WINDOW=""
 if [ "$BACKEND" = claude ]; then
   # Auto-compact window: per-spawn CLAUDE_SESSION_COMPACT_WINDOW=<n|host> wins, else the tier's
-  # CRSS_COMPACT_WINDOW_<TIER> overlay value; empty/"host" = export nothing (host settings.json
-  # default). Only a launch-environment export reaches claude; see references/troubleshooting.md.
+  # CRSS_COMPACT_WINDOW_<TIER> overlay value, else CRSS_COMPACT_WINDOW_DEFAULT (234000: with the
+  # host's CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70 that compacts at ~150k). "host" = export nothing
+  # (host settings.json default). Only a launch-environment export reaches claude; see
+  # references/troubleshooting.md.
+  _cw_var=""
+  [ -z "$TIER_ARG" ] || _cw_var="CRSS_COMPACT_WINDOW_$(printf '%s' "$TIER_ARG" | tr '[:lower:]' '[:upper:]')"
   if [ -n "${CLAUDE_SESSION_COMPACT_WINDOW:-}" ]; then
     COMPACT_WINDOW="$CLAUDE_SESSION_COMPACT_WINDOW"
-  elif [ -n "$TIER_ARG" ]; then
-    _cw_var="CRSS_COMPACT_WINDOW_$(printf '%s' "$TIER_ARG" | tr '[:lower:]' '[:upper:]')"
-    COMPACT_WINDOW="${!_cw_var:-}"
+  elif [ -n "$_cw_var" ] && [ -n "${!_cw_var:-}" ]; then
+    COMPACT_WINDOW="${!_cw_var}"
+  else
+    COMPACT_WINDOW="${CRSS_COMPACT_WINDOW_DEFAULT:-234000}"
   fi
   [ "$COMPACT_WINDOW" != host ] || COMPACT_WINDOW=""
   case "$COMPACT_WINDOW" in

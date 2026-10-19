@@ -16,6 +16,8 @@
 #   TELEMETRY_ROOT       default: this script's repo root (git rev-parse), else
 #                         $CRSS_WORKSPACE/claude-remote-session-skill (see
 #                         examples/crss-overlay/README.md)
+#   CRSS_TEST_SUITE      set (by tests/lib.sh): spawn/reap writes need an explicit
+#                         TELEMETRY_ROOT, else they are skipped
 set -uo pipefail
 
 # ── Host-local overlay config ────────────────────────────────────────────────
@@ -98,6 +100,12 @@ print(tier)
 PYEOF
   exit 0
 fi
+
+# Test-suite quarantine: tests/lib.sh exports CRSS_TEST_SUITE=1 alongside a private
+# TELEMETRY_ROOT. If a test path loses TELEMETRY_ROOT (cleared, or a deployed copy
+# that falls back to the live checkout), write nothing rather than pollute the live
+# events.jsonl (76 test rows landed there 09-28..10-06). Reads above still work.
+if [ -n "${CRSS_TEST_SUITE:-}" ] && [ -z "${TELEMETRY_ROOT:-}" ]; then exit 0; fi
 
 if [ "${1:-}" = --reap ]; then
   mkdir -p "$(dirname "$EVENTS_FILE")" 2>/dev/null || exit 0
