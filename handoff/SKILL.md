@@ -48,7 +48,7 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
    first-launch folder-trust dialog; `send` refuses these, it does not queue). `busy` queues
    behind current work. State list: `_state_of`'s comment in `scripts/session-handoff.sh`.
 3. **Massage.** **REQUIRED SUB-REFERENCE: follow the contract in `references/massaging.md`**:
-   goal (checkable finish line) -> why and method (method is the agent's; steps only when order is a real constraint) -> known state to verify, not assume ->
+   goal (checkable finish line) -> why, context and method (method is the agent's; steps only when order is a real constraint) -> known state to verify, not assume ->
    deliverable -> carried-forward guardrails -> scope (concrete anti-patterns) -> stop rule
    (naming the real channel, e.g. `session-send <parent> --file <f>`). The parts are fixed;
    don't steer research/decision answers (no target outcome, answer menu or method steps);

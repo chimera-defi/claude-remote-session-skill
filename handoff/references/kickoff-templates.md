@@ -80,8 +80,8 @@ independent, sizeable work; one subagent if one suffices.
 {goal} — {why}
 
 Context: {file paths, prior findings, decisions already made; everything the builder needs}.
-For research or decision work: no preferred outcome, answer menu or method steps; the builder
-picks the method.
+[For research or decision work: no preferred outcome, answer menu or method steps; the builder
+picks the method.]
 
 FINISH LINE: {finish_line}
 
@@ -108,8 +108,8 @@ to merge" or "which of these two approaches is better"}.
 
 Context: {why this matters, what's been tried, constraints that apply}.
 
-Ask the question neutrally ("what does the evidence say about X?"); no candidate answers, no
-preferred outcome.
+[Ask the question neutrally ("what does the evidence say about X?"); no candidate answers, no
+preferred outcome.]
 
 Give your own independent verdict; don't anchor on any framing above, including mine. State
 what you'd change, if anything, and why. Lead with the verdict; supporting detail after.
