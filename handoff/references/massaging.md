@@ -4,7 +4,8 @@ A handoff prompt is **self-contained**: the target session, which has none of yo
 can act on it without coming back for clarification.
 
 It IS the seven parts below, in order: a **contract of ingredients, not a fill-in template**.
-Every part is present; weighting and phrasing are judgment for the task and domain. For a
+Every part is present; weighting and phrasing are judgment for the task and domain. Give the
+goal and the context, not the answer or the method: see "Don't steer the answer" below. For a
 ready starting shape per prompt type (orchestrator, Sonnet builder, Fable reviewer, one-shot
 handoff) use [`kickoff-templates.md`](kickoff-templates.md).
 
@@ -21,8 +22,11 @@ project guardrail index, delegate routing); otherwise use the generic defaults h
    - activity: "fix the compaction bug" -> goal: "`session-compact` no longer re-compacts an
      idle low-context session; PR merged with `shell-tests` green; redeployed to `~/.local/bin`"
 
-2. **Numbered steps**: the concrete ordered path. Enough that the target needn't reverse-engineer
-   your intent; not so prescriptive that you do its thinking.
+2. **Why and method.** One clause of *why* the goal matters, then leave the method to the
+   target. Steps are optional and belong only where the order is a real constraint (a deploy
+   sequence, a migration, a mechanical edit list). For research, analysis and decision tasks,
+   do not number a method: it anchors the answer on your framing. If you must name an approach
+   you favor, label it "one option, your call".
 
 3. **Known state, to VERIFY not assume.** Everything you hold, each item tagged with how current
    it is and how to confirm it. Prevents the target building on a stale relayed list.
@@ -53,6 +57,29 @@ project guardrail index, delegate routing); otherwise use the generic defaults h
    > Anything genuinely my call goes to me via `session-send <parent-session> --file <f>`, a
    > numbered list with your recommended option. Decide defaults yourself when there's a normal
    > recommended answer; report them afterwards."
+
+## Don't steer the answer
+
+For research, analysis and decision tasks a brief that carries the answer gets the answer back:
+the child optimizes toward the target, the menu or the method, and its conclusion mirrors the
+brief instead of the evidence. One real run changed its answer each time the question was
+reframed. Three things steer:
+
+- **The preferred outcome as the target.** Put the operator's preference on its own line,
+  labelled "preference, not a target; the evidence decides", or leave it out when it isn't a
+  hard limit. Hard limits are constraints; preferences are not.
+- **A menu of candidate answers.** Don't list options (a)-(d). If a specific candidate must be
+  evaluated, name it as one of several things to consider and invite others.
+- **A step-by-step method.** Give the goal, why, context, where things live, hard limits and
+  the deliverable; the agent chooses how.
+
+Ask neutrally: "what does the evidence say about X?", not "find a way to do X" or "confirm Y".
+When you ask the same question again, reframing it is not new information.
+
+**Reopening a settled decision.** Before sending a brief that revisits one, ask: did a
+pre-agreed trigger fire, did the situation change, or is there genuinely new information? If
+none, don't re-brief; a re-asked question is not new evidence. If yes, put that fact in the
+brief as context and say the earlier decision may be changed on the evidence.
 
 Don't add "think carefully", "think step by step", or "ultrathink": current models size their own
 thinking, so those lines add length not quality.
@@ -90,8 +117,8 @@ A compacted transcript's summary drops detail; a file on disk doesn't.
 
 ```
 Goal: a go/no-go shortlist of tranche-1 candidates -> memory/tranche1-survey.md.
-Steps: 1) pull the candidate set from <source>; 2) score each on <criteria>; 3) write the
-       shortlist with a one-line rationale each.
+Why: <one clause: what the shortlist decides>. Method: yours; criteria are your call.
+Context: candidates live in <source>; scoring inputs in <path>.
 Known state (VERIFY, don't assume): I think X/Y/Z are live; confirm against <source>, may be stale.
 Deliverable: memory/tranche1-survey.md + a one-paragraph summary to me. Mark any candidate you
        couldn't confirm, and say where you looked.
@@ -105,6 +132,7 @@ Stop rule: keep going; stop and ask only if <source> is unreachable. My-call ite
 
 Use the pre-send checklist in [`kickoff-templates.md`](kickoff-templates.md#pre-send-checklist);
 it covers every item below plus the template-specific ones: goal is a checkable finish line;
+no preferred outcome as target, no answer menu, no research method steps, question asked neutrally;
 stale-able facts marked "verify"; deliverable has an exact destination; peers' guardrails
 restated; scope has concrete anti-patterns; stop rule names the real channel; eval campaigns name
 the protocol and `scripts/eval-hillclimb-decision.py`; long runs ask for TASKS.md; no
