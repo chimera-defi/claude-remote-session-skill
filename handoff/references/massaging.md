@@ -22,7 +22,7 @@ project guardrail index, delegate routing); otherwise use the generic defaults h
    - activity: "fix the compaction bug" -> goal: "`session-compact` no longer re-compacts an
      idle low-context session; PR merged with `shell-tests` green; redeployed to `~/.local/bin`"
 
-2. **Why and method.** One clause of *why* the goal matters, then leave the method to the
+2. **Why, context and method.** One clause of *why* the goal matters, then leave the method to the
    target. Steps are optional and belong only where the order is a real constraint (a deploy
    sequence, a migration, a mechanical edit list). For research, analysis and decision tasks,
    do not number a method: it anchors the answer on your framing. If you must name an approach
@@ -88,7 +88,7 @@ thinking, so those lines add length not quality.
 
 - **Research / survey**: lean on #3; the failure is confident action on stale inputs. Ask it to
   mark anything it couldn't confirm and say where it looked.
-- **Execution-capable** (trading, deploys, side effects): put #5 *first*, above the steps; the
+- **Execution-capable** (trading, deploys, side effects): put #5 *first*, above the method; the
   gate must be the first thing the target reads.
 - **Build / code**: sharpen #4 (branch, PR vs direct commit, tests required). Ask it to
   pre-review its own diff before opening the PR: only merge-blocking problems, each with file
