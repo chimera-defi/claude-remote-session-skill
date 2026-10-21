@@ -87,7 +87,8 @@ thinking, so those lines add length not quality.
 ## Weighting by domain
 
 - **Research / survey**: lean on #3; the failure is confident action on stale inputs. Ask it to
-  mark anything it couldn't confirm and say where it looked.
+  mark anything it couldn't confirm and say where it looked. Its finish line also includes a
+  closeout (see "Research and decision closeout" below).
 - **Execution-capable** (trading, deploys, side effects): put #5 *first*, above the method; the
   gate must be the first thing the target reads.
 - **Build / code**: sharpen #4 (branch, PR vs direct commit, tests required). Ask it to
@@ -102,6 +103,19 @@ thinking, so those lines add length not quality.
   [`eval-hillclimb-protocol.md`](eval-hillclimb-protocol.md) canonical. Don't paste hidden
   failures; declare budgets, splits, noise, minimum effect, parity tolerance, novelty reserve and
   the machine decision gate up front.
+
+## Research and decision closeout
+
+Research that ends in a pile of recommendations nobody adopts or rejects has not finished.
+Common failure: no owner, no date, rules written but never checked, the one operative sentence
+buried deep in a long doc, the findings ledger left stale. For research/decision briefs, put
+these in the finish line:
+
+- Every recommendation is marked **adopted / declined / superseded / needs-ruling**, each with
+  an owner.
+- Every proposed rule names who checks it and when.
+- The operative part ships as a short separate proposal, not inside the analysis.
+- If the project keeps a findings ledger, update it in place.
 
 ## Long runs
 
@@ -133,6 +147,7 @@ Stop rule: keep going; stop and ask only if <source> is unreachable. My-call ite
 Use the pre-send checklist in [`kickoff-templates.md`](kickoff-templates.md#pre-send-checklist);
 it covers every item below plus the template-specific ones: goal is a checkable finish line;
 no preferred outcome as target, no answer menu, no research method steps, question asked neutrally;
+research/decision briefs carry the closeout;
 stale-able facts marked "verify"; deliverable has an exact destination; peers' guardrails
 restated; scope has concrete anti-patterns; stop rule names the real channel; eval campaigns name
 the protocol and `scripts/eval-hillclimb-decision.py`; long runs ask for TASKS.md; no
