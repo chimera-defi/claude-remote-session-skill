@@ -147,6 +147,7 @@ Stop rule: keep going; stop and ask only if <source> is unreachable. My-call ite
 Use the pre-send checklist in [`kickoff-templates.md`](kickoff-templates.md#pre-send-checklist);
 it covers every item below plus the template-specific ones: goal is a checkable finish line;
 no preferred outcome as target, no answer menu, no research method steps, question asked neutrally;
+research/decision briefs carry the closeout;
 stale-able facts marked "verify"; deliverable has an exact destination; peers' guardrails
 restated; scope has concrete anti-patterns; stop rule names the real channel; eval campaigns name
 the protocol and `scripts/eval-hillclimb-decision.py`; long runs ask for TASKS.md; no
