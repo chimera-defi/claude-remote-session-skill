@@ -181,6 +181,9 @@ Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeat
       information, and the brief says which.
 - [ ] Every possibly-stale relayed fact is marked "verify, don't assume".
 - [ ] Deliverable names an exact destination.
+- [ ] Research/decision brief: finish line includes the closeout (every recommendation
+      adopted/declined/superseded/needs-ruling with an owner; each rule's checker and date;
+      short separate proposal; ledger updated in place).
 - [ ] Scope names concrete anti-patterns, not "be careful".
 - [ ] Stop rule states both when to keep going and when to stop and ask.
 - [ ] Eval/hillclimb? Add (e) with budgets/splits/noise/parity; point at the protocol, don't copy it.
