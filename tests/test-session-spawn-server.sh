@@ -7,7 +7,7 @@ source "$HERE/lib.sh"
 isolate_overlay
 S="$HERE/../scripts/session-spawn-server.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T" "$TELEMETRY_ROOT"' EXIT
-unset CLAUDE_CONFIG_DIR; export HOME="$T/home" CRSS_BIN_DIR="$T/home/bin" CRSS_SYSTEMD_DIR="$T/home/units" CRSS_CLAUDE_BIN=/usr/bin/claude
+unset CLAUDE_CONFIG_DIR; export HOME="$T/hm" CRSS_BIN_DIR="$T/hm/bin" CRSS_SYSTEMD_DIR="$T/hm/units" CRSS_CLAUDE_BIN=/usr/bin/claude
 mkdir -p "$HOME"
 printf '#!/bin/sh\necho "systemctl $*" >> %s/calls\n' "$T" > "$T/systemctl"; chmod +x "$T/systemctl"
 printf '#!/bin/sh\necho "tmux $*" >> %s/calls\nexit 1\n' "$T" > "$T/tmux"; chmod +x "$T/tmux"
