@@ -1,6 +1,6 @@
 ---
 name: haiku-reviewer
-description: Cheap first-pass reviewer pinned to Haiku 5.5 low; diff review against a spec and mechanical checks. Advisory, not a merge gate.
+description: Cheap first-pass reviewer on Haiku (bare alias; 5.5 at the 2026-10-22 bench), effort low; diff review against a spec and mechanical checks. Advisory, not a merge gate.
 model: haiku
 effort: low
 ---

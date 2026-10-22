@@ -12,7 +12,8 @@ kickoff brief instead of retyping it. Host model pins and quota rules live in th
 | Implementation/builder | gpt-6.1-sol low, default tier, trim flags below | Codex `codex exec` or `new-session --backend codex` | 2026-10-22 routing decision: spend Codex subscription limits first; A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Cheap/fast implementation | gpt-6-luna low | Codex | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
-| Review and mechanical checks | Haiku 5.5 low, `subagent_type: haiku-reviewer` | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
+| Review | Haiku low, `subagent_type: haiku-reviewer` (read-only) | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
+| Mechanical | Haiku (`model: "haiku"`) | Claude | greps, inventories, log triage, doc moves |
 | Adversarial reviewer | Opus, different context from author | Claude | races, idempotency, partial failure, restart, rollback |
 | Second opinion/tiebreak | Fable, `subagent_type: reviewer`; condensed packet only | Claude | independent read after Opus or at a real fork |
 
@@ -21,13 +22,13 @@ Claude builders inherit Opus; mechanical checks make judgement calls or edit sha
 reviewers review their own work or say "looks fine" without a failing scenario;
 Fable receives transcripts (it shares the Claude spend limit with Opus).
 
-Evidence: model bench 2026-10-22 (https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm).
+Evidence: model bench 2026-10-22 (private report: https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm). Model ids and flags are as of that bench; a host overlay may override them.
 Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness
 nor speed on these ceiling tasks. Tools off: Haiku 5.5 low led at 4.54 s, $0.0003.
 Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review,
 C ran alone. Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
 
-Codex is the default builder on subscription limits; use gpt-6-luna low when cost/latency matters
+Codex is the first builder (`new-session --backend codex` or `codex exec`), to spend the Codex subscription first; use gpt-6-luna low when cost/latency matters
 more than strength. When it is out, say "Codex quota-out, operator-approved Claude-only review"
 in the PR and record `models_ran`. Never review on one model family alone when a second is
 available. Haiku review alone does not satisfy the second-family gate: it is advisory.
