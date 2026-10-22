@@ -40,7 +40,7 @@ useful shapes:
   `session-doctor` view and no restart loop. Anything long-lived should be launched through `new-session` from it.
 - Its model is the account default (Opus), unless the server was installed with `--model`, which is
   passed as `ANTHROPIC_MODEL`. It has no `--tier`, so it routes its own work per
-  [orchestration-flow.md](orchestration-flow.md): luna-low builds, Haiku checks.
+  [orchestration-flow.md](orchestration-flow.md): luna high builds, Haiku repairs and checks.
 - `--permission-mode auto` by default: the CLI's auto-mode classifier approves or blocks each action.
   A phone-started session is a different trust case from an unattended crss lane, so `bypassPermissions`
   is an explicit `--permission-mode` opt-in. A blocked action shows up in the phone session; answer it
