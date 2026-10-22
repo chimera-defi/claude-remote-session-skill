@@ -404,7 +404,7 @@ else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
   # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
-  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna}" "${CRSS_CODEX_BUILDER_EFFORT:-low}" <<'PY'
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" <<'PY'
 import shlex,sys
 args,model,effort=sys.argv[1:]
 try: w=shlex.split(args)
