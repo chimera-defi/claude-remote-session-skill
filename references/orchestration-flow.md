@@ -1,4 +1,4 @@
-# Orchestration flow: Opus orchestrates, Sonnet builds, Opus attacks
+# Orchestration flow: Opus orchestrates, Codex builds, Haiku checks, Opus/Fable attack
 
 The default shape for any non-trivial multi-file or multi-step lane. Put this file's path in the
 kickoff brief instead of retyping it. Host model pins and quota rules live in the host overlay and
@@ -6,17 +6,45 @@ kickoff brief instead of retyping it. Host model pins and quota rules live in th
 
 ## Roles
 
-| Role | Model | Does | Never |
+| Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
-| Orchestrator | Opus (the `orchestrator` profile's pinned id, see `SKILL.md` key rules) | reads, diagnoses, decides, writes frozen packets, verifies, reports | hand-implements multi-file changes; large reads that a builder can summarise |
-| Builder | Sonnet (`subagent_type: builder` or `model: "sonnet"`) | implements one independent slice in its own worktree off `origin/main`, opens a PR, does not merge | inherits the Opus model (it silently loses `advisor`) |
-| Mechanical | Haiku (`model: "haiku"`) | greps, inventories, log triage, doc moves | judgement calls, anything that edits shared state |
-| Adversarial reviewer | Opus (`model: "opus"`), a different context from the author | tries to break the diff: races, idempotency, partial failure, restart, rollback | reviewing its own work; "looks fine" without a failing scenario |
-| Second opinion / tiebreak | Fable (`subagent_type: reviewer`, `agents/reviewer.md`) | an independent read of a diff or decision after the Opus pass, at a real fork, or before a risky action; condensed packet only | pasting transcripts (it shares the Claude spend limit with Opus) |
+| Orchestrator | Opus (pinned id; no tier effort) | Claude | orchestration and escalation |
+| Implementation/builder | gpt-6.1-sol low, default tier, trim flags below | Codex `codex exec` or `new-session --backend codex` | 2026-10-22 routing decision: spend Codex subscription limits first; A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
+| Cheap/fast implementation | gpt-6-luna low | Codex | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
+| Builder fallback | Sonnet 5.5 low, `subagent_type: builder` | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
+| Review and mechanical checks | Haiku 5.5 low, `subagent_type: haiku-reviewer` | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
+| Adversarial reviewer | Opus, different context from author | Claude | races, idempotency, partial failure, restart, rollback |
+| Second opinion/tiebreak | Fable, `subagent_type: reviewer`; condensed packet only | Claude | independent read after Opus or at a real fork |
 
-Codex is the preferred builder/reviewer when the host overlay says it has quota (model and flags live there); when it is
-out, say "Codex quota-out, operator-approved Claude-only review" in the PR and record `models_ran`.
-Never review on one model family alone when a second is available.
+Never: orchestrators hand-implement multi-file changes or do large reads a builder can summarise;
+Claude builders inherit Opus; mechanical checks make judgement calls or edit shared state;
+reviewers review their own work or say "looks fine" without a failing scenario;
+Fable receives transcripts (it shares the Claude spend limit with Opus).
+
+Evidence: model bench 2026-10-22 (https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm).
+Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness
+nor speed on these ceiling tasks. Tools off: Haiku 5.5 low led at 4.54 s, $0.0003.
+Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review,
+C ran alone. Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
+
+Codex is the default builder on subscription limits; use gpt-6-luna low when cost/latency matters
+more than strength. When it is out, say "Codex quota-out, operator-approved Claude-only review"
+in the PR and record `models_ran`. Never review on one model family alone when a second is
+available. Haiku review alone does not satisfy the second-family gate: it is advisory.
+
+Builder trim flags: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`
+(input ~28k → ~14.5k tokens). Tool-less one-shots may also use
+`-c include_environment_context=false -c model_instructions_file=<file>`.
+Keep priority out of host config. Opt in per call with `-c service_tier=priority`:
+~31% faster on gpt-6.1-sol (5.15 s vs 7.43 s), no gain on luna; assumed 1.5x cost.
+
+## Self-improving routing
+
+- Log each delegated task: job type, model, effort, backend, tier, wall s, $, pass/fail, rework.
+- Codex $ is a list-price proxy; log in the lane's `TASKS.md` or report `models_ran`.
+- Revisit routing when a job type's pass rate drops, costs drift >2x, or a new model/CLI lands.
+- Rerun the bench before changing defaults.
+- Record routing decisions with the date.
 
 ## Steps
 
