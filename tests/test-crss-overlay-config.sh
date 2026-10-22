@@ -27,7 +27,7 @@ REPO="$HERE/.."
 
 # Every script that reads overlay config — keep this list in sync with
 # the scripts if a new one gains the loader.
-LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh)
+LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh session-spawn-server.sh)
 
 # Every script that reads CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES — keep in
 # sync with the scripts if a new one gains the block. Deliberately a SUBSET of LOADER_FILES: fleet-status.sh,
