@@ -6,6 +6,7 @@
 #   workspace (default when $CRSS_WORKSPACE/<name> exists) — repo sessions
 #   sessions  — utility sessions (monitors, managers, etc.)
 set -e
+_crss_codex_args_from_env=${CRSS_CODEX_ARGS+yes}
 # Autonomous actuation uses the single Agent Host authority; diagnostics/manual
 # control retain their existing behavior. No provider/model fallback here.
 _crss_admit() {
@@ -151,8 +152,9 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
-  --tier <t>          Right-size the spawn: light|standard|heavy -> profile/model
-                      defaults (see SKILL.md "Choosing a tier"); never Opus.
+  --tier <t>          Right-size: light|standard|heavy|auto; auto uses brief keywords.
+                      Orchestrator default effort medium; use CLAUDE_SESSION_EFFORT=high at risky forks.
+  --task-type <t>     Auto routing: orchestrate|review|mechanical|research|build.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
   --launcher <n>      Record <n> as this spawn's launcher (auto: tmux session name
                       inside tmux; Claude session id when set). See telemetry-report.sh --kids
@@ -231,7 +233,7 @@ HELP_EOF
 fi
 
 # ── Inputs ──────────────────────────────────────────────────────────────────
-FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; SETDEFAULT_ALIAS=no; NPOS=0
+FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; TASK_TYPE=""; TIER_AUTO=no; SETDEFAULT_ALIAS=no; NPOS=0
 TIER_ARG=""; TIER_REASON=""; ESCALATE_FROM=""; LAUNCHER_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -240,7 +242,8 @@ while [ $# -gt 0 ]; do
     --set-default-alias) SETDEFAULT_ALIAS=yes; shift ;;
     --dry-run)   DRYRUN=yes; shift ;;
     --force)     FORCE=yes; shift ;;
-    --tier)      TIER_ARG="${2:?--tier needs a value}"; shift 2 ;;
+    --tier)      TIER_ARG="${2:?--tier needs a value}"; [ "$TIER_ARG" = auto ] && TIER_AUTO=yes; shift 2 ;;
+    --task-type) TASK_TYPE="${2:?--task-type needs a value}"; shift 2 ;;
     --launcher) LAUNCHER_ARG="${2:?--launcher needs a session name}"; shift 2 ;;
     --escalate-from) ESCALATE_FROM="${2:?--escalate-from needs a session name}"; shift 2 ;;
     --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
@@ -275,9 +278,10 @@ case "$TYPE" in
   *) echo "new-session: unknown session type '$TYPE' (valid: workspace|sessions|auto) — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
 esac
 case "$TIER_ARG" in
-  ""|light|standard|heavy) ;;
-  *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy)" >&2; exit 2 ;;
+  ""|light|standard|heavy|auto) ;;
+  *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy|auto)" >&2; exit 2 ;;
 esac
+case "$TASK_TYPE" in ""|orchestrate|review|mechanical|research|build) ;; *) echo "new-session: invalid --task-type '$TASK_TYPE' (valid: orchestrate|review|mechanical|research|build)" >&2; exit 2 ;; esac
 # --escalate-from <session>: respawn one tier above that session's recorded tier (an
 # explicit --tier wins). Launcher-initiated, never automatic; recorded in telemetry.
 if [ -n "$ESCALATE_FROM" ]; then
@@ -367,6 +371,72 @@ elif [ -n "$TASK_ARG" ]; then
   TASK="$TASK_ARG"
 fi
 
+# ── Auto tier routing and quota checks ──────────────────────────────────────
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+if [ "$TIER_AUTO" = yes ]; then
+  _brief="${TASK,,}"; [ -n "$_brief" ] || _brief="${FOLDERNAME,,}"
+  _tt="$TASK_TYPE"; _why_src=no\ match; _kw=""
+  if [ -z "$_tt" ]; then
+    # First rule whose keyword starts a word in the brief wins (so "add" never matches "address").
+    for _rule in 'orchestrate:orchestrat|coordinat|plan the|lead the' 'review:review|audit|check|verify|lint' \
+                 'mechanical:inventor|grep|triage|rename|move docs|mechanical' 'research:research|investigat|debug|design|root cause|why' \
+                 'build:implement|build|fix|add|refactor|migrat|test|write'; do
+      if [[ "$_brief" =~ (^|[^a-z0-9])(${_rule#*:}) ]]; then _tt=${_rule%%:*}; _kw=${BASH_REMATCH[2]}; break; fi
+    done
+    [ -z "$_kw" ] || _why_src="keyword '$_kw'"
+  else _why_src=--task-type; fi
+  [ -n "$_tt" ] || _tt=none
+  case "$_tt" in
+    orchestrate) TIER_ARG=""; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-orchestrator}; _auto_model=${CLAUDE_SESSION_MODEL:-$CRSS_OPUS_MODEL}; _auto_effort=${CLAUDE_SESSION_EFFORT:-${CRSS_ORCHESTRATOR_EFFORT:-medium}} ;;
+    review|mechanical) TIER_ARG=light; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-copywriter}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-haiku}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low} ;;
+    research) TIER_ARG=heavy; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-owner}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet} ;;
+    build) TIER_ARG=standard; _auto_backend=codex ;;
+    *) TIER_ARG=standard; _tt=none; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-builder}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low} ;;
+  esac
+  if [ -z "$BACKEND_ARG" ] && [ -z "${CRSS_SESSION_BACKEND+x}" ]; then BACKEND="$_auto_backend"; fi
+  TIER_AUTO_TYPE=$_tt; [ -n "$TIER_REASON" ] || TIER_REASON="auto: $_tt via $_why_src"
+else TIER_AUTO_TYPE=""; fi
+_apply_codex_builder_args() {
+  [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
+  local model=${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna} tok; local -a words=() out=(); local i=0 found=no has_effort=no
+  while IFS= read -r -d '' tok; do words+=("$tok"); done < <(python3 - "${CRSS_CODEX_ARGS:-}" <<'PY'
+import shlex,sys
+try: w=shlex.split(sys.argv[1])
+except ValueError: w=sys.argv[1].split()
+sys.stdout.write(''.join(x+'\0' for x in w))
+PY
+)
+  while [ "$i" -lt "${#words[@]}" ]; do tok=${words[$i]}; case "$tok" in
+    -m|--model) out+=("$tok" "$model"); i=$((i+2)); found=yes; continue ;;
+    -m?*) out+=("-m$model"); found=yes ;;
+    --model=*) out+=("--model=$model"); found=yes ;;
+    *) out+=("$tok") ;; esac; i=$((i+1)); done
+  [ "$found" = yes ] || out=(-m "$model" "${out[@]}")
+  for tok in "${out[@]}"; do [[ "$tok" == *model_reasoning_effort* ]] && has_effort=yes; done
+  [ "$has_effort" = yes ] || out+=(-c "model_reasoning_effort=${CRSS_CODEX_BUILDER_EFFORT:-low}")
+  CRSS_CODEX_ARGS="$(printf '%q ' "${out[@]}")"
+}
+[ "${TIER_AUTO_TYPE:-}" = build ] && [ "$BACKEND" = codex ] && _apply_codex_builder_args
+QUOTA_RESULT=none; QUOTA_FROM=""; QUOTA_EVIDENCE=""
+if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
+  if [ ! -x "$SELF_DIR/quota-check.sh" ]; then echo 'new-session: quota-check.sh missing; quota failover skipped' >&2
+  elif [ "$BACKEND" = codex ] || [ "$BACKEND" = claude ]; then
+    _from=$BACKEND; if _out=$("$SELF_DIR/quota-check.sh" "$BACKEND-status"); then _orc=0; else _orc=$?; fi
+    if { [ "$BACKEND" = codex ] && [ "$_orc" = 10 ]; } || { [ "$BACKEND" = claude ] && [ "$_orc" = 11 ]; }; then
+      _other=claude; [ "$BACKEND" = claude ] && _other=codex
+      if _other_out=$("$SELF_DIR/quota-check.sh" "$_other-status"); then _other_rc=0; else _other_rc=$?; fi
+      if { [ "$_other" = claude ] && [ "$_other_rc" = 11 ]; } || { [ "$_other" = codex ] && [ "$_other_rc" = 10 ]; }; then
+        QUOTA_RESULT=both-out; echo "$_out" >&2; echo "$_other_out" >&2; echo 'both quotas out: pausing — report the exact text above to the launcher' >&2; [ "$DRYRUN" = yes ] && echo QUOTA=both-out; exit 3
+      fi
+      if [ "$BACKEND" = codex ]; then
+        QUOTA_RESULT=codex-out; QUOTA_FROM=codex; QUOTA_EVIDENCE=$_out; BACKEND=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-builder}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low}; [ -n "$TIER_ARG" ] || TIER_ARG=standard; TIER_REASON="${TIER_REASON:+$TIER_REASON; }quota failover codex->claude"; echo "quota failover: Codex out ($_out) -> Claude builder sonnet low" >&2
+      else
+        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; _apply_codex_builder_args; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6-luna builds; gpt-6.1-sol reviews; PR must say "single-family review (Claude quota-out)")' >&2
+      fi
+    fi
+  fi
+fi
+
 # ── Preflight capacity gate ──────────────────────────────────────────────────
 # Sessions are long-lived and nothing reaps them automatically, so spawns
 # accumulate until the box runs out of RAM and every session degrades together
@@ -423,8 +493,9 @@ if [ "$BACKEND" = claude ]; then
        echo "note: unknown CLAUDE_SESSION_PROFILE='$PROFILE' — defaulting to 'orchestrator' (full tool set). Valid: orchestrator|owner|hub|builder|copywriter" >&2
        PROFILE="orchestrator" ;;
   esac
-  EFFORT="${CLAUDE_SESSION_EFFORT:-$T_EFFORT}"
-  case "$EFFORT" in ""|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
+  if [ "$PROFILE" = orchestrator ]; then _default_effort=${CRSS_ORCHESTRATOR_EFFORT:-medium}; else _default_effort=$T_EFFORT; fi
+  EFFORT="${CLAUDE_SESSION_EFFORT:-$_default_effort}"; [ "$EFFORT" = none ] && EFFORT=""
+  case "$EFFORT" in ""|none|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
 
   if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
@@ -686,9 +757,15 @@ PROFILE_LITERAL="$(_shell_quote "$PROFILE")"
 CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
+if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$SELF_DIR/quota-check.sh" log event=quota-failover from="$QUOTA_FROM" to="$BACKEND" evidence="$QUOTA_EVIDENCE" session="$SESSION"; fi
+_shown_effort="${EFFORT:-default}"
+if [ "$BACKEND" = codex ] && [[ "$CRSS_CODEX_ARGS" =~ model_reasoning_effort=([a-z]+) ]]; then _shown_effort=${BASH_REMATCH[1]}; fi
+if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$SELF_DIR/quota-check.sh" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON"; fi
 if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
+  [ -z "$TIER_AUTO_TYPE" ] || printf 'TIER_AUTO=%s\n' "$TIER_AUTO_TYPE"
+  printf 'QUOTA=%s\n' "$QUOTA_RESULT"
   exit 0
 fi
 

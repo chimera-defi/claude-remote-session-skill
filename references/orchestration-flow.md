@@ -7,7 +7,7 @@ Host model pins and quota rules live in the host overlay and `~/.claude/CLAUDE.m
 
 | Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
-| Orchestrator | Opus (pinned id; no tier effort) | Claude | — |
+| Orchestrator | Opus (pinned id), effort medium; high at risky forks | Claude | blind check: medium 8.3 vs high 8.0, $0.10 vs $0.17 a plan |
 | Builder (default) | gpt-6-luna low, default tier, [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna -c model_reasoning_effort=low`, or `new-session --backend codex` with `CRSS_CODEX_ARGS='-m gpt-6-luna -c model_reasoning_effort=low'` | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
 | Builder escalation | gpt-6.1-sol low, then medium ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
@@ -43,10 +43,20 @@ luna low → gpt-6.1-sol low → gpt-6.1-sol medium → Sonnet builder.
 - Log every hop in the [routing log](#self-improving-routing) so the table self-corrects.
 - The bench never found luna's failure point (all passed); the log exists to find it. Revisit the default if luna's fail rate exceeds ~10%.
 
+### Quota ladder
+
+luna and gpt-6.1-sol share one Codex quota, so hopping between them never escapes a quota-out.
+
+- **Codex out** → Sonnet low builder + Haiku low review.
+- **Claude out** → Codex-only: luna builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
+- **Both out** → pause and report the exact error text.
+
+`scripts/quota-check.sh` detects it: `classify` reads error text (pipe a hand-run `codex exec` through it), `codex-status` reads the latest Codex rollout `rate_limits`, `claude-status` reads recent transcript API errors. `new-session` runs both at spawn, fails over automatically (`CRSS_QUOTA_FAILOVER=0` disables) and logs the hop. Patterns come from the installed Codex CLI and real Claude transcripts; override them in `$CRSS_HOME/quota-patterns.txt`. A quota-out inside an already-running Codex TUI is not detected.
+
 Review gate:
 
 - Never review on one model family alone when a second is available; Haiku alone is advisory and does not count.
-- Codex out: say "Codex quota-out, operator-approved Claude-only review" in the PR and record `models_ran`.
+- Single-family review only in the Claude-out case above; record `models_ran`.
 
 ### Codex flags
 
@@ -56,7 +66,7 @@ Review gate:
 
 ## Self-improving routing
 
-- Log each delegated task: job type, model, effort, backend, tier, wall s, $, pass/fail, rework, escalation hops.
+- Log each delegated task: job type, model, effort, backend, tier, wall s, $, pass/fail, rework, escalation hops. `new-session` appends `--tier auto` picks and quota hops to `$CRSS_ROUTING_LOG` (default `~/.sessions/routing-log.jsonl`); `quota-check log key=value...` adds others.
 - Codex $ is a list-price proxy; log in the lane's `TASKS.md` or report `models_ran`.
 - Revisit routing when a job type's pass rate drops, costs drift >2x, or a new model/CLI lands; rerun the bench first.
 - Record routing decisions with the date.

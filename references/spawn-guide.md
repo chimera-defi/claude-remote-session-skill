@@ -35,8 +35,9 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 
 ## Choosing a tier (right-size the model, save quota)
 
-The launcher knows the task; the script cannot guess it. Pass `--tier` and a one-line
-`--tier-reason` (logged in spawn telemetry: the decision, not the outcome). Resolution lives in
+Pass `--tier` and a one-line `--tier-reason` (logged in spawn telemetry: the decision, not the outcome),
+or `--tier auto` with `--task-type orchestrate|review|mechanical|research|build` (else keywords in the brief):
+it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6-luna low, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
 `scripts/new-session.sh` and is pinned by `tests/test-new-session-tier.sh`; do not restate it here.
 
 | Tier | Pick it when the task is | Defaults |
@@ -46,6 +47,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
 - Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
+- **Orchestrator effort** defaults to medium (`CRSS_ORCHESTRATOR_EFFORT`, `none` drops it); set `CLAUDE_SESSION_EFFORT=high` at risky forks. A 2026-10-22 blind check (3 planning prompts, Fable judge) scored medium 8.3 vs high 8.0 at ~60% of the cost.
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).

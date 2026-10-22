@@ -108,13 +108,13 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   ([script](scripts/merge-guard.sh), [test](tests/test-merge-guard.sh)). On a nonzero exit,
   leave the PR for the operator and report the reasons. A general rule never overrides a per-item veto.
 
-- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6-luna low builds first; [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md).
+- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6-luna low builds first (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md).
 
 ## Tier, kickoff and naming (read before spawning)
 
 [`references/spawn-guide.md`](references/spawn-guide.md) holds the detail. The short form:
 
-- **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."` (right-size the model; a tier never selects Opus; resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
+- **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."`, or `--tier auto --task-type <t>` (right-size the model; a tier never selects Opus; resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
 - **Kickoff:** give a finish line, not an activity; a stop rule that names the channel (`session-send <launcher>`, or the bus/mailbox when the launcher is not a tmux session; `new-session --launcher` warns); concrete anti-patterns; Codex builders first; a `TASKS.md` for long runs. Prefer `--task`/`--task-file`.
 - **Naming:** `<prefix>_<alias>-<MMDD-HHMM>`; `--alias` is per-spawn, add `--set-default-alias` only when the name describes the folder (rules: `scripts/session-alias.sh`, `tests/test-session-alias.sh`).
 
