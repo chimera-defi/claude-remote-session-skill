@@ -54,6 +54,9 @@ o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME
 set +e; env HOME="$QHOME" CRSS_SESSION_PREFIX=px CRSS_WORKSPACE="$QHOME/workspace" CRSS_SESSIONS_DIR="$QHOME/sessions" CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" bash "$NS" proj workspace --dry-run >/dev/null 2>&1; _both_rc=$?; set +e
 ok "both quotas exit code" "$_both_rc" 3
  o="$(dry CRSS_QUOTA_FAILOVER=0 CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" -- --backend codex)"; hasre "quota failover disabled" "$o" '^BACKEND=codex$'; hasre "disabled quota marker" "$o" '^QUOTA=none$'
+# deployed layout drops .sh: new-session must find quota-check on PATH
+mkdir -p "$WORKHOME/bin"; cp "$NS" "$WORKHOME/bin/new-session"; cp "$HERE/../scripts/quota-check.sh" "$WORKHOME/bin/quota-check"
+o="$(NS="$WORKHOME/bin/new-session" PATH="$WORKHOME/bin:$PATH" dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/empty" -- --backend codex)"; hasre "deployed layout finds quota-check" "$o" '^QUOTA=codex-out$'
 rm -rf "$QHOME"
 
 # advisor: one Opus source, overridable, validated
