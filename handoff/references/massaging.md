@@ -6,7 +6,7 @@ can act on it without coming back for clarification.
 It IS the seven parts below, in order: a **contract of ingredients, not a fill-in template**.
 Every part is present; weighting and phrasing are judgment for the task and domain. Give the
 goal and the context, not the answer or the method: see "Don't steer the answer" below. For a
-ready starting shape per prompt type (orchestrator, Sonnet builder, Fable reviewer, one-shot
+ready starting shape per prompt type (orchestrator, Sonnet fallback builder, Fable reviewer, one-shot
 handoff) use [`kickoff-templates.md`](kickoff-templates.md).
 
 Before writing, read `$CRSS_HOME/local.md` if it exists (this host's escalation channel,
