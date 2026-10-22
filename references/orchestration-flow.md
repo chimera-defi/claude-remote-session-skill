@@ -50,6 +50,7 @@ luna and gpt-6.1-sol share one Codex quota, so hopping between them never escape
 - **Codex out** → Sonnet low builder + Haiku low review.
 - **Claude out** → Codex-only: luna builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
 - **Both out** → pause and report the exact error text.
+- Claude Code's own `--fallback-model` only covers an overloaded or unavailable model (it retries the primary each turn); it does not see quota-outs across families, so this ladder stays in `new-session`.
 
 `scripts/quota-check.sh` detects it: `classify` reads error text (pipe a hand-run `codex exec` through it), `codex-status` reads the latest Codex rollout `rate_limits`, `claude-status` reads recent transcript API errors. `new-session` runs both at spawn, fails over automatically (`CRSS_QUOTA_FAILOVER=0` disables) and logs the hop. Patterns come from the installed Codex CLI and real Claude transcripts; override them in `quota-patterns.txt` in the crss overlay (`$CRSS_HOME`, else `~/.config/crss`). A quota-out inside an already-running Codex TUI is not detected.
 
