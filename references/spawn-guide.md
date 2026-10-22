@@ -12,7 +12,7 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
-- The standard lane shape (Opus orchestrates, Codex builds, Haiku checks, Opus
+- The standard lane shape (Opus orchestrates, Codex gpt-6-luna low builds, Haiku checks, Opus
   adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
@@ -43,10 +43,20 @@ it prints the pick and why and logs it to the routing log; `build` picks Codex g
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
-| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet, `--effort low` |
+| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex luna low first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
 - Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
+- **Claude Code has no per-request model router.** Checked on CLI 2.1.308: the alias table is
+  `sonnet opus haiku fable best sonnet[1m] opus[1m] fable[1m] opusplan`, with no `auto`. `opusplan` swaps
+  Opus (plan mode) for Sonnet (execution) on the plan-mode toggle and nothing else. `default`/`best` follow the
+  account or release. `--fallback-model a,b` is an availability fallback (overloaded or unavailable; retries
+  the primary each user turn), not a router. "Auto mode" (`--permission-mode auto`, `claude auto-mode`) is
+  the permission classifier and never picks a model. So right-sizing happens once, at spawn:
+  `--tier auto` classifies the brief, and inside a session the orchestrator routes each slice by the table in
+  [orchestration-flow.md](orchestration-flow.md). `new-session` without `--tier` uses the profile
+  default (orchestrator pins `$CRSS_OPUS_MODEL`). Native sessions it does not launch (desktop app, phone, a
+  remote-control spawn server) run the account default, Opus, and delegate the same way.
 - **Orchestrator effort** defaults to medium (`CRSS_ORCHESTRATOR_EFFORT`, `none` drops it); set `CLAUDE_SESSION_EFFORT=high` at risky forks. A 2026-10-22 blind check (3 planning prompts, Fable judge) scored medium 8.3 vs high 8.0 at ~60% of the cost.
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
