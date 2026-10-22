@@ -34,6 +34,7 @@ Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7
 - Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review, C ran alone.
 - Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
 - Harder problems (luna's 7 worst, n=35 each, post hoc): luna low/medium average 0–7 reasoning tokens a call and pass 21/35; prompt nudges and harness trims do not change that. luna high (stripped) 31/35, Haiku low 32/35, luna low → Haiku repair 35/35, Sonnet medium 35/35 at ~10× the cost.
+- Measured on one real lane (2026-10-22, website copy + this tool; `scripts/slice-usage.py`, $ from a one-call CLI cost probe per model, so read it as ±30%). Haiku research and two luna high builds cost $0.03 in all; the same tokens on Opus would have cost ~$1.55. But the bill was the Opus orchestrator ($7.45, 10M cache-read tokens over 79 calls) and three Fable reviews ($6.05; Fable is about 3x Opus per token on the probe). Cheap builders are a solved saving. The levers left are fewer orchestrator turns and one Fable gate per change on a tight packet, with interim checks on Haiku.
 
 ## Escalation ladder
 
