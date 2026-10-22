@@ -51,6 +51,11 @@ report, benchmark or new repository that other people will read.
 - Tables: sortable by any column, numeric-aware.
 - Charts: labelled axes with nothing clipped at phone width, and a marked Pareto frontier on
   cost-vs-latency or cost-vs-accuracy charts.
+- Visual first. The operator rated a word-heavy, design-system report as clearly worse than an
+  earlier page that was mostly charts. Lead with a one-sentence verdict box, then follow each
+  heading with a chart or table and at most three one-line bullets. Keep visible body prose to
+  about 350 words and put method, limitations and appendices in `<details>`. Have more charts
+  than text sections.
 - Prose: plain words, a deslop pass, no repeated facts.
 
 ## Review passes before calling it done
