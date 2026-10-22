@@ -373,6 +373,10 @@ fi
 
 # ── Auto tier routing and quota checks ──────────────────────────────────────
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+# quota-check: co-located (repo layout) first, then PATH (deployed layout, .sh dropped).
+QUOTA_CHECK=""
+if [ -x "$SELF_DIR/quota-check.sh" ]; then QUOTA_CHECK="$SELF_DIR/quota-check.sh"
+elif command -v quota-check >/dev/null 2>&1; then QUOTA_CHECK="$(command -v quota-check)"; fi
 if [ "$TIER_AUTO" = yes ]; then
   _brief="${TASK,,}"; [ -n "$_brief" ] || _brief="${FOLDERNAME,,}"
   _tt="$TASK_TYPE"; _why_src=no\ match; _kw=""
@@ -422,12 +426,12 @@ PY
 [ "${TIER_AUTO_TYPE:-}" = build ] && [ "$BACKEND" = codex ] && _apply_codex_builder_args
 QUOTA_RESULT=none; QUOTA_FROM=""; QUOTA_EVIDENCE=""
 if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
-  if [ ! -x "$SELF_DIR/quota-check.sh" ]; then echo 'new-session: quota-check.sh missing; quota failover skipped' >&2
+  if [ -z "$QUOTA_CHECK" ]; then echo 'new-session: quota-check.sh missing; quota failover skipped' >&2
   elif [ "$BACKEND" = codex ] || [ "$BACKEND" = claude ]; then
-    _from=$BACKEND; if _out=$("$SELF_DIR/quota-check.sh" "$BACKEND-status"); then _orc=0; else _orc=$?; fi
+    _from=$BACKEND; if _out=$("$QUOTA_CHECK" "$BACKEND-status"); then _orc=0; else _orc=$?; fi
     if { [ "$BACKEND" = codex ] && [ "$_orc" = 10 ]; } || { [ "$BACKEND" = claude ] && [ "$_orc" = 11 ]; }; then
       _other=claude; [ "$BACKEND" = claude ] && _other=codex
-      if _other_out=$("$SELF_DIR/quota-check.sh" "$_other-status"); then _other_rc=0; else _other_rc=$?; fi
+      if _other_out=$("$QUOTA_CHECK" "$_other-status"); then _other_rc=0; else _other_rc=$?; fi
       if { [ "$_other" = claude ] && [ "$_other_rc" = 11 ]; } || { [ "$_other" = codex ] && [ "$_other_rc" = 10 ]; }; then
         QUOTA_RESULT=both-out; echo "$_out" >&2; echo "$_other_out" >&2; echo 'both quotas out: pausing — report the exact text above to the launcher' >&2; [ "$DRYRUN" = yes ] && echo QUOTA=both-out; exit 3
       fi
@@ -760,10 +764,10 @@ PROFILE_LITERAL="$(_shell_quote "$PROFILE")"
 CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
 
-if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$SELF_DIR/quota-check.sh" log event=quota-failover from="$QUOTA_FROM" to="$BACKEND" evidence="$QUOTA_EVIDENCE" session="$SESSION"; fi
+if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$QUOTA_CHECK" log event=quota-failover from="$QUOTA_FROM" to="$BACKEND" evidence="$QUOTA_EVIDENCE" session="$SESSION" || true; fi
 _shown_effort="${EFFORT:-default}"
 if [ "$BACKEND" = codex ] && [[ "$CRSS_CODEX_ARGS" =~ model_reasoning_effort=([a-z]+) ]]; then _shown_effort=${BASH_REMATCH[1]}; fi
-if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$SELF_DIR/quota-check.sh" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON"; fi
+if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$QUOTA_CHECK" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON" || true; fi
 if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
