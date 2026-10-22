@@ -9,8 +9,8 @@ Host model pins and quota rules live in the host overlay and `~/.claude/CLAUDE.m
 |---|---|---|---|
 | Orchestrator | Opus (pinned id), effort medium; high at risky forks | Claude | blind check: medium 8.3 vs high 8.0, $0.10 vs $0.17 a plan |
 | Builder (default) | gpt-6-luna high, default tier, [trim flags](#codex-flags) (stripped harness for tool-less one-shots); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna -c model_reasoning_effort=high`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | hard set (routing bench): stripped high 31/35, $0.00105/pass, ~13 s; luna low 21/35 |
-| Builder repair (fallback) | Haiku low reads the statement + luna's code and returns corrected code, then re-run the check | Claude `haiku-reviewer` or `claude -p --model haiku --effort low` | luna low → Haiku repair 35/35, $0.0035/pass, ~27 s |
-| Builder escalation | gpt-6.1-sol low, then medium ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
+| Builder repair (fallback) | Haiku low reads the statement + luna's code and returns corrected code, then re-run the check | Claude `claude -p --model haiku --effort low --tools ""` with a repair prompt (not `haiku-reviewer`, which only reports) | luna low → Haiku repair 35/35, $0.0035/pass, ~27 s |
+| Builder escalation | gpt-6.1-sol medium after a failed Haiku repair ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
 | Review | Haiku low, `subagent_type: haiku-reviewer` (read-only; [`agents/haiku-reviewer.md`](../agents/haiku-reviewer.md)) | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
 | Mechanical | Haiku (`model: "haiku"`) | Claude | greps, inventories, log triage, doc moves |
