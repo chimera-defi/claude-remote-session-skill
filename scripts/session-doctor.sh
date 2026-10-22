@@ -169,7 +169,7 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
   PROTECT='.'
 }
 
-# _is_protected <text> — CRSS_PROTECT_NAMES against tmux names (ah_x), units and titles (ah-x) alike: try the
+# _is_protected <text> — CRSS_PROTECT_NAMES against tmux names (<prefix>_x), units and titles (<prefix>-x) alike: try the
 # text as-is, all-hyphen and all-underscore so a term in either form protects every form. Tests: tests/test-reap-min-age.sh.
 _is_protected() {
   local t="$1"
