@@ -377,17 +377,18 @@ if [ "$TIER_AUTO" = yes ]; then
   _brief="${TASK,,}"; [ -n "$_brief" ] || _brief="${FOLDERNAME,,}"
   _tt="$TASK_TYPE"; _why_src=no\ match; _kw=""
   if [ -z "$_tt" ]; then
-    # First rule whose keyword starts a word in the brief wins (so "add" never matches "address").
-    for _rule in 'orchestrate:orchestrat|coordinat|plan the|lead the' 'review:review|audit|check|verify|lint' \
-                 'mechanical:inventor|grep|triage|rename|move docs|mechanical' 'research:research|investigat|debug|design|root cause|why' \
-                 'build:implement|build|fix|add|refactor|migrat|test|write'; do
-      if [[ "$_brief" =~ (^|[^a-z0-9])(${_rule#*:}) ]]; then _tt=${_rule%%:*}; _kw=${BASH_REMATCH[2]}; break; fi
+    # First rule with a whole-word keyword in the brief wins ("add" never matches "address");
+    # stems spell their endings out ([a-z]*).
+    for _rule in 'orchestrate:orchestrat[a-z]*|coordinat[a-z]*|plan the|lead the' 'review:reviews?|audits?|check|verify|lint' \
+                 'mechanical:inventory|grep|triage|rename|move docs|mechanical' 'research:research|investigat[a-z]*|debug|design|root cause|why' \
+                 'build:implement[a-z]*|build|fix|add|refactor|migrat[a-z]*|tests?|write'; do
+      if [[ "$_brief" =~ (^|[^a-z0-9])(${_rule#*:})([^a-z0-9]|$) ]]; then _tt=${_rule%%:*}; _kw=${BASH_REMATCH[2]}; break; fi
     done
     [ -z "$_kw" ] || _why_src="keyword '$_kw'"
   else _why_src=--task-type; fi
   [ -n "$_tt" ] || _tt=none
   case "$_tt" in
-    orchestrate) TIER_ARG=""; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-orchestrator}; _auto_model=${CLAUDE_SESSION_MODEL:-$CRSS_OPUS_MODEL}; _auto_effort=${CLAUDE_SESSION_EFFORT:-${CRSS_ORCHESTRATOR_EFFORT:-medium}} ;;
+    orchestrate) TIER_ARG=""; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-orchestrator} ;;
     review|mechanical) TIER_ARG=light; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-copywriter}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-haiku}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low} ;;
     research) TIER_ARG=heavy; _auto_backend=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-owner}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet} ;;
     build) TIER_ARG=standard; _auto_backend=codex ;;
@@ -398,23 +399,25 @@ if [ "$TIER_AUTO" = yes ]; then
 else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
-  local model=${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna} tok; local -a words=() out=(); local i=0 found=no has_effort=no
-  while IFS= read -r -d '' tok; do words+=("$tok"); done < <(python3 - "${CRSS_CODEX_ARGS:-}" <<'PY'
+  # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna}" "${CRSS_CODEX_BUILDER_EFFORT:-low}" <<'PY'
 import shlex,sys
-try: w=shlex.split(sys.argv[1])
-except ValueError: w=sys.argv[1].split()
-sys.stdout.write(''.join(x+'\0' for x in w))
+args,model,effort=sys.argv[1:]
+try: w=shlex.split(args)
+except ValueError: w=args.split()
+out=[]; i=0; found=False
+while i<len(w):
+  t=w[i]
+  if t in ('-m','--model'): out+=[t,model]; i+=2; found=True; continue
+  if t.startswith('--model='): out.append('--model='+model); found=True
+  elif t.startswith('-m') and len(t)>2 and not t.startswith('--'): out.append('-m'+model); found=True
+  else: out.append(t)
+  i+=1
+if not found: out=['-m',model]+out
+if not any('model_reasoning_effort' in t for t in out): out+=['-c','model_reasoning_effort='+effort]
+print(shlex.join(out))
 PY
-)
-  while [ "$i" -lt "${#words[@]}" ]; do tok=${words[$i]}; case "$tok" in
-    -m|--model) out+=("$tok" "$model"); i=$((i+2)); found=yes; continue ;;
-    -m?*) out+=("-m$model"); found=yes ;;
-    --model=*) out+=("--model=$model"); found=yes ;;
-    *) out+=("$tok") ;; esac; i=$((i+1)); done
-  [ "$found" = yes ] || out=(-m "$model" "${out[@]}")
-  for tok in "${out[@]}"; do [[ "$tok" == *model_reasoning_effort* ]] && has_effort=yes; done
-  [ "$has_effort" = yes ] || out+=(-c "model_reasoning_effort=${CRSS_CODEX_BUILDER_EFFORT:-low}")
-  CRSS_CODEX_ARGS="$(printf '%q ' "${out[@]}")"
+)"
 }
 [ "${TIER_AUTO_TYPE:-}" = build ] && [ "$BACKEND" = codex ] && _apply_codex_builder_args
 QUOTA_RESULT=none; QUOTA_FROM=""; QUOTA_EVIDENCE=""

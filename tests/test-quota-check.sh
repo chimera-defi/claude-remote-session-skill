@@ -24,4 +24,10 @@ with open(sys.argv[1]) as f: d=json.loads(f.readline())
 assert d['event']=='test' and d['key']=='value' and 'ts' in d
 PY
 ok 'routing log writes JSON' "$?" 0
+# reached type with only an expired full window does not count; a newer real reply clears a Claude quota error
+now=$(date +%s); printf '{"timestamp":"%s","payload":{"rate_limits":{"primary":{"used_percent":100,"resets_at":%d},"secondary":{"used_percent":20,"resets_at":%d},"rate_limit_reached_type":"rate_limit_reached"}}}\n' "$(date -u +%FT%TZ)" $((now-60)) $((now+9999)) > "$TMP/codex/z.jsonl"
+CRSS_CODEX_SESSIONS_DIR="$TMP/codex" "$Q" codex-status >/dev/null; ok 'expired window with reached type is ok' "$?" 0
+mkdir -p "$TMP/cl/p"; printf '{"type":"assistant","timestamp":"%s","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"You have hit your session limit"}]}}\n' "$(date -u -d '-5 min' +%FT%T.000Z)" > "$TMP/cl/p/s.jsonl"
+printf '{"type":"assistant","timestamp":"%s","message":{"content":[{"type":"text","text":"hi"}]}}\n' "$(date -u -d '-1 min' +%FT%T.000Z)" >> "$TMP/cl/p/s.jsonl"
+CRSS_CLAUDE_PROJECTS_DIR="$TMP/cl" "$Q" claude-status >/dev/null; ok 'newer reply clears Claude quota error' "$?" 0
 finish test-quota-check
