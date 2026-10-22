@@ -104,7 +104,7 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first, gpt-6-luna low by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=low` or `new-session --backend codex`), default tier.
+- **Builders: Codex first, gpt-6-luna low by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=low`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
   - Escalate on a failed check or a judgement call: `-m gpt-6.1-sol` low → medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)).
   - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
