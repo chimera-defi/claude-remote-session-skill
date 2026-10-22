@@ -70,6 +70,7 @@ Review gate:
 ## Self-improving routing
 
 - Log each delegated task: job type, model, effort, backend, tier, wall s, $, pass/fail, rework, escalation hops. `new-session` appends `--tier auto` picks and quota hops to `$CRSS_ROUTING_LOG` (default `~/.sessions/routing-log.jsonl`); `quota-check log key=value...` adds others.
+- Measure, don't estimate: `python3 scripts/slice-usage.py <session.jsonl> --codex <exec.jsonl>` prints each slice's real tokens (main transcript, its subagents, `codex exec --json` logs) and the Claude slices' wall-clock span; Codex logs carry no timestamps or model name; price them with the bench's rates or the CLI's cost readout.
 - Codex $ is a list-price proxy; log in the lane's `TASKS.md` or report `models_ran`.
 - Revisit routing when a job type's pass rate drops, costs drift >2x, or a new model/CLI lands; rerun the bench first.
 - Record routing decisions with the date.
