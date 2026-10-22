@@ -37,7 +37,7 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 
 Pass `--tier` and a one-line `--tier-reason` (logged in spawn telemetry: the decision, not the outcome),
 or `--tier auto` with `--task-type orchestrate|review|mechanical|research|build` (else keywords in the brief):
-it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6-luna low, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
+it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6-luna high, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
 `scripts/new-session.sh` and is pinned by `tests/test-new-session-tier.sh`; do not restate it here.
 
 | Tier | Pick it when the task is | Defaults |
@@ -116,9 +116,9 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first, gpt-6-luna low by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=low`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
+- **Builders: Codex first, gpt-6-luna high by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=high`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
-  - Escalate on a failed check or a judgement call: `-m gpt-6.1-sol` low → medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)).
+  - On a failed check, Haiku low repairs first; then `-m gpt-6.1-sol` medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Never luna low/medium for builds.
   - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
   - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
