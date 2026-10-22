@@ -100,3 +100,5 @@ fine: every variable has a generic default.
 
 See `config.sh.example` in this directory for the full list of variables,
 each documented with its default.
+
+Optional `quota-patterns.txt` replaces the built-in quota classification patterns used by `scripts/quota-check.sh`.

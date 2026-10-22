@@ -1,0 +1,17 @@
+# transient/auth — never quota (Claude transcripts on this host)
+transient	API Error: Rate limited
+transient	OAuth session expired
+transient	Login expired
+transient	Response stalled mid-stream
+# codex — installed Codex CLI 0.163.0 binary strings (not yet seen at runtime on this host)
+codex-quota	hit your usage limit
+codex-quota	Quota exceeded. Check your plan and billing details
+codex-quota	usage_limit_reached
+codex-quota	quota_exceeded
+codex-quota	usage_not_included
+codex-quota	credits_depleted
+# claude — Claude CLI isApiErrorMessage text in ~/.claude/projects transcripts on this host
+claude-quota	hit your monthly spend limit
+claude-quota	hit your session limit
+claude-quota	hit your weekly limit
+claude-quota	would exceed your account's rate limit
