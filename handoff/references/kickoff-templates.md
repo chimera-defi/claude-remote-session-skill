@@ -188,6 +188,7 @@ Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeat
 - [ ] Scope names concrete anti-patterns, not "be careful".
 - [ ] Stop rule states both when to keep going and when to stop and ask.
 - [ ] Eval/hillclimb? Add (e) with budgets/splits/noise/parity; point at the protocol, don't copy it.
+- [ ] Report, benchmark or new repo? Link [`research-deliverables.md`](../../references/research-deliverables.md): repo created private, numbers checked against data, review passes before done.
 - [ ] Long-running (a)/(b)? TASKS.md instruction included ("re-read after any compaction, before acting").
 - [ ] (a) only: delegation instruction present (delegate independent slices, not a builder's own
       verification; brief completely).
