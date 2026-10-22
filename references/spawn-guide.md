@@ -54,8 +54,9 @@ it prints the pick and why and logs it to the routing log; `build` picks Codex g
   the primary each user turn), not a router. "Auto mode" (`--permission-mode auto`, `claude auto-mode`) is
   the permission classifier and never picks a model. So right-sizing happens once, at spawn:
   `--tier auto` classifies the brief, and inside a session the orchestrator routes each slice by the table in
-  [orchestration-flow.md](orchestration-flow.md). Sessions with no `--tier` (desktop, phone, remote-control
-  spawn server) run the account default (Opus) and should delegate the same way.
+  [orchestration-flow.md](orchestration-flow.md). `new-session` without `--tier` uses the profile
+  default (orchestrator pins `$CRSS_OPUS_MODEL`). Native sessions it does not launch (desktop app, phone, a
+  remote-control spawn server) run the account default, Opus, and delegate the same way.
 - **Orchestrator effort** defaults to medium (`CRSS_ORCHESTRATOR_EFFORT`, `none` drops it); set `CLAUDE_SESSION_EFFORT=high` at risky forks. A 2026-10-22 blind check (3 planning prompts, Fable judge) scored medium 8.3 vs high 8.0 at ~60% of the cost.
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
