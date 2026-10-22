@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Claude-side implementation and deep-research subagent spawned by an orchestrator session. Implementation goes to Codex gpt-6-luna low first; use this when Codex cannot run the task or is quota-out, for focused debugging, and for deep-research fan-out. Pinned to Sonnet, effort low (2026-10-22 bench), so it stays cheap (advisor works on Sonnet; Opus 5.5 has it too on CLI 2.1.300).
+description: Claude-side implementation and deep-research subagent spawned by an orchestrator session. Implementation goes to Codex gpt-6-luna high first (Haiku repairs on a failed check); use this when Codex cannot run the task or is quota-out, for focused debugging, and for deep-research fan-out. Pinned to Sonnet, effort low (2026-10-22 bench), so it stays cheap (advisor works on Sonnet; Opus 5.5 has it too on CLI 2.1.300).
 model: sonnet
 effort: low
 maxTurns: 250
