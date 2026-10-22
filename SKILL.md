@@ -108,7 +108,7 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   ([script](scripts/merge-guard.sh), [test](tests/test-merge-guard.sh)). On a nonzero exit,
   leave the PR for the operator and report the reasons. A general rule never overrides a per-item veto.
 
-- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6-luna high builds first, Haiku low repairs a failed check (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md).
+- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6-luna high builds first, Haiku low repairs a failed check (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md). Reports, benchmarks and new repos (private first, data-checked numbers, review passes): [`references/research-deliverables.md`](references/research-deliverables.md).
 
 ## Tier, kickoff and naming (read before spawning)
 
