@@ -160,7 +160,11 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$SBIN/systemctl"; chmod +x "$SBIN/syst
 printf '#!/usr/bin/env bash\ncase "$1" in +%%m%%d-%%H%%M) echo 0101-0000 ;; *) exec /usr/bin/date "$@" ;; esac\n' > "$SBIN/date"; chmod +x "$SBIN/date"
 export CRSS_SESSION_PREFIX=px SESSION_ALIAS_STORE="$WORK/alias-store"
 SPAWN_HOME="$WORK/spawnhome"; mkdir -p "$SPAWN_HOME/.sessions/lp-start"
+# A denying authority keeps restart admission in the generated loop, so pass 2 stops there
+# (with no authority configured, a manual loop restarts freely).
+printf 'import sys\nsys.exit(2)\n' > "$SBIN/deny-authority.py"
 HOME="$SPAWN_HOME" PATH="$SBIN:$PATH" CRSS_CODEX_BIN=/bin/true CRSS_CODEX_ARGS='-m m -s read-only' \
+  AGENT_HOST_ADMISSION_CLI="$SBIN/deny-authority.py" \
   bash "$NS" --backend codex lp-start sessions --alias lp >/dev/null 2>&1
 GEN="$SPAWN_HOME/.local/bin/px-lp-0101-0000-start.sh"
 [ -f "$GEN" ] || { echo "FAIL: loop harness — no generated script $GEN"; fail=$((fail+1)); GEN=/dev/null; }

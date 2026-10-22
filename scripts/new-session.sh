@@ -750,6 +750,13 @@ if [ "$ADMISSION_CONFIG_INVALID" = 1 ]; then
   ADMISSION_HELPER=""
   AGENT_HOST_ADMISSION_CLI=""; AGENT_HOST_ADMISSION_DB=""; AGENT_HOST_ADMISSION_EVIDENCE=""
 fi
+# Restart passes consult admission only when something can answer: an autonomous spawn,
+# a configured authority, or a broken config (fails closed). A manual session with no
+# authority configured restarts freely, so a reboot or crash doesn't strand it.
+ADMISSION_GATED=0
+if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ "$ADMISSION_CONFIG_INVALID" = 1 ] || [ -n "${AGENT_HOST_ADMISSION_CLI:-}" ]; then
+  ADMISSION_GATED=1
+fi
 SCRIPT="$HOME/.local/bin/${REMOTE_NAME}-start.sh"
 HUB_CONSULT_PROMPT_FILE=""
 [ "$BACKEND" = claude ] && [ "$PROFILE" = hub ] && HUB_CONSULT_PROMPT_FILE="${SCRIPT%.sh}-hub-consult-prompt.txt"
@@ -953,7 +960,7 @@ while true; do
   if [ "\$ADMISSION_FIRST" = 1 ] && [ -s "\$MANUAL_LAUNCH" ] && [ -s "\$RESUME_PIN" ] && [ "\$(cat "\$MANUAL_LAUNCH")" = "\$(cat "\$RESUME_PIN")" ]; then
     rm -f "\$MANUAL_LAUNCH" && MANUAL_ONCE=1
   fi
-  if [ "\$MANUAL_ONCE" != 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
+  if [ "${ADMISSION_GATED}" = 1 ] && [ "\$MANUAL_ONCE" != 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
     ADMISSION_ACTION=restart
     [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
     AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
@@ -996,7 +1003,7 @@ CODEX_PIN="\$HOME/.sessions/resume/${REMOTE_NAME}.codex-thread"
 SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
 ADMISSION_FIRST=1
 while true; do
-  if [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; then
+  if [ "${ADMISSION_GATED}" = 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
     ADMISSION_ACTION=restart
     [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
     AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }

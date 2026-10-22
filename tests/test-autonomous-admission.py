@@ -54,6 +54,20 @@ esac''')
         again=self.run_shell(payload)
         self.assertEqual(again.returncode,0,again.stderr)
         self.assertEqual(self.calls().count('model\n'),1)  # service/process restart cannot bypass
+    def test_manual_restart_without_authority_relaunches(self):
+        # No authority configured (this host's default): a reboot or crash must not strand a
+        # manual session at a bare shell.
+        del self.env['AGENT_HOST_ADMISSION_CLI']
+        script=self.generated()
+        # Stop the endless loop on the second launch: proof enough that the restart ran.
+        self.stub('fake-model','echo model >> "$CALLS"; [ "$(grep -c model "$CALLS")" -ge 2 ] && kill $PPID; exit 0')
+        start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
+        payload=script[start:end]
+        remote=re.search(r'^REMOTE_NAME=(.+)$',script,re.M).group(1)
+        (self.root/('.sessions-init-'+remote)).touch()  # previously launched, as after a reboot
+        p=self.run_shell(payload)
+        self.assertNotIn('autonomous admission denied',p.stdout)
+        self.assertEqual(self.calls().count('model\n'),2)
     def test_operator_manual_resume_intent_is_consumed_once(self):
         script=self.generated()
         start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
@@ -90,7 +104,7 @@ esac''')
         b=source.index('\nSCRIPT_EOF',a)
         heredoc=source[a:b]
         p=self.run_shell('''SESSION=test; REMOTE_NAME=test; MODEL=fake; CLAUDE_EXTRA_FLAGS=; CRSS_CLAUDE_HOME=/tmp
-ADMISSION_HELPER="'''+str(ROOT/'scripts/autonomous-admission.sh')+'''"; ADMISSION_SUBJECT=test
+ADMISSION_HELPER="'''+str(ROOT/'scripts/autonomous-admission.sh')+'''"; ADMISSION_SUBJECT=test; ADMISSION_GATED=1
 cat <<SCRIPT_EOF
 '''+heredoc+'''\nSCRIPT_EOF
 ''',CRSS_AUTONOMOUS='1')
