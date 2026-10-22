@@ -70,9 +70,10 @@ owner/hub/builder/copywriter default to a **bare alias** on purpose — it auto-
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
-before bumping it. Codex gpt-6.1-sol low is the first builder (`--backend codex`); Sonnet is the Claude fallback.
+before bumping it.
+
+Builders: Codex gpt-6-luna low first (`--backend codex`), escalating to gpt-6.1-sol, then Sonnet ([`agents/builder.md`](agents/builder.md)).
 Routing and bench evidence: [`references/orchestration-flow.md`](references/orchestration-flow.md).
-Claude builder subagents are pinned to Sonnet — see `agents/builder.md`.
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -111,9 +112,9 @@ Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`
 | `SKILL.md` | spawning and operating sessions, incl. how to write a kickoff task |
 | `handoff/` | routing a task to another session; `handoff/references/massaging.md` is the handoff-prompt contract |
 | `references/` | runbooks and reference docs: troubleshooting/recycling, session lifecycle, fallback recipe |
-| `agents/builder.md` | the Sonnet-pinned Claude fallback `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
-| `agents/haiku-reviewer.md` | Haiku (low effort) read-only diff/spec review; advisory, not a merge gate |
-| `agents/reviewer.md` | Fable independent second opinion; condensed packet only |
+| [`agents/builder.md`](agents/builder.md) | the Sonnet-pinned Claude fallback `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
+| [`agents/haiku-reviewer.md`](agents/haiku-reviewer.md) | Haiku (low effort) read-only diff/spec review; advisory, not a merge gate |
+| [`agents/reviewer.md`](agents/reviewer.md) | Fable independent second opinion; condensed packet only |
 
 ## License
 

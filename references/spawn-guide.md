@@ -45,9 +45,7 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 | `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
-- The 2026-10-22 bench did not test Haiku as an agentic builder, so tier defaults are unchanged.
-  `light`/`standard` already use effort low; higher effort bought nothing on these tasks
-  (see the [bench evidence](orchestration-flow.md#roles)).
+- Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
@@ -106,17 +104,14 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first.** Use gpt-6.1-sol with `-c model_reasoning_effort=low`
-  (`codex exec` or `new-session --backend codex`), default tier; safe builder trims:
-  `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
-  Opt into `-c service_tier=priority` per call only when latency matters (6.1-sol only).
-  Use gpt-6-luna low for cheap/fast work; Sonnet 5.5 low is the fallback when Codex cannot
-  run the task. Record the model that ran; table and bench evidence:
-  [`orchestration-flow.md`](orchestration-flow.md).
+- **Builders: Codex first, gpt-6-luna low by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=low` or `new-session --backend codex`), default tier.
+  - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
+  - Escalate on a failed check or a judgement call: `-m gpt-6.1-sol` low → medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)).
+  - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
+  - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
   verification each go to their own delegate (Codex first for implementation; Claude fallback:
-  `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`); brief each completely — only the prompt string crosses over — and
-  don't delegate a builder's own verification back to itself. Have subagents write large
+  `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Brief each completely: only the prompt string crosses over. Don't delegate a builder's own verification back to itself. Have subagents write large
   output to files and return a short summary plus the path; check each one's evidence before
   accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md

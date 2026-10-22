@@ -41,10 +41,11 @@ CONTEXT / PREFERENCES: {where things live, what's decided. Operator preferences 
 labelled "preference, not a target"; no candidate answers; method is yours.}
 
 ROLES: you orchestrate. Delegate every independent slice (research, per-file edits,
-verification) to a delegate (Codex gpt-6.1-sol low builds first; Claude fallback:
-`subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Don't delegate a builder's
-own verification back to itself, and don't spawn one for something you can finish in a few tool calls. Brief each subagent completely in the prompt
-string: nothing else crosses over. For a second opinion on your own work, spawn a Fable
+verification) to a delegate. Codex gpt-6-luna low builds first; Claude fallback:
+`subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`.
+Don't delegate a builder's own verification back to itself.
+Don't spawn one for something you can finish in a few tool calls.
+Brief each subagent completely in the prompt string: nothing else crosses over. For a second opinion on your own work, spawn a Fable
 subagent directly (`model: "fable"`), not a Sonnet builder (Sonnet checking its own reasoning).
 
 CONTEXT HYGIENE: have subagents write large research/logs/diffs to files and return a short
