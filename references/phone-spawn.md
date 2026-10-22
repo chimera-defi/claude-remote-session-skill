@@ -23,7 +23,7 @@ session-spawn-server uninstall <name>
 ```
 
 On the phone: Claude app → Code → choose the environment named `<name>` → new session → type the
-ask. The server pane is `tmux attach -t crss-spawn-<name>`; it prints the environment URL.
+ask. The server pane, on its own tmux socket, is `tmux -L crss-spawn-<name> attach`; it prints the environment URL.
 
 Which directories get a server is host config, so it belongs in the overlay's `local.md`, not here. Two
 useful shapes:

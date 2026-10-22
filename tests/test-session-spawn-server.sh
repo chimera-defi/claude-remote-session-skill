@@ -20,7 +20,7 @@ has "model via env, quoted" "$out" 'ANTHROPIC_MODEL=opus\[1m\]'
 has "git dir defaults to worktree, no pre-created session" "$out" "--spawn worktree --capacity 4 --permission-mode auto --no-create-session-in-dir"
 hasnt "never --continue (crash-loops after ~4h idle)" "$out" "remote-control -c"
 hasnt "no --settings (remote-control rejects it)" "$out" "--settings"
-has "own namespace, outside session prefixes" "$out" "SESSION=\"crss-spawn-repo\""
+has "own namespace, outside session prefixes" "$out" "SESSION=crss-spawn-repo"
 
 out="$(bash "$S" install "$T/plain dir" --name 'My Box' --dry-run)"
 has "non-git defaults to same-dir" "$out" "--spawn same-dir"
@@ -41,4 +41,22 @@ has "status lists it" "$(bash "$S" status)" "crss-spawn-repo"
 bash "$S" uninstall crss-spawn-repo >/dev/null 2>&1
 nofile "unit removed" "$CRSS_SYSTEMD_DIR/crss-spawn-repo.service"
 nofile "start script removed" "$CRSS_BIN_DIR/crss-spawn-repo-start.sh"
+
+# Execute the generated launcher (Codex review): hostile dir name, own tmux socket, exact targets.
+printf '#!/bin/sh\necho "$PWD|$ANTHROPIC_BASE_URL|$*" > %s/claude-ran\nkill -TERM $PPID\n' "$T" > "$T/fakeclaude"; chmod +x "$T/fakeclaude"
+evil="$T/odd dir \$(touch $T/PWNED) \`x\` 'q'"; mkdir -p "$evil"; : > "$T/calls"
+CRSS_CLAUDE_BIN="$T/fakeclaude" bash "$S" install "$evil" --name odd >/dev/null 2>&1
+gen="$CRSS_BIN_DIR/crss-spawn-odd-start.sh"
+bash "$gen" >/dev/null 2>&1
+calls="$(cat "$T/calls")"
+has "has-session on own socket, exact target" "$calls" "tmux -L crss-spawn-odd has-session -t =crss-spawn-odd"
+has "new-session on own socket" "$calls" "tmux -L crss-spawn-odd new-session -d -s crss-spawn-odd"
+(cd / && timeout 10 bash "$gen" --loop >/dev/null 2>&1)
+ran="$(cat "$T/claude-ran" 2>/dev/null)"
+ok "loop ran claude in the odd dir" "${ran%%|*}" "$evil"
+has "first-party env reached claude" "$ran" "|https://api.anthropic.com|remote-control --name odd --spawn same-dir"
+gone "dir name never evaluated as code" "$T/PWNED"
+bash "$S" uninstall odd >/dev/null 2>&1
+has "uninstall kills only its own tmux server" "$(cat "$T/calls")" "tmux -L crss-spawn-odd kill-server"
+ok "unit path with a space refused" "$(CRSS_BIN_DIR="$T/bin space" bash "$S" install "$T/repo" --dry-run >/dev/null 2>&1; echo $?)" 2
 finish "session-spawn-server"
