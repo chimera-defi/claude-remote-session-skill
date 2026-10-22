@@ -8,7 +8,7 @@ Host model pins and quota rules live in the host overlay and `~/.claude/CLAUDE.m
 | Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
 | Orchestrator | Opus (pinned id; no tier effort) | Claude | — |
-| Builder (default) | gpt-6-luna low, default tier, [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna` or `new-session --backend codex` | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
+| Builder (default) | gpt-6-luna low, default tier, [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna -c model_reasoning_effort=low`, or `new-session --backend codex` with `CRSS_CODEX_ARGS='-m gpt-6-luna -c model_reasoning_effort=low'` | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
 | Builder escalation | gpt-6.1-sol low, then medium ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
 | Review | Haiku low, `subagent_type: haiku-reviewer` (read-only; [`agents/haiku-reviewer.md`](../agents/haiku-reviewer.md)) | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
@@ -28,7 +28,7 @@ Never:
 
 Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm)); ids and flags as of that bench, a host overlay may override them.
 
-- Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness nor speed.
+- Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness nor speed on these ceiling tasks.
 - Tools off: Haiku 5.5 low led at 4.54 s, $0.0003.
 - Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review, C ran alone.
 - Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
