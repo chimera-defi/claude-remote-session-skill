@@ -8,7 +8,8 @@ Host model pins and quota rules live in the host overlay and `~/.claude/CLAUDE.m
 | Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
 | Orchestrator | Opus (pinned id), effort medium; high at risky forks | Claude | blind check: medium 8.3 vs high 8.0, $0.10 vs $0.17 a plan |
-| Builder (default) | gpt-6-luna low, default tier, [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna -c model_reasoning_effort=low`, or `new-session --backend codex` with `CRSS_CODEX_ARGS='-m gpt-6-luna -c model_reasoning_effort=low'` | B: 7/7, 20–21 s, ~$0.004 proxy; small tasks with tools: 4.45 s median, ~$0.0009 proxy |
+| Builder (default) | gpt-6-luna high, default tier, [trim flags](#codex-flags) (stripped harness for tool-less one-shots); any bounded, well-specified task | Codex `codex exec -m gpt-6-luna -c model_reasoning_effort=high`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | hard set (routing bench): stripped high 31/35, $0.00105/pass, ~13 s; luna low 21/35 |
+| Builder repair (fallback) | Haiku low reads the statement + luna's code and returns corrected code, then re-run the check | Claude `haiku-reviewer` or `claude -p --model haiku --effort low` | luna low → Haiku repair 35/35, $0.0035/pass, ~27 s |
 | Builder escalation | gpt-6.1-sol low, then medium ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
 | Review | Haiku low, `subagent_type: haiku-reviewer` (read-only; [`agents/haiku-reviewer.md`](../agents/haiku-reviewer.md)) | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
@@ -26,22 +27,23 @@ Never:
 
 ## Bench evidence
 
-Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm)); ids and flags as of that bench, a host overlay may override them.
+Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm)) and the follow-up routing bench (private repo `model-routing-bench`); ids and flags as of those benches, a host overlay may override them.
 
 - Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness nor speed on these ceiling tasks.
 - Tools off: Haiku 5.5 low led at 4.54 s, $0.0003.
 - Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review, C ran alone.
 - Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
+- Harder problems (luna's 7 worst, n=35 each, post hoc): luna low/medium average 0–7 reasoning tokens a call and pass 21/35; prompt nudges and harness trims do not change that. luna high (stripped) 31/35, Haiku low 32/35, luna low → Haiku repair 35/35, Sonnet medium 35/35 at ~10× the cost.
 
 ## Escalation ladder
 
-Default builder: gpt-6-luna low (operator, 2026-10-22); Codex first spends that subscription first.
+Default builder: gpt-6-luna high (operator, 2026-10-22, replacing luna low); Codex first spends that subscription first.
 
-luna low → gpt-6.1-sol low → gpt-6.1-sol medium → Sonnet builder.
+luna high → Haiku low repair → gpt-6.1-sol medium → Sonnet builder.
 
 - Hop on a failed check or Haiku review, or when the task needs judgement, ambiguity resolution or architecture.
 - Log every hop in the [routing log](#self-improving-routing) so the table self-corrects.
-- The bench never found luna's failure point (all passed); the log exists to find it. Revisit the default if luna's fail rate exceeds ~10%.
+- Don't build with luna low or medium beyond trivial edits: they barely reason and failed 40% of the hard set. Revisit the default if luna high's logged fail rate exceeds ~10%.
 
 ### Quota ladder
 
@@ -61,7 +63,7 @@ Review gate:
 ### Codex flags
 
 - Builder trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0` (input ~28k → ~14.5k tokens).
-- Tool-less one-shots may add `-c include_environment_context=false -c model_instructions_file=<file>`.
+- Tool-less one-shots (stripped harness) may add `-c include_environment_context=false -c model_instructions_file=<file>` and disable the shell features: input ~14.7k → ~6.2k tokens, same accuracy. The host `AGENTS.md` in `$CODEX_HOME` cannot be dropped by any flag (Codex 0.163).
 - Priority: keep it out of host config; opt in per call with `-c service_tier=priority`. ~31% faster on gpt-6.1-sol (5.15 s vs 7.43 s), no gain on luna; assumed 1.5x cost.
 
 ## Self-improving routing
