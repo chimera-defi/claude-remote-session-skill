@@ -65,6 +65,10 @@ session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
                                        # bring a DEAD session back on its own unit + transcript
 ```
 
+**Start sessions from the phone** with a Remote Control spawn server: `session-spawn-server install <dir>`
+makes `<dir>` an environment in the Claude app, where "new session" starts one on this host. Runbook:
+[`references/phone-spawn.md`](references/phone-spawn.md).
+
 **A dead session comes back with `session-resume`, never by hand** (every agent, Codex
 included). Do not type `claude --resume <uuid> …` into a new tmux pane or
 `systemctl --user start` the unit bare: a hand relaunch drops the unit's
