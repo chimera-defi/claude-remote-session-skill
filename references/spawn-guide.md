@@ -5,14 +5,14 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 ## Model and second-opinion policy (Key Rules detail)
 
 - The superpowers plugin injects `using-superpowers` at session start and the global skills are linked into every spawn; don't wait for the user to ask
-- Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
+- Claude profile default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
 - `agents/builder.md` caps a builder at 250 turns per invocation (`maxTurns`). The CLI stops it
   mid-step. On an "Agent stopped at its 250-turn limit" result, run `git status` /
   `git diff --stat` in its worktree before deciding anything. Then continue it with SendMessage,
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
-- The standard lane shape (Opus orchestrates, Sonnet builders, Haiku for mechanical work, Opus
+- The standard lane shape (Opus orchestrates, Codex builds, Haiku checks, Opus
   adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
@@ -45,6 +45,9 @@ The launcher knows the task; the script cannot guess it. Pass `--tier` and a one
 | `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
+- The 2026-10-22 bench did not test Haiku as an agentic builder, so tier defaults are unchanged.
+  `light`/`standard` already use effort low; higher effort bought nothing on these tasks
+  (see the [bench evidence](orchestration-flow.md#roles)).
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
@@ -103,12 +106,16 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first.** For hands-on implementation, spawn Codex builders first
-  (`new-session --backend codex`, or `codex exec` for one-shot local work); use Sonnet as
-  the fallback when Codex cannot run the task, and record the model that actually ran.
+- **Builders: Codex first.** Use gpt-6.1-sol with `-c model_reasoning_effort=low`
+  (`codex exec` or `new-session --backend codex`), default tier; safe builder trims:
+  `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
+  Opt into `-c service_tier=priority` per call only when latency matters (6.1-sol only).
+  Use gpt-6-luna low for cheap/fast work; Sonnet 5.5 low is the fallback when Codex cannot
+  run the task. Record the model that ran; table and bench evidence:
+  [`orchestration-flow.md`](orchestration-flow.md).
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
-  verification each go to their own subagent (`subagent_type: builder` or `model: "sonnet"`,
-  which keeps `advisor`); brief each completely — only the prompt string crosses over — and
+  verification each go to their own delegate (Codex first for implementation; Claude fallback:
+  `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`); brief each completely — only the prompt string crosses over — and
   don't delegate a builder's own verification back to itself. Have subagents write large
   output to files and return a short summary plus the path; check each one's evidence before
   accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
