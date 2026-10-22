@@ -70,7 +70,7 @@ owner/hub/builder/copywriter default to a **bare alias** on purpose — it auto-
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
-before bumping it. Codex gpt-6.1-sol low is the default builder; Sonnet is the Claude fallback.
+before bumping it. Codex gpt-6.1-sol low is the first builder (`--backend codex`); Sonnet is the Claude fallback.
 Routing and bench evidence: [`references/orchestration-flow.md`](references/orchestration-flow.md).
 Claude builder subagents are pinned to Sonnet — see `agents/builder.md`.
 
@@ -112,7 +112,7 @@ Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`
 | `handoff/` | routing a task to another session; `handoff/references/massaging.md` is the handoff-prompt contract |
 | `references/` | runbooks and reference docs: troubleshooting/recycling, session lifecycle, fallback recipe |
 | `agents/builder.md` | the Sonnet-pinned Claude fallback `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
-| `agents/haiku-reviewer.md` | Haiku 5.5 low diff/spec and mechanical review; advisory, not a merge gate |
+| `agents/haiku-reviewer.md` | Haiku (low effort) read-only diff/spec review; advisory, not a merge gate |
 | `agents/reviewer.md` | Fable independent second opinion; condensed packet only |
 
 ## License
