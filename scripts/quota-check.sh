@@ -82,12 +82,15 @@ for _,p in sorted(files,reverse=True):          # newest rollout that has a snap
   except ValueError: r=None
   if r is None: continue
   typ=r.get('rate_limit_reached_type'); wins=[w for w in (r.get('primary'),r.get('secondary')) if isinstance(w,dict)]
-  for w in wins:
-    used=w.get('used_percent'); reset=w.get('resets_at')
-    if (typ is not None or (isinstance(used,(int,float)) and used>=100)) and (reset is None or reset>now):
-      print('codex-quota rate_limit_reached_type=%s used_percent=%s resets_at=%s source=%s'%(typ if typ is not None else 'null',used,iso(reset),p)); sys.exit(10)
-  if typ is not None and not wins:
-    print('codex-quota rate_limit_reached_type=%s used_percent=null resets_at=null source=%s'%(typ,p)); sys.exit(10)
+  full=[w for w in wins if isinstance(w.get('used_percent'),(int,float)) and w['used_percent']>=100]
+  live=[w for w in full if w.get('resets_at') is None or w['resets_at']>now]
+  # a window counts only while it is full and not yet reset; rate_limit_reached_type alone
+  # (e.g. credits/spend control, no full window) counts only on a snapshot from the last hour
+  try: snap=datetime.datetime.fromisoformat(json.loads(last).get('timestamp','').replace('Z','+00:00')).timestamp()
+  except (ValueError,AttributeError): snap=0
+  if live or (typ is not None and not full and now-snap<=3600):
+    w=live[0] if live else {}
+    print('codex-quota rate_limit_reached_type=%s used_percent=%s resets_at=%s source=%s'%(typ if typ is not None else 'null',w.get('used_percent','null'),iso(w.get('resets_at')),p)); sys.exit(10)
   print('ok used_percent=%s source=%s'%(wins[0].get('used_percent') if wins else 'null',p)); sys.exit(0)
 print('unknown')
 PY
@@ -106,20 +109,26 @@ for dp,_,fs in os.walk(root,followlinks=True):
       try: m=os.path.getmtime(p)
       except OSError: continue
       if now-m<=age*60: files.append((m,p))
+errs=[]; ok_ts=0
 for _,p in sorted(files,reverse=True):
   rows=[]
   with open(p,errors='ignore') as f:
     for n,ln in enumerate(f,1):
-      if '"isApiErrorMessage":true' not in ln: continue
+      if '"isApiErrorMessage":true' not in ln and '"type":"assistant"' not in ln: continue
       try: d=json.loads(ln)
       except ValueError: continue
       try: ts=datetime.datetime.fromisoformat(d.get('timestamp','').replace('Z','+00:00')).timestamp()
       except ValueError: ts=0
       if now-ts>age*60: continue        # the line's own time, not the file's mtime
+      if '"isApiErrorMessage":true' not in ln:
+        if d.get('type')=='assistant': ok_ts=max(ok_ts,ts)   # a real reply: capacity is back
+        continue
       c=d.get('message',{}).get('content',[])
       t=c[0].get('text','') if c and isinstance(c[0],dict) else ''
-      if t: rows.append('%s:%d\t%s'%(p,n,t.replace('\n',' ')))
-  for r in reversed(rows): print(r)
+      if t: rows.append((ts,'%s:%d\t%s'%(p,n,t.replace('\n',' '))))
+  errs.extend(rows)
+for ts,r in sorted(errs,reverse=True):
+  if ts>ok_ts: print(r)
 PY
 )
   while IFS=$'\t' read -r src text; do
