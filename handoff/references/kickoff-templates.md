@@ -41,9 +41,9 @@ CONTEXT / PREFERENCES: {where things live, what's decided. Operator preferences 
 labelled "preference, not a target"; no candidate answers; method is yours.}
 
 ROLES: you orchestrate. Delegate every independent slice (research, per-file edits,
-verification) to a subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
-`advisor`). Don't delegate a builder's own verification back to itself, and don't spawn one
-for something you can finish in a few tool calls. Brief each subagent completely in the prompt
+verification) to a delegate (Codex gpt-6.1-sol low builds first; Claude fallback:
+`subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Don't delegate a builder's
+own verification back to itself, and don't spawn one for something you can finish in a few tool calls. Brief each subagent completely in the prompt
 string: nothing else crosses over. For a second opinion on your own work, spawn a Fable
 subagent directly (`model: "fable"`), not a Sonnet builder (Sonnet checking its own reasoning).
 
@@ -69,7 +69,7 @@ When the finish line is met, send {escalation_channel} one report: table, eviden
 decisions. [Then stay on as owner / then reap yourself; say which.]
 ```
 
-## (b) Sonnet builder subagent (Agent tool prompt string)
+## (b) Sonnet fallback builder subagent (Agent tool prompt string)
 
 Only this string crosses to the subagent (no parent history, tool results or system prompt).
 `subagent_type: "builder"` already supplies standing instructions (finish line, stop rule,
