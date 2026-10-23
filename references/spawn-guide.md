@@ -12,7 +12,7 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
-- The standard lane shape (Opus orchestrates, Codex gpt-6-luna high builds, Haiku checks, Opus
+- The standard lane shape (Opus orchestrates, Codex gpt-6.1-sol high builds, Haiku checks, Opus
   adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
@@ -37,13 +37,13 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 
 Pass `--tier` and a one-line `--tier-reason` (logged in spawn telemetry: the decision, not the outcome),
 or `--tier auto` with `--task-type orchestrate|review|mechanical|research|build` (else keywords in the brief):
-it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6-luna high, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
+it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6.1-sol high, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
 `scripts/new-session.sh` and is pinned by `tests/test-new-session-tier.sh`; do not restate it here.
 
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
-| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex luna high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
+| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex gpt-6.1-sol high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), **sonnet** + Opus advisor. Not Opus: for an Opus orchestrator omit `--tier` |
 
 - Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
@@ -116,9 +116,9 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first, gpt-6-luna high by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=high`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
+- **Builders: Codex first, gpt-6.1-sol high by default** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
-  - On a failed check, Haiku low repairs first; then `-m gpt-6.1-sol` medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Never luna low/medium for builds.
+  - Run the task's tests first; only on a failed check does Haiku low repair, then `-m gpt-6-astra` medium (also the pick when latency matters) → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Codex out (exact quota error text): Haiku low builds, Haiku medium on a failed check. Never luna or sol61 medium for builds.
   - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
   - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and

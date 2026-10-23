@@ -95,7 +95,7 @@ Each of these has happened here. Don't repeat them.
 
 For work spanning many files or sessions (doc audit, fleet-wide check, multi-script
 migration), give each independent slice its own delegate: implementation slices go to Codex
-gpt-6-luna high first (`references/orchestration-flow.md`); read-only slices to Haiku; a Claude
+gpt-6.1-sol high first (`references/orchestration-flow.md`); read-only slices to Haiku; a Claude
 builder is `subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model costs more
 (and, before CLI 2.1.300, silently lost `advisor`). `session-doctor opus-subagents [--days N]` lists
 sessions whose subagent transcripts ran on Opus (one summary line is also in `report`).
