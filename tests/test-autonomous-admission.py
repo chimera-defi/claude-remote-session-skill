@@ -68,6 +68,33 @@ esac''')
         p=self.run_shell(payload)
         self.assertNotIn('autonomous admission denied',p.stdout)
         self.assertEqual(self.calls().count('model\n'),2)
+    def test_helper_without_authority_admits_only_manual_callers(self):
+        # Loops already running in panes (pre-#189 shape) call the helper on every restart and
+        # never re-read their start script; the helper is what reaches them.
+        helper=str(ROOT/'scripts/autonomous-admission.sh'); log=self.root/'starts.log'
+        env=dict(AGENT_HOST_ADMISSION_CLI='',CRSS_STARTS_LOG=str(log))
+        manual=self.run_shell('bash "$H" restart ah_x',H=helper,**env)
+        self.assertEqual(manual.returncode,0,manual.stderr)
+        self.assertIn('event=admission-skipped reason=no-authority-manual action=restart subject=ah_x',log.read_text())
+        auto=self.run_shell('bash "$H" restart ah_x',H=helper,CRSS_AUTONOMOUS='1',**env)
+        self.assertEqual(auto.returncode,2)
+        bad=self.run_shell('bash "$H" restart ah_x',H=helper,CRSS_STARTS_LOG=str(log),AGENT_HOST_ADMISSION_CLI='rel/cli.py')
+        self.assertEqual(bad.returncode,2)
+    def test_generated_autonomous_loop_without_authority_still_denies(self):
+        # The generator passes its baked autonomy to the helper, so an autonomous loop never
+        # reads as manual even with no authority configured.
+        source=(ROOT/'scripts/new-session.sh').read_text()
+        a=source.index("tmux send-keys -t \"${SESSION}\" 'LOG_FILE=")
+        b=source.index('\nSCRIPT_EOF',a)
+        p=self.run_shell('''SESSION=test; REMOTE_NAME=test; MODEL=fake; CLAUDE_EXTRA_FLAGS=; CRSS_CLAUDE_HOME=/tmp
+ADMISSION_HELPER="'''+str(ROOT/'scripts/autonomous-admission.sh')+'''"; ADMISSION_SUBJECT=test; ADMISSION_GATED=1
+cat <<SCRIPT_EOF
+'''+source[a:b]+'''\nSCRIPT_EOF
+''',CRSS_AUTONOMOUS='1',AGENT_HOST_ADMISSION_CLI='')
+        generated=p.stdout; start=generated.index("'LOG_FILE=")+1; end=generated.index("done'",start)+4
+        q=self.run_shell(generated[start:end],AGENT_HOST_ADMISSION_CLI='')
+        self.assertIn('autonomous admission denied',q.stdout)
+        self.assertNotIn('model',self.calls())
     def test_operator_manual_resume_intent_is_consumed_once(self):
         script=self.generated()
         start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
@@ -156,7 +183,7 @@ cat <<SCRIPT_EOF
         p=self.run_shell(f'bash {helper} launch subj-a')
         self.assertEqual(p.returncode,2); self.assertIn('DENY',p.stdout)
         self.assertRegex(log.read_text(),r'event=admission-denied action=launch subject=subj-a rc=2')
-        q=self.run_shell(f'bash {helper} wake subj-b',AGENT_HOST_ADMISSION_CLI='')
+        q=self.run_shell(f'bash {helper} wake subj-b',AGENT_HOST_ADMISSION_CLI='',CRSS_AUTONOMOUS='1')
         self.assertEqual(q.returncode,2); self.assertIn('authority unavailable',q.stderr)
         self.assertIn('action=wake subject=subj-b rc=2',log.read_text())
     def test_allow_writes_no_denial_line(self):
