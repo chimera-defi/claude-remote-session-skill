@@ -116,10 +116,10 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first, gpt-6.1-sol high by default** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
+- **Builders: Codex first, gpt-6.1-sol high in fast mode by default** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority`, or `new-session --backend codex --tier auto --task-type build`, which adds those flags).
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
   - Run the task's tests first; only on a failed check does Haiku low repair, then `-m gpt-6-astra` medium (also the pick when latency matters) → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Codex out (exact quota error text): Haiku low builds, Haiku medium on a failed check. Never luna or sol61 medium for builds.
-  - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
+  - Fast mode (`service_tier=priority`) is the builder default: 37% faster on the hard set, same pass rate and code, ~2x list price. Not for luna (no gain). xhigh effort adds cost and time, not quality.
   - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
   verification each go to their own delegate (Codex first for implementation; Codex/ChatGPT gpt-6.1-sol first for read-only research, see the Research row in [orchestration-flow.md](orchestration-flow.md#roles); Claude fallback:
