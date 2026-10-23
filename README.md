@@ -12,6 +12,7 @@ Say "create a session for my-project" and Claude spins up a session you can conn
 - Sentinel file + `--continue` so sessions resume conversation context after restarts
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
 - Per-role default model via `CLAUDE_SESSION_PROFILE`; override with `CLAUDE_SESSION_MODEL=<model>` (see "Model default")
+- `session-spawn-server install <dir>` lets the phone start new sessions on the host (Remote Control server mode; see `references/phone-spawn.md`)
 
 ## Requirements
 
@@ -56,21 +57,24 @@ The session appears in the Claude Code app under Remote sessions as `<prefix>-<a
 
 ## Model default
 
-The model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per role:
+The Claude model follows the **profile** (`CLAUDE_SESSION_PROFILE`), one default per role:
 
 | Profile | Role | Default model |
 |---|---|---|
 | `orchestrator` (default) | thinking / multi-agent fan-out | `claude-opus-5-5` (pinned) |
 | `owner` | long-lived campaign/lane owner (full tools, fans out to builders) | `sonnet` (bare alias) |
 | `hub` | review hub (Sonnet, one-shot Opus consult at forks; see `references/hub-opus-consult.md`) | `sonnet` (bare alias) |
-| `builder` | hands-on implementation | `sonnet` (bare alias) |
+| `builder` | Claude implementation fallback | `sonnet` (bare alias) |
 | `copywriter` | lightweight doc/copy work | `haiku` (bare alias) |
 
 owner/hub/builder/copywriter default to a **bare alias** on purpose — it auto-tracks Anthropic's
 latest release for that tier. orchestrator is **pinned** to an exact id because the bare
 `opus` alias has been observed resolving to different releases across spawns. See
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
-before bumping it. Subagents inherit the session model, so implementation subagents are pinned to Sonnet (cheaper; `advisor` is on Sonnet, and on Opus 5.5 since CLI 2.1.300) — see `agents/builder.md`.
+before bumping it.
+
+Builders: Codex gpt-6-luna high first (`--backend codex`), Haiku low repair on a failed check, then gpt-6.1-sol, then Sonnet ([`agents/builder.md`](agents/builder.md)).
+Routing and bench evidence: [`references/orchestration-flow.md`](references/orchestration-flow.md).
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
 
@@ -109,7 +113,9 @@ Claude Code on any device → Remote sessions → `<prefix>-<alias>-<MMDD-HHMM>`
 | `SKILL.md` | spawning and operating sessions, incl. how to write a kickoff task |
 | `handoff/` | routing a task to another session; `handoff/references/massaging.md` is the handoff-prompt contract |
 | `references/` | runbooks and reference docs: troubleshooting/recycling, session lifecycle, fallback recipe |
-| `agents/builder.md` | the Sonnet-pinned `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
+| [`agents/builder.md`](agents/builder.md) | the Sonnet-pinned Claude fallback `builder` subagent; deployed to `~/.claude/agents/` (diff before `install`) |
+| [`agents/haiku-reviewer.md`](agents/haiku-reviewer.md) | Haiku (low effort) read-only diff/spec review; advisory, not a merge gate |
+| [`agents/reviewer.md`](agents/reviewer.md) | Fable independent second opinion; condensed packet only |
 
 ## License
 

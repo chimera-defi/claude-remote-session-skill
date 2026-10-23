@@ -100,7 +100,7 @@ outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
 has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
 has "orchestrator-default-model-opus5-5" "$outp" '^MODEL=claude-opus-5-5$'
 has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
-has "orchestrator-cache-flag-only"   "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections$'
+has "orchestrator-cache-flag-and-effort" "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections --effort medium'
 
 # owner: full tool set (no --tools allowlist, like orchestrator) but a Sonnet default, and no alias warning
 outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/null)"

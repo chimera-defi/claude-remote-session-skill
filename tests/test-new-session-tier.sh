@@ -22,7 +22,7 @@ dry() {
 # tiers
 o="$(dry A=1 --)"
 hasre "default: orchestrator on pinned Opus, no tier/advisor/effort" "$o" '^PROFILE=orchestrator$'
-hasre "default model" "$o" '^MODEL=claude-opus-5-5$'; hasre "default advisor" "$o" '^ADVISOR=none$'; hasre "default effort" "$o" '^EFFORT=default$'
+hasre "default model" "$o" '^MODEL=claude-opus-5-5$'; hasre "default advisor" "$o" '^ADVISOR=none$'; hasre "default orchestrator effort" "$o" '^EFFORT=medium$'
 o="$(dry A=1 -- --tier light)"
 hasre "light: copywriter/haiku" "$o" '^PROFILE=copywriter$'; hasre "light model" "$o" '^MODEL=haiku$'
 hasre "light advisor is Opus" "$o" '--advisor claude-opus-5-5'; hasre "light effort low (Haiku 5.5 supports effort)" "$o" '--effort low'
@@ -30,6 +30,34 @@ o="$(dry A=1 -- --tier standard)"; hasre "standard: builder/sonnet" "$o" '^PROFI
 o="$(dry CLAUDE_SESSION_EFFORT=high -- --tier standard)"; hasre "explicit effort beats tier default" "$o" '--effort high'
 o="$(dry A=1 -- --tier heavy)"; hasre "heavy: owner/sonnet" "$o" '^PROFILE=owner$'
 o="$(dry CLAUDE_SESSION_PROFILE=orchestrator -- --tier heavy)"; hasre "explicit profile beats tier" "$o" '^PROFILE=orchestrator$'; hasre "Opus has no advisor" "$o" '^ADVISOR=none$'
+
+# auto tier routing: explicit types and task brief keywords
+ o="$(dry A=1 -- --tier auto --task-type review)"; hasre "auto review profile" "$o" '^PROFILE=copywriter$'; hasre "auto review model" "$o" '^MODEL=haiku$'; hasre "auto review tier" "$o" '^TIER=light$'
+ o="$(dry A=1 -- --tier auto --task-type research)"; hasre "auto research profile" "$o" '^PROFILE=owner$'; hasre "auto research model" "$o" '^MODEL=sonnet$'
+ GOODCFG="$(mktemp -d)"; mkdir -p "$GOODCFG"; printf '%s\n' 'CRSS_CODEX_ARGS=-s danger-full-access' > "$GOODCFG/config.sh"
+ o="$(dry CRSS_HOME="$GOODCFG" -- --tier auto --task-type build)"; hasre "auto build backend" "$o" '^BACKEND=codex$'; has "auto build model" "$o" '-m gpt-6-luna'; has "auto build effort" "$o" 'model_reasoning_effort=high'; has "auto build keeps sandbox" "$o" '-s danger-full-access'; rm -rf "$GOODCFG"
+ o="$(dry CRSS_CODEX_ARGS='-m custom -s danger-full-access' -- --tier auto --task-type build)"; hasre "env Codex args preserved" "$o" '^CODEX_ARGS=-m custom -s danger-full-access$'
+ o="$(dry A=1 -- --tier auto --task 'please review the diff')"; hasre "keyword review maps light" "$o" '^TIER=light$'
+ o="$(dry A=1 -- --tier auto)"; hasre "no match maps standard" "$o" '^TIER=standard$'; hasre "no match builder" "$o" '^PROFILE=builder$'
+ o="$(dry A=1 -- --backend claude --tier auto --task-type build)"; hasre "explicit backend beats auto" "$o" '^BACKEND=claude$'
+ o="$(dry A=1 -- --tier auto --task-type invalid)"; hasre "invalid task type" "$o" 'invalid --task-type'
+ o="$(dry CRSS_ORCHESTRATOR_EFFORT=none --)"; hasre "orchestrator effort none" "$o" '^EFFORT=default$'; o="$(dry CLAUDE_SESSION_EFFORT=high --)"; hasre "explicit orchestrator effort wins" "$o" '^EFFORT=high$'
+
+# quota failover uses only isolated fixture directories
+QHOME="$(mktemp -d)"; mkdir -p "$QHOME/codex" "$QHOME/claude/project"
+printf '%s\n' '{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100,"resets_at":1999999999},"rate_limit_reached_type":"rate_limit_reached"}}}' > "$QHOME/codex/x.jsonl"
+o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" -- --backend codex)"; hasre "Codex quota failover" "$o" '^BACKEND=claude$'; hasre "Codex quota decision shown" "$o" '^QUOTA=codex-out$'
+# quota-check keys on the line's own timestamp, so the fixture needs a fresh one
+printf '{"type":"user","timestamp":"%s","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"You'"'"'ve hit your monthly spend limit · raise it at claude.ai/settings/usage"}]}}\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "$QHOME/claude/project/error.jsonl"
+o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/empty" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" --)"; hasre "Claude quota failover" "$o" '^BACKEND=codex$'; hasre "Claude quota decision shown" "$o" '^QUOTA=claude-out$'
+o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" --)"; hasre "both quotas out exits 3" "$o" 'both quotas out: pausing' # exit is separately pinned below
+set +e; env HOME="$QHOME" CRSS_SESSION_PREFIX=px CRSS_WORKSPACE="$QHOME/workspace" CRSS_SESSIONS_DIR="$QHOME/sessions" CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" bash "$NS" proj workspace --dry-run >/dev/null 2>&1; _both_rc=$?; set +e
+ok "both quotas exit code" "$_both_rc" 3
+ o="$(dry CRSS_QUOTA_FAILOVER=0 CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" -- --backend codex)"; hasre "quota failover disabled" "$o" '^BACKEND=codex$'; hasre "disabled quota marker" "$o" '^QUOTA=none$'
+# deployed layout drops .sh: new-session must find quota-check on PATH
+mkdir -p "$WORKHOME/bin"; cp "$NS" "$WORKHOME/bin/new-session"; cp "$HERE/../scripts/quota-check.sh" "$WORKHOME/bin/quota-check"
+o="$(NS="$WORKHOME/bin/new-session" PATH="$WORKHOME/bin:$PATH" dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/empty" -- --backend codex)"; hasre "deployed layout finds quota-check" "$o" '^QUOTA=codex-out$'
+rm -rf "$QHOME"
 
 # advisor: one Opus source, overridable, validated
 o="$(dry CRSS_OPUS_MODEL=claude-opus-9-9 -- --tier standard)"; hasre "Opus id feeds the advisor" "$o" '--advisor claude-opus-9-9'

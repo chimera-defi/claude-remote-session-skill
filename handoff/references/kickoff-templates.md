@@ -37,11 +37,15 @@ FINISH LINE: {finish_line}
 
 {project_guardrails} [Omit if this project has none to carry forward.]
 
+CONTEXT / PREFERENCES: {where things live, what's decided. Operator preferences go here
+labelled "preference, not a target"; no candidate answers; method is yours.}
+
 ROLES: you orchestrate. Delegate every independent slice (research, per-file edits,
-verification) to a subagent (`subagent_type: builder` or `model: "sonnet"`, which keeps
-`advisor`). Don't delegate a builder's own verification back to itself, and don't spawn one
-for something you can finish in a few tool calls. Brief each subagent completely in the prompt
-string: nothing else crosses over. For a second opinion on your own work, spawn a Fable
+verification) to a delegate. Codex gpt-6-luna high builds first, Haiku low repairs a failed check; Claude fallback:
+`subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`.
+Don't delegate a builder's own verification back to itself.
+Don't spawn one for something you can finish in a few tool calls.
+Brief each subagent completely in the prompt string: nothing else crosses over. For a second opinion on your own work, spawn a Fable
 subagent directly (`model: "fable"`), not a Sonnet builder (Sonnet checking its own reasoning).
 
 CONTEXT HYGIENE: have subagents write large research/logs/diffs to files and return a short
@@ -66,7 +70,7 @@ When the finish line is met, send {escalation_channel} one report: table, eviden
 decisions. [Then stay on as owner / then reap yourself; say which.]
 ```
 
-## (b) Sonnet builder subagent (Agent tool prompt string)
+## (b) Sonnet fallback builder subagent (Agent tool prompt string)
 
 Only this string crosses to the subagent (no parent history, tool results or system prompt).
 `subagent_type: "builder"` already supplies standing instructions (finish line, stop rule,
@@ -77,6 +81,8 @@ independent, sizeable work; one subagent if one suffices.
 {goal} — {why}
 
 Context: {file paths, prior findings, decisions already made; everything the builder needs}.
+[For research or decision work: no preferred outcome, answer menu or method steps; the builder
+picks the method.]
 
 FINISH LINE: {finish_line}
 
@@ -103,6 +109,9 @@ to merge" or "which of these two approaches is better"}.
 
 Context: {why this matters, what's been tried, constraints that apply}.
 
+[Ask the question neutrally ("what does the evidence say about X?"); no candidate answers, no
+preferred outcome.]
+
 Give your own independent verdict; don't anchor on any framing above, including mine. State
 what you'd change, if anything, and why. Lead with the verdict; supporting detail after.
 ```
@@ -117,8 +126,11 @@ Compact version of the seven parts in [`massaging.md`](massaging.md).
 ```
 GOAL: {goal} — {why}
 
-STEPS: {the concrete path, numbered; enough not to reverse-engineer intent, not so detailed
-you're doing its thinking}
+CONTEXT: {where things live, what's already decided, what changed since; no candidate answers}
+
+PREFERENCES (not targets; the evidence decides): {operator preferences, if any. Omit if none.}
+
+METHOD: yours. [Numbered steps only when order is a real constraint, e.g. a deploy sequence.]
 
 KNOWN STATE (verify, don't assume): {facts you hold, each tagged with how to confirm it}
 
@@ -163,11 +175,20 @@ Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeat
       `session-send <parent> --file <f>`), not "the operator".
 - [ ] `{project_guardrails}` is set the right way for the target (name the section for a Claude
       child inside the repo; paste or give a path otherwise), or its absence is a deliberate call.
+- [ ] Research/decision brief: goal + why + context + limits + deliverable only. No preferred
+      outcome as target (preferences labelled, separate), no candidate-answer menu, no method
+      steps, question asked neutrally.
+- [ ] Revisiting a settled decision? A trigger fired, the situation changed, or there is new
+      information, and the brief says which.
 - [ ] Every possibly-stale relayed fact is marked "verify, don't assume".
 - [ ] Deliverable names an exact destination.
+- [ ] Research/decision brief: finish line includes the closeout (every recommendation
+      adopted/declined/superseded/needs-ruling with an owner; each rule's checker and date;
+      short separate proposal; ledger updated in place).
 - [ ] Scope names concrete anti-patterns, not "be careful".
 - [ ] Stop rule states both when to keep going and when to stop and ask.
 - [ ] Eval/hillclimb? Add (e) with budgets/splits/noise/parity; point at the protocol, don't copy it.
+- [ ] Report, benchmark or new repo? Link [`research-deliverables.md`](../../references/research-deliverables.md): repo created private, numbers checked against data, review passes before done.
 - [ ] Long-running (a)/(b)? TASKS.md instruction included ("re-read after any compaction, before acting").
 - [ ] (a) only: delegation instruction present (delegate independent slices, not a builder's own
       verification; brief completely).
