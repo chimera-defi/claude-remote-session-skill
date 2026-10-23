@@ -406,7 +406,7 @@ else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
   # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
-  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" <<'PY'
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" <<'PY'
 import shlex,sys
 args,model,effort=sys.argv[1:]
 try: w=shlex.split(args)
@@ -440,7 +440,7 @@ if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
       if [ "$BACKEND" = codex ]; then
         QUOTA_RESULT=codex-out; QUOTA_FROM=codex; QUOTA_EVIDENCE=$_out; BACKEND=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-builder}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low}; [ -n "$TIER_ARG" ] || TIER_ARG=standard; TIER_REASON="${TIER_REASON:+$TIER_REASON; }quota failover codex->claude"; echo "quota failover: Codex out ($_out) -> Claude builder sonnet low" >&2
       else
-        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; _apply_codex_builder_args; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6-luna builds; gpt-6.1-sol reviews; PR must say "single-family review (Claude quota-out)")' >&2
+        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; _apply_codex_builder_args; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6.1-sol high builds and reviews; PR must say "single-family review (Claude quota-out)")' >&2
       fi
     fi
   fi
