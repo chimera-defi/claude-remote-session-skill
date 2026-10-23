@@ -1,10 +1,11 @@
 # Nightly review state
-last_run: 2026-10-15   last_reviewed_sha: a44059b2a85c1e9837d4a5471d97614e3d0c6e2c
+last_run: 2026-10-23   last_reviewed_sha: 748b23d43dfd05ef399fb17380b2b3fbb01e3e70
 
 ## open (found, PR not merged yet)
-- merge-guard: rename/move claim breaks on "Y from X" phrasing (branch nightly-review-2026-10-15)
+- merge-guard: noun-form claims (Addition/Creation/Deletion of) bypass body-vs-diff check (PR #176, branch nightly-review-2026-10-20)
 
 ## fixed (last 30 days)
+- merge-guard: rename/move claim breaks on "Y from X" phrasing - #164
 - merge-guard: rename/move body claim false-positives on "X to Y" phrasing - #159
 - test-session-resume.sh leaked background processes across standalone runs - #122
 - tests/test-*.py never ran in CI or the local loop; wired in - #137
@@ -14,8 +15,7 @@ last_run: 2026-10-15   last_reviewed_sha: a44059b2a85c1e9837d4a5471d97614e3d0c6e
 (none)
 
 ## next (max 5 lines)
-- Reviewed #159 (merge-guard to/into fix, merged), #160 (session-doctor
-  auth-scan), #161 (docs), #162 (SKILL.md slim + harness-claim corrections;
-  advisor/effort/model-id changes verified against new-session.sh + tests).
-  Found the "Y from X" rename-phrasing gap in #159 itself; fixed here.
-- session-alias poisoning guard: re-verified green (48/48), 9th night running.
+- PR #176 sat 3 nights with zero CI checks ever reported (gh get_status:
+  total_count 0). Merged current main in, full suite green locally, pushed
+  to resync; CI run started on push. No new defect; leave for merge once green.
+- session-alias poisoning guard: re-verified green, 11th night running.
