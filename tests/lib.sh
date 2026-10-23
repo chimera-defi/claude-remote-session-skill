@@ -14,7 +14,8 @@ _crss_lib_cleanup() { rm -rf "$CRSS_TEST_TMP"; }
 # shellcheck disable=SC2218  # defined on the line above; shellcheck mis-orders it against the trap() wrapper below
 builtin trap _crss_lib_cleanup EXIT
 # Tests install their own EXIT cleanup, which replaces the line above. Make every EXIT trap also run ours so the
-# private TMPDIR is always removed last, whatever a test sets.
+# private TMPDIR is always removed last, whatever a test sets. Only set EXIT traps at top level, never in a ( ) subshell:
+# the subshell would remove the shared TMPDIR while the parent test still uses it.
 trap() {
   if [ "$#" -ge 2 ] && [ "${!#}" = EXIT ] && [ "$1" != -p ] && [ "$1" != - ]; then
     # shellcheck disable=SC2064  # expanding the test's handler text now is the point
