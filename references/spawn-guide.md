@@ -44,7 +44,7 @@ it prints the pick and why and logs it to the routing log; `build` picks Codex g
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
 | `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex luna high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
-| `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
+| `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), **sonnet** + Opus advisor. Not Opus: for an Opus orchestrator omit `--tier` |
 
 - Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
 - **Claude Code has no per-request model router.** Checked on CLI 2.1.308: the alias table is
@@ -58,7 +58,7 @@ it prints the pick and why and logs it to the routing log; `build` picks Codex g
   default (orchestrator pins `$CRSS_OPUS_MODEL`). Native sessions it does not launch (desktop app, phone, a
   remote-control spawn server) run the account default, Opus, and delegate the same way.
 - **Orchestrator effort** defaults to medium (`CRSS_ORCHESTRATOR_EFFORT`, `none` drops it); set `CLAUDE_SESSION_EFFORT=high` at risky forks. A 2026-10-22 blind check (3 planning prompts, Fable judge) scored medium 8.3 vs high 8.0 at ~60% of the cost.
-- A tier never selects Opus. Opus is the no-tier default or an explicit
+- A tier never selects Opus (`heavy` is a Sonnet owner with an Opus advisor; `new-session` prints `resolved: ... model=` on every spawn so this is visible). Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
 - A `--launcher` that is not a live tmux session (a desktop/app launcher) cannot be reached by `session-send`; `new-session` warns on stderr, so tell the lane in its kickoff to report through the host's bus/mailbox.
@@ -122,7 +122,7 @@ generic defaults in those two files. What matters most for a fresh spawn:
   - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
   - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
-  verification each go to their own delegate (Codex first for implementation; Claude fallback:
+  verification each go to their own delegate (Codex first for implementation; Codex/ChatGPT gpt-6.1-sol first for read-only research, see the Research row in [orchestration-flow.md](orchestration-flow.md#roles); Claude fallback:
   `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Brief each completely: only the prompt string crosses over. Don't delegate a builder's own verification back to itself. Have subagents write large
   output to files and return a short summary plus the path; check each one's evidence before
   accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
