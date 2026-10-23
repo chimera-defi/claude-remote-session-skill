@@ -34,7 +34,7 @@ Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7
 - Agentic task: 5-file change + tests, 7 hidden tests, two rounds each; A/B included Haiku review, C ran alone.
 - Haiku flagged only spec-undefined inputs: a cheap advisory pass, not a merge gate.
 - Harder problems (luna's 7 worst, n=35 each, post hoc): luna low/medium average 0–7 reasoning tokens a call and pass 21/35; prompt nudges and harness trims do not change that. luna high (stripped) 31/35, Haiku low 32/35, Haiku medium 35/35 ($0.00192/pass, ~15 s), Sonnet medium 35/35 at ~10× the cost; luna high with gated Haiku low repair 32/35 at $0.00135.
-- Corrected headline ([private report](https://claude.ai/artifact/8SHR12aRZ3aWqaZ1ixcFho)): on these tools-off function problems haiku-medium alone is the pick (59/60 overall, 0 misses on the hard set), beating every luna → Haiku pipeline on accuracy. luna high stays the default builder because Codex $ is a list-price proxy for a separate subscription quota (moving builds to Haiku spends the Claude quota Opus and Fable share), and haiku-medium was never run on repo tasks or L7. Use Haiku medium (`claude -p --model haiku --effort medium --tools ""`) for tool-less one-shot functions when Codex is out or a miss is costly. Re-decide when the routing log holds enough luna high outcomes.
+- Corrected headline ([private report](https://claude.ai/artifact/8SHR12aRZ3aWqaZ1ixcFho)): on these tools-off function problems haiku-medium alone is the pick (59/60 overall, 0 misses on the hard set), matching the best luna → Haiku pipeline (review every answer, 35/35) at about half its cost and beating the gated one (32/35) on accuracy. luna high stays the default builder because Codex $ is a list-price proxy for a separate subscription quota (moving builds to Haiku spends the Claude quota Opus and Fable share), and haiku-medium was never run on repo tasks or L7. Use Haiku medium (`claude -p --model haiku --effort medium --tools ""`) for tool-less one-shot functions when Codex is out or a miss is costly. Re-decide when the routing log holds enough luna high outcomes.
 - Measured on one real lane (2026-10-22, website copy + this tool; `scripts/slice-usage.py`, $ from a one-call CLI cost probe per model, so read it as ±30%). Haiku research and two luna high builds cost $0.03 in all; the same tokens on Opus would have cost ~$1.55. But the bill was the Opus orchestrator ($7.45, 10M cache-read tokens over 79 calls) and three Fable reviews ($6.05; Fable is about 3x Opus per token on the probe). Cheap builders are a solved saving. The levers left are fewer orchestrator turns and one Fable gate per change on a tight packet, with interim checks on Haiku.
 
 ## Escalation ladder
@@ -51,7 +51,7 @@ luna high → Haiku low repair → gpt-6.1-sol medium → Sonnet builder.
 
 luna and gpt-6.1-sol share one Codex quota, so hopping between them never escapes a quota-out.
 
-- **Codex out** → Sonnet low builder + Haiku low review.
+- **Codex out** → Sonnet low builder + Haiku low review; a tool-less one-shot function may go to Haiku medium instead, still with the Haiku low review.
 - **Claude out** → Codex-only: luna builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
 - **Both out** → pause and report the exact error text.
 - Claude Code's own `--fallback-model` only covers an overloaded or unavailable model (it retries the primary each turn); it does not see quota-outs across families, so this ladder stays in `new-session`.
