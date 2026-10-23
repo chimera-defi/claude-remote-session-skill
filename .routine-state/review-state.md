@@ -1,8 +1,8 @@
 # Nightly review state
-last_run: 2026-10-20   last_reviewed_sha: 7f36759599cc399b84fc40e0cc2fe5e69d8fc6909b
+last_run: 2026-10-23   last_reviewed_sha: 748b23d43dfd05ef399fb17380b2b3fbb01e3e70
 
 ## open (found, PR not merged yet)
-- merge-guard: noun-form claims (Addition/Creation/Deletion of) bypass body-vs-diff check (branch nightly-review-2026-10-20)
+- merge-guard: noun-form claims (Addition/Creation/Deletion of) bypass body-vs-diff check (PR #176, branch nightly-review-2026-10-20)
 
 ## fixed (last 30 days)
 - merge-guard: rename/move claim breaks on "Y from X" phrasing - #164
@@ -15,8 +15,7 @@ last_run: 2026-10-20   last_reviewed_sha: 7f36759599cc399b84fc40e0cc2fe5e69d8fc6
 (none)
 
 ## next (max 5 lines)
-- Reviewed #165-#175 (auth-heal, opus-subagents scan, land-check squash/PR-landed
-  fallbacks, compact-window default, prompt-suggestion off switch, telemetry
-  quarantine): full suite + shellcheck clean, logic traced against own tests,
-  no defect found beyond the merge-guard regex gap fixed here.
-- session-alias poisoning guard: re-verified green, 10th night running.
+- PR #176 sat 3 nights with zero CI checks ever reported (gh get_status:
+  total_count 0). Merged current main in, full suite green locally, pushed
+  to resync; CI run started on push. No new defect; leave for merge once green.
+- session-alias poisoning guard: re-verified green, 11th night running.
