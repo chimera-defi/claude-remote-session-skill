@@ -178,6 +178,9 @@ Environment:
   CRSS_CODEX_ARGS=<args>        Extra Codex CLI args for --backend codex.
                                 Default: empty. Host overlays commonly set
                                 model/sandbox/approval flags here.
+  CRSS_CODEX_BUILDER_TIER=<t>   Codex service tier for --task-type build
+                                lanes (default: priority, i.e. fast mode;
+                                "default" for the normal tier, empty to omit).
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/sonnet/sonnet/haiku
@@ -406,9 +409,9 @@ else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
   # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
-  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" <<'PY'
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" "${CRSS_CODEX_BUILDER_TIER-priority}" <<'PY'
 import shlex,sys
-args,model,effort=sys.argv[1:]
+args,model,effort,tier=sys.argv[1:]
 try: w=shlex.split(args)
 except ValueError: w=args.split()
 out=[]; i=0; found=False
@@ -421,6 +424,7 @@ while i<len(w):
   i+=1
 if not found: out=['-m',model]+out
 if not any('model_reasoning_effort' in t for t in out): out+=['-c','model_reasoning_effort='+effort]
+if tier and not any('service_tier' in t for t in out): out+=['-c','service_tier='+tier]
 print(shlex.join(out))
 PY
 )"
