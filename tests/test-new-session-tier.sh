@@ -29,6 +29,10 @@ hasre "light advisor is Opus" "$o" '--advisor claude-opus-5-5'; hasre "light eff
 o="$(dry A=1 -- --tier standard)"; hasre "standard: builder/sonnet" "$o" '^PROFILE=builder$'; hasre "standard effort low" "$o" '--effort low'
 o="$(dry CLAUDE_SESSION_EFFORT=high -- --tier standard)"; hasre "explicit effort beats tier default" "$o" '--effort high'
 o="$(dry A=1 -- --tier heavy)"; hasre "heavy: owner/sonnet" "$o" '^PROFILE=owner$'
+hasre "heavy is Sonnet, never Opus" "$o" '^MODEL=sonnet$'; hasre "heavy keeps Opus advisor" "$o" '^ADVISOR=claude-opus-5-5$'
+hasre "resolved line names model and advisor" "$o" 'resolved: backend=claude profile=owner model=sonnet .*advisor=claude-opus-5-5 tier=heavy'
+hasre "tier misread warning" "$o" 'a tier never selects Opus\); for an Opus orchestrator omit --tier'
+o2="$(dry A=1 --)"; hasre "bare spawn resolved line is Opus" "$o2" 'resolved: backend=claude profile=orchestrator model=claude-opus-5-5'
 o="$(dry CLAUDE_SESSION_PROFILE=orchestrator -- --tier heavy)"; hasre "explicit profile beats tier" "$o" '^PROFILE=orchestrator$'; hasre "Opus has no advisor" "$o" '^ADVISOR=none$'
 
 # auto tier routing: explicit types and task brief keywords
