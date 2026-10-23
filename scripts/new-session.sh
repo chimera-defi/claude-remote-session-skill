@@ -152,7 +152,9 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
-  --tier <t>          Right-size: light|standard|heavy|auto; auto uses brief keywords.
+  --tier <t>          Right-size: light = Haiku, standard = Sonnet builder, heavy = Sonnet owner
+                      (full tools) + Opus advisor; auto uses brief keywords. A tier NEVER selects
+                      Opus: for an Opus orchestrator omit --tier (bare spawn = Opus).
                       Orchestrator default effort medium; use CLAUDE_SESSION_EFFORT=high at risky forks.
   --task-type <t>     Auto routing: orchestrate|review|mechanical|research|build.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
@@ -775,6 +777,12 @@ if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$QUOTA_CHECK" log 
 _shown_effort="${EFFORT:-default}"
 if [ "$BACKEND" = codex ] && [[ "$CRSS_CODEX_ARGS" =~ model_reasoning_effort=([a-z]+) ]]; then _shown_effort=${BASH_REMATCH[1]}; fi
 if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$QUOTA_CHECK" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON" || true; fi
+# What this spawn actually runs, every time, so a tier name can't be misread as a model choice.
+_shown_adv="${ADVISOR:-}"; [ "$BACKEND" = claude ] || _shown_adv=n/a
+printf 'resolved: backend=%s profile=%s model=%s effort=%s advisor=%s tier=%s\n' "$BACKEND" "${PROFILE:-codex}" "$MODEL" "$_shown_effort" "${_shown_adv:-none}" "${TIER_ARG:-none}" >&2
+if [ "$BACKEND" = claude ] && [ -n "$TIER_ARG" ] && [[ "$MODEL" != *opus* && "$MODEL" != *fable* ]]; then
+  echo "note: --tier ${TIER_ARG} is a Sonnet/Haiku session (a tier never selects Opus); for an Opus orchestrator omit --tier" >&2
+fi
 if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
