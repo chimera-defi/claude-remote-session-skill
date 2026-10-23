@@ -73,7 +73,7 @@ latest release for that tier. orchestrator is **pinned** to an exact id because 
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
 before bumping it.
 
-Builders: Codex gpt-6-luna high first (`--backend codex`), Haiku low repair on a failed check, then gpt-6.1-sol, then Sonnet ([`agents/builder.md`](agents/builder.md)).
+Builders: Codex gpt-6.1-sol high first (`--backend codex`), Haiku low repair on a failed check, then gpt-6-astra medium, then Sonnet ([`agents/builder.md`](agents/builder.md)).
 Routing and bench evidence: [`references/orchestration-flow.md`](references/orchestration-flow.md).
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
