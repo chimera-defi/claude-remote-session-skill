@@ -5,14 +5,14 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 ## Model and second-opinion policy (Key Rules detail)
 
 - The superpowers plugin injects `using-superpowers` at session start and the global skills are linked into every spawn; don't wait for the user to ask
-- Model default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
+- Claude profile default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
 - `agents/builder.md` caps a builder at 250 turns per invocation (`maxTurns`). The CLI stops it
   mid-step. On an "Agent stopped at its 250-turn limit" result, run `git status` /
   `git diff --stat` in its worktree before deciding anything. Then continue it with SendMessage,
   which keeps its context and its half-done edits; a fresh spawn would orphan them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
-- The standard lane shape (Opus orchestrates, Sonnet builders, Haiku for mechanical work, Opus
+- The standard lane shape (Opus orchestrates, Codex gpt-6-luna high builds, Haiku checks, Opus
   adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` availability (verified 2026-10-15 on CLI 2.1.300: an interactive `--model opus` probe listed the
@@ -35,16 +35,29 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 
 ## Choosing a tier (right-size the model, save quota)
 
-The launcher knows the task; the script cannot guess it. Pass `--tier` and a one-line
-`--tier-reason` (logged in spawn telemetry: the decision, not the outcome). Resolution lives in
+Pass `--tier` and a one-line `--tier-reason` (logged in spawn telemetry: the decision, not the outcome),
+or `--tier auto` with `--task-type orchestrate|review|mechanical|research|build` (else keywords in the brief):
+it prints the pick and why and logs it to the routing log; `build` picks Codex gpt-6-luna high, review/mechanical `light`, research `heavy`, orchestrate the Opus default, no match `standard`. Explicit `--backend`/env win. Resolution lives in
 `scripts/new-session.sh` and is pinned by `tests/test-new-session-tier.sh`; do not restate it here.
 
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
-| `standard` | ordinary implementation, debugging, review in one repo | builder profile, sonnet, `--effort low` |
+| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex luna high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), sonnet |
 
+- Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
+- **Claude Code has no per-request model router.** Checked on CLI 2.1.308: the alias table is
+  `sonnet opus haiku fable best sonnet[1m] opus[1m] fable[1m] opusplan`, with no `auto`. `opusplan` swaps
+  Opus (plan mode) for Sonnet (execution) on the plan-mode toggle and nothing else. `default`/`best` follow the
+  account or release. `--fallback-model a,b` is an availability fallback (overloaded or unavailable; retries
+  the primary each user turn), not a router. "Auto mode" (`--permission-mode auto`, `claude auto-mode`) is
+  the permission classifier and never picks a model. So right-sizing happens once, at spawn:
+  `--tier auto` classifies the brief, and inside a session the orchestrator routes each slice by the table in
+  [orchestration-flow.md](orchestration-flow.md). `new-session` without `--tier` uses the profile
+  default (orchestrator pins `$CRSS_OPUS_MODEL`). Native sessions it does not launch (desktop app, phone, a
+  remote-control spawn server) run the account default, Opus, and delegate the same way.
+- **Orchestrator effort** defaults to medium (`CRSS_ORCHESTRATOR_EFFORT`, `none` drops it); set `CLAUDE_SESSION_EFFORT=high` at risky forks. A 2026-10-22 blind check (3 planning prompts, Fable judge) scored medium 8.3 vs high 8.0 at ~60% of the cost.
 - A tier never selects Opus. Opus is the no-tier default or an explicit
   `CLAUDE_SESSION_PROFILE=orchestrator` / `CLAUDE_SESSION_MODEL`; use it for short, truly hard,
   bounded jobs, give it a task, and reap it when done (nothing enforces that).
@@ -103,13 +116,14 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first.** For hands-on implementation, spawn Codex builders first
-  (`new-session --backend codex`, or `codex exec` for one-shot local work); use Sonnet as
-  the fallback when Codex cannot run the task, and record the model that actually ran.
+- **Builders: Codex first, gpt-6-luna high by default** (`codex exec -m gpt-6-luna -c model_reasoning_effort=high`, or `new-session --backend codex` with those flags in `CRSS_CODEX_ARGS`), default tier.
+  - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
+  - On a failed check, Haiku low repairs first; then `-m gpt-6.1-sol` medium → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Never luna low/medium for builds.
+  - `-c service_tier=priority` per call only when latency matters (6.1-sol only).
+  - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
-  verification each go to their own subagent (`subagent_type: builder` or `model: "sonnet"`,
-  which keeps `advisor`); brief each completely — only the prompt string crosses over — and
-  don't delegate a builder's own verification back to itself. Have subagents write large
+  verification each go to their own delegate (Codex first for implementation; Claude fallback:
+  `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Brief each completely: only the prompt string crosses over. Don't delegate a builder's own verification back to itself. Have subagents write large
   output to files and return a short summary plus the path; check each one's evidence before
   accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md
