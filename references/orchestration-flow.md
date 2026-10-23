@@ -13,6 +13,7 @@ Host model pins and quota rules live in the host overlay and `~/.claude/CLAUDE.m
 | Builder escalation | gpt-6.1-sol medium after a failed Haiku repair ([ladder](#escalation-ladder)) | Codex | A: 7/7, 52–71 s, ~$0.044–0.056 proxy |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
 | Review | Haiku low, `subagent_type: haiku-reviewer` (read-only; [`agents/haiku-reviewer.md`](../agents/haiku-reviewer.md)) | Claude | ~10 s, ~$0.0013/review; advisory, no real bug found |
+| Research / workers | gpt-6.1-sol low (medium for large or ambiguous), via the host relay or `codex exec`; read-only, written findings back to the orchestrator | Codex / ChatGPT | host staffing ruling, not benched here; Claude fallback `subagent_type: builder` when Codex is out; `new-session --tier auto --task-type research` is a Sonnet lane owner, not this row |
 | Mechanical | Haiku (`model: "haiku"`) | Claude | greps, inventories, log triage, doc moves |
 | Adversarial reviewer | Opus, different context from author | Claude | races, idempotency, partial failure, restart, rollback |
 | Second opinion/tiebreak | Fable, `subagent_type: reviewer` ([`agents/reviewer.md`](../agents/reviewer.md)); condensed packet only | Claude | independent read at risky forks or after Opus |
