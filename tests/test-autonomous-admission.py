@@ -92,6 +92,7 @@ cat <<SCRIPT_EOF
 '''+source[a:b]+'''\nSCRIPT_EOF
 ''',CRSS_AUTONOMOUS='1',AGENT_HOST_ADMISSION_CLI='')
         generated=p.stdout; start=generated.index("'LOG_FILE=")+1; end=generated.index("done'",start)+4
+        self.stub('fake-model','echo model >> "$CALLS"; kill $PPID; exit 0')  # fail fast if admitted
         q=self.run_shell(generated[start:end],AGENT_HOST_ADMISSION_CLI='')
         self.assertIn('autonomous admission denied',q.stdout)
         self.assertNotIn('model',self.calls())

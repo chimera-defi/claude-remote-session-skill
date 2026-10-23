@@ -803,7 +803,8 @@ _do_compact() {
     return 1
   fi
   if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ "${MODE:-}" = sweep ]; then
-    _crss_admit compact "$session" >&2 || { echo admission-denied; return 1; }
+    # A sweep is unattended even when the timer's env lacks CRSS_AUTONOMOUS: say so to the helper.
+    CRSS_AUTONOMOUS=1 _crss_admit compact "$session" >&2 || { echo admission-denied; return 1; }
   fi
   _COMPACT_ISSUED[$session]=1
 
