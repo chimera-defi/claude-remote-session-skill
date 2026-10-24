@@ -1839,9 +1839,11 @@ for pid in sorted((d for d in os.listdir(root) if d.isdigit()), key=int):
     try: env = dict(l.split('=', 1) for l in open(f'{root}/{pid}/environ', 'rb').read().decode('utf-8', 'replace').split('\0') if '=' in l)
     except Exception: env = {}
     val = env.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
-    if '--settings' in argv[:-1]:
-        arg = argv[argv.index('--settings') + 1]
+    arg = next((argv[i + 1] for i, a in enumerate(argv[:-1]) if a == '--settings'),
+               next((a.split('=', 1)[1] for a in argv if a.startswith('--settings=')), None))
+    if arg is not None:
         try:
+            if not arg.lstrip().startswith('{') and not os.path.isabs(arg): arg = f'{root}/{pid}/cwd/{arg}'  # relative to the process cwd
             d = json.loads(arg) if arg.lstrip().startswith('{') else json.load(open(arg))
             val = d.get('env', {}).get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION', val)
         except Exception: pass
