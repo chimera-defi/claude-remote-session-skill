@@ -40,7 +40,7 @@ BIN_DIR="${CRSS_BIN_DIR:-$HOME/.local/bin}"
 _cgroup() { sed -n 's/^0:://p' "/proc/$1/cgroup" 2>/dev/null; }
 # A unit whose ExecStop kills this socket's whole server owns it deliberately.
 _owned_by_unit() {  # <unit> <socket-name>
-  systemctl --user cat "$1" 2>/dev/null | grep -qE "^ExecStop=.*tmux (-L $2|-S [^ ]*/$2) kill-server"
+  grep -qE "^ExecStop=.*tmux (-L $2|-S [^ ]*/$2) kill-server" <<<"$(systemctl --user cat "$1" 2>/dev/null)"
 }
 
 _servers() {  # prints: socket-name pid cgroup
