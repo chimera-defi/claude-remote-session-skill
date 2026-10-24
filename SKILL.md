@@ -78,6 +78,13 @@ by uuid through its own unit, keeps its launch flags, and refuses while anything
 the session. Run `--dry-run` first. Steps: header of `scripts/session-resume.sh`, pinned by
 `tests/test-session-resume.sh`.
 
+**One unit's restart must not kill the tmux server.** Start scripts launch tmux through
+`systemd-run --user --scope`, so the shared server never sits in a session unit's cgroup
+(2026-10-24: one restart killed 29 sessions). `crss-tmux-scope` shows any server still
+TRAPPED in a `.service` cgroup; `adopt --apply` moves it to its own scope without a signal.
+For scripts generated before this fix, `migrate-scripts --apply` (backup kept). Header of
+`scripts/crss-tmux-scope.sh`.
+
 `reap` refuses protected names, and sessions with unlanded/uncommitted work unless `--force`
 (rescue first: `session-preserve <name> --rescue --wip`). It also removes the session's own
 `~/.claude/worktrees/<name>` worktree (branch kept; `--keep-worktree` opts out); guards:
