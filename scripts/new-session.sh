@@ -930,7 +930,19 @@ SCRIPT_EOF
 fi
 
 cat >> "$SCRIPT" << SCRIPT_EOF
-tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+# Launch tmux in its own transient scope, never in this unit's cgroup: if this call forks the
+# shared server, a later stop/restart of THIS unit (KillMode=control-group) would otherwise kill
+# the server and every session on it (2026-10-24, 29 sessions). With a server already up, the
+# scope holds only the short-lived client. Bare tmux only when systemd-run cannot run at all.
+# Older scripts: crss-tmux-scope migrate-scripts / adopt.
+_crss_tmux() {
+  if command -v systemd-run >/dev/null 2>&1 && [ -S "\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/bus" ]; then
+    systemd-run --user --scope --quiet --collect -- tmux "\$@"
+  else
+    tmux "\$@"
+  fi
+}
+_crss_tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
 # Wait for the pane's interactive shell to be ready before typing into it, so
 # the kickoff keystrokes are not swallowed by a still-initializing pane.
 for _i in \$(seq 1 20); do
