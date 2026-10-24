@@ -71,6 +71,8 @@
 #                                           # Also printed as one line by the default `report`. Report only.
 #   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N
 #                                           # days, default 2); summary line in `report`. Report only.
+#   session-doctor.sh suggest-feeders       # live claude TUIs that can feed promptSuggestionUnusedStreak
+#                                           # (~/.claude.json back-off counter) + its current value. Report only.
 #   session-doctor.sh auth-heal [--apply] [--days N]
 #                                           # Nudge idle Claude lanes whose last turn failed auth, only when
 #                                           # host login is valid; DRY-RUN by default, window default 2 days.
@@ -1813,6 +1815,44 @@ sys.exit(1 if ongoing else 0)
 # (CLAUDE.md "Subagent models"); an Agent call with no subagent_type/model inherits the parent's Opus.
 # Same safety conventions as _auth_scan (symlinked dir followed, symlinked files never opened, event-time
 # window). Parent transcripts on Opus are expected and not scanned. rc 0, or >1 on an internal error.
+# suggest-feeders: which live claude TUIs can write the host-wide promptSuggestionUnusedStreak (the 20-unused
+# back-off counter in ~/.claude.json). Only the interactive REPL counts (CLI 2.1.308 onSubmit path): --print,
+# stream-json/--sdk-url children and the `claude remote-control` server never do. A TUI is quiet when its env or
+# its --settings file sets CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION to 0/false; anything else is a feeder.
+# PROC_ROOT (default /proc) is overridable for tests. Report only.
+_suggest_feeders() {
+  python3 - "${PROC_ROOT:-/proc}" "$HOME/.claude.json" <<'PY'
+import sys, os, json
+root, cj = sys.argv[1], sys.argv[2]
+try: streak = json.load(open(cj)).get('promptSuggestionUnusedStreak', 0)
+except Exception: streak = '?'
+off = lambda v: str(v).strip().lower() in ('0', 'false')
+feeders, quiet = [], 0
+for pid in sorted((d for d in os.listdir(root) if d.isdigit()), key=int):
+    try:
+        argv = open(f'{root}/{pid}/cmdline', 'rb').read().split(b'\0')
+        argv = [a.decode('utf-8', 'replace') for a in argv if a]
+    except Exception: continue
+    if not argv or os.path.basename(argv[0]) not in ('claude', 'claude.exe'): continue
+    if any(a in ('-p', '--print', '--sdk-url') or a.startswith('--sdk-url') or a == 'stream-json' for a in argv): continue
+    if len(argv) > 1 and argv[1] == 'remote-control': continue
+    try: env = dict(l.split('=', 1) for l in open(f'{root}/{pid}/environ', 'rb').read().decode('utf-8', 'replace').split('\0') if '=' in l)
+    except Exception: env = {}
+    val = env.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
+    if '--settings' in argv[:-1]:
+        arg = argv[argv.index('--settings') + 1]
+        try:
+            d = json.loads(arg) if arg.lstrip().startswith('{') else json.load(open(arg))
+            val = d.get('env', {}).get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION', val)
+        except Exception: pass
+    if val is not None and off(val): quiet += 1
+    else: feeders.append((pid, ' '.join(argv)[:110]))
+print(f'  promptSuggestionUnusedStreak={streak} (>=20 = back-off); interactive claude TUIs with suggestions off: {quiet}')
+if not feeders: print('  no TUI can feed the counter')
+for pid, c in feeders: print(f'  FEEDER pid={pid}: {c}')
+PY
+}
+
 _opus_subagent_scan() {
   local proj_base="$1" days="$2"
   [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
@@ -1890,6 +1930,10 @@ case "$MODE" in
   auth-scan)
     echo "=== AUTH: transcript auth-failure scan (last $DAYS day(s)) ==="
     _auth_scan "$HOME/.claude/projects" "$DAYS"
+    ;;
+  suggest-feeders)
+    echo "=== PROMPT SUGGESTIONS: TUIs that can feed the host-wide unused-streak ==="
+    _suggest_feeders
     ;;
   opus-subagents)
     echo "=== OPUS SUBAGENTS: subagent transcripts on Opus (last $DAYS day(s)) ==="
@@ -2631,6 +2675,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|opus-subagents [--days N]|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|opus-subagents [--days N]|suggest-feeders|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
