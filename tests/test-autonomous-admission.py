@@ -255,9 +255,9 @@ cat <<SCRIPT_EOF
         self.real_authority(); script=self.generated('codex')
         start=script.index("CODEX_LOOP_EOF'\n")+len("CODEX_LOOP_EOF'\n")
         end=script.index('\nCODEX_LOOP_EOF',start)
-        p=self.run_shell(typed); self.assertEqual(p.returncode,0,p.stderr)
+        p=self.run_shell(script[start:end]); self.assertEqual(p.returncode,0,p.stderr)
         self.assertNotIn('model',self.calls()); self.assert_cooperative_stop()
-        self.run_shell(typed); self.assert_cooperative_stop()
+        self.run_shell(script[start:end]); self.assert_cooperative_stop()
 
 
 if __name__=='__main__': unittest.main(verbosity=2)
