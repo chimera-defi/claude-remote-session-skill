@@ -176,6 +176,17 @@ if command -v git >/dev/null 2>&1 && command -v tmux >/dev/null 2>&1; then
   ( export PATH="$TMP/shim:$PATH" HOME="$WTHOME"; eval "$(rmline "$(blk "$out" "$WTD/px-wtchain2-0101-0900")")" ) >/dev/null 2>&1
   nodir "worktree-stale-chain-removed-after-archive" "$WTD/px-wtchain2-0101-0900"
   ok "worktree-stale-chain-archive-has-the-file" "$(cat "$WTHOME"/backups/reaped-worktree-ignored/px-wtchain2-0101-0900-*/worktree/artifacts/results.tsv 2>/dev/null)" data
+
+  # A plain folder is listed as not-a-worktree with no command and kept out of the count;
+  # an orphan worktree (.git file, gitdir gone) still reads DIRTY.
+  mkdir -p "$WTD/px-wtplain-0101-0900" "$WTD/px-wtorphan-0101-0900"; echo x > "$WTD/px-wtplain-0101-0900/events.jsonl"
+  echo "gitdir: $TMP/gone/.git/worktrees/x" > "$WTD/px-wtorphan-0101-0900/.git"
+  out="$(ws)"; b="$(blk "$out" "$WTD/px-wtplain-0101-0900")"
+  has "worktree-stale-plain-folder-status" "$b" 'status=not-a-worktree'
+  for s in remove: --force 'branch -D' DIRTY; do hasnt "worktree-stale-plain-folder-no-$s" "$b" "$s"; done
+  has "worktree-stale-plain-folder-footer" "$out" ", 1 not-a-worktree (plain folder"
+  has "worktree-stale-orphan-gitfile-stays-dirty" "$(blk "$out" "$WTD/px-wtorphan-0101-0900")" 'status=DIRTY'
+  rm -rf "$WTD/px-wtplain-0101-0900" "$WTD/px-wtorphan-0101-0900"
 fi
 
 # ── _default_branch: no remote (main / master), a plain clone (origin/HEAD), cached repeat; no gh needed ──
@@ -195,6 +206,11 @@ if command -v git >/dev/null 2>&1; then
   ok "wtdirty-ignores-sessions-init-sentinel" "$(_wt_dirty "$TMP/dirty")" clean
   echo x > "$TMP/dirty/real-untracked.txt"
   ok "wtdirty-still-flags-real-untracked" "$(_wt_dirty "$TMP/dirty")" DIRTY
+  # No repo anywhere -> not-a-worktree; a .git file whose gitdir is gone (orphan worktree) stays DIRTY.
+  mkdir -p "$TMP/plain" "$TMP/orphanwt"; echo x > "$TMP/plain/events.jsonl"
+  echo "gitdir: $TMP/gone/.git/worktrees/x" > "$TMP/orphanwt/.git"
+  ok "wtdirty-plain-folder-not-a-worktree" "$(_wt_dirty "$TMP/plain")" not-a-worktree
+  ok "wtdirty-orphan-gitfile-stays-dirty" "$(_wt_dirty "$TMP/orphanwt")" DIRTY
 fi
 
 # ── worktree-stale / land-check end to end: base + landed reporting, branch -D policy, DIRTY rows ──
