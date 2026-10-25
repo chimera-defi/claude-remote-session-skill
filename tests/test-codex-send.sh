@@ -178,12 +178,21 @@ run_cases() {
   ok "$expected bad ref exit" "$rc" 2
   out="$(send "codex:$REF" '   ' 2>&1)"; rc=$?
   ok "$expected empty exit" "$rc" 2
+  # A message that looks like a help flag must be refused, never answered with help + exit 0.
+  out="$(send "codex:$REF" -h 2>&1)"; rc=$?
+  ok "$expected help-looking message refused" "$rc" 2
   ok "$expected invalid inputs no dispatch" "$(( $(calls) - before ))" 0
   echo "$expected cases complete"
 }
 
 : > "$CONFIG/config.sh"
 run_cases fallback
+# Fallback with no runnable codex: refused before dispatch (exit 2), not "uncertain".
+before="$(calls)"
+name_thread 'Fixture thread'
+out="$("${fixture_env[@]}" CRSS_CODEX_BIN="$CRSS_TEST_TMP/no-such-codex" bash "$SEND" "codex:$REF" missing-bin-test 2>&1)"; rc=$?
+ok "fallback missing codex refused" "$rc" 2
+ok "fallback missing codex no dispatch" "$(( $(calls) - before ))" 0
 if [ -n "$BRIDGE_PATH" ] && [ -n "$BRIDGE_MODULE" ]; then
   if clean python3 -B -c 'import sys,importlib; sys.path.insert(0,sys.argv[1]); importlib.import_module(sys.argv[2])' "$BRIDGE_PATH" "$BRIDGE_MODULE"; then
     printf 'CRSS_CODEX_BRIDGE_PATH="%s"\nCRSS_CODEX_BRIDGE_MODULE="%s"\n' "$BRIDGE_PATH" "$BRIDGE_MODULE" > "$CONFIG/config.sh"

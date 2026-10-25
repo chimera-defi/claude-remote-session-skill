@@ -126,9 +126,14 @@ def resolve(ref: str) -> dict[str, Any]:
     raise RuntimeError("active Codex thread not found")
 
 
+def display(value: Any) -> str:
+    """Thread names/cwds are user text: no control characters (tabs, newlines) in table or error lines."""
+    return "".join(ch if ch.isprintable() else "�" for ch in str(value or "-"))[:256]
+
+
 def mismatch_message(expected: str, row: dict[str, Any]) -> str:
-    return (f"identity mismatch: expected {expected}, current {row['destination_identity']} "
-            f"name={row.get('name') or '-'} cwd={row.get('cwd')}; "
+    return (f"identity mismatch: expected {expected}, current {row.get('destination_identity')} "
+            f"name={display(row.get('name'))} cwd={display(row.get('cwd'))}; "
             "re-run session-send codex:list and confirm")
 
 
@@ -189,7 +194,7 @@ def module_send(bridge: Any, args: argparse.Namespace, message: str, audit: Audi
                            "queue_uncertain": uncertain, "error": f"{exc} {getattr(exc, 'code', '')}"})
         return report_error(exc, "module", uncertain)
     print(f"codex-send: {result['observed_state']} bridge=module ref={args.ref} "
-          f"name={result['session'].get('name') or '-'} queued_message_id={result['queued_message_id']} "
+          f"name={display(result['session'].get('name'))} queued_message_id={result['queued_message_id']} "
           f"evidence={','.join(result.get('observed_state_evidence', []))}")
     for warning in result.get("warnings", []):
         print(f"codex-send: {warning} bridge=module", file=sys.stderr)
@@ -210,6 +215,9 @@ def fallback_send(args: argparse.Namespace, message: str, audit: Audit) -> int:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
             probe.settimeout(0.5)
             probe.connect(str(sock))
+        binary = os.environ.get("CRSS_CODEX_BIN") or shutil.which("codex")
+        if not binary or not os.access(binary, os.X_OK):
+            raise RuntimeError("codex binary unavailable (set CRSS_CODEX_BIN)")
         audit.write({**record, "outcome": "DISPATCH_PENDING", "queue_uncertain": True})
         if resolve(args.ref)["destination_identity"] != row["destination_identity"]:
             raise RuntimeError("destination identity changed before queue; not sent; re-run session-send codex:list and confirm")
@@ -221,9 +229,6 @@ def fallback_send(args: argparse.Namespace, message: str, audit: Audit) -> int:
     warning = False
     error = ""
     try:
-        binary = os.environ.get("CRSS_CODEX_BIN") or shutil.which("codex")
-        if not binary:
-            raise OSError("codex binary unavailable")
         proc = subprocess.run([binary, "queue", "--remote", "unix://" + str(sock),
                                "--thread", row["id"], "--message", message],
                               capture_output=True, text=True, errors="replace", timeout=20,
@@ -248,31 +253,38 @@ def fallback_send(args: argparse.Namespace, message: str, audit: Audit) -> int:
         return report_error(RuntimeError(error or "no unique matching queue receipt"), "fallback", True)
     if warning:
         print("codex-send: receipt matched despite a nonzero exit or timeout; do not resend bridge=fallback", file=sys.stderr)
-    print(f"codex-send: QUEUED bridge=fallback ref={args.ref} name={row.get('name') or '-'} "
+    print(f"codex-send: QUEUED bridge=fallback ref={args.ref} name={display(row.get('name'))} "
           f"queued_message_id={record['queued_message_id']} (receipt only; acceptance not observed)")
     return 0
 
 
+USAGE = """usage: codex-send list [--limit N] [--json]
+       codex-send send <cs-ref> [--expect-identity ID] [--origin TEXT] (<message> | --file PATH)
+exit: 0 queued, 1 uncertain (do NOT resend), 2 refused (not sent)"""
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("list", "send"))
-    command, remaining = parser.parse_known_args()
-    listing = argparse.ArgumentParser(prog=f"{parser.prog} list")
+    if len(sys.argv) < 2 or sys.argv[1] not in ("list", "send"):
+        print(USAGE, file=sys.stderr)
+        return 2
+    command, remaining = sys.argv[1], sys.argv[2:]
+    listing = argparse.ArgumentParser(prog="codex-send list")
     listing.add_argument("--limit", type=int, default=20)
     listing.add_argument("--json", action="store_true")
-    sending = argparse.ArgumentParser(prog=f"{parser.prog} send")
+    # No -h on send: a message such as "-h" must be refused (exit 2), never print help and exit 0.
+    sending = argparse.ArgumentParser(prog="codex-send send", usage=USAGE, add_help=False)
     sending.add_argument("ref")
     sending.add_argument("--expect-identity")
     sending.add_argument("--origin", default="crss codex-send")
     sending.add_argument("message", nargs="?")
     sending.add_argument("--file", type=Path)
-    child = listing if command.command == "list" else sending
+    child = listing if command == "list" else sending
     args = child.parse_intermixed_args(remaining)
-    args.command = command.command
+    args.command = command
     if args.command == "send" and (args.message is None) == (args.file is None):
         sending.error("provide exactly one of message or --file")
     if args.command == "list" and not 1 <= args.limit <= 100:
-        parser.error("--limit must be from 1 to 100")
+        listing.error("--limit must be from 1 to 100")
     load_config()
     bridge = select_bridge()
     kind = "module" if bridge else "fallback"
@@ -287,7 +299,7 @@ def main() -> int:
             else:
                 print("session_ref\tname\tcwd\tupdated\tdestination_identity\tbridge")
                 for row in rows:
-                    print("\t".join(str(value) for key, value in row.items() if key != "bridge") + f"\tbridge={kind}")
+                    print("\t".join(display(value) for key, value in row.items() if key != "bridge") + f"\tbridge={kind}")
             return 0
         if not re.fullmatch(r"cs-[0-9a-f]{32}", args.ref):
             raise ValueError("bad ref: expected cs- followed by 32 lowercase hex characters")
