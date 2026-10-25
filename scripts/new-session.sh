@@ -946,9 +946,10 @@ import json,os,sys
 src,dst,plugin=sys.argv[1:4]
 d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
 tmp=dst+'.'+str(os.getpid())+'.tmp'
-f=open(tmp,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
+fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.fchmod(fd,os.stat(src).st_mode&0o777)
+f=os.fdopen(fd,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
-    cp ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
+    cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
   }
 fi
@@ -1011,6 +1012,12 @@ SCRIPT_EOF
 #                  `--continue` with no prior conversation just starts fresh (checked
 #                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
+  # The loop is typed into the pane by `tmux send-keys '...'`, so a literal ' in the flags (printf %q writes an
+  # apostrophe as \') would end that quote early and leave the start script unparseable (orchestrator/owner
+  # spawns since the delegation prompt gained apostrophes). Close the quote, emit a quoted ', reopen: the pane
+  # still receives the %q text unchanged.
+  _sq="'"; _sq_esc="'\\''"
+  CLAUDE_EXTRA_FLAGS_SQ="${CLAUDE_EXTRA_FLAGS//"$_sq"/$_sq_esc}"
   cat >> "$SCRIPT" << SCRIPT_EOF
 ${COMPACT_WINDOW:+tmux send-keys -t "${SESSION}" 'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=$COMPACT_WINDOW' Enter
 }tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
@@ -1034,12 +1041,12 @@ while true; do
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
     RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
   else
     touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
