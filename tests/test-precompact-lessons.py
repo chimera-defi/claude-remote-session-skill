@@ -49,7 +49,8 @@ class LessonsTest(unittest.TestCase):
         self.reply.write_text(json.dumps({"save": False}))
         self.env = dict(os.environ, HOME=str(self.home), CRSS_LESSONS_STATE=str(self.state),
                         CRSS_LESSONS_CLAUDE=str(self.stub), STUB_PROMPT=str(self.prompt), STUB_REPLY=str(self.reply))
-        for k in ("CRSS_LESSONS", "CRSS_LESSONS_CHILD", "CRSS_LESSONS_MEMORY_DIR", "STUB_FAIL"):
+        for k in ("CRSS_LESSONS", "CRSS_LESSONS_CHILD", "CRSS_LESSONS_MEMORY_DIR", "CRSS_LESSONS_INDEX_NAME",
+                  "CRSS_HOME", "XDG_CONFIG_HOME", "STUB_FAIL"):
             self.env.pop(k, None)
 
     def tearDown(self):
@@ -169,6 +170,43 @@ class LessonsTest(unittest.TestCase):
         self.run_hook("--sync")
         self.assertEqual(self.last_log()["outcome"], "skip:memory-dir-redirected")
         self.assertFalse((other / "feedback-verify-before-relay.md").exists())
+
+    def test_host_config_file_redirects_target_and_index_name(self):
+        lessons = self.home / "lessons"
+        lessons.mkdir()
+        (lessons / "INDEX.md").write_text("# Lessons\n\n- [Old](feedback-old.md) — old rule\n\nAdd new lessons here.\n")
+        (lessons / "feedback-old.md").write_text(
+            "---\nname: feedback-old\ndescription: old rule\nmetadata:\n  type: feedback\n---\n\nKeep briefs short.\n")
+        conf = self.home / ".config" / "crss"
+        conf.mkdir(parents=True)
+        (conf / "precompact-lessons.env").write_text(
+            f"# host target\nCRSS_LESSONS_MEMORY_DIR={lessons}\nCRSS_LESSONS_INDEX_NAME='INDEX.md'\n"
+            "PATH=/nonexistent\nCRSS_LESSONS_CHILD=1\n")
+        self.write_transcript(self.wren_rows())
+        mem_before = (self.mem / "MEMORY.md").read_text()
+
+        self.reply.write_text(json.dumps(GOOD))
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "saved:create")
+        umask = os.umask(0)
+        os.umask(umask)
+        written = lessons / "feedback-verify-before-relay.md"
+        self.assertEqual(os.stat(written).st_mode & 0o777, 0o666 & ~umask)
+        index = (lessons / "INDEX.md").read_text()
+        self.assertLess(index.index("(feedback-verify-before-relay.md)"), index.index("Add new lessons here."))
+        self.assertTrue(index.endswith("Add new lessons here.\n"))
+        self.assertEqual((self.mem / "MEMORY.md").read_text(), mem_before)
+        self.assertFalse((self.mem / "feedback-verify-before-relay.md").exists())
+
+        self.reply.write_text(json.dumps({**GOOD, "update": "INDEX.md"}))
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "rejected:bad-update-target")
+        self.reply.write_text(json.dumps({**GOOD, "slug": "fresh-rule", "rule": "Stage runs small.", "why": "Quota."}))
+        self.run_hook("--sync", extra_env={"CRSS_LESSONS_MEMORY_DIR": str(self.mem),
+                                           "CRSS_LESSONS_INDEX_NAME": "MEMORY.md"})
+        self.assertEqual(self.last_log()["outcome"], "saved:create", "the real environment beats the config file")
+        self.assertTrue((self.mem / "feedback-fresh-rule.md").exists())
+        self.assertIn("(feedback-fresh-rule.md)", (self.mem / "MEMORY.md").read_text())
 
     def test_worktree_session_writes_to_main_checkout_memory(self):
         work = self.home / "work"

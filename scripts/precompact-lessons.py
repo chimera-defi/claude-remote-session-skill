@@ -5,7 +5,8 @@ Wired as a Claude Code `PreCompact` command hook. The hook process only records 
 size, starts a detached worker and exits 0, so compaction is never slowed, blocked or failed.
 The worker (a) checks the session is a Wren session, (b) gives a cheap Haiku reviewer the human
 turns plus a bounded slice of the rest since the previous compaction, (c) validates the reviewer's
-JSON and writes the lesson into the session's auto-memory dir. "Nothing to save" is the normal
+JSON and writes the lesson into the session's auto-memory dir (or the dir a host config names).
+"Nothing to save" is the normal
 outcome. Every outcome is one line in the state log. Design and knobs: references/precompact-lessons.md.
 """
 
@@ -17,6 +18,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -25,7 +27,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SIGNAL = os.environ.get("CRSS_LESSONS_SIGNAL", "agents/claude/public/wren/")
 TYPES = ("feedback", "project", "reference", "user")
 USER_BUDGET = 14000
 OTHER_BUDGET = 18000
@@ -78,7 +79,36 @@ where "update" is an existing file name from the index when that file should rec
 """
 
 
-# ---------------------------------------------------------------- paths, log, lock
+# ---------------------------------------------------------------- config, paths, log, lock
+
+def load_config() -> None:
+    """Fill unset CRSS_LESSONS_* knobs from <crss home>/precompact-lessons.env (KEY=VALUE lines).
+
+    A hook runs with none of crss's environment, so this file is how a host sets the memory dir and
+    index name. The real environment wins; other keys are ignored. Read without ever blocking.
+    """
+    home = os.environ.get("CRSS_HOME") or str(
+        Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "crss")
+    try:
+        fd = os.open(Path(home) / "precompact-lessons.env", os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return
+            text = fh.read(16384).decode("utf-8", errors="replace")
+    except OSError:
+        return
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if sep and re.fullmatch(r"CRSS_LESSONS_[A-Z_]+", key) and key != "CRSS_LESSONS_CHILD":
+            os.environ.setdefault(key, value.strip().strip("\"'"))
+
+
+def index_name() -> str:
+    """The memory dir's index file: MEMORY.md for auto-memory, e.g. INDEX.md for a lessons dir."""
+    name = os.environ.get("CRSS_LESSONS_INDEX_NAME", "")
+    return name if FILENAME.match(name) else "MEMORY.md"
+
 
 def state_dir() -> Path:
     override = os.environ.get("CRSS_LESSONS_STATE")
@@ -249,7 +279,8 @@ def read_rows(path: Path, size: int) -> list[dict[str, Any]]:
 
 def has_wren_signal(path: Path, size: int) -> bool:
     """A tool call reading or touching the Wren persona dir, or a compaction summary naming it."""
-    needle = SIGNAL.encode()
+    signal_text = os.environ.get("CRSS_LESSONS_SIGNAL", "agents/claude/public/wren/")
+    needle = signal_text.encode()
     with path.open("rb") as fh:
         read = 0
         for line in fh:
@@ -264,12 +295,12 @@ def has_wren_signal(path: Path, size: int) -> bool:
                 continue
             message = row.get("message") if isinstance(row, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
-            if row.get("isCompactSummary") and isinstance(content, str) and SIGNAL in content:
+            if row.get("isCompactSummary") and isinstance(content, str) and signal_text in content:
                 return True
             if row.get("type") == "assistant" and isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use" \
-                            and SIGNAL in json.dumps(block.get("input", {})):
+                            and signal_text in json.dumps(block.get("input", {})):
                         return True
     return False
 
@@ -420,7 +451,7 @@ def validate(reply: dict[str, Any]) -> tuple[dict[str, str | None] | None, str]:
                 return None, f"{name}-in-{label}"
     slug = str(reply.get("slug") or "")
     if update:
-        if not FILENAME.match(update) or update == "MEMORY.md":
+        if not FILENAME.match(update) or update in ("MEMORY.md", index_name()):
             return None, "bad-update-target"
         slug = ""
     else:
@@ -431,14 +462,30 @@ def validate(reply: dict[str, Any]) -> tuple[dict[str, str | None] | None, str]:
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """Temp file plus rename, keeping an existing file's mode (new files get the umask default, not 0600)."""
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode)
+    else:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix="lessons-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def _with_entry(index: str, entry: str) -> str:
+    """Add `entry` after the last list item, so a closing note in the index stays last."""
+    lines = index.rstrip("\n").split("\n")
+    last = max((i for i, line in enumerate(lines) if line.startswith("- [")), default=len(lines) - 1)
+    lines.insert(last + 1, entry.rstrip("\n"))
+    return "\n".join(lines) + "\n"
 
 
 def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_run: bool) -> tuple[str, str]:
@@ -446,14 +493,15 @@ def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_
     rule, why = str(lesson["rule"]), str(lesson["why"])
     probe = _words(rule + " " + why)
     flat_rule = _flat(rule)
+    index_file = index_name()
     for f in memdir.glob("*.md"):
-        if f.name == "MEMORY.md":
+        if f.name in ("MEMORY.md", index_file):
             continue
         text = f.read_text(encoding="utf-8", errors="replace")
         if flat_rule in _flat(text) or (
                 len(probe) >= 5 and len(probe & _words(text)) / len(probe) >= 0.75):
             return "rejected:duplicate", f.name
-    index = memdir / "MEMORY.md"
+    index = memdir / index_file
     max_file = int(os.environ.get("CRSS_LESSONS_MAX_FILE_BYTES", "6000"))
     target_name = str(lesson["update"]) if lesson["update"] else f"{lesson['slug']}.md"
     target = memdir / target_name
@@ -484,7 +532,7 @@ def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_
         return "rejected:file-cap", target_name
     if not dry_run:
         _atomic_write(target, body)
-        _atomic_write(index, old_index.rstrip("\n") + "\n" + entry)
+        _atomic_write(index, _with_entry(old_index, entry))
     return ("dry-run:create" if dry_run else "saved:create"), target_name
 
 
@@ -507,7 +555,7 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     window, humans = build_window(read_rows(transcript, size))
     if humans == 0 or len(window) < 300:
         return {**base, "outcome": "skip:thin-window"}
-    index_file = memdir / "MEMORY.md"
+    index_file = memdir / index_name()
     index = "\n".join(index_file.read_text(encoding="utf-8", errors="replace").splitlines()[:200]) \
         if index_file.exists() else "(empty)"
     started = time.monotonic()
@@ -564,6 +612,7 @@ def hook(argv: list[str]) -> None:
 
 def main(argv: list[str]) -> int:
     try:
+        load_config()
         if "--worker" in argv:
             worker(argv[argv.index("--worker") + 1], "--dry-run" in argv)
         else:
