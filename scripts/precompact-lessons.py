@@ -94,9 +94,12 @@ def load_config() -> None:
         with os.fdopen(fd, "rb") as fh:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                 return
-            text = fh.read(16384).decode("utf-8", errors="replace")
+            data = fh.read(16385)
     except OSError:
         return
+    if len(data) > 16384:  # a cut-off last line could apply a truncated path
+        return
+    text = data.decode("utf-8", errors="replace")
     for line in text.splitlines():
         key, sep, value = line.partition("=")
         key = key.strip()
@@ -504,6 +507,8 @@ def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_
     index = memdir / index_file
     max_file = int(os.environ.get("CRSS_LESSONS_MAX_FILE_BYTES", "6000"))
     target_name = str(lesson["update"]) if lesson["update"] else f"{lesson['slug']}.md"
+    if target_name in ("MEMORY.md", index_file):
+        return "rejected:bad-update-target", target_name
     target = memdir / target_name
     if target.is_symlink() or (target.exists() and not target.is_file()):
         return "rejected:bad-update-target", target_name
