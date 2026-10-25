@@ -155,46 +155,46 @@ def start_cwd(transcript: Path) -> str | None:
     name = transcript.resolve().parent.name
     try:
         with transcript.open("rb") as fh:
-            head = fh.read(400_000).split(b"\n")[:200]
+            for _, line in zip(range(200), fh):
+                try:
+                    cwd = json.loads(line).get("cwd")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(cwd, str) and _project_key(cwd) == name:
+                    return cwd
     except OSError:
-        return None
-    for line in head:
-        try:
-            cwd = json.loads(line).get("cwd")
-        except (ValueError, AttributeError):
-            continue
-        if isinstance(cwd, str) and _project_key(cwd) == name:
-            return cwd
+        pass
     return None
 
 
-def memory_dir_for(transcript: Path, cwd: str | None = None) -> Path | None:
-    """Where the CLI loads auto-memory for this session.
+def memory_dir_for(transcript: Path, cwd: str) -> Path | None:
+    """Where the CLI loads auto-memory for a session that started in `cwd`.
 
     A linked worktree shares its main checkout's memory, so its own project dir is the wrong place
     even when that dir has a memory folder. In a main checkout (or a subdirectory of one) the
     checkout's or the cwd's dir wins, whichever already has memory, else the checkout's. Outside
-    git it is the cwd's, and with no cwd the transcript's own project dir.
+    git it is the cwd's. None when the path is too long for the CLI's plain project key.
     """
     override = os.environ.get("CRSS_LESSONS_MEMORY_DIR")
     if override:
         return Path(override).expanduser()
     projects = (Path.home() / ".claude" / "projects").resolve()
-    own = transcript.resolve().parent
-    if own.parent != projects:
+    if transcript.resolve().parent.parent != projects:
         return None
-    found = _checkout_root(cwd) if cwd else None
+    found = _checkout_root(cwd)
     if found and found[1]:
         paths = [found[0]]
     elif found:
         paths = [found[0], cwd]
     else:
-        paths = [cwd] if cwd else []
-    candidates = [projects / k for k in dict.fromkeys(_project_key(p) for p in paths) if len(k) <= 150] or [own]
-    for proj in candidates:
-        if (proj / "memory").is_dir():
-            return proj / "memory"
-    return candidates[0] / "memory"
+        paths = [cwd]
+    keys = [_project_key(p) for p in dict.fromkeys(paths)]
+    if any(len(k) > 150 for k in keys):
+        return None
+    for key in keys:
+        if (projects / key / "memory").is_dir():
+            return projects / key / "memory"
+    return projects / keys[0] / "memory"
 
 
 def contained(memdir: Path) -> bool:
@@ -386,7 +386,7 @@ SECRET_PREFIXED = re.compile(
 SECRET = re.compile(
     SECRET_PREFIXED.pattern
     + r"|(?=[A-Za-z0-9+/=_-]*\d)(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{32,}"
-    r"|(?:api[ _-]?key|secret|passw(?:or)?d|token)\s*[:=]\s*\S{8,}", re.I)
+    r"|(?:api[ _-]?key|secret|passw(?:or)?d|token|credential)s?[\"']?\s*[:=]\s*[\"']?\S{8,}", re.I)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
 FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
 
@@ -496,7 +496,10 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     size = int(job["size"])
     if os.environ.get("CRSS_LESSONS") != "all" and not has_wren_signal(transcript, size):
         return {**base, "outcome": "skip:no-wren-signal"}
-    memdir = memory_dir_for(transcript, start_cwd(transcript) or job.get("cwd"))
+    cwd = start_cwd(transcript)
+    if cwd is None and not os.environ.get("CRSS_LESSONS_MEMORY_DIR"):
+        return {**base, "outcome": "skip:no-start-dir"}
+    memdir = memory_dir_for(transcript, cwd or "")
     if memdir is None:
         return {**base, "outcome": "skip:no-memory-dir"}
     if not contained(memdir):
@@ -543,7 +546,7 @@ def hook(argv: list[str]) -> None:
             or payload.get("agent_id") or not payload.get("transcript_path"):
         return
     transcript = Path(payload["transcript_path"])
-    job = {"session_id": payload.get("session_id"), "trigger": payload.get("trigger"), "cwd": payload.get("cwd"),
+    job = {"session_id": payload.get("session_id"), "trigger": payload.get("trigger"),
            "transcript_path": str(transcript), "size": transcript.stat().st_size}
     jobs = state_dir() / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
