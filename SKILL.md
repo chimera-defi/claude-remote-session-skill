@@ -200,7 +200,8 @@ Durable facts other sessions should inherit go through the host's shared memory 
 (root, namespace, sync command, citation format), set up in the user-level
 `~/.claude/CLAUDE.md` or `$CRSS_HOME/local.md` — not restated here. "Who else is working
 here right now" is a different question: `session-doctor history` derives presence from
-live processes.
+live processes. Lessons are saved at compaction, not by remembering: the opt-in `PreCompact`
+hook `precompact-lessons` ([`references/precompact-lessons.md`](references/precompact-lessons.md)).
 
 ## Sessions agent scope
 
