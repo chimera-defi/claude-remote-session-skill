@@ -208,6 +208,23 @@ class LessonsTest(unittest.TestCase):
         self.assertTrue((self.mem / "feedback-fresh-rule.md").exists())
         self.assertIn("(feedback-fresh-rule.md)", (self.mem / "MEMORY.md").read_text())
 
+        clash = self.home / "clash"
+        clash.mkdir()
+        self.reply.write_text(json.dumps({**GOOD, "slug": "clash-rule", "rule": "Brief children with a finish line.",
+                                          "why": "Open-ended briefs never end."}))
+        self.run_hook("--sync", extra_env={"CRSS_LESSONS_MEMORY_DIR": str(clash),
+                                           "CRSS_LESSONS_INDEX_NAME": "feedback-clash-rule.md"})
+        self.assertEqual(self.last_log()["outcome"], "rejected:bad-update-target", "a lesson may not be the index file")
+        self.assertEqual(list(clash.iterdir()), [])
+
+        # an oversized config is ignored whole, so a cut-off last line can't apply a truncated path
+        (conf / "precompact-lessons.env").write_text(
+            "#" + "x" * 20000 + f"\nCRSS_LESSONS_MEMORY_DIR={lessons}\n")
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "saved:create")
+        self.assertTrue((self.mem / "feedback-clash-rule.md").exists())
+        self.assertFalse((lessons / "feedback-clash-rule.md").exists())
+
     def test_worktree_session_writes_to_main_checkout_memory(self):
         work = self.home / "work"
         work.mkdir()
