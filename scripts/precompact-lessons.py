@@ -93,7 +93,8 @@ def log(event: dict[str, Any]) -> None:
         d = state_dir()
         d.mkdir(parents=True, exist_ok=True)
         event = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **event}
-        with (d / "precompact-lessons.jsonl").open("a", encoding="utf-8") as fh:
+        fd = os.open(d / "precompact-lessons.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError:
         pass
@@ -126,20 +127,70 @@ class Lock:
             self.fh.close()
 
 
-def memory_dir_for(transcript: Path) -> Path | None:
+def _project_key(path: str) -> str:
+    """The CLI's project directory name for a working directory."""
+    return re.sub(r"[^A-Za-z0-9]", "-", path)
+
+
+def _checkout_root(cwd: str) -> str | None:
+    """Main checkout for a git working tree or linked worktree (None when cwd is not in a repo)."""
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
+    if common is None:
+        return None
+    return str(common.parent if common.name == ".git" else common)
+
+
+def memory_dir_for(transcript: Path, cwd: str | None = None) -> Path | None:
+    """Where the CLI loads auto-memory for this session.
+
+    A linked worktree shares its main checkout's memory, so the transcript's own project dir is
+    wrong for those sessions. Candidates, in order: main checkout, cwd, transcript's project dir.
+    The first with an existing memory dir wins, else the first one (a repo only ever used through
+    worktrees has no memory dir yet; the CLI will read it once written).
+    """
     override = os.environ.get("CRSS_LESSONS_MEMORY_DIR")
     if override:
         return Path(override).expanduser()
-    projects = Path.home() / ".claude" / "projects"
-    parent = transcript.resolve().parent
-    if parent.parent != projects.resolve():
+    projects = (Path.home() / ".claude" / "projects").resolve()
+    own = transcript.resolve().parent
+    if own.parent != projects:
         return None
-    return parent / "memory"
+    keys = []
+    if cwd:
+        root = _checkout_root(cwd)
+        keys = [_project_key(p) for p in (root, cwd) if p]
+    candidates = [projects / k for k in dict.fromkeys(keys) if len(k) <= 150] + [own]
+    for proj in candidates:
+        if (proj / "memory").is_dir():
+            return proj / "memory"
+    return candidates[0] / "memory"
+
+
+def contained(memdir: Path) -> bool:
+    """Reject a memory dir that is a symlink, or a state dir (log, locks) that lives inside it."""
+    if memdir.is_symlink() or memdir.parent.is_symlink():
+        return False
+    state = state_dir().resolve()
+    return memdir.resolve() != state and memdir.resolve() not in state.parents
 
 
 # ---------------------------------------------------------------- transcript window
 
 REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+
+
+def _is_boundary(line: bytes) -> bool:
+    """The CLI's real marker row, not text that merely mentions it (a grep result, a quote)."""
+    try:
+        row = json.loads(line)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return isinstance(row, dict) and row.get("type") == "system" and row.get("subtype") == "compact_boundary"
 
 
 def read_rows(path: Path, size: int) -> list[dict[str, Any]]:
@@ -155,7 +206,7 @@ def read_rows(path: Path, size: int) -> list[dict[str, Any]]:
         lines = lines[:-1]
     last_boundary = -1
     for i, line in enumerate(lines):
-        if b"compact_boundary" in line:
+        if b"compact_boundary" in line and _is_boundary(line):
             last_boundary = i
     rows = []
     for line in lines[last_boundary + 1:]:
@@ -191,7 +242,8 @@ def has_wren_signal(path: Path, size: int) -> bool:
                 return True
             if row.get("type") == "assistant" and isinstance(content, list):
                 for block in content:
-                    if block.get("type") == "tool_use" and SIGNAL in json.dumps(block.get("input", {})):
+                    if isinstance(block, dict) and block.get("type") == "tool_use" \
+                            and SIGNAL in json.dumps(block.get("input", {})):
                         return True
     return False
 
@@ -259,7 +311,7 @@ def run_reviewer(prompt: str) -> str:
         "--model", os.environ.get("CRSS_LESSONS_MODEL", "haiku"),
         "--effort", os.environ.get("CRSS_LESSONS_EFFORT", "high"),
         "--tools", "", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
-        "--system-prompt", SYSTEM_PROMPT, "--output-format", "text",
+        "--settings", '{"disableAllHooks": true}', "--system-prompt", SYSTEM_PROMPT, "--output-format", "text",
     ]
     env = dict(os.environ, CRSS_LESSONS_CHILD="1")
     timeout = float(os.environ.get("CRSS_LESSONS_TIMEOUT", "120"))
@@ -291,17 +343,27 @@ def parse_reply(text: str) -> dict[str, Any] | None:
 
 # ---------------------------------------------------------------- validation and writing
 
-DATEISH = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}[-/]\d{1,2}[-/](?:19|20)\d{2}\b")
-REFNUM = re.compile(r"(?:\bPR\b|\bissue\b|\bpull\b|\bticket\b)\s*#?\d+|#\d{2,}|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b")
+DATEISH = re.compile(
+    r"\b(?:19|20)\d{2}\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b"
+    r"|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?"
+    r"|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.? +\d{1,2}\b", re.I)
+REFNUM = re.compile(
+    r"\b(?:PR|issue|pull|ticket)\s*#?\d+|#\d+|\bcommit\s+[0-9a-f]{6,40}\b|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", re.I)
 NEGATIVE = re.compile(
     r"(?:does not|doesn't|do not|don't|won't|no longer|never) work|not working|is broken|are broken"
-    r"|is unavailable|is unsupported|always (?:fails|breaks)", re.I)
+    r"|is unavailable|is unsupported|always (?:fails|breaks)"
+    r"|(?:cannot|can't|unable to) (?:be )?(?:use|used|run|execute|call|access)", re.I)
 SECRET = re.compile(
-    r"sk-[A-Za-z0-9_-]{16,}|bearer\s+\S{12,}"
+    r"\bsk-[A-Za-z0-9_-]{16,}|bearer\s+\S{12,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[baprs]-\S{10,}"
+    r"|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN"
     r"|(?=[A-Za-z0-9+/=_-]*\d)(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{32,}"
     r"|(?:api[_-]?key|secret|passw(?:or)?d|token)\s*[:=]\s*\S{8,}", re.I)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
 FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
+
+
+def _flat(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 def _words(text: str) -> set[str]:
@@ -334,7 +396,7 @@ def validate(reply: dict[str, Any]) -> tuple[dict[str, str | None] | None, str]:
         slug = ""
     else:
         slug = slug if slug.startswith(f"{kind}-") else f"{kind}-{slug}"
-        if not SLUG.match(slug):
+        if not SLUG.match(slug) or SECRET.search(slug) or REFNUM.search(slug) or DATEISH.search(slug):
             return None, "bad-slug"
     return {"type": kind, "slug": slug, "description": desc, "rule": rule, "why": why, "update": update}, ""
 
@@ -354,17 +416,19 @@ def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_
     """Returns (outcome, file). Caller holds the lock."""
     rule, why = str(lesson["rule"]), str(lesson["why"])
     probe = _words(rule + " " + why)
-    if len(probe) >= 5:
-        for f in memdir.glob("*.md"):
-            if f.name == "MEMORY.md":
-                continue
-            if len(probe & _words(f.read_text(encoding="utf-8", errors="replace"))) / len(probe) >= 0.75:
-                return "rejected:duplicate", f.name
+    flat_rule = _flat(rule)
+    for f in memdir.glob("*.md"):
+        if f.name == "MEMORY.md":
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        if flat_rule in _flat(text) or (
+                len(probe) >= 5 and len(probe & _words(text)) / len(probe) >= 0.75):
+            return "rejected:duplicate", f.name
     index = memdir / "MEMORY.md"
     max_file = int(os.environ.get("CRSS_LESSONS_MAX_FILE_BYTES", "6000"))
     target_name = str(lesson["update"]) if lesson["update"] else f"{lesson['slug']}.md"
     target = memdir / target_name
-    if target.exists() and not target.is_file():
+    if target.is_symlink() or (target.exists() and not target.is_file()):
         return "rejected:bad-update-target", target_name
     if lesson["update"] or target.exists():
         if not target.exists():
@@ -387,6 +451,8 @@ def write_lesson(memdir: Path, lesson: dict[str, str | None], session: str, dry_
         return "rejected:index-cap", target_name
     body = (f"---\nname: {lesson['slug']}\ndescription: {lesson['description']}\nmetadata:\n"
             f"  type: {lesson['type']}\n  originSessionId: {session}\n---\n\n{rule}\n\n**Why:** {why}\n")
+    if len(body.encode()) > max_file:
+        return "rejected:file-cap", target_name
     if not dry_run:
         _atomic_write(target, body)
         _atomic_write(index, old_index.rstrip("\n") + "\n" + entry)
@@ -401,9 +467,11 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     size = int(job["size"])
     if os.environ.get("CRSS_LESSONS") != "all" and not has_wren_signal(transcript, size):
         return {**base, "outcome": "skip:no-wren-signal"}
-    memdir = memory_dir_for(transcript)
-    if memdir is None or not memdir.parent.is_dir():
+    memdir = memory_dir_for(transcript, job.get("cwd"))
+    if memdir is None:
         return {**base, "outcome": "skip:no-memory-dir"}
+    if not contained(memdir):
+        return {**base, "outcome": "skip:memory-dir-redirected"}
     window, humans = build_window(read_rows(transcript, size))
     if humans == 0 or len(window) < 300:
         return {**base, "outcome": "skip:thin-window"}
@@ -420,7 +488,7 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     lesson, reason = validate(reply)
     if lesson is None:
         return {**base, "outcome": f"rejected:{reason}"}
-    memdir.mkdir(exist_ok=True)
+    memdir.mkdir(parents=True, exist_ok=True)
     with Lock(memdir):
         outcome, name = write_lesson(memdir, lesson, str(job.get("session_id") or ""), dry_run)
     return {**base, "outcome": outcome, "file": name, "rule": lesson["rule"]}
@@ -446,7 +514,7 @@ def hook(argv: list[str]) -> None:
             or payload.get("agent_id") or not payload.get("transcript_path"):
         return
     transcript = Path(payload["transcript_path"])
-    job = {"session_id": payload.get("session_id"), "trigger": payload.get("trigger"),
+    job = {"session_id": payload.get("session_id"), "trigger": payload.get("trigger"), "cwd": payload.get("cwd"),
            "transcript_path": str(transcript), "size": transcript.stat().st_size}
     jobs = state_dir() / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
