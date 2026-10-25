@@ -100,14 +100,14 @@ outp="$(bash "$NS" --dry-run profile-default 2>/dev/null)"
 has "profile-default-orchestrator"   "$outp" 'PROFILE=orchestrator'
 has "orchestrator-default-model-opus5-5" "$outp" '^MODEL=claude-opus-5-5$'
 has "orchestrator-model-src-profile"  "$outp" '^MODEL_SRC=profile-default$'
-has "orchestrator-cache-flag-and-effort" "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections --effort medium'
+hasre "orchestrator-cache-flag-and-effort" "$outp" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections( --append-system-prompt .*)? --effort medium'
 
 # owner: full tool set (no --tools allowlist, like orchestrator) but a Sonnet default, and no alias warning
 outw="$(CLAUDE_SESSION_PROFILE=owner bash "$NS" --dry-run profile-owner 2>/dev/null)"
 has "profile-owner"                 "$outw" 'PROFILE=owner'
 has "owner-default-model-sonnet"    "$outw" '^MODEL=sonnet$'
 has "owner-model-src-profile"       "$outw" '^MODEL_SRC=profile-default$'
-hasre "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections( --effort [a-z]+)?( --advisor [a-z0-9.-]+)?$'
+hasre "owner-full-tool-set"           "$outw" 'CLAUDE_EXTRA_FLAGS=--exclude-dynamic-system-prompt-sections( --append-system-prompt .*)?( --effort [a-z]+)?( --advisor [a-z0-9.-]+)?$'
 
 
 outb="$(CLAUDE_SESSION_PROFILE=builder bash "$NS" --dry-run profile-builder 2>/dev/null)"
@@ -165,13 +165,13 @@ GEN_STORE_OWNER="$(mktemp -u)"
 owner_gen="$(HOME="$GEN_HOME" PATH="$GEN_BIN:$PATH" SESSION_ALIAS_STORE="$GEN_STORE_OWNER" CLAUDE_SESSION_PROFILE=owner bash "$NS" owner-script sessions --alias ownerscript 2>&1)"
 has "owner-script-spawn-created" "$owner_gen" 'Session created: px-ownerscript-0101-0000'
 owner_script_text="$(cat "$GEN_HOME/.local/bin/px-ownerscript-0101-0000-start.sh" 2>/dev/null)"
-hasnt "owner-script-no-hub-prompt" "$owner_script_text" '--append-system-prompt'
+hasnt "owner-script-no-hub-prompt" "$owner_script_text" 'You are a Sonnet hub'
 
 GEN_STORE_ORCH="$(mktemp -u)"
 orch_gen="$(HOME="$GEN_HOME" PATH="$GEN_BIN:$PATH" SESSION_ALIAS_STORE="$GEN_STORE_ORCH" bash "$NS" orch-script sessions --alias orchscript 2>&1)"
 has "orchestrator-script-spawn-created" "$orch_gen" 'Session created: px-orchscript-0101-0000'
 orch_script_text="$(cat "$GEN_HOME/.local/bin/px-orchscript-0101-0000-start.sh" 2>/dev/null)"
-hasnt "orchestrator-script-no-hub-prompt" "$orch_script_text" '--append-system-prompt'
+hasnt "orchestrator-script-no-hub-prompt" "$orch_script_text" 'You are a Sonnet hub'
 rm -rf "$GEN_HOME" "$GEN_BIN"
 
 # ── --dry-run must bypass the preflight capacity gate (found in review) ──
