@@ -112,4 +112,7 @@ If a **new** session never appears on the phone: the remote-control bridge only 
 local `127.0.0.1` proxy) silently disables registration. The launcher forces a first-party URL
 via `--settings .../rc-firstparty.settings.json`. If a session is live in `tmux` but
 absent/disconnected in `session-doctor report`'s registry section, check its `claude` process
-carries that `--settings` flag.
+carries that `--settings` flag. Builder, copywriter and autonomous lanes carry the derived
+`rc-firstparty-no-superpowers.settings.json` instead (same content plus the Superpowers plugin off,
+rebuilt from `rc-firstparty` on every start); a launch must carry exactly one `--settings` flag
+because repeated flags replace each other.
