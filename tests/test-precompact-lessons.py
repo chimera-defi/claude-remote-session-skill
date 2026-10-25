@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ GOOD = {"save": True, "type": "feedback", "slug": "verify-before-relay", "descri
 
 
 def row(kind, content, **extra):
-    return {"type": kind, "message": {"role": kind, "content": content}, "isSidechain": False, **extra}
+    return {"type": kind, "message": {"role": kind, "content": content}, "isSidechain": False, "cwd": "/work/proj", **extra}
 
 
 class LessonsTest(unittest.TestCase):
@@ -89,6 +90,7 @@ class LessonsTest(unittest.TestCase):
             ("secret-in-why", {"why": "gh" + "p_" + "a1" * 15 + " leaked."}),
             ("secret-in-rule", {"rule": "Use API key: abcdefghijklmnop for authentication."}),
             ("secret-in-rule", {"rule": "Use glpat-abcdefghijklmnopqrst for GitLab access."}),
+            ("secret-in-rule", {"rule": 'Read credentials {"api_key":"abcdefghijklmnop"} for access.'}),
             ("bad-type", {"type": "random"}),
             ("bad-update-target", {"update": "../escape.md"}),
             ("bad-slug", {"slug": "Not A Slug!"}),
@@ -189,6 +191,18 @@ class LessonsTest(unittest.TestCase):
         self.assertEqual(self.last_log()["outcome"], "saved:create")
         self.assertTrue((main_mem / "feedback-verify-before-relay.md").exists(), "memory goes where the CLI reads it")
         self.assertEqual(list((wt_proj / "memory").iterdir()), [])
+
+    def test_start_directory_is_required_and_found_past_a_big_first_row(self):
+        self.write_transcript([row("user", "x" * 500_000)] + self.wren_rows())
+        self.assertEqual(mod.start_cwd(self.transcript), "/work/proj")
+        with unittest.mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+            self.assertEqual(mod.memory_dir_for(self.transcript, "/work/proj"), self.mem)
+            self.assertIsNone(mod.memory_dir_for(self.transcript, "/work/" + "a" * 160), "key too long for the plain form")
+        self.write_transcript([{k: v for k, v in r.items() if k != "cwd"} for r in self.wren_rows()])
+        self.reply.write_text(json.dumps(GOOD))
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "skip:no-start-dir")
+        self.assertFalse(list(self.mem.glob("feedback-verify*")), "never guess a directory from the hook payload")
 
     def test_window_stops_at_last_compaction_and_skips_summary(self):
         rows = self.wren_rows()

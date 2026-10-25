@@ -32,8 +32,8 @@ Code and the rules it enforces: `scripts/precompact-lessons.py`; behaviour pinne
 
 The memory dir is where the CLI loads auto-memory, which is not always the transcript's own project
 dir (linked worktrees share their main checkout's); `memory_dir_for` and its worktree test are the
-rule. It starts from the session's start directory, not the hook payload's `cwd` (that follows
-`cd`). Known gap: sessions started under `/tmp` map to a bare `-tmp` project dir in the CLI; the
+rule. It starts from the session's start directory, read from the transcript, not the hook payload's
+`cwd` (that follows `cd`); with no start directory found the run is skipped. Known gap: sessions started under `/tmp` map to a bare `-tmp` project dir in the CLI; the
 hook does not follow that. A symlinked memory dir, or a state dir inside it, is refused
 (`skip:memory-dir-redirected`). Writes take a `flock` outside that dir and are atomic (temp file
 plus rename). The size cap applies to new files as well as updates. The hook process itself
