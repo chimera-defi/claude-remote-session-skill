@@ -12,6 +12,7 @@ outcome. Every outcome is one line in the state log. Design and knobs: reference
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -163,7 +164,8 @@ class Lock:
                 return self
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("memory dir lock busy")
+                    self.fh.close()
+                    raise TimeoutError("lock busy")
                 time.sleep(0.2)
 
     def __exit__(self, *exc: Any) -> None:
@@ -255,6 +257,9 @@ NOT_HUMAN_TAGS = (r"system-reminder|cross-session-message|task-notification|loca
                   r"|user-prompt-submit-hook")
 NOT_HUMAN_RE = re.compile(rf"<({NOT_HUMAN_TAGS})\b[^>]*>.*?</\1>", re.S)
 NOT_HUMAN_OPEN_RE = re.compile(rf"<(?:{NOT_HUMAN_TAGS})\b")
+NOT_HUMAN_CLOSE_RE = re.compile(rf"</(?:{NOT_HUMAN_TAGS})>")
+# another session's or task's words: their body may hold a closing tag, so nothing after the opening one counts
+FOREIGN_OPEN_RE = re.compile(r"<(?:cross-session-message|task-notification)\b")
 
 
 def _is_boundary(line: bytes) -> bool:
@@ -296,13 +301,15 @@ def read_rows(path: Path, size: int) -> list[dict[str, Any]]:
 
 READ_CMD = re.compile(r"(?:^|[\s;&|(`])(?:cat|head|tail|less|more|bat|nl|sed\s+-n|rtk\s+read)\s")
 BOOT_FILE = re.compile(r"(?<![\w.-])(?:BOOT|START)\.md(?![\w.-])")
+SHELL_COMMENT = re.compile(r"(?m)(?:^|\s)#.*$")
 
 
 def _reads_boot_file(block: dict[str, Any], signal_text: str) -> bool:
     """A Read, or a cat-style Bash command, of the persona's BOOT.md or START.md: what a Wren session opens with.
 
     A Bash command may read the file as `cd <persona dir> && for f in START.md ...; do cat $f`, so it needs
-    the dir, a boot file name and a reader command, not one literal path.
+    the dir, a boot file name and a reader command, not one literal path. That is a heuristic for telling
+    sessions apart, not a boundary: what a lesson may say is held by the evidence rule, not by this gate.
     """
     args = block.get("input")
     if not isinstance(args, dict):
@@ -310,7 +317,7 @@ def _reads_boot_file(block: dict[str, Any], signal_text: str) -> bool:
     if block.get("name") == "Read":
         return re.search(re.escape(signal_text) + r"(?:BOOT|START)\.md$", str(args.get("file_path", ""))) is not None
     if block.get("name") == "Bash":
-        command = str(args.get("command", ""))
+        command = SHELL_COMMENT.sub("", str(args.get("command", "")))
         return signal_text in command and BOOT_FILE.search(command) is not None \
             and READ_CMD.search(command) is not None
     return False
@@ -369,7 +376,10 @@ def _human_texts(row: dict[str, Any]) -> list[str]:
         return []
     texts = []
     for text in _text_blocks(content):
-        text = NOT_HUMAN_RE.sub("", text)
+        foreign = FOREIGN_OPEN_RE.search(text)
+        text = NOT_HUMAN_RE.sub("", text[:foreign.start()] if foreign else text)
+        if NOT_HUMAN_CLOSE_RE.search(text):
+            continue  # a closing tag with no opener: the wrapper was broken from inside, so none of it is trusted
         unclosed = NOT_HUMAN_OPEN_RE.search(text)
         text = _clip(text[:unclosed.start()] if unclosed else text, 700)
         if text:
@@ -638,7 +648,8 @@ def recently_reviewed(session: str | None) -> bool:
     for line in reversed(lines):
         try:
             event = json.loads(line)
-            if event["session"] != session or str(event["outcome"]).startswith(("skip:", "dry-run:")):
+            if event["session"] != session or event.get("dry_run") \
+                    or str(event["outcome"]).startswith(("skip:", "dry-run:")):
                 continue
             then = datetime.strptime(event["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         except (ValueError, KeyError, TypeError):
@@ -709,17 +720,36 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     return {**base, "outcome": outcome, "file": name, "rule": lesson["rule"], "evidence": _clip(reply["evidence"], 160)}
 
 
+def claim_session(stack: contextlib.ExitStack, session: str) -> bool:
+    """Hold this session's run lock until `stack` closes; False when another worker for it is running.
+
+    The lock is held through the log write, so two overlapping compactions can't both pass the
+    cooldown check. flock goes away with its process, so a killed worker leaves nothing to expire.
+    """
+    try:
+        stack.enter_context(Lock(Path("session") / session, wait=0))
+    except TimeoutError:
+        return False
+    return True
+
+
 def worker(job_file: str, dry_run: bool = False) -> dict[str, Any]:
     job: dict[str, Any] = {}
-    try:
-        job = json.loads(Path(job_file).read_text(encoding="utf-8"))
-        result = run_job(job, dry_run)
-    except BaseException as exc:  # never raise out of the worker
-        result = {"session": job.get("session_id"), "outcome": f"error:{type(exc).__name__}",
-                  "detail": _clip(str(exc), 200)}
-    finally:
-        Path(job_file).unlink(missing_ok=True)
-    log(result)
+    with contextlib.ExitStack() as stack:
+        try:
+            job = json.loads(Path(job_file).read_text(encoding="utf-8"))
+            if job.get("session_id") and not dry_run and not claim_session(stack, str(job["session_id"])):
+                result = {"session": job.get("session_id"), "trigger": job.get("trigger"), "outcome": "skip:in-flight"}
+            else:
+                result = run_job(job, dry_run)
+        except BaseException as exc:  # never raise out of the worker
+            result = {"session": job.get("session_id"), "outcome": f"error:{type(exc).__name__}",
+                      "detail": _clip(str(exc), 200)}
+        finally:
+            Path(job_file).unlink(missing_ok=True)
+        if dry_run:
+            result["dry_run"] = True
+        log(result)
     return result
 
 

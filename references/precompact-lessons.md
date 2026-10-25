@@ -16,16 +16,21 @@ Code and the rules it enforces: `scripts/precompact-lessons.py`; behaviour pinne
    file) within its first 40 tool calls. A mention in text or tool output, another file of that dir,
    an edit of it, or a compaction summary naming it does not count. `CRSS_LESSONS=all` skips this
    check; `CRSS_LESSONS=0` turns the hook off. A session continued in a fresh transcript must read
-   the boot file again to qualify.
-3. Two cheap skips follow, both logged. `skip:cooldown`: the log shows a real run for this session
+   the boot file again to qualify. The gate tells sessions apart (a Bash command only has to name the
+   dir, a boot file and a reader, outside comments); the operator-quote rule below is what bounds a lesson.
+3. Cheap skips follow, all logged. `skip:cooldown`: the log shows a real run for this session
    in the last 15 minutes (a subagent's auto-compaction fires the hook with the parent's transcript
-   and no `agent_id`, so the hook can't tell it apart). `skip:session-saved-memory`: the window shows
+   and no `agent_id`, so the hook can't tell it apart; dry runs, marked `dry_run`, don't count).
+   `skip:in-flight`: another worker for this session holds its run lock (an `flock`, held until the log
+   line is written, so overlapping compactions can't both review). `skip:session-saved-memory`: the window shows
    an Edit or Write into the target dir or any `~/.claude/projects/*/memory/` dir, so the session
    already saved its own lesson.
 4. It builds a window from the last `compact_boundary` to the recorded size: every operator turn
    (capped), plus assistant and tool-call lines newest-first within a budget. Tool results never
    enter the window. Sidechain, meta, compaction-summary, notification, cross-session-message and
-   `<system-reminder>` text are dropped.
+   `<system-reminder>` text are dropped; from the first cross-session-message or task-notification tag
+   on, a text block is dropped whole (its body can contain a closing tag), as is a block with a closing
+   tag that has no opener.
 5. It runs `claude -p --model haiku --effort high --tools "" --setting-sources ""` from an empty
    temp dir with `--settings '{"disableAllHooks": true}'` (no settings, hooks, CLAUDE.md or
    memory: about 4k input tokens) and an allowlisted environment (`PATH`, `HOME`, auth and proxy
