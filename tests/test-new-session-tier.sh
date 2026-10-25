@@ -186,7 +186,9 @@ SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$S
 field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(sys.argv[2],{}).get(sys.argv[3]))' "$@"; }
 mkdir -p "$HOME/.claude"
 echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"other@market":true}}' > "$SP_ON"
+chmod 600 "$SP_ON"; echo stale > "$SP_OFF"; chmod 664 "$SP_OFF"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "derived takes the private mode of rc-firstparty, not the umask default" "$(stat -c %a "$SP_OFF")" 600
 ok "derived keeps the base URL (remote-control needs it)" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
 ok "derived keeps the suggestion off-switch" "$(field "$SP_OFF" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
 ok "derived switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
@@ -197,9 +199,10 @@ SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "rerun follows a later edit to rc-firstparty" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://edited.example"
 ok "rerun drops entries rc-firstparty no longer has" "$(field "$SP_OFF" enabledPlugins other@market)" None
 ok "no temp file left behind" "$(find "$HOME/.claude" -name '*.tmp' | wc -l | tr -d ' ')" 0
-echo 'not json' > "$SP_ON"
+echo 'not json' > "$SP_ON"; chmod 600 "$SP_ON"; chmod 664 "$SP_OFF"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "unreadable rc-firstparty: lane still gets a settings file" "$(cat "$SP_OFF")" "not json"
+ok "unreadable rc-firstparty: the copy keeps the private mode too" "$(stat -c %a "$SP_OFF")" 600
 has "unreadable rc-firstparty: failure logged" "$(cat "$HOME/sp.log")" "event=no-superpowers-settings-FAILED"
 rm -f "$SP_ON" "$SP_OFF"
 
