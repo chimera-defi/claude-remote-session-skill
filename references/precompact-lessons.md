@@ -11,22 +11,36 @@ Code and the rules it enforces: `scripts/precompact-lessons.py`; behaviour pinne
 1. The Claude Code `PreCompact` hook starts `precompact-lessons`, which records the transcript
    size, starts a detached worker and exits 0 with no output. It can't block, slow or fail
    compaction (the CLI treats exit 2 or stdout as instructions; this script never does either).
-2. The worker only proceeds for a Wren session: a tool call touching `agents/claude/public/wren/`
-   anywhere in the transcript (or a compaction summary naming it). `CRSS_LESSONS=all` skips this
-   check; `CRSS_LESSONS=0` turns the hook off.
-3. It builds a window from the last `compact_boundary` to the recorded size: every human turn
-   (capped), plus assistant and tool lines newest-first within a budget. Sidechain, meta,
-   compaction-summary and `<system-reminder>` text are dropped.
-4. It runs `claude -p --model haiku --effort high --tools "" --setting-sources ""` from an empty
+2. The worker only proceeds for a Wren session: one that read the persona's `BOOT.md` or
+   `START.md` (a `Read`, or a `cat`-style Bash command naming `agents/claude/public/wren/` and the
+   file) within its first 40 tool calls. A mention in text or tool output, another file of that dir,
+   an edit of it, or a compaction summary naming it does not count. `CRSS_LESSONS=all` skips this
+   check; `CRSS_LESSONS=0` turns the hook off. A session continued in a fresh transcript must read
+   the boot file again to qualify.
+3. Two cheap skips follow, both logged. `skip:cooldown`: the log shows a real run for this session
+   in the last 15 minutes (a subagent's auto-compaction fires the hook with the parent's transcript
+   and no `agent_id`, so the hook can't tell it apart). `skip:session-saved-memory`: the window shows
+   an Edit or Write into the target dir or any `~/.claude/projects/*/memory/` dir, so the session
+   already saved its own lesson.
+4. It builds a window from the last `compact_boundary` to the recorded size: every operator turn
+   (capped), plus assistant and tool-call lines newest-first within a budget. Tool results never
+   enter the window. Sidechain, meta, compaction-summary, notification, cross-session-message and
+   `<system-reminder>` text are dropped.
+5. It runs `claude -p --model haiku --effort high --tools "" --setting-sources ""` from an empty
    temp dir with `--settings '{"disableAllHooks": true}'` (no settings, hooks, CLAUDE.md or
-   memory: about 4k input tokens). The reviewer gets the memory index and replies with one JSON
-   object.
-5. The script, not the model, validates and writes. It rejects dates, PR/issue numbers, hashes,
+   memory: about 4k input tokens) and an allowlisted environment (`PATH`, `HOME`, auth and proxy
+   variables, `LC_*`; not the parent session's id, messaging socket or token). The reviewer gets
+   the memory index and replies with one JSON object, including an `evidence` quote.
+6. The script, not the model, validates and writes. The `evidence` quote must be at least 12
+   characters and appear verbatim (whitespace and case aside) in an operator turn of the window, so a
+   lesson is always tied to something the operator said (`rejected:no-evidence`,
+   `rejected:evidence-not-from-user`). It rejects dates, PR/issue numbers, hashes,
    "X is broken"-style claims and secret-looking strings (in the slug and description too);
    rejects duplicates of any existing memory file (word overlap, or the same rule text for short
    lessons); appends to an existing file when the reviewer names one, else creates a file with
-   the frontmatter the other memory files use and adds one index line.
-6. One line per run goes to `$XDG_STATE_HOME/crss/precompact-lessons.jsonl` (default
+   the frontmatter the other memory files use and adds one index line. The quote goes to the log,
+   not into memory.
+7. One line per run goes to `$XDG_STATE_HOME/crss/precompact-lessons.jsonl` (default
    `~/.local/state/crss/`): `outcome` is `saved:create`, `saved:update`, `nothing-to-save`,
    `skip:*`, `rejected:*` or `error:*`.
 
@@ -76,6 +90,7 @@ key (with `jq` into a temp file) and diff only that subtree.
 |---|---|---|
 | `CRSS_LESSONS` | unset | `0` off; `all` every session, not just Wren |
 | `CRSS_LESSONS_MODEL` / `_EFFORT` / `_TIMEOUT` | `haiku` / `high` / `120` | reviewer call |
+| `CRSS_LESSONS_COOLDOWN` | `900` | seconds between real runs for one session; `0` off; dry runs ignore it |
 | `CRSS_LESSONS_MAX_FILE_BYTES` | `6000` | a new file, or an update that would grow a file, past this is refused |
 | `CRSS_LESSONS_INDEX_MAX_LINES` / `_BYTES` | `190` / `24000` | past this only updates are written, new files are refused (the CLI's own `MEMORY.md` load limit was not found in the binary; these are conservative) |
 | `CRSS_LESSONS_MEMORY_DIR` / `_INDEX_NAME` | derived / `MEMORY.md` | target dir and its index file (usually set in the host config above) |
@@ -86,6 +101,6 @@ key (with `jq` into a temp file) and diff only that subtree.
 `precompact-lessons --sync --dry-run < payload.json` runs the whole pipeline in the foreground
 and prints the outcome without writing memory (payload: `session_id`, `transcript_path`,
 `trigger`). A live check without touching global settings: pass the hook inline
-(`claude -p ... --settings '{"hooks":{"PreCompact":[...]}}'`), do a short Wren-style exchange
-with one correction, then `claude -p --resume <id> "/compact"` and read the log line.
+(`claude -p ... --settings '{"hooks":{"PreCompact":[...]}}'`), have the session read the Wren
+`START.md` (or `BOOT.md`), give it one correction, then `claude -p --resume <id> "/compact"` and read the log line.
 `session-doctor` does not read the log yet; a curator that prunes lessons is a separate piece.
