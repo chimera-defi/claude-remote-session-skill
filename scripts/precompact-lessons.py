@@ -147,6 +147,27 @@ def _checkout_root(cwd: str) -> tuple[str, bool] | None:
     return str(common.parent if common.name == ".git" else common), git_dir != common
 
 
+def start_cwd(transcript: Path) -> str | None:
+    """The directory the session started in: the first row cwd whose project key names this transcript's dir.
+
+    The hook payload's cwd follows the Bash tool's `cd`, so it can point at another repo by compaction time.
+    """
+    name = transcript.resolve().parent.name
+    try:
+        with transcript.open("rb") as fh:
+            head = fh.read(400_000).split(b"\n")[:200]
+    except OSError:
+        return None
+    for line in head:
+        try:
+            cwd = json.loads(line).get("cwd")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(cwd, str) and _project_key(cwd) == name:
+            return cwd
+    return None
+
+
 def memory_dir_for(transcript: Path, cwd: str | None = None) -> Path | None:
     """Where the CLI loads auto-memory for this session.
 
@@ -475,7 +496,7 @@ def run_job(job: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
     size = int(job["size"])
     if os.environ.get("CRSS_LESSONS") != "all" and not has_wren_signal(transcript, size):
         return {**base, "outcome": "skip:no-wren-signal"}
-    memdir = memory_dir_for(transcript, job.get("cwd"))
+    memdir = memory_dir_for(transcript, start_cwd(transcript) or job.get("cwd"))
     if memdir is None:
         return {**base, "outcome": "skip:no-memory-dir"}
     if not contained(memdir):
