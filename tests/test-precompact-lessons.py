@@ -87,6 +87,8 @@ class LessonsTest(unittest.TestCase):
             ("negative-claim-in-rule", {"rule": "Bash cannot execute commands in builders."}),
             ("secret-in-why", {"why": "Auth token: abcd1234efgh5678 was rejected."}),
             ("secret-in-why", {"why": "gh" + "p_" + "a1" * 15 + " leaked."}),
+            ("secret-in-rule", {"rule": "Use API key: abcdefghijklmnop for authentication."}),
+            ("secret-in-rule", {"rule": "Use glpat-abcdefghijklmnopqrst for GitLab access."}),
             ("bad-type", {"type": "random"}),
             ("bad-update-target", {"update": "../escape.md"}),
             ("bad-slug", {"slug": "Not A Slug!"}),
@@ -96,10 +98,12 @@ class LessonsTest(unittest.TestCase):
             got, why = mod.validate({**GOOD, **patch})
             self.assertIsNone(got, patch)
             self.assertEqual(why, reason, patch)
-        for fine in ("Decide 2 owners per lane.", "Market 10 lanes at most."):
+        for fine in ("Decide 2 owners per lane.", "Market 10 lanes at most.", "Never work directly on shared main.",
+                     "Do not work around failing checks.", "Rotate the API key owner field monthly."):
             self.assertIsNotNone(mod.validate({**GOOD, "rule": fine})[0], fine)
-        got, why = mod.validate({**GOOD, "slug": "task-reports-lead-with-finish-line"})
-        self.assertEqual((got["slug"], why), ("feedback-task-reports-lead-with-finish-line", ""), "'sk-' inside a word")
+        for slug in ("task-reports-lead-with-finish-line", "verify-2-independent-sources-before-reporting"):
+            got, why = mod.validate({**GOOD, "slug": slug})
+            self.assertEqual((got["slug"], why), (f"feedback-{slug}", ""), slug)
 
     def test_flows_against_stub_reviewer(self):
         self.write_transcript([row("user", "hello")])
@@ -172,7 +176,7 @@ class LessonsTest(unittest.TestCase):
         key = lambda p: "".join(c if c.isalnum() else "-" for c in str(p))
         projects = self.home / ".claude" / "projects"
         wt_proj = projects / key(work / "wt")
-        wt_proj.mkdir()
+        (wt_proj / "memory").mkdir(parents=True)  # a stale folder here must not attract the lesson
         self.transcript = wt_proj / "sess-1.jsonl"
         self.write_transcript(self.wren_rows())
         self.reply.write_text(json.dumps(GOOD))
@@ -183,7 +187,7 @@ class LessonsTest(unittest.TestCase):
         main_mem = projects / key(work / "main") / "memory"
         self.assertEqual(self.last_log()["outcome"], "saved:create")
         self.assertTrue((main_mem / "feedback-verify-before-relay.md").exists(), "memory goes where the CLI reads it")
-        self.assertFalse((wt_proj / "memory").exists())
+        self.assertEqual(list((wt_proj / "memory").iterdir()), [])
 
     def test_window_stops_at_last_compaction_and_skips_summary(self):
         rows = self.wren_rows()
