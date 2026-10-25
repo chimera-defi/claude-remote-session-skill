@@ -16,8 +16,33 @@ dry() {
   env -u CLAUDE_SESSION_PROFILE -u CLAUDE_SESSION_MODEL -u CLAUDE_SESSION_EFFORT -u CLAUDE_SESSION_ADVISOR \
     -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_STANDARD \
     -u CRSS_COMPACT_WINDOW_LIGHT -u CRSS_COMPACT_WINDOW_DEFAULT \
-    -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
+    -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND -u CRSS_ORCHESTRATOR_PROMPT -u CRSS_AUTONOMOUS \
+    "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
 }
+
+# delegation prompt: Claude orchestrator/owner only, with opt-out and autonomous exclusions
+for profile in orchestrator owner; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  has "$profile appends delegation prompt" "$o" '--append-system-prompt Delegation\ \(operator\ 2026-10-25\,\ keep\ quota\):'
+  hasnt "$profile has no hub prompt" "$o" 'You\ are\ a\ Sonnet\ hub.'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_ORCHESTRATOR_PROMPT=off --)"
+  hasnt "$profile opt-out removes prompt" "$o" '--append-system-prompt'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
+  hasnt "$profile autonomous skips delegation" "$o" 'Delegation\ \(operator'
+  has "$profile autonomous keeps Agent disabled" "$o" '--disallowedTools Agent'
+done
+for profile in builder copywriter; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasnt "$profile has no appended prompt" "$o" '--append-system-prompt'
+done
+o="$(dry CLAUDE_SESSION_PROFILE=hub --)"
+has "hub keeps consult prompt" "$o" '--append-system-prompt You\ are\ a\ Sonnet\ hub.'
+hasnt "hub has no delegation prompt" "$o" 'Delegation\ \(operator'
+o="$(dry CRSS_AUTONOMOUS=1 CLAUDE_SESSION_PROFILE=hub --)"
+has "autonomous hub keeps bounded prompt" "$o" '--append-system-prompt Autonomous\ bounded\ session:'
+hasnt "autonomous hub has no delegation prompt" "$o" 'Delegation\ \(operator'
+o="$(dry A=1 -- --backend codex)"
+hasre "Codex has no Claude flags" "$o" '^CLAUDE_EXTRA_FLAGS=$'
 
 # tiers
 o="$(dry A=1 --)"
