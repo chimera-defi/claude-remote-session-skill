@@ -61,7 +61,8 @@ Safety guarantees:
   worktree another unit runs from gets `KEEP:` and no command; `status=DIRTY` gets removal
   without `--force`/`branch -D` plus a `NOTE:`; a worktree with non-regenerable gitignored
   files gets a `NOTE:` and `session-doctor archive-ignored <worktree> &&` chained ahead of
-  `remove:`.
+  `remove:`; a plain folder with no git repo is listed as `status=not-a-worktree`, outside the
+  candidate count, with no command.
 - **`idle-report` is report-only** ([`docs/idle-report.md`](../docs/idle-report.md)): rows are
   alive, so `reap-local` won't touch them; you reap by hand.
 

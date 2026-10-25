@@ -607,8 +607,24 @@ _record_reap_event() {
 # dirty check (same ignore regex) so a fresh, otherwise-untouched worktree
 # doesn't look dirty just because the spawner touched it. Before this fix,
 # EVERY worktree was reported DIRTY unconditionally.
+#
+# "not-a-worktree" when git status fails AND there is no repo at all: no .git
+# entry in the folder and git finds none above it (a plain folder someone left
+# under the worktrees dir). Every other git status failure — a .git file whose
+# gitdir is gone (an orphan worktree that may still hold work), a repo git
+# refuses to open — stays DIRTY. Callers act only on "clean", so both are
+# fail-closed; the distinct label only keeps plain folders from reading as
+# dirty worktrees.
 _wt_dirty() {
-  local out; out="$(git -C "$1" status --porcelain 2>/dev/null)" || { echo DIRTY; return; }
+  local out
+  if ! out="$(git -C "$1" status --porcelain 2>/dev/null)"; then
+    if [ ! -e "$1/.git" ] && ! git -C "$1" rev-parse --git-dir >/dev/null 2>&1; then
+      echo not-a-worktree
+    else
+      echo DIRTY
+    fi
+    return
+  fi
   if [ -n "$out" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$out"; then
     echo DIRTY
   else
@@ -1197,6 +1213,10 @@ _tsv_git_status() {
     _TSV_LANDED="no-worktree"; _TSV_DIRTY="unknown"
   else
     _TSV_DIRTY="$(_wt_dirty "$cwd")"
+    # Defensive: git already found a repo to get here, so _wt_dirty should
+    # never answer not-a-worktree; if it does, report unknown to keep the TSV
+    # vocabulary that session-compact.sh validates.
+    [ "$_TSV_DIRTY" = not-a-worktree ] && _TSV_DIRTY=unknown
     mainrepo="$(_wt_mainrepo "$cwd")"
     if [ -n "$mainrepo" ]; then
       landedinfo="$(_wt_landed "$cwd" "$mainrepo")"
@@ -2112,7 +2132,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
   worktree-stale)
     echo "=== ~/.claude/worktrees/ dirs with no live owning session (NOT auto-removed) ==="
     WT_BASE="$HOME/.claude/worktrees"
-    cand=0; kept=0
+    cand=0; kept=0; nonwt=0
     wti_list="$(mktemp)"
     for wt in "$WT_BASE"/*/; do
       [ -d "$wt" ] || continue
@@ -2133,8 +2153,17 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       if [ -n "$tm" ] && _tmux_live_has "$tm" && proc_alive "$tm"; then
         continue
       fi
-      cand=$((cand+1))
       dirty="$(_wt_dirty "$wt")"
+      # A plain folder (no git repo at all) has nothing to remove with git:
+      # list it so it is visible, but outside the candidate count and with no
+      # command.
+      if [ "$dirty" = not-a-worktree ]; then
+        printf '  %-60s status=not-a-worktree\n' "$wt"
+        printf '    NOTE: plain folder, not a git work tree — never offered for removal; inspect it by hand\n'
+        nonwt=$((nonwt+1))
+        continue
+      fi
+      cand=$((cand+1))
       # Resolve the main repo this worktree belongs to, so the removal command
       # below is copy-pasteable without the reviewer having to hunt for the
       # repo, and so landed-ness can be checked against its REAL default
@@ -2162,8 +2191,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # the NOTE says `status --ignored`) and no `branch -D`. Clean rows
         # keep `--force`: _wt_dirty deliberately ignores the spawner's untracked
         # .claude/* + .sessions-init-* baseline, which git still counts as
-        # untracked and plain remove would refuse over.
-        rmforce=" --force"; [ "$dirty" = DIRTY ] && rmforce=""
+        # untracked and plain remove would refuse over. Positive match on
+        # clean, so any status other than clean never earns --force.
+        rmforce=""; [ "$dirty" = clean ] && rmforce=" --force"
         # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
         # deletes it and status=clean never shows it. When there is some, the
         # archive step is chained AHEAD of the printed remove command (so pasting
@@ -2179,7 +2209,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # reachable once the worktree is gone — `reap` never deletes it either.
           # A squash-merged branch reads landed=yes via the content fallback, or via
           # a merged PR containing HEAD (_wt_pr_landed): a suggestion, never a wrong delete.
-          if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
+          if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" = clean ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
           else
@@ -2209,6 +2239,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     rm -f "$wti_list"
     keepnote=""
     [ "$kept" -gt 0 ] && keepnote=", $kept KEEP (in use by a systemd unit — no removal command printed)"
+    [ "$nonwt" -gt 0 ] && keepnote="$keepnote, $nonwt not-a-worktree (plain folder — not counted, no command)"
     echo "  --- $cand candidate(s)$keepnote. VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;
   idle-report)
