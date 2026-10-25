@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# session-send.sh — follow up with a running tmux session or Codex desktop thread.
-# tmux sends delegate to session-handoff.sh; codex: targets use codex-send.
+# session-send.sh — relay a follow-up message into an ALREADY-RUNNING session,
+# under a shorter name than `session-handoff send`. All the mechanics (queued-
+# input handling, bracketed paste, whitespace-only rejection, Enter + landed/
+# unverified verdict) live in session-handoff.sh's `send` mode — this is a
+# thin passthrough, not a second copy of that logic. A codex: target goes to
+# codex-send instead: a Codex desktop thread, queued through its local
+# app-server socket (replies still come by the bus).
 #
 # Usage:
 #   session-send <tmux-session> <msg>
 #   session-send <tmux-session> --file <path>
 #   session-send codex:list [--limit N] [--json]
 #   session-send codex:<cs-ref> [--expect-identity <id>] (<msg> | --file <path>)
+# Exit (both kinds): 0 sent, 1 unverified/uncertain (codex: do NOT resend), 2 refused (not sent).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
