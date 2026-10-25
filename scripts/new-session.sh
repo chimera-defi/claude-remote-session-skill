@@ -1011,6 +1011,12 @@ SCRIPT_EOF
 #                  `--continue` with no prior conversation just starts fresh (checked
 #                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
+  # The loop is typed into the pane by `tmux send-keys '...'`, so a literal ' in the flags (printf %q writes an
+  # apostrophe as \') would end that quote early and leave the start script unparseable (orchestrator/owner
+  # spawns since the delegation prompt gained apostrophes). Close the quote, emit a quoted ', reopen: the pane
+  # still receives the %q text unchanged.
+  _sq="'"; _sq_esc="'\\''"
+  CLAUDE_EXTRA_FLAGS_SQ="${CLAUDE_EXTRA_FLAGS//"$_sq"/$_sq_esc}"
   cat >> "$SCRIPT" << SCRIPT_EOF
 ${COMPACT_WINDOW:+tmux send-keys -t "${SESSION}" 'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=$COMPACT_WINDOW' Enter
 }tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
@@ -1034,12 +1040,12 @@ while true; do
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
     RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
   else
     touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi

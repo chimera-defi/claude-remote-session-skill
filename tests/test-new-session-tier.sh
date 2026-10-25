@@ -203,6 +203,59 @@ ok "unreadable rc-firstparty: lane still gets a settings file" "$(cat "$SP_OFF")
 has "unreadable rc-firstparty: failure logged" "$(cat "$HOME/sp.log")" "event=no-superpowers-settings-FAILED"
 rm -f "$SP_ON" "$SP_OFF"
 
+# Every profile's start script must parse, and so must the text it types into the pane. The loop rides in
+# `tmux send-keys '...'`, so an apostrophe in an interpolated flag (printf %q writes it as \') used to close that
+# quote and leave the whole script unparseable: orchestrator/owner spawns died at once on the apostrophes in the
+# delegation prompt. The fresh-launch line is then run against a stub claude to prove the pane's shell hands claude
+# the prompt as ONE intact argument, including a prompt full of quote characters and expansions.
+printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done\n' > "$HOME/stub-claude"; chmod +x "$HOME/stub-claude"
+# an autonomous spawn asks the admission authority first; this throwaway-HOME stub says yes so its script can be generated
+printf 'import sys\nsys.exit(0)\n' > "$HOME/stub-admit.py"
+typed() {  # start script on stdin -> the text its main send-keys literal types into the pane
+  local lit; lit="$(awk '/^tmux send-keys -t .* .LOG_FILE=/{f=1} f{print} f&&/^done.$/{exit}')"
+  bash -c "tmux() { shift 3; printf '%s' \"\$1\"; }
+$lit"
+}
+launch_argv() {  # typed pane text on stdin -> the argv its fresh-launch line gives claude, one per line
+  local line; line="$(grep -- '--dangerously-skip-permissions' | grep -- '--remote-control [^ ]*$' | head -1)"
+  bash -c "$line"
+}
+for spec in orchestrator owner hub builder copywriter "orchestrator CRSS_AUTONOMOUS=1" "owner CRSS_AUTONOMOUS=1" \
+            "hub CRSS_AUTONOMOUS=1" "builder CRSS_AUTONOMOUS=1"; do
+  set -- $spec; profile="$1"; shift
+  SCR="$(CLAUDE_SESSION_PROFILE="$profile" gen CRSS_CLAUDE_BIN="$HOME/stub-claude" AGENT_HOST_ADMISSION_CLI="$HOME/stub-admit.py" "$@")"
+  has "$spec: start script generated" "$SCR" "tmux send-keys"
+  printf '%s\n' "$SCR" > "$HOME/ss.sh"
+  ok "$spec: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+  typed <<<"$SCR" > "$HOME/typed.sh"
+  has "$spec: pane text extracted" "$(cat "$HOME/typed.sh")" "--remote-control"
+  ok "$spec: pane text parses" "$(bash -n "$HOME/typed.sh" 2>&1; echo "rc=$?")" "rc=0"
+done
+set --
+SCR="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+ARGV="$(typed <<<"$SCR" | launch_argv)"
+ok "orchestrator: the default delegation prompt arrives as one argument" \
+  "$(awk 'p{print substr($0,1,26); exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "Delegation (operator 2026-"
+ok "orchestrator: its apostrophes arrive intact" "$(grep -c "slice's test" <<<"$ARGV")" 1
+NASTY="it's a \"test\" with \$HOME, \`date\`, \$(touch \$HOME/pwned), 'quoted' text, a \\ and a trailing quote'"
+rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
+NASTY="$NASTY" python3 - "$HOME/scripts-nasty/new-session.sh" <<'PY'
+import os, re, sys
+p = sys.argv[1]
+s = open(p).read()
+new = "ORCHESTRATOR_DELEGATION_PROMPT='" + os.environ["NASTY"].replace("'", "'\\''") + "'"
+s2 = re.sub(r"^ORCHESTRATOR_DELEGATION_PROMPT=.*$", lambda m: new, s, count=1, flags=re.M)
+assert s2 != s
+open(p, "w").write(s2)
+PY
+SCR="$(NS="$HOME/scripts-nasty/new-session.sh" CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+printf '%s\n' "$SCR" > "$HOME/ss.sh"
+ok "hostile prompt: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+ARGV="$(typed <<<"$SCR" | launch_argv)"
+ok "hostile prompt reaches claude byte for byte" "$(awk 'p{print; exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "$NASTY"
+ok "hostile prompt: nothing in it was executed" "$(yn test -e "$HOME/pwned")" no
+rm -rf "$HOME/scripts-nasty"
+
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"
 ABSENT="/tmp/crss-newsession-overlay-absent-$$-nonexistent"
