@@ -90,7 +90,7 @@ class LessonsTest(unittest.TestCase):
             ("secret-in-why", {"why": "gh" + "p_" + "a1" * 15 + " leaked."}),
             ("secret-in-rule", {"rule": "Use API key: abcdefghijklmnop for authentication."}),
             ("secret-in-rule", {"rule": "Use glpat-abcdefghijklmnopqrst for GitLab access."}),
-            ("secret-in-rule", {"rule": 'Read credentials {"api_key":"abcdefghijklmnop"} for access.'}),
+            ("secret-in-rule", {"rule": "Read credentials " + json.dumps({"api" + "_key": "q9" * 8}) + " for access."}),
             ("bad-type", {"type": "random"}),
             ("bad-update-target", {"update": "../escape.md"}),
             ("bad-slug", {"slug": "Not A Slug!"}),
