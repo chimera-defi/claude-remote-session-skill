@@ -125,7 +125,7 @@ After merge, for each changed deployable:
 
 | Repo source | Deployed to | How |
 |---|---|---|
-| `scripts/<x>.sh` | `~/.local/bin/<x>` | `diff` first, then `install -m 755` |
+| `scripts/<x>.sh`, `scripts/<x>.py` | `~/.local/bin/<x>` | `diff` first, then `install -m 755` |
 | `agents/<name>.md` | `~/.claude/agents/<name>.md` | `diff` first, then `install -m 644` |
 | `SKILL.md`, `handoff/`, `references/`, `.claude/commands/create-session.md` | symlinked from the canonical checkout | canonical checkout must be on `origin/main` |
 

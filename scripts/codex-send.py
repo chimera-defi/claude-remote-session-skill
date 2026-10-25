@@ -83,7 +83,6 @@ class Audit:
         row["error"] = error.replace(self.message, "[message]")[:256] if self.message else error[:256]
         directory = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "crss"
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(directory, 0o700)
         fd = os.open(directory / "codex-send.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             os.fchmod(target.fileno(), 0o600)
@@ -157,11 +156,12 @@ def module_send(bridge: Any, args: argparse.Namespace, message: str, audit: Audi
         if is_pending and args.expect_identity and record.get("destination_identity") != args.expect_identity:
             mismatch = True
         # The module invokes this again on its exception path; only pending may raise.
+        # RuntimeError (not ValueError) is what the module turns into "not dispatched".
         if is_pending:
-            audit.write(record)
             if mismatch:
                 audit.write({**record, "outcome": "REFUSED_IDENTITY_MISMATCH", "queue_uncertain": False})
                 raise RuntimeError("destination identity changed before dispatch")
+            audit.write(record)
         else:
             if mismatch:
                 record = {**record, "outcome": "REFUSED_IDENTITY_MISMATCH", "queue_uncertain": False}
