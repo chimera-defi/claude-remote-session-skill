@@ -28,7 +28,7 @@ Never:
 
 ## Bench evidence
 
-Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm)) and the follow-up routing bench (private repo `model-routing-bench`); ids and flags as of those benches, a host overlay may override them.
+Model bench 2026-10-22 ([private report](https://claude.ai/artifact/E9zfBpSipyg7kS1aP9Luhm)) and the follow-up routing bench (private repo `dispatchbench`, formerly `model-routing-bench`); ids and flags as of those benches, a host overlay may override them.
 
 - Small coding tasks: 18 configs, 198 runs, all passed; higher effort changed neither correctness nor speed on these ceiling tasks.
 - Tools off: Haiku 5.5 low led at 4.54 s, $0.0003.
