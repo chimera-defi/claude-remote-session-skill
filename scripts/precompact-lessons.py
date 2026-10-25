@@ -132,26 +132,28 @@ def _project_key(path: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
-def _checkout_root(cwd: str) -> str | None:
-    """Main checkout for a git working tree or linked worktree (None when cwd is not in a repo)."""
+def _checkout_root(cwd: str) -> tuple[str, bool] | None:
+    """(main checkout, is-a-linked-worktree) for a git working tree; None when cwd is not in a repo."""
     try:
-        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--path-format=absolute", "--git-dir",
+                              "--git-common-dir"], capture_output=True, text=True, timeout=10,
+                             stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
         return None
-    common = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() else None
-    if common is None:
+    lines = out.stdout.split("\n") if out.returncode == 0 else []
+    if len(lines) < 2 or not lines[0] or not lines[1]:
         return None
-    return str(common.parent if common.name == ".git" else common)
+    git_dir, common = Path(lines[0]), Path(lines[1])
+    return str(common.parent if common.name == ".git" else common), git_dir != common
 
 
 def memory_dir_for(transcript: Path, cwd: str | None = None) -> Path | None:
     """Where the CLI loads auto-memory for this session.
 
-    A linked worktree shares its main checkout's memory, so the transcript's own project dir is
-    wrong for those sessions. Candidates, in order: main checkout, cwd, transcript's project dir.
-    The first with an existing memory dir wins, else the first one (a repo only ever used through
-    worktrees has no memory dir yet; the CLI will read it once written).
+    A linked worktree shares its main checkout's memory, so its own project dir is the wrong place
+    even when that dir has a memory folder. In a main checkout (or a subdirectory of one) the
+    checkout's or the cwd's dir wins, whichever already has memory, else the checkout's. Outside
+    git it is the cwd's, and with no cwd the transcript's own project dir.
     """
     override = os.environ.get("CRSS_LESSONS_MEMORY_DIR")
     if override:
@@ -160,11 +162,14 @@ def memory_dir_for(transcript: Path, cwd: str | None = None) -> Path | None:
     own = transcript.resolve().parent
     if own.parent != projects:
         return None
-    keys = []
-    if cwd:
-        root = _checkout_root(cwd)
-        keys = [_project_key(p) for p in (root, cwd) if p]
-    candidates = [projects / k for k in dict.fromkeys(keys) if len(k) <= 150] + [own]
+    found = _checkout_root(cwd) if cwd else None
+    if found and found[1]:
+        paths = [found[0]]
+    elif found:
+        paths = [found[0], cwd]
+    else:
+        paths = [cwd] if cwd else []
+    candidates = [projects / k for k in dict.fromkeys(_project_key(p) for p in paths) if len(k) <= 150] or [own]
     for proj in candidates:
         if (proj / "memory").is_dir():
             return proj / "memory"
@@ -350,14 +355,17 @@ DATEISH = re.compile(
 REFNUM = re.compile(
     r"\b(?:PR|issue|pull|ticket)\s*#?\d+|#\d+|\bcommit\s+[0-9a-f]{6,40}\b|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b", re.I)
 NEGATIVE = re.compile(
-    r"(?:does not|doesn't|do not|don't|won't|no longer|never) work|not working|is broken|are broken"
-    r"|is unavailable|is unsupported|always (?:fails|breaks)"
-    r"|(?:cannot|can't|unable to) (?:be )?(?:use|used|run|execute|call|access)", re.I)
-SECRET = re.compile(
+    r"(?:does not|doesn't|won't|no longer) works?\b|never works\b|(?:do not|don't|never) work(?=\s*(?:[.,;:!?)]|$|anymore|"
+    r"properly|reliably|at all|as expected|correctly))|not working|(?:is|are) broken|is unavailable|is unsupported"
+    r"|always (?:fails|breaks)|(?:cannot|can't|unable to) (?:be )?(?:use|used|run|execute|call|access)", re.I)
+SECRET_PREFIXED = re.compile(
     r"\bsk-[A-Za-z0-9_-]{16,}|bearer\s+\S{12,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[baprs]-\S{10,}"
-    r"|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN"
-    r"|(?=[A-Za-z0-9+/=_-]*\d)(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{32,}"
-    r"|(?:api[_-]?key|secret|passw(?:or)?d|token)\s*[:=]\s*\S{8,}", re.I)
+    r"|\b(?:glpat|pypi|shpat|npm)[-_][A-Za-z0-9_-]{16,}|\bAIza[0-9A-Za-z_-]{30,}|\bya29\.\S{20,}"
+    r"|\b[sr]k_(?:live|test)_\S{16,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN", re.I)
+SECRET = re.compile(
+    SECRET_PREFIXED.pattern
+    + r"|(?=[A-Za-z0-9+/=_-]*\d)(?=[A-Za-z0-9+/=_-]*[A-Za-z])[A-Za-z0-9+/=_-]{32,}"
+    r"|(?:api[ _-]?key|secret|passw(?:or)?d|token)\s*[:=]\s*\S{8,}", re.I)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{2,60}$")
 FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
 
@@ -396,7 +404,7 @@ def validate(reply: dict[str, Any]) -> tuple[dict[str, str | None] | None, str]:
         slug = ""
     else:
         slug = slug if slug.startswith(f"{kind}-") else f"{kind}-{slug}"
-        if not SLUG.match(slug) or SECRET.search(slug) or REFNUM.search(slug) or DATEISH.search(slug):
+        if not SLUG.match(slug) or SECRET_PREFIXED.search(slug) or REFNUM.search(slug) or DATEISH.search(slug):
             return None, "bad-slug"
     return {"type": kind, "slug": slug, "description": desc, "rule": rule, "why": why, "update": update}, ""
 
