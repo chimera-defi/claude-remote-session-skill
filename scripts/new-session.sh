@@ -223,6 +223,11 @@ CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 --exclude-dynamic-system-prompt-sections (a
                                 prompt-cache-reuse win). Unknown values fall back
                                 to orchestrator with a warning.
+                                builder/copywriter (and any profile under
+                                CRSS_AUTONOMOUS=1) also launch with the Superpowers
+                                plugin switched off (its SessionStart hook costs ~900
+                                tokens per start/clear/compact); orchestrator, owner
+                                and hub keep it.
 
 Examples:
   new-session my-project                                                     # orchestrator + claude-opus-5-5 (pinned)
@@ -576,6 +581,16 @@ ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): yo
 # user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
+# Superpowers plugin: its SessionStart hook (startup|clear|compact) injects ~900 tokens on every start, clear
+# and compact, on top of ~840 always-on tokens, and its text pushes the brainstorming skill before any reply,
+# the wrong habit for a cheap builder lane. Builder, copywriter and autonomous spawns (any profile) run
+# without it; orchestrator, owner and hub keep it. Repeated --settings flags REPLACE each other (probed on CLI
+# 2.1.308: the last file wins, the first one's env is gone), so a second layer would drop rc-firstparty's
+# ANTHROPIC_BASE_URL and break remote-control registration. Instead the start script derives ONE file from
+# the healed rc-firstparty layer with the plugin switched off, and the launch lines point at that file.
+SUPERPOWERS=on
+SUPERPOWERS_PLUGIN="superpowers@claude-plugins-official"
+SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json"
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
   HUB_CONSULT_PROMPT='Autonomous bounded session: no child agents, advisor fanout, compaction, polling or self-restarts. Finish one finite task, record its result and stop. Operator judgment requires a separately admitted frozen packet.'
   CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --disallowedTools Agent"
@@ -603,6 +618,9 @@ if [ "$BACKEND" = claude ]; then
     *) if [ "$COMPACT_WINDOW" -lt 100000 ] || [ "$COMPACT_WINDOW" -gt 2000000 ]; then
          echo "new-session: compact window '$COMPACT_WINDOW' out of range (100000..2000000, or 'host')" >&2; exit 2; fi ;;
   esac
+  case "$PROFILE" in builder|copywriter) SUPERPOWERS=off ;; esac
+  [ "${CRSS_AUTONOMOUS:-0}" != 1 ] || SUPERPOWERS=off
+  [ "$SUPERPOWERS" = on ] || SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty-no-superpowers.settings.json"
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     orchestrator|owner)
@@ -621,7 +639,7 @@ if [ "$BACKEND" = claude ]; then
   [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id or none)" >&2; exit 2; }
   [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"
 else
-  CLAUDE_EXTRA_FLAGS=""; ADVISOR=none
+  CLAUDE_EXTRA_FLAGS=""; ADVISOR=none; SUPERPOWERS=n/a
 fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
@@ -796,6 +814,7 @@ if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   [ -z "$TIER_AUTO_TYPE" ] || printf 'TIER_AUTO=%s\n' "$TIER_AUTO_TYPE"
+  printf 'SUPERPOWERS=%s\nSETTINGS_FILE=%s\n' "$SUPERPOWERS" "$SETTINGS_FILE"
   printf 'QUOTA=%s\n' "$QUOTA_RESULT"
   exit 0
 fi
@@ -917,6 +936,22 @@ f=sys.argv[1];d=json.load(open(f));e=d.setdefault('env',{})
 if 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' not in e:
     e['CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION']='0';json.dump(d,open(f,'w'));open(f,'a').write('\\n')
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json 2>/dev/null || true
+# superpowers-free lane: derive the launch settings file from the healed rc-firstparty layer above (so the
+# base URL and suggestion switch carry over) with ${SUPERPOWERS_PLUGIN} switched off. Rebuilt on every start so
+# it follows later edits to rc-firstparty; tmp + rename because lanes share the file. If the derive fails the
+# lane still starts, with a plain copy (plugin on) rather than a missing --settings file.
+if [ "${SUPERPOWERS}" = off ]; then
+  python3 -c "
+import json,os,sys
+src,dst,plugin=sys.argv[1:4]
+d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
+tmp=dst+'.'+str(os.getpid())+'.tmp'
+f=open(tmp,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
+" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
+    cp ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
+  }
+fi
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
@@ -999,12 +1034,12 @@ while true; do
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
     RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
   else
     touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
