@@ -30,7 +30,7 @@ Code and the rules it enforces: `scripts/precompact-lessons.py`; behaviour pinne
    `~/.local/state/crss/`): `outcome` is `saved:create`, `saved:update`, `nothing-to-save`,
    `skip:*`, `rejected:*` or `error:*`.
 
-The memory dir is where the CLI loads auto-memory, which is not always the transcript's own project
+By default the memory dir is where the CLI loads auto-memory, which is not always the transcript's own project
 dir (linked worktrees share their main checkout's); `memory_dir_for` and its worktree test are the
 rule. It starts from the session's start directory, read from the transcript, not the hook payload's
 `cwd` (that follows `cd`); with no start directory found the run is skipped. Known gap: sessions started under `/tmp` map to a bare `-tmp` project dir in the CLI; the
@@ -40,6 +40,24 @@ plus rename). The size cap applies to new files as well as updates. The hook pro
 only logs through a non-blocking open, so a broken log path can't stall compaction.
 The reviewer does not see the target file's body, so duplicate detection is the script's
 word-overlap check, not the model's judgement.
+
+## Pointing it at a lessons dir (host config)
+
+A hook runs with none of crss's environment, so a host sets its target in
+`${CRSS_HOME:-~/.config/crss}/precompact-lessons.env`: plain `KEY=VALUE` lines, `#` comments, only
+`CRSS_LESSONS_*` keys are read, and a variable already in the environment wins. Two keys matter:
+
+```
+CRSS_LESSONS_MEMORY_DIR=<dir that holds the lesson files>
+CRSS_LESSONS_INDEX_NAME=INDEX.md
+```
+
+`CRSS_LESSONS_MEMORY_DIR` replaces the per-project auto-memory dir (the project-key logic is skipped).
+`CRSS_LESSONS_INDEX_NAME` (default `MEMORY.md`) names that dir's index; it is guarded exactly like
+`MEMORY.md` (never an update target, never scanned for duplicates, subject to the index caps) and new
+index lines go after the last list item, so a closing note in the index stays last. The hook only
+writes files: it never runs `git`, so lessons saved into a version-controlled dir are left
+uncommitted for a human or an orchestrator to review and commit.
 
 ## Install (global settings, operator-approved)
 
@@ -60,7 +78,8 @@ key (with `jq` into a temp file) and diff only that subtree.
 | `CRSS_LESSONS_MODEL` / `_EFFORT` / `_TIMEOUT` | `haiku` / `high` / `120` | reviewer call |
 | `CRSS_LESSONS_MAX_FILE_BYTES` | `6000` | a new file, or an update that would grow a file, past this is refused |
 | `CRSS_LESSONS_INDEX_MAX_LINES` / `_BYTES` | `190` / `24000` | past this only updates are written, new files are refused (the CLI's own `MEMORY.md` load limit was not found in the binary; these are conservative) |
-| `CRSS_LESSONS_MEMORY_DIR`, `_STATE`, `_CLAUDE`, `_SIGNAL` | derived | overrides for tests and odd layouts |
+| `CRSS_LESSONS_MEMORY_DIR` / `_INDEX_NAME` | derived / `MEMORY.md` | target dir and its index file (usually set in the host config above) |
+| `CRSS_LESSONS_STATE`, `_CLAUDE`, `_SIGNAL` | derived | overrides for tests and odd layouts |
 
 ## Check it works
 
