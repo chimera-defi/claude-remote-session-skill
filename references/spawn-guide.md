@@ -4,7 +4,7 @@ Detail moved out of `SKILL.md` (which every spawn loads) on 2026-10-15; text unc
 
 ## Model and second-opinion policy (Key Rules detail)
 
-- The superpowers plugin injects `using-superpowers` at session start and the global skills are linked into every spawn; don't wait for the user to ask
+- The superpowers plugin injects `using-superpowers` at session start (orchestrator, owner and hub spawns) and the global skills are linked into every spawn; don't wait for the user to ask. `builder`, `copywriter` and `CRSS_AUTONOMOUS=1` spawns launch with the plugin switched off (a derived `rc-firstparty-no-superpowers.settings.json`: its hook costs ~900 tokens per start/clear/compact and pushes brainstorming before any reply). Never add a second `--settings` flag for this: repeated flags replace each other, so the first-party base URL would be lost
 - Claude profile default is **per role** via `CLAUDE_SESSION_PROFILE`: `owner`→`sonnet` (full tool set, for long-lived lane owners), `hub`→`sonnet` (full tools plus the Opus consult contract), `builder`→`sonnet`, `copywriter`→`haiku` (bare aliases, auto-track the latest release for their tier); `orchestrator`→`claude-opus-5-5`, **pinned** to an exact id (see `scripts/new-session.sh`'s "Model selection" comment for why). Override per-spawn with `CLAUDE_SESSION_MODEL=<model>`
 - `agents/builder.md` caps a builder at 250 turns per invocation (`maxTurns`). The CLI stops it
   mid-step. On an "Agent stopped at its 250-turn limit" result, run `git status` /

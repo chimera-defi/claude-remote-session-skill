@@ -150,6 +150,59 @@ has "other keys kept" "$(cat "$RCF")" '"ANTHROPIC_BASE_URL": "x"'
 echo '{"env":{"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"}}' > "$RCF"; bash -c "$BLK"
 has "explicit value kept" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"'
 
+# Superpowers plugin: builder/copywriter and autonomous spawns launch with a derived settings file that switches
+# it off; orchestrator/owner/hub keep plain rc-firstparty. Repeated --settings flags REPLACE each other (probed on
+# CLI 2.1.308), so the plugin switch rides in ONE file derived from rc-firstparty, never in a second layer.
+SP_ON="$HOME/.claude/rc-firstparty.settings.json"; SP_OFF="$HOME/.claude/rc-firstparty-no-superpowers.settings.json"
+for profile in orchestrator owner hub; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on plain rc-firstparty" "$o" "^SETTINGS_FILE=$SP_ON\$"
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
+  hasre "autonomous $profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "autonomous $profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
+done
+for profile in builder copywriter; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasre "$profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "$profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
+done
+o="$(dry A=1 -- --tier standard)"; hasre "tier standard (builder) drops superpowers" "$o" '^SUPERPOWERS=off$'
+o="$(dry A=1 -- --tier heavy)"; hasre "tier heavy (owner) keeps superpowers" "$o" '^SUPERPOWERS=on$'
+o="$(dry A=1 -- --backend codex)"; hasre "codex has no plugin switch" "$o" '^SUPERPOWERS=n/a$'
+
+# generated start script: the launch lines name the resolved file, and only a superpowers-free lane derives it
+launches() { grep -c -- "--remote-control" <<<"$1"; }
+SCR="$(CLAUDE_SESSION_PROFILE=builder gen A=1)"
+ok "builder: three launch lines" "$(launches "$SCR")" 3
+ok "builder: every launch line uses the derived file" "$(grep -c -- "--settings $SP_OFF --remote-control" <<<"$SCR")" 3
+ok "builder: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR")" 0
+SCR_O="$(CLAUDE_SESSION_PROFILE=orchestrator gen A=1)"
+ok "orchestrator: every launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 3
+hasnt "orchestrator: derives nothing" "$SCR_O" 'if [ "off" = off ]'
+hasnt "orchestrator: never names the derived file" "$SCR_O" "$SP_OFF"
+
+# the derive block, run against fixture layers: every rc-firstparty key survives, only the plugin switch is added,
+# and a rerun follows later edits to rc-firstparty
+SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
+[ -n "$SPB" ] || { echo "FAIL: could not extract the superpowers derive block"; fail=$((fail+1)); }
+field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(sys.argv[2],{}).get(sys.argv[3]))' "$@"; }
+mkdir -p "$HOME/.claude"
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"other@market":true}}' > "$SP_ON"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "derived keeps the base URL (remote-control needs it)" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
+ok "derived keeps the suggestion off-switch" "$(field "$SP_OFF" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
+ok "derived switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
+ok "derived keeps other plugin entries" "$(field "$SP_OFF" enabledPlugins other@market)" True
+ok "rc-firstparty itself is not touched" "$(field "$SP_ON" enabledPlugins superpowers@claude-plugins-official)" None
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://edited.example"}}' > "$SP_ON"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "rerun follows a later edit to rc-firstparty" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://edited.example"
+ok "rerun drops entries rc-firstparty no longer has" "$(field "$SP_OFF" enabledPlugins other@market)" None
+ok "no temp file left behind" "$(find "$HOME/.claude" -name '*.tmp' | wc -l | tr -d ' ')" 0
+echo 'not json' > "$SP_ON"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "unreadable rc-firstparty: lane still gets a settings file" "$(cat "$SP_OFF")" "not json"
+has "unreadable rc-firstparty: failure logged" "$(cat "$HOME/sp.log")" "event=no-superpowers-settings-FAILED"
+rm -f "$SP_ON" "$SP_OFF"
+
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"
 ABSENT="/tmp/crss-newsession-overlay-absent-$$-nonexistent"
