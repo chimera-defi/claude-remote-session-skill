@@ -946,9 +946,10 @@ import json,os,sys
 src,dst,plugin=sys.argv[1:4]
 d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
 tmp=dst+'.'+str(os.getpid())+'.tmp'
-f=open(tmp,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
+fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.fchmod(fd,os.stat(src).st_mode&0o777)
+f=os.fdopen(fd,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
-    cp ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
+    cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
   }
 fi
