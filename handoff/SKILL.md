@@ -65,6 +65,7 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
    it dropped").
 6. **Follow up, don't restart.** Relay mid-run news with `session-send` (or
    `session-handoff send`); respawning throws the work away.
+   Codex desktop threads aren't tmux sessions: use `session-send codex:<cs-ref>`; replies come by the bus.
 7. **When the target reports back**, first check what it needs from you (a decision, approval,
    merge, credential) and unblock that. Then verify its claims against evidence (PR, file,
    command output) before telling the human "done".
