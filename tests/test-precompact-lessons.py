@@ -178,10 +178,11 @@ class LessonsTest(unittest.TestCase):
         wt_proj = projects / key(work / "wt")
         (wt_proj / "memory").mkdir(parents=True)  # a stale folder here must not attract the lesson
         self.transcript = wt_proj / "sess-1.jsonl"
-        self.write_transcript(self.wren_rows())
+        self.write_transcript([{**r, "cwd": str(work / "wt")} for r in self.wren_rows()])
         self.reply.write_text(json.dumps(GOOD))
+        # the payload cwd follows the Bash tool's `cd`: here it points at an unrelated directory
         payload = json.dumps({"session_id": "sess-1", "transcript_path": str(self.transcript),
-                              "trigger": "manual", "cwd": str(work / "wt")})
+                              "trigger": "manual", "cwd": str(self.home)})
         subprocess.run([sys.executable, str(TOOL), "--sync"], input=payload, text=True, capture_output=True,
                        env=self.env, timeout=30, check=True)
         main_mem = projects / key(work / "main") / "memory"

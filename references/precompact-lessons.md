@@ -30,10 +30,11 @@ Code and the rules it enforces: `scripts/precompact-lessons.py`; behaviour pinne
    `~/.local/state/crss/`): `outcome` is `saved:create`, `saved:update`, `nothing-to-save`,
    `skip:*`, `rejected:*` or `error:*`.
 
-The memory dir is where the CLI loads auto-memory: `~/.claude/projects/<project>/memory`, with
-`<project>` the main checkout's path for a linked worktree (they share it), else the cwd's path,
-else the transcript's own project dir (`memory_dir_for` in the script has the order and a test
-pins the worktree case). A symlinked memory dir, or a state dir inside it, is refused
+The memory dir is where the CLI loads auto-memory, which is not always the transcript's own project
+dir (linked worktrees share their main checkout's); `memory_dir_for` and its worktree test are the
+rule. It starts from the session's start directory, not the hook payload's `cwd` (that follows
+`cd`). Known gap: sessions started under `/tmp` map to a bare `-tmp` project dir in the CLI; the
+hook does not follow that. A symlinked memory dir, or a state dir inside it, is refused
 (`skip:memory-dir-redirected`). Writes take a `flock` outside that dir and are atomic (temp file
 plus rename). The size cap applies to new files as well as updates. The hook process itself
 only logs through a non-blocking open, so a broken log path can't stall compaction.
