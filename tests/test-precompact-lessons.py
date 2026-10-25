@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -69,23 +70,36 @@ class LessonsTest(unittest.TestCase):
     def last_log(self):
         return json.loads((self.state / "precompact-lessons.jsonl").read_text().splitlines()[-1])
 
+    def last_log_in(self, state):
+        return json.loads((state / "precompact-lessons.jsonl").read_text().splitlines()[-1])
+
     def test_validate_table(self):
         ok, why = mod.validate(dict(GOOD))
         self.assertEqual((ok["slug"], why), ("feedback-verify-before-relay", ""))
-        bad = {
-            "date-in-rule": {"rule": "Since 2026-10-25 always rerun checks."},
-            "ref-number-in-rule": {"rule": "Rerun checks, see PR #201 for the incident."},
-            "ref-number-in-why": {"why": "Broke in commit 1b92d62abc last time."},
-            "negative-claim-in-rule": {"rule": "Skip the browser tool because it does not work."},
-            "secret-in-why": {"why": "Auth token: abcd1234efgh5678 was rejected."},
-            "bad-type": {"type": "random"},
-            "bad-update-target": {"update": "../escape.md"},
-            "bad-slug": {"slug": "Not A Slug!"},
-        }
-        for reason, patch in bad.items():
+        bad = [
+            ("date-in-rule", {"rule": "Since 2026-10-25 always rerun checks."}),
+            ("date-in-rule", {"rule": "Since October 25, 2026 rerun checks."}),
+            ("ref-number-in-rule", {"rule": "Rerun checks, see PR #201 for the incident."}),
+            ("ref-number-in-rule", {"rule": "Rerun checks; see pr 7 for the incident."}),
+            ("ref-number-in-why", {"why": "Broke in commit 1b92d62abc last time."}),
+            ("ref-number-in-why", {"why": "Broke after commit deadbeef landed."}),
+            ("negative-claim-in-rule", {"rule": "Skip the browser tool because it does not work."}),
+            ("negative-claim-in-rule", {"rule": "Bash cannot execute commands in builders."}),
+            ("secret-in-why", {"why": "Auth token: abcd1234efgh5678 was rejected."}),
+            ("secret-in-why", {"why": "gh" + "p_" + "a1" * 15 + " leaked."}),
+            ("bad-type", {"type": "random"}),
+            ("bad-update-target", {"update": "../escape.md"}),
+            ("bad-slug", {"slug": "Not A Slug!"}),
+            ("bad-slug", {"slug": "sk-abcdefghijklmnopqrst"}),
+        ]
+        for reason, patch in bad:
             got, why = mod.validate({**GOOD, **patch})
-            self.assertIsNone(got, reason)
-            self.assertEqual(why, reason, reason)
+            self.assertIsNone(got, patch)
+            self.assertEqual(why, reason, patch)
+        for fine in ("Decide 2 owners per lane.", "Market 10 lanes at most."):
+            self.assertIsNotNone(mod.validate({**GOOD, "rule": fine})[0], fine)
+        got, why = mod.validate({**GOOD, "slug": "task-reports-lead-with-finish-line"})
+        self.assertEqual((got["slug"], why), ("feedback-task-reports-lead-with-finish-line", ""), "'sk-' inside a word")
 
     def test_flows_against_stub_reviewer(self):
         self.write_transcript([row("user", "hello")])
@@ -125,18 +139,66 @@ class LessonsTest(unittest.TestCase):
                                           "why": "A written stop rule saves quota."}))
         self.run_hook("--sync", extra_env={"CRSS_LESSONS_MAX_FILE_BYTES": "50"})
         self.assertEqual(self.last_log()["outcome"], "rejected:file-cap")
+        self.reply.write_text(json.dumps({**GOOD, "slug": "fresh-rule", "rule": "Stage runs small.", "why": "Quota."}))
+        self.run_hook("--sync", extra_env={"CRSS_LESSONS_MAX_FILE_BYTES": "50"})
+        self.assertEqual(self.last_log()["outcome"], "rejected:file-cap", "create must honour the size cap too")
+        self.assertFalse((self.mem / "feedback-fresh-rule.md").exists())
+        self.reply.write_text(json.dumps({**GOOD, "slug": "short-dup", "rule": "Keep briefs short.", "why": "Brevity."}))
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "rejected:duplicate", "short lessons are deduplicated too")
+
+    def test_redirected_memory_dir_is_refused(self):
+        self.write_transcript(self.wren_rows())
+        self.reply.write_text(json.dumps(GOOD))
+        self.run_hook("--sync", extra_env={"CRSS_LESSONS_STATE": str(self.mem / "state")})
+        self.assertEqual(self.last_log_in(self.mem / "state")["outcome"], "skip:memory-dir-redirected")
+
+        other = self.home / "elsewhere"
+        other.mkdir()
+        shutil.rmtree(self.mem / "state")
+        for f in list(self.mem.iterdir()):
+            f.rename(other / f.name)
+        self.mem.rmdir()
+        self.mem.symlink_to(other)
+        self.run_hook("--sync")
+        self.assertEqual(self.last_log()["outcome"], "skip:memory-dir-redirected")
+        self.assertFalse((other / "feedback-verify-before-relay.md").exists())
+
+    def test_worktree_session_writes_to_main_checkout_memory(self):
+        work = self.home / "work"
+        work.mkdir()
+        subprocess.run(["git", "init", "-q", "main"], cwd=work, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", "--orphan", "-b", "wtb", "../wt"], cwd=work / "main", check=True)
+        key = lambda p: "".join(c if c.isalnum() else "-" for c in str(p))
+        projects = self.home / ".claude" / "projects"
+        wt_proj = projects / key(work / "wt")
+        wt_proj.mkdir()
+        self.transcript = wt_proj / "sess-1.jsonl"
+        self.write_transcript(self.wren_rows())
+        self.reply.write_text(json.dumps(GOOD))
+        payload = json.dumps({"session_id": "sess-1", "transcript_path": str(self.transcript),
+                              "trigger": "manual", "cwd": str(work / "wt")})
+        subprocess.run([sys.executable, str(TOOL), "--sync"], input=payload, text=True, capture_output=True,
+                       env=self.env, timeout=30, check=True)
+        main_mem = projects / key(work / "main") / "memory"
+        self.assertEqual(self.last_log()["outcome"], "saved:create")
+        self.assertTrue((main_mem / "feedback-verify-before-relay.md").exists(), "memory goes where the CLI reads it")
+        self.assertFalse((wt_proj / "memory").exists())
 
     def test_window_stops_at_last_compaction_and_skips_summary(self):
         rows = self.wren_rows()
         rows[1] = row("user", "EARLIER-CORRECTION " * 20)
         boundary = {"type": "system", "subtype": "compact_boundary"}
         summary = row("user", "SUMMARY-TEXT " * 30, isCompactSummary=True)
-        after = [row("user", "LATER-CORRECTION never push to main without review. " * 4),
+        after = [row("user", "MID-CORRECTION keep one writer per file. " * 4),
+                 row("assistant", [{"type": "text", "text": 'grep shows {"subtype": "compact_boundary"} twice. ' * 4}]),
+                 row("user", "LATER-CORRECTION never push to main without review. " * 4),
                  row("assistant", [{"type": "text", "text": "ok " * 120}])]
         self.write_transcript(rows + [boundary, summary] + after)
         self.run_hook("--sync")
         prompt = self.prompt.read_text()
         self.assertIn("LATER-CORRECTION", prompt)
+        self.assertIn("MID-CORRECTION", prompt, "text that mentions compact_boundary is not a boundary")
         self.assertNotIn("EARLIER-CORRECTION", prompt)
         self.assertNotIn("SUMMARY-TEXT", prompt)
         self.assertIn("Old", prompt, "memory index must be shown to the reviewer")
