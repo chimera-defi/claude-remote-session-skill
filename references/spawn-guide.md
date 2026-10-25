@@ -46,7 +46,7 @@ it prints the pick and why and logs it to the routing log; `build` picks Codex g
 | `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex gpt-6.1-sol high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), **sonnet** + Opus advisor. Not Opus: for an Opus orchestrator omit `--tier` |
 
-- Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder; `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
+- Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder (the 10-24 follow-up ran haiku-high 12/12 agentic, used only on the Codex-out ladder); `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
 - **Claude Code has no per-request model router.** Checked on CLI 2.1.308: the alias table is
   `sonnet opus haiku fable best sonnet[1m] opus[1m] fable[1m] opusplan`, with no `auto`. `opusplan` swaps
   Opus (plan mode) for Sonnet (execution) on the plan-mode toggle and nothing else. `default`/`best` follow the
