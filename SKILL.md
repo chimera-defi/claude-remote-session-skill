@@ -57,6 +57,9 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
+# Message a Codex desktop thread via its local app-server socket instead of a poll-only bus; exit 1 = uncertain, do not resend; replies still arrive by the bus.
+session-send codex:list
+session-send codex:<cs-ref> --expect-identity <id> "..."
 session-doctor reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run]
                                        # teardown (tmux + unit) + registry entry + worktree; refuses young sessions
                                        # (CRSS_REAP_MIN_AGE_H, default 24h; see _reap_age_gate, tests/test-reap-min-age.sh)
@@ -184,7 +187,7 @@ in this repo:
 
 | File | Holds |
 |---|---|
-| `config.sh` | `CRSS_*=value` settings (parsed, never sourced); loaded by most `session-*` scripts, not `session-compact`, `session-git-prep`, `session-send` |
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced); loaded by most `session-*` scripts, not `session-compact` or `session-git-prep`; `session-send` delegates Codex targets to `codex-send`, which parses `CRSS_CODEX_BRIDGE_*`/`CRSS_CODEX_BIN` |
 | `local.md` | host prose: operator handle, escalation channel, project index, routing; agents read it via a tiny user rules file that `@`-imports it |
 | `leak-denylist.txt` | host-private terms that must never reach this repo; read only by `tests/test-no-host-leaks.sh` when `CRSS_LEAK_DENYLIST` is set |
 
