@@ -220,7 +220,7 @@ typed() {  # start script on stdin -> the text its main send-keys literal types 
 $lit"
 }
 launch_argv() {  # typed pane text on stdin -> the argv its fresh-launch line gives claude, one per line
-  local line; line="$(grep -- '--dangerously-skip-permissions' | grep -- '--remote-control [^ ]*$' | head -1)"
+  local line; line="$(grep -- '--dangerously-skip-permissions' | grep -v -e '--resume' -e '--continue$' | head -1)"
   bash -c "$line"
 }
 for spec in orchestrator owner hub builder copywriter "orchestrator CRSS_AUTONOMOUS=1" "owner CRSS_AUTONOMOUS=1" \
@@ -258,6 +258,47 @@ ARGV="$(typed <<<"$SCR" | launch_argv)"
 ok "hostile prompt reaches claude byte for byte" "$(awk 'p{print; exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "$NASTY"
 ok "hostile prompt: nothing in it was executed" "$(yn test -e "$HOME/pwned")" no
 rm -rf "$HOME/scripts-nasty"
+
+# The model, the settings path and the remote name are typed into the same pane text as the prompt, so an apostrophe
+# in one of them closed the send-keys quote just the same, and a space split a word. A normal spawn must keep the
+# `--model "..."` shape session-resume --model rewrites. The hostile model comes in through its env var; a settings
+# path comes from CRSS_CLAUDE_HOME and a remote name from a sanitized alias, so a copy of the script plants both.
+SCR="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+ok "launch lines keep --model \"...\" for session-resume" "$(grep -c -- '--model "claude-opus-5-5" ' <<<"$SCR")" 3
+H_MODEL="it's a model"
+rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
+python3 - "$HOME/scripts-nasty/new-session.sh" <<'HOSTILE_PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+a = 'SETTINGS_FILE="${CRSS_CLAUDE_HOME}/'
+assert s.count(a) == 2
+s = s.replace(a, a + "it's a dir/")
+s, n = re.subn(r'^(REMOTE_NAME="\$\{CRSS_SESSION_PREFIX\}-\$\{BODY\})"$', lambda m: m.group(1) + "-it's a name\"", s, flags=re.M)
+assert n == 1
+open(p, "w").write(s)
+HOSTILE_PY
+for profile in orchestrator builder; do
+  SCR="$(NS="$HOME/scripts-nasty/new-session.sh" CLAUDE_SESSION_PROFILE="$profile" CLAUDE_SESSION_MODEL="$H_MODEL" gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+  has "$profile, hostile model/settings/name: script generated" "$SCR" "tmux send-keys"
+  printf '%s\n' "$SCR" > "$HOME/ss.sh"
+  ok "$profile, hostile model/settings/name: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+  typed <<<"$SCR" > "$HOME/typed.sh"
+  ok "$profile, hostile model/settings/name: pane text parses" "$(bash -n "$HOME/typed.sh" 2>&1; echo "rc=$?")" "rc=0"
+  ARGV="$(launch_argv < "$HOME/typed.sh")"
+  settings_name=rc-firstparty.settings.json; [ "$profile" = builder ] && settings_name=rc-firstparty-no-superpowers.settings.json
+  ok "$profile: the model arrives as one argument" "$(awk 'p{print; exit} $0=="--model"{p=1}' <<<"$ARGV")" "$H_MODEL"
+  ok "$profile: the settings path arrives as one argument" "$(awk 'p{print; exit} $0=="--settings"{p=1}' <<<"$ARGV")" "$HOME/.claude/it's a dir/$settings_name"
+  hasre "$profile: the remote name arrives as one argument" "$(awk 'p{print; exit} $0=="--remote-control"{p=1}' <<<"$ARGV")" "^px-[a-z0-9]+-[0-9]{4}-[0-9]{4}-it's a name\$"
+done
+# the superpowers-off lane also derives its file at start, outside the pane: run that block against the hostile path
+SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
+[ -n "$SPB" ] || { echo "FAIL: could not extract the superpowers derive block (hostile path)"; fail=$((fail+1)); }
+mkdir -p "$HOME/.claude/it's a dir"; echo '{"env":{}}' > "$HOME/.claude/rc-firstparty.settings.json"
+SESSION=px_h LOG_FILE="$HOME/h.log" bash -c "$SPB" >/dev/null 2>&1
+ok "derive block writes the file at a path with an apostrophe and a space" \
+  "$(field "$HOME/.claude/it's a dir/rc-firstparty-no-superpowers.settings.json" enabledPlugins superpowers@claude-plugins-official 2>&1)" False
+rm -rf "$HOME/scripts-nasty" "$HOME/.claude/it's a dir" "$HOME/.claude/rc-firstparty.settings.json"
 
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"
