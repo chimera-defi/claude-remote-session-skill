@@ -40,9 +40,9 @@
 # every single sweep run, forever.
 # Context % is read directly from the session's own transcript (last
 # assistant message's usage: input + cache_read + cache_creation tokens,
-# divided by a per-model window — see _model_window_for). If that can't be
-# read/parsed, the session degrades to idle-only (trigger A only) and the
-# report says so — it never guesses a percentage. `sweep --apply` reuses
+# divided by the session's CLI auto-compact trigger point). If that can't be
+# resolved, neither need-based trigger fires and the report says so — it never
+# guesses a percentage. `sweep --apply` reuses
 # _do_compact/_write_marker unchanged (the SAME compaction mechanism report/
 # before-relay already use) and is just as fail-closed as it always was: a
 # compact that can't be verified logs FAILED and moves to the next session,
@@ -197,9 +197,10 @@ print(mx or '')
 # _model_window_for <model-string> -> token count, or "" if unrecognized.
 # ONE table, not scattered (see design brief). Sonnet-5/Opus-5/Fable-5 (any
 # point release matching *sonnet*/*opus*/*fable*) default to a 1,000,000-token
-# window; Haiku (*haiku*) to 200,000 — documented defaults, not a measured fact
-# this repo has anywhere else. A model string matching none is UNKNOWN on
-# purpose: callers must degrade to idle-only rather than divide by a guessed
+# window; Haiku (*haiku*) retains a conservative 200,000-token cap even though
+# Haiku 5.5 also supports 1M natively. These cap the configured CLI window.
+# A model string matching none is UNKNOWN on purpose: callers must skip
+# need-based compaction rather than divide by a guessed
 # number — the same "never guess a percentage" rule that governs an
 # unparseable transcript (see _context_snapshot below).
 #
@@ -215,6 +216,74 @@ _model_window_for() {
     *haiku*)                 echo 200000 ;;
     *)                       echo "" ;;
   esac
+}
+
+# _cli_compact_trigger <W> <PCT> -> tokens, or "" for unusable settings.
+# CLI formula: T = min(floor((W - 20000) * PCT / 100), W - 33000).
+_cli_compact_trigger() {
+  python3 - "$1" "$2" <<'PYTRIGGER'
+import sys
+if all(v.isascii() and v.isdecimal() for v in sys.argv[1:]):
+    window, pct = map(int, sys.argv[1:])
+    trigger = min((window - 20000) * pct // 100, window - 33000)
+    if trigger > 0 and pct > 0:
+        print(trigger)
+PYTRIGGER
+}
+
+# Resolve each setting from the live Claude process under this session's pane
+# first, then settings.json's env block. Never inherit the sweep's own W/PCT.
+# SESSION_COMPACT_PROC_ROOT permits a hermetic /proc fixture in tests.
+_session_compact_env() {
+  local session="$1" cap="$2" pane_pid
+  pane_pid="$(tmux display-message -p -t "=$session" '#{pane_pid}' 2>/dev/null)" || pane_pid=""
+  python3 - "$pane_pid" "${SESSION_COMPACT_PROC_ROOT:-/proc}" \
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" "$cap" <<'PYENV'
+import glob, json, os, sys
+pane, root, settings_path, cap = sys.argv[1:]
+keys = ('CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+live = {}
+children = {}
+if pane.isascii() and pane.isdecimal():
+    for path in glob.glob(os.path.join(root, '[0-9]*', 'stat')):
+        try:
+            with open(path) as fh:
+                ppid = fh.read().rsplit(')', 1)[1].split()[1]
+            children.setdefault(ppid, []).append(os.path.basename(os.path.dirname(path)))
+        except (OSError, IndexError):
+            continue
+    pending, seen = [pane], set()
+    for pid in pending:
+        if pid in seen:
+            continue
+        seen.add(pid)
+        pending.extend(sorted(children.get(pid, []), key=int))
+        try:
+            with open(os.path.join(root, pid, 'comm')) as fh:
+                comm = fh.read().strip()
+            with open(os.path.join(root, pid, 'cmdline'), 'rb') as fh:
+                args = fh.read().decode(errors='replace').split('\0')
+            if not (comm == 'claude' or os.path.basename(args[0]) == 'claude'
+                    or any(a.endswith('/@anthropic-ai/claude-code/cli.js') for a in args)):
+                continue
+            with open(os.path.join(root, pid, 'environ'), 'rb') as fh:
+                live = dict(v.split('=', 1) for v in fh.read().decode(errors='replace').split('\0') if '=' in v)
+            break  # nearest Claude ancestor of any nested agents owns the pane
+        except OSError:
+            continue
+try:
+    with open(settings_path) as fh:
+        settings = json.load(fh).get('env', {})
+    if not isinstance(settings, dict):
+        settings = {}
+except (OSError, ValueError, AttributeError):
+    settings = {}
+values = [str(live.get(k, settings.get(k, ''))) for k in keys]
+if all(v.isascii() and v.isdecimal() for v in values):
+    window, pct = map(int, values)
+    if window > 0 and pct > 0:
+        print('%d\t%d' % (min(window, int(cap)), pct))
+PYENV
 }
 
 # _context_snapshot <cwd> -> "tokens\tmodel" for the LAST assistant message
@@ -282,13 +351,13 @@ else:
 " "$dir"
 }
 
-# _context_pct_for_row <cwd> -> "tokens\tpct" or "" (degraded — no transcript,
-# no usable usage entry, or a model _model_window_for doesn't recognize).
+# _context_pct_for_row <cwd> <session> -> "tokens\tpct" or "" (degraded — no
+# transcript/usage, unrecognized model, or unknown CLI auto-compact settings).
 # Callers MUST treat "" as "context unavailable: skip need-based compaction
 # for this session and report the degradation" — never substitute a
 # guessed window just to produce a number.
 _context_pct_for_row() {
-  local cwd="$1" raw tokens model window
+  local cwd="$1" session="$2" raw tokens model window settings trigger
   raw="$(_context_snapshot "$cwd")"
   [ -n "$raw" ] || { echo ""; return; }
   tokens="${raw%%$'\t'*}"
@@ -296,7 +365,11 @@ _context_pct_for_row() {
   case "$tokens" in ''|*[!0-9]*) echo ""; return ;; esac
   window="$(_model_window_for "$model")"
   [ -n "$window" ] || { echo ""; return; }
-  printf '%s\t%s\n' "$tokens" "$(( tokens * 100 / window ))"
+  settings="$(_session_compact_env "$session" "$window")"
+  [ -n "$settings" ] || { echo ""; return; }
+  trigger="$(_cli_compact_trigger "${settings%%$'\t'*}" "${settings#*$'\t'}")"
+  [ -n "$trigger" ] || { echo ""; return; }
+  printf '%s\t%s\n' "$tokens" "$(( tokens * 100 / trigger ))"
 }
 
 # Managed compaction is a phase-boundary action. Bind the active transcript
@@ -681,6 +754,7 @@ _sweep_evaluate_row_managed() {
 #              landed+clean session should not be defeated on the context
 #              trigger either, only on whichever guard (already-compacted,
 #              protected, busy pane, ...) legitimately still applies.
+# All three context thresholds are percentages of the session's CLI trigger T.
 _SWEEP_CONTEXT_TRIGGER_PCT=80
 _SWEEP_MANAGED_CONTEXT_TRIGGER_PCT=50
 _SWEEP_CONTEXT_IDLE_FLOOR=5
@@ -693,7 +767,7 @@ _SWEEP_CONTEXT_IDLE_FLOOR=5
 # _SWEEP_CONTEXT_TRIGGER_PCT (80 fleet default; 50 for --managed-only): trigger A still exists specifically for
 # sessions that are idle AND carrying meaningful context, it is not meant to
 # require near-full context the way the dedicated context trigger (B) does.
-# Unknown context (unparseable transcript, or a model absent from
+# Unknown context (unresolved CLI settings, unparseable transcript, or a model absent from
 # _model_window_for's table) does NOT satisfy this floor either — seeing a numeric trigger
 # in this file already isn't enough, an unmeasurable percentage must never
 # be treated as if it cleared a numeric floor. See the eligible:idle branch
@@ -1013,7 +1087,7 @@ case "$MODE" in
       [ -n "$c1" ] || continue
       n=$((n+1))
 
-      ctx_raw="$(_context_pct_for_row "$c4")"
+      ctx_raw="$(_context_pct_for_row "$c4" "$c1")"
       if [ -n "$ctx_raw" ]; then
         ctx_tokens="${ctx_raw%%$'\t'*}"
         ctx_pct="${ctx_raw#*$'\t'}"
@@ -1026,7 +1100,7 @@ case "$MODE" in
         # generic, decision-agnostic fact ("we don't know"); the specific
         # skip:context-unknown case below overrides it with the full loud
         # explanation.
-        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript or unrecognized model)"
+        ctx_tokens="n/a"; ctx_pct=""; note="context unavailable (unparseable/missing transcript, unrecognized model, or unknown CLI auto-compact settings)"
       fi
 
       # detail: the underlying _decide/_evaluate_row reason, surfaced in NOTE
@@ -1071,11 +1145,9 @@ case "$MODE" in
           ;;
         skip:context-unknown)
           verdict="skip: context unknown"
-          # Direct override, not `detail`: this is deliberately NOT the
-          # generic ctx_raw-empty note set above (that note describes
-          # degrading to idle-only, which is exactly what must NOT happen
-          # here) — see _sweep_decide's comment for why unknown must skip.
-          note="cannot verify need: context is unreadable (unparseable/missing transcript, or the model is missing from _model_window_for's table) — refusing to compact on idle alone until context can be measured; if the transcript looks fine, the model likely needs adding to _model_window_for"
+          # Direct override, not `detail`: expand the generic ctx_raw-empty
+          # note above with the settings to inspect and the fail-closed rule.
+          note="cannot verify need: context unavailable — check transcript usage, _model_window_for's table, and CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_AUTOCOMPACT_PCT_OVERRIDE in the live Claude environment or settings.json env; refusing to compact on idle alone until the CLI trigger can be measured"
           ;;
         skip:protected)         verdict="skip: protected" ;;
         skip:active-task)       verdict="skip: active task"; detail="${active_task_count:-1} in_progress Claude task(s); checkpoint/finish phase before compacting" ;;
