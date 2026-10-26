@@ -29,9 +29,10 @@ case "$1" in
   has-session) shift; name="$(_name_arg "$@")"; for s in ${STUB_TMUX_SESSIONS:-}; do [ "$s" = "$name" ] && exit 0; done; exit 1 ;;
   display-message)
     case "$*" in
-      *'#{pane_pid}'*) [ "$(_name_arg "$@")" = '=ctxsess' ] && echo 700 ;;
+      *'#{pane_pid}'*) : ;;  # real tmux 3.4 prints nothing for -t "=name"
       *) echo claude ;;
     esac ;;
+  list-panes) [ "$(_name_arg "$@")" = '=ctxsess' ] && echo 700 ;;
   capture-pane)
     shift; name="$(_name_arg "$@")"
     for s in ${STUB_TMUX_BUSY_SESSIONS:-}; do

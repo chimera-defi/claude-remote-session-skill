@@ -236,7 +236,8 @@ PYTRIGGER
 # SESSION_COMPACT_PROC_ROOT permits a hermetic /proc fixture in tests.
 _session_compact_env() {
   local session="$1" cap="$2" pane_pid
-  pane_pid="$(tmux display-message -p -t "=$session" '#{pane_pid}' 2>/dev/null)" || pane_pid=""
+  # list-panes, not display-message: tmux 3.4 prints nothing for display-message -t "=name" (no pane).
+  pane_pid="$(tmux list-panes -t "=$session" -F '#{pane_pid}' 2>/dev/null | head -1)" || pane_pid=""
   python3 - "$pane_pid" "${SESSION_COMPACT_PROC_ROOT:-/proc}" \
     "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" "$cap" <<'PYENV'
 import glob, json, os, sys
