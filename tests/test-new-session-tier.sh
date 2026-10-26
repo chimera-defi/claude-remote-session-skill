@@ -289,7 +289,7 @@ for profile in orchestrator builder; do
   settings_name=rc-firstparty.settings.json; [ "$profile" = builder ] && settings_name=rc-firstparty-no-superpowers.settings.json
   ok "$profile: the model arrives as one argument" "$(awk 'p{print; exit} $0=="--model"{p=1}' <<<"$ARGV")" "$H_MODEL"
   ok "$profile: the settings path arrives as one argument" "$(awk 'p{print; exit} $0=="--settings"{p=1}' <<<"$ARGV")" "$HOME/.claude/it's a dir/$settings_name"
-  hasre "$profile: the remote name arrives as one argument" "$(awk 'p{print; exit} $0=="--remote-control"{p=1}' <<<"$ARGV")" "^px-cw-[0-9]{4}-[0-9]{4}-it's a name\$"
+  hasre "$profile: the remote name arrives as one argument" "$(awk 'p{print; exit} $0=="--remote-control"{p=1}' <<<"$ARGV")" "^px-[a-z0-9]+-[0-9]{4}-[0-9]{4}-it's a name\$"
 done
 # the superpowers-off lane also derives its file at start, outside the pane: run that block against the hostile path
 SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
