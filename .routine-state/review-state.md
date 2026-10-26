@@ -1,21 +1,21 @@
 # Nightly review state
-last_run: 2026-10-15   last_reviewed_sha: a44059b2a85c1e9837d4a5471d97614e3d0c6e2c
+last_run: 2026-10-26   last_reviewed_sha: 6c6cd20c86d0c54a5e6e5230a94aca71ea707ac7
 
 ## open (found, PR not merged yet)
-- merge-guard: rename/move claim breaks on "Y from X" phrasing (branch nightly-review-2026-10-15)
+- merge-guard: noun-form claims (Addition/Creation/Deletion of) bypass check - PR #176 (clean, CI green)
+- new-session: CLAUDE_SESSION_MODEL quote-breakout executes in the pane launch line - this PR
 
 ## fixed (last 30 days)
+- merge-guard: rename/move claim breaks on "Y from X" phrasing - #164
+- review follow-ups for #151-#169 (auth-scan rc, merge-guard verbs, stale comments) - #170
 - merge-guard: rename/move body claim false-positives on "X to Y" phrasing - #159
-- test-session-resume.sh leaked background processes across standalone runs - #122
-- tests/test-*.py never ran in CI or the local loop; wired in - #137
-- session-resume admission subject used a leading flag not the session name - #143
 
 ## rejected / wont_fix (keep; never retry)
 (none)
 
 ## next (max 5 lines)
-- Reviewed #159 (merge-guard to/into fix, merged), #160 (session-doctor
-  auth-scan), #161 (docs), #162 (SKILL.md slim + harness-claim corrections;
-  advisor/effort/model-id changes verified against new-session.sh + tests).
-  Found the "Y from X" rename-phrasing gap in #159 itself; fixed here.
-- session-alias poisoning guard: re-verified green (48/48), 9th night running.
+- #163-175 already reviewed in PR #176's own body (session-doctor auth-heal/opus-subagents,
+  land-check landed-fallbacks, compact-window default, --launcher liveness warning): no action.
+- Tonight covered #177-#207 (escaping/admission/quota/delegation-prompt/session-spawn-server/
+  slice-usage.py); full suite+shellcheck clean on main. Found the model-injection above.
+- session-alias poisoning guard: re-verified green (48/48), 11th night running.
