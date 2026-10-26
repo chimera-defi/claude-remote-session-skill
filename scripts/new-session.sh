@@ -516,6 +516,10 @@ if [ "$BACKEND" = claude ]; then
   case "$EFFORT" in ""|none|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
 
   if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
+    # Same shape as CRSS_OPUS_MODEL above and session-resume's --model: this also closes the pane-injection
+    # hole the apostrophe-only escape below leaves open for "..."-breakout characters (", $, `, \) in a model
+    # typed straight into `--model "..."` in the launch line.
+    [[ "$CLAUDE_SESSION_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_MODEL='$CLAUDE_SESSION_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
   else
     case "$PROFILE" in
