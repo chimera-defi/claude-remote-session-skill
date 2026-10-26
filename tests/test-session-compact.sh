@@ -9,6 +9,11 @@ SCRIPT="$HERE/../scripts/session-compact.sh"
 # shellcheck disable=SC1090
 source "$SCRIPT"   # source-guarded: must NOT run dispatch
 
+# One formula table pins the desktop, crss spawn, and heavy trigger points.
+ok "CLI auto-compact trigger tokens (PCT=70)" \
+  "$(for w in 300000 234000 600000; do _cli_compact_trigger "$w" 70; done)" \
+  $'196000\n149800\n406000'
+
 # Layer 1: _decide (pure). d() spells only the varying fields; positional order: min max idle protected compacted landed dirty marker_hit.
 d() { _decide "$1" "$2" sess remote pid cwd "$3" 2026-01-01T00:00:00 "$4" "$5" "$6" "$7" "$8"; }
 
@@ -205,7 +210,8 @@ _row() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$@"; }
 
 _run() {  # _run <mode/args...> — invokes the isolated copy with stubs wired up
   PATH="$BIN:$PATH" SESSION_COMPACT_SENSOR="$FIXTURE_DIR/sensor.sh" \
-    HOME="$CLI_HOME" bash "$ISO/session-compact.sh" "$@"
+    HOME="$CLI_HOME" CLAUDE_CONFIG_DIR="$CLI_HOME/.claude" \
+    SESSION_COMPACT_PROC_ROOT="$CLI_HOME/proc" bash "$ISO/session-compact.sh" "$@"
 }
 
 CLI_HOME="$(mktemp -d)"
@@ -237,7 +243,8 @@ has  "cli-report-reason-pane-busy" "$(printf '%s' "$out" | grep notreadysess)" "
 # sweep: CLI contract (flags, exit codes, verdict text). Rows use /nonexistent-cwd (context unavailable) except
 # readysess, which gets a 50% transcript so the idle trigger is reachable.
 READY_CWD="$CLI_HOME/proj-ready"
-_fixture_transcript "$READY_CWD" 500000 claude-sonnet-4-6   # 50%
+_fixture_transcript "$READY_CWD" 98000 claude-sonnet-4-6   # 50% of T=196000
+printf '%s\n' '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"70"}}' > "$CLI_HOME/.claude/settings.json"
 
 # neither flag: defaults to dry-run (exit 0, no send, but pane checked)
 : > "$STUB_LOG"

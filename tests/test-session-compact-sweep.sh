@@ -27,7 +27,12 @@ cat > "$BIN/tmux" <<'EOF'
 _name_arg() { local prev="" a; for a in "$@"; do [ "$prev" = "-t" ] && { printf '%s\n' "$a"; return; }; prev="$a"; done; }
 case "$1" in
   has-session) shift; name="$(_name_arg "$@")"; for s in ${STUB_TMUX_SESSIONS:-}; do [ "$s" = "$name" ] && exit 0; done; exit 1 ;;
-  display-message) echo claude ;;
+  display-message)
+    case "$*" in
+      *'#{pane_pid}'*) : ;;  # real tmux 3.4 prints nothing for -t "=name"
+      *) echo claude ;;
+    esac ;;
+  list-panes) [ "$(_name_arg "$@")" = '=ctxsess' ] && echo 700 ;;
   capture-pane)
     shift; name="$(_name_arg "$@")"
     for s in ${STUB_TMUX_BUSY_SESSIONS:-}; do
@@ -51,12 +56,27 @@ tx_bad() {
   local d; d="$FAKE_HOME/.claude/projects/$(_encode_cwd "$(cwd_of "$1")")"; mkdir -p "$d" "$(cwd_of "$1")"
   printf 'this is not json at all\n{"broken\n\n' > "$d/fixture.jsonl"
 }
-_run() { PATH="$BIN:$PATH" SESSION_COMPACT_SENSOR="$FIXTURE_DIR/sensor.sh" HOME="$FAKE_HOME" bash "$ISO/session-compact.sh" "$@"; }
+_run() {
+  PATH="$BIN:$PATH" SESSION_COMPACT_SENSOR="$FIXTURE_DIR/sensor.sh" HOME="$FAKE_HOME" \
+    CLAUDE_CONFIG_DIR="$FAKE_HOME/.claude" SESSION_COMPACT_PROC_ROOT="$FIXTURE_DIR/proc" \
+    bash "$ISO/session-compact.sh" "$@"
+}
 row_in() { printf '%s' "$1" | grep "^$2 "; }
 
-tx ctxsess 850000; tx idlesess 450000; tx busysess 950000; tx protsess 990000; tx_bad unparsesess; tx_bad unparse90
-tx ctxsmall 100000; tx atfloor 400000; tx underfloor 390000; tx ctxb50 500000; tx ctxb49 490000
-tx compacted 500000; tx mo_landed 450000; tx mo_ctxlanded 900000
+# Settings fallback gives T=196000. ctxsess instead inherits W=234000 from
+# its live Claude descendant (not the pane shell), so T=149800 and 160k => 106%.
+tx ctxsess 160000; tx idlesess 88200; tx busysess 186200; tx protsess 194040; tx_bad unparsesess; tx_bad unparse90
+tx ctxsmall 19600; tx atfloor 78400; tx underfloor 76440; tx ctxb50 98000; tx ctxb49 96040
+tx compacted 98000; tx mo_landed 88200; tx mo_ctxlanded 176400
+printf '%s\n' '{"env":{"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"70"}}' > "$FAKE_HOME/.claude/settings.json"
+mkdir -p "$FIXTURE_DIR/proc/700" "$FIXTURE_DIR/proc/701"
+printf '700 (bash) S 1\n' > "$FIXTURE_DIR/proc/700/stat"
+printf 'bash\n' > "$FIXTURE_DIR/proc/700/comm"
+printf 'bash\0' > "$FIXTURE_DIR/proc/700/cmdline"
+printf '701 (claude) S 700\n' > "$FIXTURE_DIR/proc/701/stat"
+printf 'claude\n' > "$FIXTURE_DIR/proc/701/comm"
+printf 'claude\0' > "$FIXTURE_DIR/proc/701/cmdline"
+printf 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=234000\0CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\0' > "$FIXTURE_DIR/proc/701/environ"
 mkdir -p "$(cwd_of malformed)" "$(cwd_of nevertouched)" "$(cwd_of badidle)" "$(cwd_of landed)"
 export STUB_TMUX_SESSIONS="ctxsess idlesess busysess protsess unparsesess unparse90 ctxsmall atfloor underfloor ctxb50 ctxb49 compacted mo_landed mo_ctxlanded malformed nevertouched badidle landed"
 export STUB_TMUX_BUSY_SESSIONS="busysess"
@@ -86,8 +106,8 @@ export STUB_TMUX_BUSY_SESSIONS="busysess"
 out="$(_run sweep --dry-run)"; rc=$?
 ok "sweep exit 0" "$rc" "0"
 r() { row_in "$out" "$1"; }
-has   "context >= 80% fires (idle only 10m), with pct and tokens" "$(r ctxsess)" "would-compact: context"
-has   "...pct shown" "$(r ctxsess)" " 85 "; has "...tokens shown" "$(r ctxsess)" "850000"
+has   "160k under live W=234000 is eligible:context (idle only 10m)" "$(r ctxsess)" "would-compact: context"
+has   "...pct above 100 shown without clamping" "$(r ctxsess)" " 106 "; has "...tokens shown" "$(r ctxsess)" "160000"
 has   "idle trigger fires once context clears the floor" "$(r idlesess)" "would-compact: idle"
 has   "context 10% + idle 90m is not need" "$(r ctxsmall)" "skip: context too small"
 has   "exactly 40% (inclusive floor) compacts" "$(r atfloor)" "would-compact: idle"
