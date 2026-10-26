@@ -179,14 +179,29 @@ Cadence: [`references/session-lifecycle.md`](../references/session-lifecycle.md)
 
 ## Managed-orchestrator high-context policy
 
-Fleet-wide, the high-context sweep trigger is **80% of the model context window plus 5
-minutes idle**. For allowlisted managed orchestrators under `--managed-only` it is lower:
+All context percentages measure **percent of the session's CLI auto-compact trigger
+point**, where 100% means the CLI compacts itself. Fleet-wide, the high-context sweep
+trigger is **80% plus 5 minutes idle**. For allowlisted managed orchestrators under `--managed-only` it is lower:
 **50% plus 5 minutes idle**. The idle-window path still needs its separate 40% context
 floor. The 5-minute floor keeps compaction out of active turns; the lower threshold makes
 persistent orchestrators compact well before pressure is acute. Long-running orchestrators
 should also checkpoint durably and compact at major phase boundaries and at least once per
 active 24-hour period. Code: `_SWEEP_CONTEXT_TRIGGER_PCT`, `_SWEEP_IDLE_CONTEXT_FLOOR_PCT`
 in `scripts/session-compact.sh`.
+
+The CLI trigger in tokens is `T = min(floor((W - 20000) * PCT / 100), W - 33000)`.
+`W` is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which the sweep additionally caps at the recognized model's window (its own conservative cap, not CLI behaviour);
+`PCT` is `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. At PCT=70, the desktop W=300000 gives
+T=196000; the default crss tmux spawn W=234000 gives T=149800 (about 150k); and
+the heavy W=600000 gives T=406000. The sweep reports `tokens * 100 / T` without
+clamping values above 100. Dividing by W would leave the 80% trigger unreachable:
+the CLI already compacts at roughly 64–68% of W for these windows.
+
+Each setting comes first from the live Claude process descended from the session's
+tmux pane, then from the `env` block of `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json`.
+Missing or invalid settings, an unrecognized model, or unreadable transcript usage
+produce “context unavailable” and skip need-based compaction. The model table keeps
+a conservative 200000-token Haiku cap even though Haiku 5.5 supports 1M natively.
 
 ## Managed campaign-phase guard
 
