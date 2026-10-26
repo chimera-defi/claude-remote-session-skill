@@ -796,6 +796,7 @@ TYPE_LITERAL="$(_shell_quote "$TYPE")"
 REMOTE_NAME_LITERAL="$(_shell_quote "$REMOTE_NAME")"
 BACKEND_LITERAL="$(_shell_quote "$BACKEND")"
 MODEL_LITERAL="$(_shell_quote "$MODEL")"
+SETTINGS_FILE_LITERAL="$(_shell_quote "$SETTINGS_FILE")"
 PROFILE_LITERAL="$(_shell_quote "$PROFILE")"
 CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
@@ -948,8 +949,8 @@ d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
 tmp=dst+'.'+str(os.getpid())+'.tmp'
 fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.fchmod(fd,os.stat(src).st_mode&0o777)
 f=os.fdopen(fd,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
-" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
-    cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE}
+" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
+    cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL}
     echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
   }
 fi
@@ -1015,16 +1016,25 @@ if [ "$BACKEND" = claude ]; then
   # The loop is typed into the pane by `tmux send-keys '...'`, so a literal ' in the flags (printf %q writes an
   # apostrophe as \') would end that quote early and leave the start script unparseable (orchestrator/owner
   # spawns since the delegation prompt gained apostrophes). Close the quote, emit a quoted ', reopen: the pane
-  # still receives the %q text unchanged.
+  # still receives the %q text unchanged. The model, settings path and remote name are typed into the same
+  # pane text, so they get the same escape: %q first for the two unquoted words (a space stays one word), a plain
+  # escape for the values that sit inside double quotes. The launch line keeps `--model "..."`: session-resume
+  # --model rewrites exactly that shape.
   _sq="'"; _sq_esc="'\\''"
+  _sq_escape() { printf '%s' "${1//"$_sq"/$_sq_esc}"; }
+  _pane_word() { _sq_escape "$(_shell_quote "$1")"; }
   CLAUDE_EXTRA_FLAGS_SQ="${CLAUDE_EXTRA_FLAGS//"$_sq"/$_sq_esc}"
+  MODEL_DQ="$(_sq_escape "$MODEL")"
+  SETTINGS_FILE_SQ="$(_pane_word "$SETTINGS_FILE")"
+  REMOTE_NAME_SQ="$(_pane_word "$REMOTE_NAME")"
+  REMOTE_NAME_DQ="$(_sq_escape "$REMOTE_NAME")"
   cat >> "$SCRIPT" << SCRIPT_EOF
 ${COMPACT_WINDOW:+tmux send-keys -t "${SESSION}" 'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=$COMPACT_WINDOW' Enter
 }tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
-SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
-RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
-MANUAL_LAUNCH="$HOME/.sessions/resume/${REMOTE_NAME}.manual-launch"
+SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME_DQ}"
+RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME_DQ}.uuid"
+MANUAL_LAUNCH="$HOME/.sessions/resume/${REMOTE_NAME_DQ}.manual-launch"
 ADMISSION_FIRST=1
 while true; do
   MANUAL_ONCE=0
@@ -1041,12 +1051,12 @@ while true; do
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
     RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ} --continue
   else
     touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE} --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
