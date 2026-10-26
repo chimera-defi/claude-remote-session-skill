@@ -190,7 +190,7 @@ active 24-hour period. Code: `_SWEEP_CONTEXT_TRIGGER_PCT`, `_SWEEP_IDLE_CONTEXT_
 in `scripts/session-compact.sh`.
 
 The CLI trigger in tokens is `T = min(floor((W - 20000) * PCT / 100), W - 33000)`.
-`W` is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, capped at the recognized model's window;
+`W` is `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which the sweep additionally caps at the recognized model's window (its own conservative cap, not CLI behaviour);
 `PCT` is `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`. At PCT=70, the desktop W=300000 gives
 T=196000; the default crss tmux spawn W=234000 gives T=149800 (about 150k); and
 the heavy W=600000 gives T=406000. The sweep reports `tokens * 100 / T` without
