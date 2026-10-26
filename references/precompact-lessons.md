@@ -75,8 +75,11 @@ CRSS_LESSONS_INDEX_NAME=INDEX.md
 `CRSS_LESSONS_INDEX_NAME` (default `MEMORY.md`) names that dir's index; it is guarded exactly like
 `MEMORY.md` (never an update target, never scanned for duplicates, subject to the index caps) and new
 index lines go after the last list item, so a closing note in the index stays last. The hook only
-writes files: it never runs `git`, so lessons saved into a version-controlled dir are left
-uncommitted for a human or an orchestrator to review and commit.
+writes files: it never runs `git`, so a lesson is exactly as durable as the dir it lands in. Where a
+host points `CRSS_LESSONS_MEMORY_DIR` into the central agent-memory store (this host does: the Wren
+lessons dir under `agents/claude/private/curated/`), that store's `.gitignore` is `*`, so the lessons
+are disk-only: nothing there can be committed, and a human or orchestrator reviews them in place. To
+keep one in version control, copy it into a tracked doc by hand.
 
 ## Install (global settings, operator-approved)
 
