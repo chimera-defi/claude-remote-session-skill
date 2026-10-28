@@ -46,7 +46,9 @@ target's project work yourself: the launcher stays bounded (route / relay / moni
 2. **Verify healthy.** `session-handoff check <tmux-session>`; exit 0 = ready at the prompt, 1 = not ready, 2 = no such tmux session.
    Don't send to a `starting`/`dead`/`menu` target (`menu` covers interactive widgets and the
    first-launch folder-trust dialog; `send` refuses these, it does not queue). `busy` queues
-   behind current work. State list: `_state_of`'s comment in `scripts/session-handoff.sh`.
+   behind current work. `blocked` means the lane stopped on a tail `BLOCKED:` line or a
+   trailing question: `check` exits 1 and `targets` shows it, and `send` is allowed so you
+   can answer it. State list: `_state_of`'s comment in `scripts/session-handoff.sh`.
 3. **Massage.** **REQUIRED SUB-REFERENCE: follow the contract in `references/massaging.md`**:
    goal (checkable finish line) -> why, context and method (method is the agent's; steps only when order is a real constraint) -> known state to verify, not assume ->
    deliverable -> carried-forward guardrails -> scope (concrete anti-patterns) -> stop rule

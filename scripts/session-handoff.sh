@@ -27,6 +27,10 @@
 # `send` still does not consult the FULL `ready` predicate before its first
 # paste (a bare unsubmitted draft is not yet checked there), see
 # `_is_safe_to_inject`'s comment for what's left.
+# A lane that stopped for the operator (a tail line starting `BLOCKED:`, or a
+# last assistant line ending in `?`) is `_state_of` `blocked`: `targets` shows
+# it and `check` exits 1. `send` is allowed — the launcher answers it. `ready`
+# stays injection-safety only and still reports SAFE for that idle pane.
 set -uo pipefail
 
 # Autonomous actuation uses the single Agent Host authority; diagnostics/manual
@@ -410,6 +414,10 @@ _input_box_empty() {
 #                          box is either truly empty or only has Claude Code's
 #                          own dim "suggested next action" ghost text, which a
 #                          paste cleanly overwrites)
+# A `blocked` lane (tail `BLOCKED:` line, or a last assistant line ending in
+# `?`) is intentionally still `safe` here when the prompt is idle. That stall
+# is `_state_of`'s job (`check` / `targets`); it is not an injection hazard,
+# so `ready` keeps reporting SAFE and `send` can answer the lane.
 # Order matters: busy and menu are checked before the prompt/draft checks
 # because both can coexist with leftover text on the input line (e.g. a menu
 # widget ignores stray keystrokes rather than clearing them), and busy/menu
@@ -572,13 +580,77 @@ _codex_live() {
   return 1
 }
 
-# _state_of — dead | starting | busy | menu | ready, from pane command +
-# capture. `menu` (see _is_on_menu's comment for the
+# _blocked_line_text — assistant-line text: drop leading whitespace, one
+# leading Claude bullet (⏺ or ●), and surrounding whitespace (including the
+# NBSP tmux uses as cell padding). Locale-safe: literal prefix strips, no
+# non-ASCII bracket class.
+_blocked_line_text() {
+  local s="$1" nbsp=$'\xc2\xa0'
+  s="${s//$nbsp/ }"
+  s="${s#"${s%%[![:space:]]*}"}"
+  case "$s" in
+    "⏺"*) s="${s#⏺}" ;;
+    "●"*) s="${s#●}" ;;
+  esac
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
+# _is_blocked — the pane is idle but waiting on the operator.
+# Checked only once menu and busy have already been ruled out.
+#   * Tail marker: among the last 12 non-blank lines above the input footer
+#     (the box border sitting on top of the ❯/› prompt, the prompt, and
+#     everything under it), a line whose text starts with `BLOCKED:`.
+#   * Trailing question: the last assistant text line before that prompt box
+#     ends with `?`.
+# A `BLOCKED:` quoted further up than that tail stays ready. A mid-sentence
+# mention inside the tail stays ready too — the marker has to start the line.
+_is_blocked() {
+  local cap="$1" region line text last="" flat n start i
+  local -a body=()
+  region="$(_transcript_region "" "$cap")"
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "${line//[[:space:]]/}" ] && continue
+    body+=("$line")
+  done <<<"$region"
+  # The ─ rule directly above the prompt is the top of the input footer, not
+  # assistant text, so it does not consume a tail slot.
+  n=${#body[@]}
+  while [ "$n" -gt 0 ]; do
+    line="${body[$((n - 1))]}"
+    flat="${line//[[:space:]]/}"
+    if [ -n "$flat" ] && [ -z "${flat//─/}" ]; then
+      n=$((n - 1))
+    else
+      break
+    fi
+  done
+  start=0
+  [ "$n" -gt 12 ] && start=$((n - 12))
+  for ((i = start; i < n; i++)); do
+    text="$(_blocked_line_text "${body[$i]}")"
+    [ -n "$text" ] || continue
+    last="$text"
+    case "$text" in
+      BLOCKED:*) return 0 ;;
+    esac
+  done
+  case "$last" in
+    *\?) return 0 ;;
+  esac
+  return 1
+}
+
+# _state_of — dead | starting | busy | menu | blocked | ready, from pane
+# command + capture. `menu` (see _is_on_menu's comment for the
 # incident) covers both the AskUserQuestion-style widgets and the folder-
-# trust dialog — checked before busy/ready so `check` (which gates
+# trust dialog — checked before busy/blocked/ready so `check` (which gates
 # new-session.sh's kickoff send on `state = ready`) refuses to call a pane
 # "ready" while it is sitting on either, instead of the previous busy-vs-not
 # split that had no way to represent "up, but not safe to type into" at all.
+# `blocked` (see _is_blocked) is a stall, not a hazard: `check` exits 1 and
+# `targets` shows it, but `send` is allowed so the launcher can answer.
 _state_of() {
   local s="$1" cmd cap backend; cmd="$(_pane_cmd "$s")"; backend="$(_backend_of "$s")"
   case "$cmd" in
@@ -616,7 +688,10 @@ _state_of() {
   # "Enter to confirm" (e.g. one discussing this very bug). A live menu or
   # trust dialog always puts its hint line in the last few non-blank lines.
   if _is_on_menu "$(printf '%s\n' "$cap" | grep -v '^[[:space:]]*$' | tail -n 4)"; then echo menu; return; fi
-  _is_working "$cap" && echo busy || echo ready
+  if _is_working "$cap"; then echo busy; return; fi
+  # After menu, and only when not busy: a stall on a question or BLOCKED: line.
+  if _is_blocked "$cap"; then echo blocked; return; fi
+  echo ready
 }
 
 _live_ours() { tmux ls 2>/dev/null | cut -d: -f1 | grep -E "^(${_crss_prefix_re})_"; }
@@ -685,6 +760,11 @@ case "$MODE" in
       # _is_on_menu's comment). Answer it by hand first.
       menu)     echo "send: '$S' is on a menu/dialog widget (e.g. a first-launch folder-trust prompt) — refusing to send; Enter could submit an unintended choice. Answer it by hand (on the folder-trust dialog the highlighted default is 'No, exit' — pick 'Yes, I trust this folder'; new spawns pre-seed it via session-trust-seed)" >&2; exit 2;;
       busy)     echo "send: note — '$S' is busy (working); message will queue behind current work" >&2;;
+      # Not a refusal. The lane is idle and waiting on the operator; the
+      # launcher sends the answer. Unknown states already fall through (there
+      # is no catch-all refuse). This arm keeps a later catch-all from
+      # refusing `blocked`, and notes why the paste is happening.
+      blocked)  echo "send: note — '$S' is blocked (waiting on a question or a BLOCKED: line); sending the answer" >&2;;
     esac
     frag="$(_frag "$MSG")"
     # A whitespace-only MSG yields an empty frag, and grep -qF "" matches every
