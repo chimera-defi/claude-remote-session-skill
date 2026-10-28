@@ -576,7 +576,8 @@ fi
 # (verified against the installed CLI: the sonnet line has it, the opus 5.x
 # line does not).
 # This allowlist is necessary but not sufficient — keep builder on sonnet.
-BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
+# AskUserQuestion is omitted (~1.7k tokens): an unwatched builder or copywriter lane must never ask.
+BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
 ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. One Fable review per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
 
@@ -590,10 +591,16 @@ CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
 # the wrong habit for a cheap builder lane. Builder, copywriter and autonomous spawns (any profile) run
 # without it; orchestrator, owner and hub keep it. Repeated --settings flags REPLACE each other (probed on CLI
 # 2.1.308: the last file wins, the first one's env is gone), so a second layer would drop rc-firstparty's
-# ANTHROPIC_BASE_URL and break remote-control registration. Instead the start script derives ONE file from
-# the healed rc-firstparty layer with the plugin switched off, and the launch lines point at that file.
+# ANTHROPIC_BASE_URL and break remote-control registration. The start script derives ONE file from the healed
+# rc-firstparty layer. Superpowers-off lanes switch the plugin off (rc-firstparty-no-superpowers.settings.json).
+# CRSS_LANE_DENY (default mcp__gbrain,SendFeedback,ReportFindings; empty disables) is unioned into
+# permissions.deny of that file; superpowers-on lanes then use rc-firstparty-lane.settings.json, and
+# CRSS_LANE_DENY= leaves them on the plain file with no derive.
 SUPERPOWERS=on
 SUPERPOWERS_PLUGIN="superpowers@claude-plugins-official"
+if [ -z "${CRSS_LANE_DENY+x}" ]; then
+  CRSS_LANE_DENY="mcp__gbrain,SendFeedback,ReportFindings"
+fi
 SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json"
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
   HUB_CONSULT_PROMPT='Autonomous bounded session: no child agents, advisor fanout, compaction, polling or self-restarts. Finish one finite task, record its result and stop. Operator judgment requires a separately admitted frozen packet.'
@@ -625,6 +632,10 @@ if [ "$BACKEND" = claude ]; then
   case "$PROFILE" in builder|copywriter) SUPERPOWERS=off ;; esac
   [ "${CRSS_AUTONOMOUS:-0}" != 1 ] || SUPERPOWERS=off
   [ "$SUPERPOWERS" = on ] || SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty-no-superpowers.settings.json"
+  # Leaf is a suffix of the plain path so the hostile-path test's two prefix rewrites still cover every file.
+  if [ "$SUPERPOWERS" = on ] && [ -n "$CRSS_LANE_DENY" ]; then
+    SETTINGS_FILE="${SETTINGS_FILE%.settings.json}-lane.settings.json"
+  fi
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
     orchestrator|owner)
@@ -801,6 +812,7 @@ REMOTE_NAME_LITERAL="$(_shell_quote "$REMOTE_NAME")"
 BACKEND_LITERAL="$(_shell_quote "$BACKEND")"
 MODEL_LITERAL="$(_shell_quote "$MODEL")"
 SETTINGS_FILE_LITERAL="$(_shell_quote "$SETTINGS_FILE")"
+LANE_DENY_LITERAL="$(_shell_quote "$CRSS_LANE_DENY")"
 PROFILE_LITERAL="$(_shell_quote "$PROFILE")"
 CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
@@ -819,7 +831,7 @@ if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   [ -z "$TIER_AUTO_TYPE" ] || printf 'TIER_AUTO=%s\n' "$TIER_AUTO_TYPE"
-  printf 'SUPERPOWERS=%s\nSETTINGS_FILE=%s\n' "$SUPERPOWERS" "$SETTINGS_FILE"
+  printf 'SUPERPOWERS=%s\nSETTINGS_FILE=%s\nLANE_DENY=%s\n' "$SUPERPOWERS" "$SETTINGS_FILE" "$CRSS_LANE_DENY"
   printf 'QUOTA=%s\n' "$QUOTA_RESULT"
   exit 0
 fi
@@ -941,23 +953,66 @@ f=sys.argv[1];d=json.load(open(f));e=d.setdefault('env',{})
 if 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' not in e:
     e['CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION']='0';json.dump(d,open(f,'w'));open(f,'a').write('\\n')
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json 2>/dev/null || true
-# superpowers-free lane: derive the launch settings file from the healed rc-firstparty layer above (so the
-# base URL and suggestion switch carry over) with ${SUPERPOWERS_PLUGIN} switched off. Rebuilt on every start so
-# it follows later edits to rc-firstparty; tmp + rename because lanes share the file. If the derive fails the
-# lane still starts, with a plain copy (plugin on) rather than a missing --settings file.
-if [ "${SUPERPOWERS}" = off ]; then
-  python3 -c "
+SCRIPT_EOF
+# Derive runs in the start script (rebuilt every start). One --settings flag only: repeated flags replace
+# each other and would drop this layer's env. Off lanes keep the no-superpowers filename and the old failure
+# event so existing extracts still match; on lanes with a deny list use the lane file.
+_DERIVE_COMMENT='# Derive ONE file from healed rc-firstparty (every other key kept, env especially; tmp + os.replace; mode copied). Off lanes set the plugin false; permissions.deny is the existing list UNION the lane deny (order kept, no duplicates).
+# gbrain MCP ~2.6k tokens/start (110 deferred names + instructions; 6 MCP calls vs 1,087 gbrain CLI calls in 4 weeks), SendFeedback ~9KB and ReportFindings ~3KB (0 uses); deny removes them even under --dangerously-skip-permissions. CRSS_LANE_DENY= opts out. Derive failure: plain rc-firstparty copy.'
+_DERIVE_PY=$(cat << 'PY'
 import json,os,sys
-src,dst,plugin=sys.argv[1:4]
-d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
+src,dst,plugin,switch_off,deny_csv=sys.argv[1:6]
+d=json.load(open(src))
+if switch_off=='1':
+    d.setdefault('enabledPlugins',{})[plugin]=False
+if deny_csv:
+    extra=[x for x in deny_csv.split(',') if x!='']
+    perms=d.setdefault('permissions',{})
+    if not isinstance(perms, dict):
+        raise SystemExit(1)
+    existing=perms.get('deny')
+    if existing is None:
+        existing=[]
+    if not isinstance(existing, list):
+        raise SystemExit(1)
+    seen=set()
+    merged=[]
+    for item in list(existing)+extra:
+        if item in seen:
+            continue
+        seen.add(item)
+        merged.append(item)
+    perms['deny']=merged
 tmp=dst+'.'+str(os.getpid())+'.tmp'
-fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.fchmod(fd,os.stat(src).st_mode&0o777)
-f=os.fdopen(fd,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
-" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
+fd=os.open(tmp, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+os.fchmod(fd, os.stat(src).st_mode & 0o777)
+f=os.fdopen(fd, 'w')
+print(json.dumps(d), file=f)
+f.close()
+os.replace(tmp, dst)
+PY
+)
+_crss_emit_derive() {
+  local first="$1" switch_flag="$2" event_name="$3"
+  cat >> "$SCRIPT" << SCRIPT_EOF
+${_DERIVE_COMMENT}
+${first}
+  python3 -c "
+${_DERIVE_PY}
+" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL} ${SUPERPOWERS_PLUGIN} ${switch_flag} ${LANE_DENY_LITERAL} 2>/dev/null || {
     cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL}
-    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=${event_name} (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
   }
 fi
+SCRIPT_EOF
+}
+if [ "$SUPERPOWERS" = off ]; then
+  _crss_emit_derive "if [ \"${SUPERPOWERS}\" = off ]; then" 1 no-superpowers-settings-FAILED
+elif [ -n "$CRSS_LANE_DENY" ]; then
+  _crss_emit_derive "# crss-lane-deny-derive
+if [ -n ${LANE_DENY_LITERAL} ]; then" 0 settings-derive-FAILED
+fi
+cat >> "$SCRIPT" << SCRIPT_EOF
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
