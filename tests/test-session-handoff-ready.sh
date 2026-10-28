@@ -176,7 +176,7 @@ has "send blocked landed" "$out" "landed on fake-session"
 hasnt "send blocked is not refused" "$out" "refusing"
 ok "send blocked exits 0" "$rc" "0"
 iso="$(mktemp -d)"
-out="$(CRSS_HOME="$iso" CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES= FAKE_SESSIONS=cs_stalllane FAKE_CAPTURE="$marker_cap" FAKE_PANE_CMD=claude PATH="$FAKE:$PATH" bash "$HANDOFF" targets 2>&1)"
+out="$(CRSS_HOME="$iso" CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES='' FAKE_SESSIONS=cs_stalllane FAKE_CAPTURE="$marker_cap" FAKE_PANE_CMD=claude PATH="$FAKE:$PATH" bash "$HANDOFF" targets 2>&1)"
 rm -rf "$iso"
 ok "targets shows blocked" "$(printf '%s\n' "$out" | awk '/^cs_stalllane /{print $2}')" "blocked"
 
