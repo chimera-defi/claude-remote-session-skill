@@ -88,10 +88,10 @@ case "$1" in
   reset-failed) : ;;
   start)
     script="$(sed -n 's/^ExecStart=//p' "$CRSS_UNIT_DIR/$u")"
-    payload="$(python3 -c 'import re,sys
+    payload="$(python3 -c 'import re,shlex,sys
 s=open(sys.argv[1]).read()
-m=re.search(r"tmux send-keys -t \"[^\"]+\" \x27(.*?\ndone)\x27", s, re.S)
-print(m.group(1))' "$script")"
+m=re.search(r"tmux send-keys -t \"[^\"]+\" (\x27.*?\ndone\x27)", s, re.S)
+print(shlex.split(m.group(1))[0])' "$script")"
     ( cd "$(cat "$STUB_STATE/rundir")" || exit 1
       exec setsid timeout 25 bash -c "$payload" >/dev/null 2>&1 ) &
     echo $! >> "$STUB_STATE/all.sids"
@@ -270,9 +270,9 @@ HOME="$NH" SESSION_ALIAS_STORE="$T/alias-store" CRSS_HOME="$T/no-overlay" CRSS_S
 NSC="$(ls "$NH"/.local/bin/px-nsr-*-start.sh 2>/dev/null | head -1)"
 ok "ns-script-generated" "$([ -f "$NSC" ] && echo yes || echo no)" yes
 has "ns-script-pin" "$(cat "$NSC" 2>/dev/null)" "RESUME_PIN=\"$NH/.sessions/resume/"
-payload="$(python3 -c 'import re,sys
+payload="$(python3 -c 'import re,shlex,sys
 s=open(sys.argv[1]).read()
-print(re.search(r"tmux send-keys -t \"[^\"]+\" \x27(.*?\ndone)\x27", s, re.S).group(1))' "$NSC" 2>/dev/null)"
+print(shlex.split(re.search(r"tmux send-keys -t \"[^\"]+\" (\x27.*?\ndone\x27)", s, re.S).group(1))[0])' "$NSC" 2>/dev/null)"
 FRESH="$T/fresh"; mkdir -p "$FRESH"; rm -f "$ARGV_LOG" "$ARGV_LOG.sentinel"
 ( cd "$FRESH" || exit 1
   exec setsid timeout 5 bash -c "$payload" >/dev/null 2>&1 ) &

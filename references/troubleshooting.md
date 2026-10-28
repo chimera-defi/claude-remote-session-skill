@@ -207,6 +207,14 @@ chose to say nothing.
   parsed env has `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` true, and only counts as young for 14 days after
   `firstStartTime`. Check: `jq .promptSuggestionUnusedStreak ~/.claude.json`; at 20 or 21 it is in back-off.
   Reset (not a credentials file; back it up first): set it to 0 with `jq` and write the file back.
+- **Who can write the counter (CLI 2.1.308, 2026-10-24):** only an interactive REPL. Each submit that differs from a
+  shown suggestion bumps an in-memory per-process count; at 20 in ONE process it writes `promptSuggestionUnusedStreak: 20`
+  (a step 0 -> 20, never a tally, so sampling the file cannot name the feeder). `--print`, `--sdk-url`/stream-json children
+  (desktop `ccd-cli`, `claude remote-control` spawns) only send telemetry and never write it. After #166 the remaining
+  feeders are hand-launched `--remote-control` TUIs with no `--settings` layer (the operator types from the phone, so
+  nothing is ever tab-accepted). `session-doctor suggest-feeders` lists them live (it found `CHIMERA SERVER CONTROL` and
+  `chimera-server`); fix is to launch them with `--settings ~/.claude/rc-firstparty.settings.json` or
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` in the environment.
 - **Fix in `new-session`:** the `--settings` layer crss already passes (`rc-firstparty.settings.json`) now
   carries `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` (added when the key is absent; an explicit value is kept),
   so crss-spawned unattended sessions generate no suggestions and never touch the counter. Verified: that

@@ -67,6 +67,11 @@
 # to the bare string "codex" if not found, so the pane's PATH decides).
 #CRSS_CODEX_BIN=/usr/local/bin/codex
 
+# Optional direct desktop sends: prefer a host's existing audited bridge module
+# exposing list_sessions/session_status/send_message. Unset = built-in fallback.
+#CRSS_CODEX_BRIDGE_PATH=/path/to/bridge-checkout
+#CRSS_CODEX_BRIDGE_MODULE=pkg.codex_sessions
+
 # CRSS_CODEX_ARGS — extra Codex CLI args for `--backend codex`. This is
 # intentionally host-owned: put model, sandbox, approval policy, and local
 # Codex config overrides here after checking your installed `codex --help`.

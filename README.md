@@ -13,6 +13,7 @@ Say "create a session for my-project" and Claude spins up a session you can conn
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
 - Per-role default model via `CLAUDE_SESSION_PROFILE`; override with `CLAUDE_SESSION_MODEL=<model>` (see "Model default")
 - `session-spawn-server install <dir>` lets the phone start new sessions on the host (Remote Control server mode; see `references/phone-spawn.md`)
+- [`jev-delegate`](references/jev-delegate.md): optional stdlib-only System One client for public/synthetic classification and shadow delegation pilots.
 
 ## Requirements
 
@@ -73,7 +74,7 @@ latest release for that tier. orchestrator is **pinned** to an exact id because 
 `scripts/new-session.sh`'s Model selection comment for the pin, its history, and the checks
 before bumping it.
 
-Builders: Codex gpt-6-luna high first (`--backend codex`), Haiku low repair on a failed check, then gpt-6.1-sol, then Sonnet ([`agents/builder.md`](agents/builder.md)).
+Builders: Codex gpt-6.1-sol high first (`--backend codex`), Haiku low repair on a failed check, then gpt-6-astra medium, then Sonnet ([`agents/builder.md`](agents/builder.md)).
 Routing and bench evidence: [`references/orchestration-flow.md`](references/orchestration-flow.md).
 
 Override per-spawn with `CLAUDE_SESSION_MODEL`. **Bare alias vs. pinned id — pick by intent:**
