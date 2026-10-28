@@ -259,13 +259,23 @@ ok "hostile prompt reaches claude byte for byte" "$(awk 'p{print; exit} $0=="--a
 ok "hostile prompt: nothing in it was executed" "$(yn test -e "$HOME/pwned")" no
 rm -rf "$HOME/scripts-nasty"
 
-# The model, the settings path and the remote name are typed into the same pane text as the prompt, so an apostrophe
+# CLAUDE_SESSION_MODEL is validated against the same ^[a-z0-9][a-z0-9.-]*$ shape as CRSS_OPUS_MODEL and
+# session-resume --model, not just apostrophe-escaped: unlike the settings path and remote name (shell-quoted
+# bare words), the model sits unescaped inside an existing `--model "..."` in the pane text, so a value with a
+# `"`, `$`, or backtick would close that quote and run arbitrary commands when the pane types the launch line.
+rm -f "$HOME/pwn-model-inject"
+MAL_MODEL="sonnet\"; touch \"$HOME/pwn-model-inject\"; echo \""
+o="$(dry CLAUDE_SESSION_MODEL="$MAL_MODEL" --)"
+hasre "hostile CLAUDE_SESSION_MODEL (quote-breakout) is rejected, not typed into the pane" "$o" 'CLAUDE_SESSION_MODEL=.* must match \^\[a-z0-9\]\[a-z0-9\.-\]\*\$'
+ok "hostile CLAUDE_SESSION_MODEL: nothing executed" "$(yn test -e "$HOME/pwn-model-inject")" no
+
+# The settings path and the remote name are typed into the same pane text as the prompt, so an apostrophe
 # in one of them closed the send-keys quote just the same, and a space split a word. A normal spawn must keep the
-# `--model "..."` shape session-resume --model rewrites. The hostile model comes in through its env var; a settings
-# path comes from CRSS_CLAUDE_HOME and a remote name from a sanitized alias, so a copy of the script plants both.
+# `--model "..."` shape session-resume --model rewrites. A settings path comes from CRSS_CLAUDE_HOME and a remote
+# name from a sanitized alias, so a copy of the script plants both (the model stays a plain, valid alias here).
 SCR="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
 ok "launch lines keep --model \"...\" for session-resume" "$(grep -c -- '--model "claude-opus-5-5" ' <<<"$SCR")" 3
-H_MODEL="it's a model"
+H_MODEL="sonnet"
 rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
 python3 - "$HOME/scripts-nasty/new-session.sh" <<'HOSTILE_PY'
 import re, sys
