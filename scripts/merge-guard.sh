@@ -60,7 +60,7 @@ try:
         pass
     missing = set()
     # Only change claims: the line (after list/bold markers) must START with the verb.
-    claim = re.compile(r"(delet|remov|drop|add|creat|renam|mov)(?:ed|es|e|al|s|ped|ping|ing|ition|ion)?\b", re.I)
+    claim = re.compile(r"(delet|remov|drop|add|creat|renam|mov)(?:ed|es|e|als?|s|ped|ping|ing|itions?|ions?)?\b", re.I)
     ext = r"\.(sh|py|md|js|jsx|ts|tsx|json|ya?ml|toml|txt|csv|html|css|go|rs|sql|cfg|ini)$"
     bases = {f.rsplit("/", 1)[-1] for f in files}
     for line in pr["body"].splitlines():
