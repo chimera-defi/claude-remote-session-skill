@@ -668,7 +668,7 @@ _evaluate_row() {
   printf 'skip:pane-%s\n' "$pane_reason"
 }
 
-_pane_state() {  # $1=tmux_session -> dead|starting|busy|ready|"" (I/O)
+_pane_state() {  # $1=tmux_session -> dead|starting|busy|menu|blocked|ready|"" (I/O)
   local out
   out="$(_session_handoff check "$1" 2>&1)" || true
   printf '%s' "$out" | grep -oE 'state=[a-z]+' | head -1 | cut -d= -f2
@@ -858,8 +858,8 @@ declare -A _COMPACT_ISSUED=()
 # older builds). So: snapshot the newest such marker BEFORE sending, then poll
 # for a NEWER one — exactly the comparison session-doctor.sh's idle-report
 # already does for column 8, reused here via _compact_marker_newer. Pane state
-# is kept as a FALLBACK ONLY (still gated on the same seen-busy-before-ready
-# rule as before), for: no cwd given, no transcript dir for that cwd, or an
+# is kept as a FALLBACK ONLY (still gated on seen-busy before ready or
+# blocked), for: no cwd given, no transcript dir for that cwd, or an
 # older CLI whose transcript never gets a fresh marker within the timeout for
 # some other reason. Both signals are checked every poll — whichever confirms
 # first wins — so a working pane-state reading (if the indicator IS matched on
@@ -896,12 +896,14 @@ _do_compact() {
   # Wait for completion (measured ~101s wall-clock — see design doc).
   # Transcript check first (the primary, reliable signal); pane-state check
   # second (fallback — see the function comment above for both). Require
-  # having OBSERVED busy at least once before accepting "ready" as done on the
-  # pane-state path specifically: `send`'s own "landed" verdict can fire the
-  # instant the /compact text is echoed into the transcript, a beat before
-  # Claude Code actually starts the compaction spinner — so a "ready" reading
-  # taken immediately after send returns is not trustworthy evidence the
-  # compact finished. This restriction does not apply to the transcript path,
+  # having OBSERVED busy at least once before accepting "ready" or "blocked"
+  # as done on the pane-state path specifically: `send`'s own "landed" verdict
+  # can fire the instant the /compact text is echoed into the transcript, a
+  # beat before Claude Code actually starts the compaction spinner — so a
+  # "ready" or "blocked" reading taken immediately after send returns is not
+  # trustworthy evidence the compact finished. `blocked` is idle the same way
+  # `ready` is (the lane is waiting on the operator, not still compacting).
+  # This restriction does not apply to the transcript path,
   # which has its own, independent ground-truth check (a NEWER marker than
   # the pre-send baseline).
   while [ "$waited" -lt "$timeout" ]; do
@@ -912,7 +914,7 @@ _do_compact() {
     state="$(_pane_state "$session")"
     case "$state" in
       busy) seen_busy=yes ;;
-      ready) [ "$seen_busy" = yes ] && { echo compacted; return 0; } ;;
+      ready|blocked) [ "$seen_busy" = yes ] && { echo compacted; return 0; } ;;
     esac
     sleep 3
     waited=$((waited+3))
