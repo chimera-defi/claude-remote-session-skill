@@ -1393,6 +1393,11 @@ fi
 # never matters.
 # TASK_FAILED collects why the task was not (verifiably) delivered; any value makes the
 # spawn exit 3 below, after naming the session, so a launcher never mistakes it for success.
+# Codex does not inherit Claude's output hook. Keep this advisory local to its
+# kickoff, after backend/quota routing, without requiring rtk or changing CLI config.
+if [ "$BACKEND" = codex ] && [ -n "$TASK" ]; then
+  TASK=$'Shell output: use rtk for supported noisy commands (e.g. rtk git log -20, rtk ls, rtk test <command>) when installed; use the original command if rtk is unavailable or unfiltered output is needed.\n\n'"$TASK"
+fi
 TASK_FAILED=""
 if [ -n "$TASK" ] && [ -n "$START_VERDICT" ]; then
   TASK_FAILED="task NOT sent: the lane's start was not verified (${START_VERDICT})"
