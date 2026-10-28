@@ -17,6 +17,7 @@ dry() {
     -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_STANDARD \
     -u CRSS_COMPACT_WINDOW_LIGHT -u CRSS_COMPACT_WINDOW_DEFAULT \
     -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND -u CRSS_ORCHESTRATOR_PROMPT -u CRSS_AUTONOMOUS \
+    -u CRSS_LANE_DENY \
     "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
 }
 
@@ -132,7 +133,7 @@ mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
 printf "#!/bin/sh\nexit 0\n" > "$HOME/.local/bin/systemctl"; chmod +x "$HOME/.local/bin/systemctl"
 gen() {
   rm -rf "$HOME/.sessions" "$HOME"/.local/bin/*-start.sh
-  env -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_DEFAULT "$@" PATH="$HOME/.local/bin:$PATH" bash "$NS" proj workspace --alias cw --tier heavy >/dev/null 2>&1
+  env -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_DEFAULT -u CRSS_LANE_DENY "$@" PATH="$HOME/.local/bin:$PATH" bash "$NS" proj workspace --alias cw --tier heavy >/dev/null 2>&1
   cat "$HOME"/.local/bin/*-start.sh 2>/dev/null
 }
 hasre "start script exports the window" "$(gen CRSS_COMPACT_WINDOW_HEAVY=600000)" "'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000' Enter$"
@@ -151,12 +152,19 @@ echo '{"env":{"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"}}' > "$RCF"; bash -c "$
 has "explicit value kept" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"'
 
 # Superpowers plugin: builder/copywriter and autonomous spawns launch with a derived settings file that switches
-# it off; orchestrator/owner/hub keep plain rc-firstparty. Repeated --settings flags REPLACE each other (probed on
-# CLI 2.1.308), so the plugin switch rides in ONE file derived from rc-firstparty, never in a second layer.
+# it off; orchestrator/owner/hub keep the plugin and, by default, launch on the lane deny file. Repeated --settings
+# flags REPLACE each other (probed on CLI 2.1.308), so the plugin switch and the deny list ride in ONE file derived
+# from rc-firstparty, never in a second layer. CRSS_LANE_DENY= opts out: superpowers-on lanes use plain rc-firstparty.
 SP_ON="$HOME/.claude/rc-firstparty.settings.json"; SP_OFF="$HOME/.claude/rc-firstparty-no-superpowers.settings.json"
+SP_LANE="$HOME/.claude/rc-firstparty-lane.settings.json"
+hasnt "BUILDER_TOOLS omits AskUserQuestion" "$(grep -m1 '^BUILDER_TOOLS=' "$NS")" "AskUserQuestion"
 for profile in orchestrator owner hub; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
-  hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on plain rc-firstparty" "$o" "^SETTINGS_FILE=$SP_ON\$"
+  hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on the lane deny file" "$o" "^SETTINGS_FILE=$SP_LANE\$"
+  hasre "$profile lane deny default" "$o" '^LANE_DENY=mcp__gbrain,SendFeedback,ReportFindings$'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_LANE_DENY= --)"
+  hasre "$profile deny opt-out keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile deny opt-out uses plain rc-firstparty" "$o" "^SETTINGS_FILE=$SP_ON\$"
+  hasre "$profile deny opt-out prints empty LANE_DENY" "$o" '^LANE_DENY=$'
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
   hasre "autonomous $profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "autonomous $profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
 done
@@ -166,26 +174,35 @@ for profile in builder copywriter; do
 done
 o="$(dry A=1 -- --tier standard)"; hasre "tier standard (builder) drops superpowers" "$o" '^SUPERPOWERS=off$'
 o="$(dry A=1 -- --tier heavy)"; hasre "tier heavy (owner) keeps superpowers" "$o" '^SUPERPOWERS=on$'
+hasre "tier heavy launches on the lane deny file" "$o" "^SETTINGS_FILE=$SP_LANE\$"
 o="$(dry A=1 -- --backend codex)"; hasre "codex has no plugin switch" "$o" '^SUPERPOWERS=n/a$'
 
-# generated start script: the launch lines name the resolved file, and only a superpowers-free lane derives it
+# generated start script: the launch lines name the resolved file. Superpowers-free lanes derive the
+# no-superpowers file; superpowers-on lanes derive the lane file unless CRSS_LANE_DENY is empty.
 launches() { grep -c -- "--remote-control" <<<"$1"; }
 SCR="$(CLAUDE_SESSION_PROFILE=builder gen A=1)"
 ok "builder: three launch lines" "$(launches "$SCR")" 3
 ok "builder: every launch line uses the derived file" "$(grep -c -- "--settings $SP_OFF --remote-control" <<<"$SCR")" 3
 ok "builder: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR")" 0
+hasnt "builder flags omit AskUserQuestion" "$SCR" "AskUserQuestion"
 SCR_O="$(CLAUDE_SESSION_PROFILE=orchestrator gen A=1)"
-ok "orchestrator: every launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 3
+ok "orchestrator: every launch line uses the lane deny file" "$(grep -c -- "--settings $SP_LANE --remote-control" <<<"$SCR_O")" 3
+ok "orchestrator: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 0
 hasnt "orchestrator: derives nothing" "$SCR_O" 'if [ "off" = off ]'
 hasnt "orchestrator: never names the derived file" "$SCR_O" "$SP_OFF"
+SCR_OPT="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_LANE_DENY=)"
+ok "orchestrator deny opt-out: every launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_OPT")" 3
+hasnt "orchestrator deny opt-out: no lane file" "$SCR_OPT" "rc-firstparty-lane.settings.json"
+hasnt "orchestrator deny opt-out: no derive" "$SCR_OPT" "os.replace"
 
-# the derive block, run against fixture layers: every rc-firstparty key survives, only the plugin switch is added,
-# and a rerun follows later edits to rc-firstparty
+# the derive block, run against fixture layers: every rc-firstparty key survives, the plugin switch and the
+# deny union are applied, and a rerun follows later edits to rc-firstparty
 SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
 [ -n "$SPB" ] || { echo "FAIL: could not extract the superpowers derive block"; fail=$((fail+1)); }
 field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(sys.argv[2],{}).get(sys.argv[3]))' "$@"; }
+deny_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["permissions"]["deny"])' "$1"; }
 mkdir -p "$HOME/.claude"
-echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"other@market":true}}' > "$SP_ON"
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"other@market":true},"permissions":{"allow":["Read"],"deny":["Bash(rm *)","SendFeedback"]}}' > "$SP_ON"
 chmod 600 "$SP_ON"; echo stale > "$SP_OFF"; chmod 664 "$SP_OFF"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "derived takes the private mode of rc-firstparty, not the umask default" "$(stat -c %a "$SP_OFF")" 600
@@ -193,17 +210,49 @@ ok "derived keeps the base URL (remote-control needs it)" "$(field "$SP_OFF" env
 ok "derived keeps the suggestion off-switch" "$(field "$SP_OFF" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
 ok "derived switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
 ok "derived keeps other plugin entries" "$(field "$SP_OFF" enabledPlugins other@market)" True
+ok "derived deny keeps pre-existing entries then the lane deny" "$(deny_of "$SP_OFF")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'ReportFindings']"
+ok "derived keeps permissions.allow" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["permissions"]["allow"])' "$SP_OFF")" "['Read']"
+ok "derived keeps env beside the deny list" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
 ok "rc-firstparty itself is not touched" "$(field "$SP_ON" enabledPlugins superpowers@claude-plugins-official)" None
+ok "rc-firstparty deny list is not rewritten" "$(deny_of "$SP_ON")" "['Bash(rm *)', 'SendFeedback']"
 echo '{"env":{"ANTHROPIC_BASE_URL":"https://edited.example"}}' > "$SP_ON"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "rerun follows a later edit to rc-firstparty" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://edited.example"
 ok "rerun drops entries rc-firstparty no longer has" "$(field "$SP_OFF" enabledPlugins other@market)" None
+ok "rerun deny list is exactly the lane deny" "$(deny_of "$SP_OFF")" "['mcp__gbrain', 'SendFeedback', 'ReportFindings']"
 ok "no temp file left behind" "$(find "$HOME/.claude" -name '*.tmp' | wc -l | tr -d ' ')" 0
 echo 'not json' > "$SP_ON"; chmod 600 "$SP_ON"; chmod 664 "$SP_OFF"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "unreadable rc-firstparty: lane still gets a settings file" "$(cat "$SP_OFF")" "not json"
 ok "unreadable rc-firstparty: the copy keeps the private mode too" "$(stat -c %a "$SP_OFF")" 600
 has "unreadable rc-firstparty: failure logged" "$(cat "$HOME/sp.log")" "event=no-superpowers-settings-FAILED"
+rm -f "$SP_ON" "$SP_OFF"
+
+# superpowers-on lane file: plugin left untouched, deny unioned, env kept
+LANEB="$(awk '/^# crss-lane-deny-derive$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR_O")"
+[ -n "$LANEB" ] || { echo "FAIL: could not extract the lane deny derive block"; fail=$((fail+1)); }
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"superpowers@claude-plugins-official":true,"other@market":true},"permissions":{"allow":["Read"],"deny":["Bash(rm *)","SendFeedback"]}}' > "$SP_ON"
+chmod 600 "$SP_ON"
+SESSION=px_lane LOG_FILE="$HOME/lane.log" bash -c "$LANEB" >/dev/null
+ok "lane derive leaves superpowers on" "$(field "$SP_LANE" enabledPlugins superpowers@claude-plugins-official)" True
+ok "lane derive keeps other plugins" "$(field "$SP_LANE" enabledPlugins other@market)" True
+ok "lane derive keeps the base URL" "$(field "$SP_LANE" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
+ok "lane derive keeps the suggestion off-switch" "$(field "$SP_LANE" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
+ok "lane derive unions pre-existing deny entries" "$(deny_of "$SP_LANE")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'ReportFindings']"
+ok "lane derive keeps permissions.allow" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["permissions"]["allow"])' "$SP_LANE")" "['Read']"
+ok "lane derive takes the private mode" "$(stat -c %a "$SP_LANE")" 600
+rm -f "$SP_ON" "$SP_LANE" "$SP_OFF"
+
+# empty deny still derives the superpowers-off file, but does not touch permissions.deny
+SCR_BOPT="$(CLAUDE_SESSION_PROFILE=builder gen CRSS_LANE_DENY=)"
+SPBOPT="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR_BOPT")"
+[ -n "$SPBOPT" ] || { echo "FAIL: could not extract the opt-out derive block"; fail=$((fail+1)); }
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://kept.example"},"permissions":{"deny":["Bash(rm *)"]}}' > "$SP_ON"
+chmod 600 "$SP_ON"
+SESSION=px_bopt LOG_FILE="$HOME/bopt.log" bash -c "$SPBOPT" >/dev/null
+ok "builder deny opt-out keeps the pre-existing deny list only" "$(deny_of "$SP_OFF")" "['Bash(rm *)']"
+ok "builder deny opt-out still switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
+ok "builder deny opt-out keeps env" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://kept.example"
 rm -f "$SP_ON" "$SP_OFF"
 
 # Every profile's start script must parse, and so must the text it types into the pane. The loop rides in
@@ -296,7 +345,7 @@ for profile in orchestrator builder; do
   typed <<<"$SCR" > "$HOME/typed.sh"
   ok "$profile, hostile model/settings/name: pane text parses" "$(bash -n "$HOME/typed.sh" 2>&1; echo "rc=$?")" "rc=0"
   ARGV="$(launch_argv < "$HOME/typed.sh")"
-  settings_name=rc-firstparty.settings.json; [ "$profile" = builder ] && settings_name=rc-firstparty-no-superpowers.settings.json
+  settings_name=rc-firstparty-lane.settings.json; [ "$profile" = builder ] && settings_name=rc-firstparty-no-superpowers.settings.json
   ok "$profile: the model arrives as one argument" "$(awk 'p{print; exit} $0=="--model"{p=1}' <<<"$ARGV")" "$H_MODEL"
   ok "$profile: the settings path arrives as one argument" "$(awk 'p{print; exit} $0=="--settings"{p=1}' <<<"$ARGV")" "$HOME/.claude/it's a dir/$settings_name"
   hasre "$profile: the remote name arrives as one argument" "$(awk 'p{print; exit} $0=="--remote-control"{p=1}' <<<"$ARGV")" "^px-[a-z0-9]+-[0-9]{4}-[0-9]{4}-it's a name\$"
@@ -309,6 +358,13 @@ SESSION=px_h LOG_FILE="$HOME/h.log" bash -c "$SPB" >/dev/null 2>&1
 ok "derive block writes the file at a path with an apostrophe and a space" \
   "$(field "$HOME/.claude/it's a dir/rc-firstparty-no-superpowers.settings.json" enabledPlugins superpowers@claude-plugins-official 2>&1)" False
 rm -rf "$HOME/scripts-nasty" "$HOME/.claude/it's a dir" "$HOME/.claude/rc-firstparty.settings.json"
+
+# an apostrophe (and a space) in CRSS_LANE_DENY is quoted into the start script; bash -n must still pass
+for spec in orchestrator builder; do
+  SCR_Q="$(CLAUDE_SESSION_PROFILE="$spec" gen CRSS_LANE_DENY="it's a deny")"
+  printf '%s\n' "$SCR_Q" > "$HOME/ss-deny.sh"
+  ok "$spec apostrophe in CRSS_LANE_DENY: start script parses" "$(bash -n "$HOME/ss-deny.sh" 2>&1; echo "rc=$?")" "rc=0"
+done
 
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"

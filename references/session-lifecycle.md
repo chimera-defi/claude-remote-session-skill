@@ -115,4 +115,8 @@ absent/disconnected in `session-doctor report`'s registry section, check its `cl
 carries that `--settings` flag. Builder, copywriter and autonomous lanes carry the derived
 `rc-firstparty-no-superpowers.settings.json` instead (same content plus the Superpowers plugin off,
 rebuilt from `rc-firstparty` on every start); a launch must carry exactly one `--settings` flag
-because repeated flags replace each other.
+because repeated flags replace each other. Claude lanes also union `permissions.deny` with
+`CRSS_LANE_DENY` (default `mcp__gbrain,SendFeedback,ReportFindings`, which drops the gbrain MCP
+server, SendFeedback and ReportFindings from the tool list). Superpowers-on lanes then launch on
+the derived `rc-firstparty-lane.settings.json`; `CRSS_LANE_DENY=` (empty) opts out and those lanes
+keep plain `rc-firstparty.settings.json` with no derive.
