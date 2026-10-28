@@ -34,8 +34,21 @@ for profile in orchestrator owner; do
 done
 for profile in builder copywriter; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
-  hasnt "$profile has no appended prompt" "$o" '--append-system-prompt'
+  flags="$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")"
+  has "$profile flags contain BLOCKED:" "$flags" 'BLOCKED:'
+  has "$profile flags contain session-send" "$flags" 'session-send'
+  hasnt "$profile flags omit the launcher sentence without --launcher" "$flags" 'Your\ launcher\ is'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
+  flags="$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")"
+  has "autonomous $profile flags contain BLOCKED:" "$flags" 'BLOCKED:'
+  has "autonomous $profile flags contain session-send" "$flags" 'session-send'
 done
+for profile in orchestrator owner hub; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasnt "$profile has no builder escalation prompt" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" 'BLOCKED:'
+done
+o="$(dry CLAUDE_SESSION_PROFILE=builder -- --launcher ah_x)"
+has "builder flags name launcher ah_x" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" 'Your\ launcher\ is\ ah_x.'
 o="$(dry CLAUDE_SESSION_PROFILE=hub --)"
 has "hub keeps consult prompt" "$o" '--append-system-prompt You\ are\ a\ Sonnet\ hub.'
 hasnt "hub has no delegation prompt" "$o" 'Delegation\ \(operator'
@@ -176,7 +189,8 @@ for profile in builder copywriter; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
   hasre "$profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "$profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
   has "$profile CLAUDE_EXTRA_FLAGS has --tools" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" '--tools'
-  hasnt "$profile CLAUDE_EXTRA_FLAGS omits AskUserQuestion" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" 'AskUserQuestion'
+  # The escalation prompt names AskUserQuestion as off. That is prose, not an allowlist entry.
+  hasnt "$profile --tools omits AskUserQuestion" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o" | grep -o -- '--tools [^ ]*' | head -1)" 'AskUserQuestion'
 done
 o="$(dry A=1 -- --tier standard)"; hasre "tier standard (builder) drops superpowers" "$o" '^SUPERPOWERS=off$'
 o="$(dry A=1 -- --tier heavy)"; hasre "tier heavy (owner) keeps superpowers" "$o" '^SUPERPOWERS=on$'
@@ -190,7 +204,11 @@ SCR="$(CLAUDE_SESSION_PROFILE=builder gen A=1)"
 ok "builder: three launch lines" "$(launches "$SCR")" 3
 ok "builder: every launch line uses the derived file" "$(grep -c -- "--settings $SP_OFF --remote-control" <<<"$SCR")" 3
 ok "builder: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR")" 0
-hasnt "builder flags omit AskUserQuestion" "$SCR" "AskUserQuestion"
+hasnt "builder --tools omits AskUserQuestion" "$(grep -o -- '--tools [^ ]*' <<<"$SCR" | head -1)" "AskUserQuestion"
+printf '%s\n' "$SCR" > "$HOME/ss-builder-esc.sh"
+ok "builder escalation start script parses" "$(bash -n "$HOME/ss-builder-esc.sh" 2>&1; echo "rc=$?")" "rc=0"
+has "builder start script carries BLOCKED:" "$SCR" "BLOCKED:"
+has "builder start script carries session-send" "$SCR" "session-send"
 SCR_O="$(CLAUDE_SESSION_PROFILE=orchestrator gen A=1)"
 ok "orchestrator: every launch line uses the lane deny file" "$(grep -c -- "--settings $SP_LANE --remote-control" <<<"$SCR_O")" 3
 ok "orchestrator: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 0
