@@ -37,7 +37,7 @@ ToolSearch. MCP-server tools are a separate namespace and stay reachable.
 
 `BUILDER_TOOLS` in `scripts/new-session.sh` is the source of truth (the `builder` and
 `copywriter` profiles both use it). Current value:
-`Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor`
+`Bash,Read,Edit,Write,Glob,Grep,Agent,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor`
 
 Override: a builder that needs SendUserFile / Artifact should add it to `BUILDER_TOOLS`
 (~1k each) or use the orchestrator profile. `advisor` is already included (~1k).
