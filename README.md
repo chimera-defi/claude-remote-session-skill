@@ -13,6 +13,7 @@ Say "create a session for my-project" and Claude spins up a session you can conn
 - Smart backoff: 300s pause on quick exits (rate limit / crash), 10s otherwise
 - Per-role default model via `CLAUDE_SESSION_PROFILE`; override with `CLAUDE_SESSION_MODEL=<model>` (see "Model default")
 - `session-spawn-server install <dir>` lets the phone start new sessions on the host (Remote Control server mode; see `references/phone-spawn.md`)
+- [`jev-delegate`](references/jev-delegate.md): optional stdlib-only System One client for public/synthetic classification and shadow delegation pilots.
 
 ## Requirements
 
