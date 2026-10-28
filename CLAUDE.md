@@ -25,7 +25,7 @@ A change is done when **all** of these are true — not before:
    CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
-   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a second model family has reviewed, and say so in the PR body.
+   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a non-Claude family (gpt-6.1-sol, or Grok when Codex is out) has reviewed; Fable alone does not count. Name the model in the PR body.
 3. Every changed deployable is redeployed and verified (see "Deploying" below). A fix that
    is merged but not redeployed is inert for the fleet.
 4. You've told the operator what landed, what was redeployed, and anything left undone.
@@ -104,7 +104,7 @@ sessions whose subagent transcripts ran on Opus (one summary line is also in `re
 claim: re-run the command it cites, open the file:line it names, or diff the change. No
 evidence means unverified. Consolidate verified results in one table at the end.
 
-**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor).
+**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor). This is a Claude read, not the second-family review on line 28. If Fable is unavailable, mark it UNVERIFIED; do not substitute another tier.
 
 ## Long runs: keep a task file
 
