@@ -1,6 +1,7 @@
 """Hermetic actuation tests: fake tmux, systemctl, authority and model only."""
 import os
 import re
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -36,6 +37,11 @@ esac''')
     def run_shell(self,text,**env):
         return subprocess.run(['bash','-c',text],env=dict(self.env,**env),cwd=self.root,capture_output=True,text=True,timeout=20)
     def calls(self): return self.log.read_text() if self.log.exists() else ''
+    def typed(self, script):
+        # What tmux send-keys types into the pane: the single-quoted loop literal, shell-unquoted
+        # (a prompt apostrophe is written '\'' inside it, so slicing the raw text is not enough).
+        i=script.index("'LOG_FILE="); j=script.index("\ndone'",i)+6
+        return shlex.split(script[i:j])[0]
     def generated(self, backend="claude"):
         p=subprocess.run(['bash',str(ROOT/'scripts/new-session.sh'),'fake','sessions','--backend',backend],env=self.env,cwd=self.root,capture_output=True,text=True,timeout=20)
         files=list((self.home/'.local/bin').glob('*-start.sh'))
@@ -45,8 +51,7 @@ esac''')
     def test_generated_restart_denies_after_manual_first_launch(self):
         script=self.generated()
         # Execute the actual serialized payload produced by the generator.
-        start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
-        payload=script[start:end]
+        payload=self.typed(script)
         p=self.run_shell(payload)
         self.assertEqual(p.returncode,0,p.stderr)
         self.assertEqual(self.calls().count('model\n'),1)
@@ -61,17 +66,43 @@ esac''')
         script=self.generated()
         # Stop the endless loop on the second launch: proof enough that the restart ran.
         self.stub('fake-model','echo model >> "$CALLS"; [ "$(grep -c model "$CALLS")" -ge 2 ] && kill $PPID; exit 0')
-        start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
-        payload=script[start:end]
+        payload=self.typed(script)
         remote=re.search(r'^REMOTE_NAME=(.+)$',script,re.M).group(1)
         (self.root/('.sessions-init-'+remote)).touch()  # previously launched, as after a reboot
         p=self.run_shell(payload)
         self.assertNotIn('autonomous admission denied',p.stdout)
         self.assertEqual(self.calls().count('model\n'),2)
+    def test_helper_without_authority_admits_only_manual_callers(self):
+        # Loops already running in panes (pre-#189 shape) call the helper on every restart and
+        # never re-read their start script; the helper is what reaches them.
+        helper=str(ROOT/'scripts/autonomous-admission.sh'); log=self.root/'starts.log'
+        env=dict(AGENT_HOST_ADMISSION_CLI='',CRSS_STARTS_LOG=str(log))
+        manual=self.run_shell('bash "$H" restart ah_x',H=helper,**env)
+        self.assertEqual(manual.returncode,0,manual.stderr)
+        self.assertIn('event=admission-skipped reason=no-authority-manual action=restart subject=ah_x',log.read_text())
+        auto=self.run_shell('bash "$H" restart ah_x',H=helper,CRSS_AUTONOMOUS='1',**env)
+        self.assertEqual(auto.returncode,2)
+        bad=self.run_shell('bash "$H" restart ah_x',H=helper,CRSS_STARTS_LOG=str(log),AGENT_HOST_ADMISSION_CLI='rel/cli.py')
+        self.assertEqual(bad.returncode,2)
+    def test_generated_autonomous_loop_without_authority_still_denies(self):
+        # The generator passes its baked autonomy to the helper, so an autonomous loop never
+        # reads as manual even with no authority configured.
+        source=(ROOT/'scripts/new-session.sh').read_text()
+        a=source.index("tmux send-keys -t \"${SESSION}\" 'LOG_FILE=")
+        b=source.index('\nSCRIPT_EOF',a)
+        p=self.run_shell('''SESSION=test; REMOTE_NAME=test; MODEL=fake; CLAUDE_EXTRA_FLAGS=; CRSS_CLAUDE_HOME=/tmp
+ADMISSION_HELPER="'''+str(ROOT/'scripts/autonomous-admission.sh')+'''"; ADMISSION_SUBJECT=test; ADMISSION_GATED=1
+cat <<SCRIPT_EOF
+'''+source[a:b]+'''\nSCRIPT_EOF
+''',CRSS_AUTONOMOUS='1',AGENT_HOST_ADMISSION_CLI='')
+        generated=p.stdout; typed=self.typed(generated)
+        self.stub('fake-model','echo model >> "$CALLS"; kill $PPID; exit 0')  # fail fast if admitted
+        q=self.run_shell(typed,AGENT_HOST_ADMISSION_CLI='')
+        self.assertIn('autonomous admission denied',q.stdout)
+        self.assertNotIn('model',self.calls())
     def test_operator_manual_resume_intent_is_consumed_once(self):
         script=self.generated()
-        start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
-        payload=script[start:end]
+        payload=self.typed(script)
         pin=Path(re.search(r'^RESUME_PIN="([^"]+)"',payload,re.M).group(1))
         marker=Path(re.search(r'^MANUAL_LAUNCH="([^"]+)"',payload,re.M).group(1))
         pin.parent.mkdir(parents=True,exist_ok=True)
@@ -96,7 +127,7 @@ esac''')
         self.assertNotIn('model',self.calls())
         self.assertIn('autonomous admission denied',p.stdout)
     def test_generated_autonomous_first_pass_denies(self):
-        script=self.generated(); start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
+        script=self.generated(); typed=self.typed(script)
         # Generated first-pass predicate comes from caller provenance; exercise
         # the generator with its actual autonomous value through the heredoc.
         source=(ROOT/'scripts/new-session.sh').read_text()
@@ -109,8 +140,8 @@ cat <<SCRIPT_EOF
 '''+heredoc+'''\nSCRIPT_EOF
 ''',CRSS_AUTONOMOUS='1')
         self.assertEqual(p.returncode,0,p.stderr)
-        generated=p.stdout; start=generated.index("'LOG_FILE=")+1; end=generated.index("done'",start)+4
-        q=self.run_shell(generated[start:end]); self.assertEqual(q.returncode,0,q.stderr)
+        generated=p.stdout; typed=self.typed(generated)
+        q=self.run_shell(typed); self.assertEqual(q.returncode,0,q.stderr)
         self.assertNotIn('model',self.calls())
     def test_autonomous_new_session_denies_before_systemctl_or_paste(self):
         p=subprocess.run(['bash',str(ROOT/'scripts/new-session.sh'),'fake','sessions'],env=dict(self.env,CRSS_AUTONOMOUS='1'),cwd=self.root,capture_output=True,text=True,timeout=20)
@@ -156,7 +187,7 @@ cat <<SCRIPT_EOF
         p=self.run_shell(f'bash {helper} launch subj-a')
         self.assertEqual(p.returncode,2); self.assertIn('DENY',p.stdout)
         self.assertRegex(log.read_text(),r'event=admission-denied action=launch subject=subj-a rc=2')
-        q=self.run_shell(f'bash {helper} wake subj-b',AGENT_HOST_ADMISSION_CLI='')
+        q=self.run_shell(f'bash {helper} wake subj-b',AGENT_HOST_ADMISSION_CLI='',CRSS_AUTONOMOUS='1')
         self.assertEqual(q.returncode,2); self.assertIn('authority unavailable',q.stderr)
         self.assertIn('action=wake subject=subj-b rc=2',log.read_text())
     def test_allow_writes_no_denial_line(self):
@@ -168,12 +199,12 @@ cat <<SCRIPT_EOF
     def test_invalid_admission_config_preserves_manual_launch_only(self):
         self.env['AGENT_HOST_ADMISSION_CLI']='/tmp/invalid authority.py'
         self.env['CRSS_ADMISSION_SUBJECT']="invalid subject"
-        script=self.generated(); start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
-        p=self.run_shell(script[start:end])
+        script=self.generated(); typed=self.typed(script)
+        p=self.run_shell(typed)
         self.assertEqual(p.returncode,0,p.stderr)
         self.assertEqual(self.calls().count('model\n'),1)
         self.assertIn('autonomous admission denied',p.stdout)
-        self.run_shell(script[start:end])
+        self.run_shell(typed)
         self.assertEqual(self.calls().count('model\n'),1)
     def test_invalid_admission_config_still_denies_autonomous_launch(self):
         self.env['AGENT_HOST_ADMISSION_CLI']='/tmp/invalid authority.py'
@@ -206,15 +237,15 @@ cat <<SCRIPT_EOF
         import pty
         self.real_authority()
         self.stub('fake-model','[ -t 0 ] || exit 99; echo manual-tty >> "$CALLS"; exit 0')
-        script=self.generated(); start=script.index("'LOG_FILE=")+1; end=script.index("done'",start)+4
+        script=self.generated(); typed=self.typed(script)
         master,slave=pty.openpty()
         try:
-            p=subprocess.run(['bash','-c',script[start:end]],stdin=slave,env=self.env,cwd=self.root,capture_output=True,text=True,timeout=10)
+            p=subprocess.run(['bash','-c',typed],stdin=slave,env=self.env,cwd=self.root,capture_output=True,text=True,timeout=10)
             self.assertEqual(p.returncode,0,p.stderr)
             self.assertEqual(self.calls().count('manual-tty'),1)
             self.assertIn('autonomous admission denied',p.stdout)
             self.assert_cooperative_stop()
-            again=self.run_shell(script[start:end])
+            again=self.run_shell(typed)
             self.assertEqual(again.returncode,0,again.stderr)
             self.assertEqual(self.calls().count('manual-tty'),1)
             self.assert_cooperative_stop()

@@ -152,7 +152,9 @@ Options:
   --force             Spawn even when the preflight capacity gate refuses
                       (low RAM). Warnings are always advisory; only an
                       out-of-memory host blocks, and this overrides it.
-  --tier <t>          Right-size: light|standard|heavy|auto; auto uses brief keywords.
+  --tier <t>          Right-size: light = Haiku, standard = Sonnet builder, heavy = Sonnet owner
+                      (full tools) + Opus advisor; auto uses brief keywords. A tier NEVER selects
+                      Opus: for an Opus orchestrator omit --tier (bare spawn = Opus).
                       Orchestrator default effort medium; use CLAUDE_SESSION_EFFORT=high at risky forks.
   --task-type <t>     Auto routing: orchestrate|review|mechanical|research|build.
   --tier-reason <s>   One line on why; recorded in spawn telemetry.
@@ -176,6 +178,9 @@ Environment:
   CRSS_CODEX_ARGS=<args>        Extra Codex CLI args for --backend codex.
                                 Default: empty. Host overlays commonly set
                                 model/sandbox/approval flags here.
+  CRSS_CODEX_BUILDER_TIER=<t>   Codex service tier for --task-type build
+                                lanes (default: priority, i.e. fast mode;
+                                "default" for the normal tier, empty to omit).
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/sonnet/sonnet/haiku
@@ -218,6 +223,11 @@ CLAUDE_SESSION_PROFILE=<p>    Tool-schema footprint + default model (default:
                                 --exclude-dynamic-system-prompt-sections (a
                                 prompt-cache-reuse win). Unknown values fall back
                                 to orchestrator with a warning.
+                                builder/copywriter (and any profile under
+                                CRSS_AUTONOMOUS=1) also launch with the Superpowers
+                                plugin switched off (its SessionStart hook costs ~900
+                                tokens per start/clear/compact); orchestrator, owner
+                                and hub keep it.
 
 Examples:
   new-session my-project                                                     # orchestrator + claude-opus-5-5 (pinned)
@@ -404,9 +414,9 @@ else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
   # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
-  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6-luna}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" <<'PY'
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" "${CRSS_CODEX_BUILDER_TIER-priority}" <<'PY'
 import shlex,sys
-args,model,effort=sys.argv[1:]
+args,model,effort,tier=sys.argv[1:]
 try: w=shlex.split(args)
 except ValueError: w=args.split()
 out=[]; i=0; found=False
@@ -419,6 +429,7 @@ while i<len(w):
   i+=1
 if not found: out=['-m',model]+out
 if not any('model_reasoning_effort' in t for t in out): out+=['-c','model_reasoning_effort='+effort]
+if tier and not any('service_tier' in t for t in out): out+=['-c','service_tier='+tier]
 print(shlex.join(out))
 PY
 )"
@@ -438,7 +449,7 @@ if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
       if [ "$BACKEND" = codex ]; then
         QUOTA_RESULT=codex-out; QUOTA_FROM=codex; QUOTA_EVIDENCE=$_out; BACKEND=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-builder}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low}; [ -n "$TIER_ARG" ] || TIER_ARG=standard; TIER_REASON="${TIER_REASON:+$TIER_REASON; }quota failover codex->claude"; echo "quota failover: Codex out ($_out) -> Claude builder sonnet low" >&2
       else
-        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; _apply_codex_builder_args; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6-luna builds; gpt-6.1-sol reviews; PR must say "single-family review (Claude quota-out)")' >&2
+        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; _apply_codex_builder_args; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6.1-sol high builds and reviews; PR must say "single-family review (Claude quota-out)")' >&2
       fi
     fi
   fi
@@ -563,12 +574,23 @@ fi
 # This allowlist is necessary but not sufficient — keep builder on sonnet.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
+ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. One Fable review per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
 
 # --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
 # cwd/env/memory-path/git-status out of the cached system prompt into the first
 # user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
 # sections, it does not shrink the raw token total.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
+# Superpowers plugin: its SessionStart hook (startup|clear|compact) injects ~900 tokens on every start, clear
+# and compact, on top of ~840 always-on tokens, and its text pushes the brainstorming skill before any reply,
+# the wrong habit for a cheap builder lane. Builder, copywriter and autonomous spawns (any profile) run
+# without it; orchestrator, owner and hub keep it. Repeated --settings flags REPLACE each other (probed on CLI
+# 2.1.308: the last file wins, the first one's env is gone), so a second layer would drop rc-firstparty's
+# ANTHROPIC_BASE_URL and break remote-control registration. Instead the start script derives ONE file from
+# the healed rc-firstparty layer with the plugin switched off, and the launch lines point at that file.
+SUPERPOWERS=on
+SUPERPOWERS_PLUGIN="superpowers@claude-plugins-official"
+SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json"
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
   HUB_CONSULT_PROMPT='Autonomous bounded session: no child agents, advisor fanout, compaction, polling or self-restarts. Finish one finite task, record its result and stop. Operator judgment requires a separately admitted frozen packet.'
   CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --disallowedTools Agent"
@@ -596,8 +618,15 @@ if [ "$BACKEND" = claude ]; then
     *) if [ "$COMPACT_WINDOW" -lt 100000 ] || [ "$COMPACT_WINDOW" -gt 2000000 ]; then
          echo "new-session: compact window '$COMPACT_WINDOW' out of range (100000..2000000, or 'host')" >&2; exit 2; fi ;;
   esac
+  case "$PROFILE" in builder|copywriter) SUPERPOWERS=off ;; esac
+  [ "${CRSS_AUTONOMOUS:-0}" != 1 ] || SUPERPOWERS=off
+  [ "$SUPERPOWERS" = on ] || SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty-no-superpowers.settings.json"
   case "$PROFILE" in
     hub) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$HUB_CONSULT_PROMPT")" ;;
+    orchestrator|owner)
+      if [ "${CRSS_AUTONOMOUS:-0}" != 1 ] && [ "${CRSS_ORCHESTRATOR_PROMPT:-}" != off ]; then
+        CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$ORCHESTRATOR_DELEGATION_PROMPT")"
+      fi ;;
     builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
   esac
   [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
@@ -610,7 +639,7 @@ if [ "$BACKEND" = claude ]; then
   [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id or none)" >&2; exit 2; }
   [ "$ADVISOR" = none ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --advisor $ADVISOR"
 else
-  CLAUDE_EXTRA_FLAGS=""; ADVISOR=none
+  CLAUDE_EXTRA_FLAGS=""; ADVISOR=none; SUPERPOWERS=n/a
 fi
 
 # ── Resolve workdir ─────────────────────────────────────────────────────────
@@ -767,6 +796,7 @@ TYPE_LITERAL="$(_shell_quote "$TYPE")"
 REMOTE_NAME_LITERAL="$(_shell_quote "$REMOTE_NAME")"
 BACKEND_LITERAL="$(_shell_quote "$BACKEND")"
 MODEL_LITERAL="$(_shell_quote "$MODEL")"
+SETTINGS_FILE_LITERAL="$(_shell_quote "$SETTINGS_FILE")"
 PROFILE_LITERAL="$(_shell_quote "$PROFILE")"
 CODEX_BIN_LITERAL="$(_shell_quote "$CRSS_CODEX_BIN")"
 CODEX_ARGS_LITERAL="$(_shell_words_literal "$CRSS_CODEX_ARGS")"
@@ -775,10 +805,17 @@ if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$QUOTA_CHECK" log 
 _shown_effort="${EFFORT:-default}"
 if [ "$BACKEND" = codex ] && [[ "$CRSS_CODEX_ARGS" =~ model_reasoning_effort=([a-z]+) ]]; then _shown_effort=${BASH_REMATCH[1]}; fi
 if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$QUOTA_CHECK" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON" || true; fi
+# What this spawn actually runs, every time, so a tier name can't be misread as a model choice.
+_shown_adv="${ADVISOR:-}"; [ "$BACKEND" = claude ] || _shown_adv=n/a
+printf 'resolved: backend=%s profile=%s model=%s effort=%s advisor=%s tier=%s\n' "$BACKEND" "${PROFILE:-codex}" "$MODEL" "$_shown_effort" "${_shown_adv:-none}" "${TIER_ARG:-none}" >&2
+if [ "$BACKEND" = claude ] && [ -n "$TIER_ARG" ] && [[ "$MODEL" != *opus* && "$MODEL" != *fable* ]]; then
+  echo "note: --tier ${TIER_ARG} is a Sonnet/Haiku session (a tier never selects Opus); for an Opus orchestrator omit --tier" >&2
+fi
 if [ "$DRYRUN" = yes ]; then
   printf 'SESSION=%s\nREMOTE_NAME=%s\nSCRIPT=%s\nSERVICE=%s\nBACKEND=%s\nPROFILE=%s\nMODEL=%s\nMODEL_SRC=%s\nCLAUDE_EXTRA_FLAGS=%s\nTIER=%s\nEFFORT=%s\nCOMPACT_WINDOW=%s\nADVISOR=%s\nCODEX_ARGS=%s\n%s\n' \
     "$SESSION" "$REMOTE_NAME" "$SCRIPT" "$SERVICE" "$BACKEND" "$PROFILE" "$MODEL" "$MODEL_SRC" "$CLAUDE_EXTRA_FLAGS" "${TIER_ARG:-none}" "${EFFORT:-default}" "${COMPACT_WINDOW:-host}" "$ADVISOR" "$CRSS_CODEX_ARGS" "$OVERLAY_LINE"
   [ -z "$TIER_AUTO_TYPE" ] || printf 'TIER_AUTO=%s\n' "$TIER_AUTO_TYPE"
+  printf 'SUPERPOWERS=%s\nSETTINGS_FILE=%s\n' "$SUPERPOWERS" "$SETTINGS_FILE"
   printf 'QUOTA=%s\n' "$QUOTA_RESULT"
   exit 0
 fi
@@ -900,6 +937,23 @@ f=sys.argv[1];d=json.load(open(f));e=d.setdefault('env',{})
 if 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' not in e:
     e['CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION']='0';json.dump(d,open(f,'w'));open(f,'a').write('\\n')
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json 2>/dev/null || true
+# superpowers-free lane: derive the launch settings file from the healed rc-firstparty layer above (so the
+# base URL and suggestion switch carry over) with ${SUPERPOWERS_PLUGIN} switched off. Rebuilt on every start so
+# it follows later edits to rc-firstparty; tmp + rename because lanes share the file. If the derive fails the
+# lane still starts, with a plain copy (plugin on) rather than a missing --settings file.
+if [ "${SUPERPOWERS}" = off ]; then
+  python3 -c "
+import json,os,sys
+src,dst,plugin=sys.argv[1:4]
+d=json.load(open(src));d.setdefault('enabledPlugins',{})[plugin]=False
+tmp=dst+'.'+str(os.getpid())+'.tmp'
+fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.fchmod(fd,os.stat(src).st_mode&0o777)
+f=os.fdopen(fd,'w');print(json.dumps(d),file=f);f.close();os.replace(tmp,dst)
+" ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL} ${SUPERPOWERS_PLUGIN} 2>/dev/null || {
+    cp -p ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json ${SETTINGS_FILE_LITERAL}
+    echo "[\$(date -u +%Y-%m-%dT%H:%M:%SZ)] session=\$SESSION event=no-superpowers-settings-FAILED (launching with the plain rc-firstparty copy; plugin stays on)" | tee -a "\$LOG_FILE"
+  }
+fi
 if [ -f "\$RUNDIR/memory/MEMORY.md" ] && ! grep -q "Session Bootstrap" "\$RUNDIR/.claude/CLAUDE.md" 2>/dev/null; then
   printf '# Session Bootstrap\n\nOn your first response in any new session, read \`memory/MEMORY.md\` to load current project state, then summarize what needs to be done next and wait for instructions.\n' >> "\$RUNDIR/.claude/CLAUDE.md"
 fi
@@ -918,7 +972,19 @@ SCRIPT_EOF
 fi
 
 cat >> "$SCRIPT" << SCRIPT_EOF
-tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
+# Launch tmux in its own transient scope, never in this unit's cgroup: if this call forks the
+# shared server, a later stop/restart of THIS unit (KillMode=control-group) would otherwise kill
+# the server and every session on it (2026-10-24, 29 sessions). With a server already up, the
+# scope holds only the short-lived client. Bare tmux only when systemd-run cannot run at all.
+# Older scripts: crss-tmux-scope migrate-scripts / adopt.
+_crss_tmux() {
+  if command -v systemd-run >/dev/null 2>&1 && [ -S "\${XDG_RUNTIME_DIR:-/run/user/\$(id -u)}/bus" ]; then
+    systemd-run --user --scope --quiet --collect -- tmux "\$@"
+  else
+    tmux "\$@"
+  fi
+}
+_crss_tmux new-session -d -s "${SESSION}" -x 220 -y 50 -c "\$RUNDIR" -e "PATH=\$PATH" -e "HOME=\$HOME"
 # Wait for the pane's interactive shell to be ready before typing into it, so
 # the kickoff keystrokes are not swallowed by a still-initializing pane.
 for _i in \$(seq 1 20); do
@@ -947,13 +1013,28 @@ SCRIPT_EOF
 #                  `--continue` with no prior conversation just starts fresh (checked
 #                  on 2.1.285), so touching early costs nothing.
 if [ "$BACKEND" = claude ]; then
+  # The loop is typed into the pane by `tmux send-keys '...'`, so a literal ' in the flags (printf %q writes an
+  # apostrophe as \') would end that quote early and leave the start script unparseable (orchestrator/owner
+  # spawns since the delegation prompt gained apostrophes). Close the quote, emit a quoted ', reopen: the pane
+  # still receives the %q text unchanged. The model, settings path and remote name are typed into the same
+  # pane text, so they get the same escape: %q first for the two unquoted words (a space stays one word), a plain
+  # escape for the values that sit inside double quotes. The launch line keeps `--model "..."`: session-resume
+  # --model rewrites exactly that shape.
+  _sq="'"; _sq_esc="'\\''"
+  _sq_escape() { printf '%s' "${1//"$_sq"/$_sq_esc}"; }
+  _pane_word() { _sq_escape "$(_shell_quote "$1")"; }
+  CLAUDE_EXTRA_FLAGS_SQ="${CLAUDE_EXTRA_FLAGS//"$_sq"/$_sq_esc}"
+  MODEL_DQ="$(_sq_escape "$MODEL")"
+  SETTINGS_FILE_SQ="$(_pane_word "$SETTINGS_FILE")"
+  REMOTE_NAME_SQ="$(_pane_word "$REMOTE_NAME")"
+  REMOTE_NAME_DQ="$(_sq_escape "$REMOTE_NAME")"
   cat >> "$SCRIPT" << SCRIPT_EOF
 ${COMPACT_WINDOW:+tmux send-keys -t "${SESSION}" 'export CLAUDE_CODE_AUTO_COMPACT_WINDOW=$COMPACT_WINDOW' Enter
 }tmux send-keys -t "${SESSION}" 'LOG_FILE="$HOME/.sessions/session-starts.log"
 SESSION="${SESSION}"
-SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME}"
-RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME}.uuid"
-MANUAL_LAUNCH="$HOME/.sessions/resume/${REMOTE_NAME}.manual-launch"
+SENTINEL="\$PWD/.sessions-init-${REMOTE_NAME_DQ}"
+RESUME_PIN="$HOME/.sessions/resume/${REMOTE_NAME_DQ}.uuid"
+MANUAL_LAUNCH="$HOME/.sessions/resume/${REMOTE_NAME_DQ}.manual-launch"
 ADMISSION_FIRST=1
 while true; do
   MANUAL_ONCE=0
@@ -963,19 +1044,19 @@ while true; do
   if [ "${ADMISSION_GATED}" = 1 ] && [ "\$MANUAL_ONCE" != 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
     ADMISSION_ACTION=restart
     [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
-    AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
+    CRSS_AUTONOMOUS="${CRSS_AUTONOMOUS:-0}" AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
   fi
   ADMISSION_FIRST=0
   START=\$(date +%s)
   PINNED=0
   if [ -s "\$RESUME_PIN" ]; then
     RESUME_ID=\$(cat "\$RESUME_PIN"); PINNED=1; touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --resume "\$RESUME_ID"
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ} --resume "\$RESUME_ID"
   elif [ -f "\$SENTINEL" ]; then
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME} --continue
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ} --continue
   else
     touch "\$SENTINEL" || break
-    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL}" ${CLAUDE_EXTRA_FLAGS} --settings ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json --remote-control ${REMOTE_NAME}
+    ${CRSS_CLAUDE_BIN} --dangerously-skip-permissions --model "${MODEL_DQ}" ${CLAUDE_EXTRA_FLAGS_SQ} --settings ${SETTINGS_FILE_SQ} --remote-control ${REMOTE_NAME_SQ}
   fi
   RUNTIME=\$(( \$(date +%s) - START ))
   if [ "\$PINNED" = 1 ] && [ "\$RUNTIME" -ge 30 ]; then rm -f "\$RESUME_PIN"; fi
@@ -1006,7 +1087,7 @@ while true; do
   if [ "${ADMISSION_GATED}" = 1 ] && { [ "\$ADMISSION_FIRST" = 0 ] || [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ -f "\$SENTINEL" ]; }; then
     ADMISSION_ACTION=restart
     [ "\$ADMISSION_FIRST" = 1 ] && [ ! -f "\$SENTINEL" ] && ADMISSION_ACTION=launch
-    AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
+    CRSS_AUTONOMOUS="${CRSS_AUTONOMOUS:-0}" AGENT_HOST_ADMISSION_CLI="${AGENT_HOST_ADMISSION_CLI:-}" AGENT_HOST_ADMISSION_DB="${AGENT_HOST_ADMISSION_DB:-}" AGENT_HOST_ADMISSION_EVIDENCE="${AGENT_HOST_ADMISSION_EVIDENCE:-}" bash "${ADMISSION_HELPER}" "\$ADMISSION_ACTION" "${ADMISSION_SUBJECT}" || { echo "autonomous admission denied"; break; }
   fi
   ADMISSION_FIRST=0
   touch "\$SENTINEL" || break

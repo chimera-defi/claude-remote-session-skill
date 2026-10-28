@@ -16,8 +16,33 @@ dry() {
   env -u CLAUDE_SESSION_PROFILE -u CLAUDE_SESSION_MODEL -u CLAUDE_SESSION_EFFORT -u CLAUDE_SESSION_ADVISOR \
     -u CLAUDE_SESSION_COMPACT_WINDOW -u CRSS_COMPACT_WINDOW_HEAVY -u CRSS_COMPACT_WINDOW_STANDARD \
     -u CRSS_COMPACT_WINDOW_LIGHT -u CRSS_COMPACT_WINDOW_DEFAULT \
-    -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
+    -u CRSS_OPUS_MODEL -u CRSS_SESSION_BACKEND -u CRSS_ORCHESTRATOR_PROMPT -u CRSS_AUTONOMOUS \
+    "${envs[@]}" bash "$NS" proj workspace --dry-run "$@" 2>&1
 }
+
+# delegation prompt: Claude orchestrator/owner only, with opt-out and autonomous exclusions
+for profile in orchestrator owner; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  has "$profile appends delegation prompt" "$o" '--append-system-prompt Delegation\ \(operator\ 2026-10-25\,\ keep\ quota\):'
+  hasnt "$profile has no hub prompt" "$o" 'You\ are\ a\ Sonnet\ hub.'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_ORCHESTRATOR_PROMPT=off --)"
+  hasnt "$profile opt-out removes prompt" "$o" '--append-system-prompt'
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
+  hasnt "$profile autonomous skips delegation" "$o" 'Delegation\ \(operator'
+  has "$profile autonomous keeps Agent disabled" "$o" '--disallowedTools Agent'
+done
+for profile in builder copywriter; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasnt "$profile has no appended prompt" "$o" '--append-system-prompt'
+done
+o="$(dry CLAUDE_SESSION_PROFILE=hub --)"
+has "hub keeps consult prompt" "$o" '--append-system-prompt You\ are\ a\ Sonnet\ hub.'
+hasnt "hub has no delegation prompt" "$o" 'Delegation\ \(operator'
+o="$(dry CRSS_AUTONOMOUS=1 CLAUDE_SESSION_PROFILE=hub --)"
+has "autonomous hub keeps bounded prompt" "$o" '--append-system-prompt Autonomous\ bounded\ session:'
+hasnt "autonomous hub has no delegation prompt" "$o" 'Delegation\ \(operator'
+o="$(dry A=1 -- --backend codex)"
+hasre "Codex has no Claude flags" "$o" '^CLAUDE_EXTRA_FLAGS=$'
 
 # tiers
 o="$(dry A=1 --)"
@@ -29,13 +54,17 @@ hasre "light advisor is Opus" "$o" '--advisor claude-opus-5-5'; hasre "light eff
 o="$(dry A=1 -- --tier standard)"; hasre "standard: builder/sonnet" "$o" '^PROFILE=builder$'; hasre "standard effort low" "$o" '--effort low'
 o="$(dry CLAUDE_SESSION_EFFORT=high -- --tier standard)"; hasre "explicit effort beats tier default" "$o" '--effort high'
 o="$(dry A=1 -- --tier heavy)"; hasre "heavy: owner/sonnet" "$o" '^PROFILE=owner$'
+hasre "heavy is Sonnet, never Opus" "$o" '^MODEL=sonnet$'; hasre "heavy keeps Opus advisor" "$o" '^ADVISOR=claude-opus-5-5$'
+hasre "resolved line names model and advisor" "$o" 'resolved: backend=claude profile=owner model=sonnet .*advisor=claude-opus-5-5 tier=heavy'
+hasre "tier misread warning" "$o" 'a tier never selects Opus\); for an Opus orchestrator omit --tier'
+o2="$(dry A=1 --)"; hasre "bare spawn resolved line is Opus" "$o2" 'resolved: backend=claude profile=orchestrator model=claude-opus-5-5'
 o="$(dry CLAUDE_SESSION_PROFILE=orchestrator -- --tier heavy)"; hasre "explicit profile beats tier" "$o" '^PROFILE=orchestrator$'; hasre "Opus has no advisor" "$o" '^ADVISOR=none$'
 
 # auto tier routing: explicit types and task brief keywords
  o="$(dry A=1 -- --tier auto --task-type review)"; hasre "auto review profile" "$o" '^PROFILE=copywriter$'; hasre "auto review model" "$o" '^MODEL=haiku$'; hasre "auto review tier" "$o" '^TIER=light$'
  o="$(dry A=1 -- --tier auto --task-type research)"; hasre "auto research profile" "$o" '^PROFILE=owner$'; hasre "auto research model" "$o" '^MODEL=sonnet$'
  GOODCFG="$(mktemp -d)"; mkdir -p "$GOODCFG"; printf '%s\n' 'CRSS_CODEX_ARGS=-s danger-full-access' > "$GOODCFG/config.sh"
- o="$(dry CRSS_HOME="$GOODCFG" -- --tier auto --task-type build)"; hasre "auto build backend" "$o" '^BACKEND=codex$'; has "auto build model" "$o" '-m gpt-6-luna'; has "auto build effort" "$o" 'model_reasoning_effort=high'; has "auto build keeps sandbox" "$o" '-s danger-full-access'; rm -rf "$GOODCFG"
+ o="$(dry CRSS_HOME="$GOODCFG" -- --tier auto --task-type build)"; hasre "auto build backend" "$o" '^BACKEND=codex$'; has "auto build model" "$o" '-m gpt-6.1-sol'; has "auto build effort" "$o" 'model_reasoning_effort=high'; has "auto build fast mode" "$o" 'service_tier=priority'; has "auto build keeps sandbox" "$o" '-s danger-full-access'; rm -rf "$GOODCFG"
  o="$(dry CRSS_CODEX_ARGS='-m custom -s danger-full-access' -- --tier auto --task-type build)"; hasre "env Codex args preserved" "$o" '^CODEX_ARGS=-m custom -s danger-full-access$'
  o="$(dry A=1 -- --tier auto --task 'please review the diff')"; hasre "keyword review maps light" "$o" '^TIER=light$'
  o="$(dry A=1 -- --tier auto)"; hasre "no match maps standard" "$o" '^TIER=standard$'; hasre "no match builder" "$o" '^PROFILE=builder$'
@@ -120,6 +149,156 @@ has "off-switch added when absent" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_S
 has "other keys kept" "$(cat "$RCF")" '"ANTHROPIC_BASE_URL": "x"'
 echo '{"env":{"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"}}' > "$RCF"; bash -c "$BLK"
 has "explicit value kept" "$(cat "$RCF")" '"CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"1"'
+
+# Superpowers plugin: builder/copywriter and autonomous spawns launch with a derived settings file that switches
+# it off; orchestrator/owner/hub keep plain rc-firstparty. Repeated --settings flags REPLACE each other (probed on
+# CLI 2.1.308), so the plugin switch rides in ONE file derived from rc-firstparty, never in a second layer.
+SP_ON="$HOME/.claude/rc-firstparty.settings.json"; SP_OFF="$HOME/.claude/rc-firstparty-no-superpowers.settings.json"
+for profile in orchestrator owner hub; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on plain rc-firstparty" "$o" "^SETTINGS_FILE=$SP_ON\$"
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_AUTONOMOUS=1 --)"
+  hasre "autonomous $profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "autonomous $profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
+done
+for profile in builder copywriter; do
+  o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
+  hasre "$profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "$profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
+done
+o="$(dry A=1 -- --tier standard)"; hasre "tier standard (builder) drops superpowers" "$o" '^SUPERPOWERS=off$'
+o="$(dry A=1 -- --tier heavy)"; hasre "tier heavy (owner) keeps superpowers" "$o" '^SUPERPOWERS=on$'
+o="$(dry A=1 -- --backend codex)"; hasre "codex has no plugin switch" "$o" '^SUPERPOWERS=n/a$'
+
+# generated start script: the launch lines name the resolved file, and only a superpowers-free lane derives it
+launches() { grep -c -- "--remote-control" <<<"$1"; }
+SCR="$(CLAUDE_SESSION_PROFILE=builder gen A=1)"
+ok "builder: three launch lines" "$(launches "$SCR")" 3
+ok "builder: every launch line uses the derived file" "$(grep -c -- "--settings $SP_OFF --remote-control" <<<"$SCR")" 3
+ok "builder: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR")" 0
+SCR_O="$(CLAUDE_SESSION_PROFILE=orchestrator gen A=1)"
+ok "orchestrator: every launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 3
+hasnt "orchestrator: derives nothing" "$SCR_O" 'if [ "off" = off ]'
+hasnt "orchestrator: never names the derived file" "$SCR_O" "$SP_OFF"
+
+# the derive block, run against fixture layers: every rc-firstparty key survives, only the plugin switch is added,
+# and a rerun follows later edits to rc-firstparty
+SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
+[ -n "$SPB" ] || { echo "FAIL: could not extract the superpowers derive block"; fail=$((fail+1)); }
+field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(sys.argv[2],{}).get(sys.argv[3]))' "$@"; }
+mkdir -p "$HOME/.claude"
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION":"0"},"enabledPlugins":{"other@market":true}}' > "$SP_ON"
+chmod 600 "$SP_ON"; echo stale > "$SP_OFF"; chmod 664 "$SP_OFF"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "derived takes the private mode of rc-firstparty, not the umask default" "$(stat -c %a "$SP_OFF")" 600
+ok "derived keeps the base URL (remote-control needs it)" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
+ok "derived keeps the suggestion off-switch" "$(field "$SP_OFF" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
+ok "derived switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
+ok "derived keeps other plugin entries" "$(field "$SP_OFF" enabledPlugins other@market)" True
+ok "rc-firstparty itself is not touched" "$(field "$SP_ON" enabledPlugins superpowers@claude-plugins-official)" None
+echo '{"env":{"ANTHROPIC_BASE_URL":"https://edited.example"}}' > "$SP_ON"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "rerun follows a later edit to rc-firstparty" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://edited.example"
+ok "rerun drops entries rc-firstparty no longer has" "$(field "$SP_OFF" enabledPlugins other@market)" None
+ok "no temp file left behind" "$(find "$HOME/.claude" -name '*.tmp' | wc -l | tr -d ' ')" 0
+echo 'not json' > "$SP_ON"; chmod 600 "$SP_ON"; chmod 664 "$SP_OFF"
+SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
+ok "unreadable rc-firstparty: lane still gets a settings file" "$(cat "$SP_OFF")" "not json"
+ok "unreadable rc-firstparty: the copy keeps the private mode too" "$(stat -c %a "$SP_OFF")" 600
+has "unreadable rc-firstparty: failure logged" "$(cat "$HOME/sp.log")" "event=no-superpowers-settings-FAILED"
+rm -f "$SP_ON" "$SP_OFF"
+
+# Every profile's start script must parse, and so must the text it types into the pane. The loop rides in
+# `tmux send-keys '...'`, so an apostrophe in an interpolated flag (printf %q writes it as \') used to close that
+# quote and leave the whole script unparseable: orchestrator/owner spawns died at once on the apostrophes in the
+# delegation prompt. The fresh-launch line is then run against a stub claude to prove the pane's shell hands claude
+# the prompt as ONE intact argument, including a prompt full of quote characters and expansions.
+printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done\n' > "$HOME/stub-claude"; chmod +x "$HOME/stub-claude"
+# an autonomous spawn asks the admission authority first; this throwaway-HOME stub says yes so its script can be generated
+printf 'import sys\nsys.exit(0)\n' > "$HOME/stub-admit.py"
+typed() {  # start script on stdin -> the text its main send-keys literal types into the pane
+  local lit; lit="$(awk '/^tmux send-keys -t .* .LOG_FILE=/{f=1} f{print} f&&/^done.$/{exit}')"
+  bash -c "tmux() { shift 3; printf '%s' \"\$1\"; }
+$lit"
+}
+launch_argv() {  # typed pane text on stdin -> the argv its fresh-launch line gives claude, one per line
+  local line; line="$(grep -- '--dangerously-skip-permissions' | grep -v -e '--resume' -e '--continue$' | head -1)"
+  bash -c "$line"
+}
+for spec in orchestrator owner hub builder copywriter "orchestrator CRSS_AUTONOMOUS=1" "owner CRSS_AUTONOMOUS=1" \
+            "hub CRSS_AUTONOMOUS=1" "builder CRSS_AUTONOMOUS=1"; do
+  set -- $spec; profile="$1"; shift
+  SCR="$(CLAUDE_SESSION_PROFILE="$profile" gen CRSS_CLAUDE_BIN="$HOME/stub-claude" AGENT_HOST_ADMISSION_CLI="$HOME/stub-admit.py" "$@")"
+  has "$spec: start script generated" "$SCR" "tmux send-keys"
+  printf '%s\n' "$SCR" > "$HOME/ss.sh"
+  ok "$spec: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+  typed <<<"$SCR" > "$HOME/typed.sh"
+  has "$spec: pane text extracted" "$(cat "$HOME/typed.sh")" "--remote-control"
+  ok "$spec: pane text parses" "$(bash -n "$HOME/typed.sh" 2>&1; echo "rc=$?")" "rc=0"
+done
+set --
+SCR="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+ARGV="$(typed <<<"$SCR" | launch_argv)"
+ok "orchestrator: the default delegation prompt arrives as one argument" \
+  "$(awk 'p{print substr($0,1,26); exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "Delegation (operator 2026-"
+ok "orchestrator: its apostrophes arrive intact" "$(grep -c "slice's test" <<<"$ARGV")" 1
+NASTY="it's a \"test\" with \$HOME, \`date\`, \$(touch \$HOME/pwned), 'quoted' text, a \\ and a trailing quote'"
+rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
+NASTY="$NASTY" python3 - "$HOME/scripts-nasty/new-session.sh" <<'PY'
+import os, re, sys
+p = sys.argv[1]
+s = open(p).read()
+new = "ORCHESTRATOR_DELEGATION_PROMPT='" + os.environ["NASTY"].replace("'", "'\\''") + "'"
+s2 = re.sub(r"^ORCHESTRATOR_DELEGATION_PROMPT=.*$", lambda m: new, s, count=1, flags=re.M)
+assert s2 != s
+open(p, "w").write(s2)
+PY
+SCR="$(NS="$HOME/scripts-nasty/new-session.sh" CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+printf '%s\n' "$SCR" > "$HOME/ss.sh"
+ok "hostile prompt: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+ARGV="$(typed <<<"$SCR" | launch_argv)"
+ok "hostile prompt reaches claude byte for byte" "$(awk 'p{print; exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "$NASTY"
+ok "hostile prompt: nothing in it was executed" "$(yn test -e "$HOME/pwned")" no
+rm -rf "$HOME/scripts-nasty"
+
+# The model, the settings path and the remote name are typed into the same pane text as the prompt, so an apostrophe
+# in one of them closed the send-keys quote just the same, and a space split a word. A normal spawn must keep the
+# `--model "..."` shape session-resume --model rewrites. The hostile model comes in through its env var; a settings
+# path comes from CRSS_CLAUDE_HOME and a remote name from a sanitized alias, so a copy of the script plants both.
+SCR="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+ok "launch lines keep --model \"...\" for session-resume" "$(grep -c -- '--model "claude-opus-5-5" ' <<<"$SCR")" 3
+H_MODEL="it's a model"
+rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
+python3 - "$HOME/scripts-nasty/new-session.sh" <<'HOSTILE_PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+a = 'SETTINGS_FILE="${CRSS_CLAUDE_HOME}/'
+assert s.count(a) == 2
+s = s.replace(a, a + "it's a dir/")
+s, n = re.subn(r'^(REMOTE_NAME="\$\{CRSS_SESSION_PREFIX\}-\$\{BODY\})"$', lambda m: m.group(1) + "-it's a name\"", s, flags=re.M)
+assert n == 1
+open(p, "w").write(s)
+HOSTILE_PY
+for profile in orchestrator builder; do
+  SCR="$(NS="$HOME/scripts-nasty/new-session.sh" CLAUDE_SESSION_PROFILE="$profile" CLAUDE_SESSION_MODEL="$H_MODEL" gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+  has "$profile, hostile model/settings/name: script generated" "$SCR" "tmux send-keys"
+  printf '%s\n' "$SCR" > "$HOME/ss.sh"
+  ok "$profile, hostile model/settings/name: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+  typed <<<"$SCR" > "$HOME/typed.sh"
+  ok "$profile, hostile model/settings/name: pane text parses" "$(bash -n "$HOME/typed.sh" 2>&1; echo "rc=$?")" "rc=0"
+  ARGV="$(launch_argv < "$HOME/typed.sh")"
+  settings_name=rc-firstparty.settings.json; [ "$profile" = builder ] && settings_name=rc-firstparty-no-superpowers.settings.json
+  ok "$profile: the model arrives as one argument" "$(awk 'p{print; exit} $0=="--model"{p=1}' <<<"$ARGV")" "$H_MODEL"
+  ok "$profile: the settings path arrives as one argument" "$(awk 'p{print; exit} $0=="--settings"{p=1}' <<<"$ARGV")" "$HOME/.claude/it's a dir/$settings_name"
+  hasre "$profile: the remote name arrives as one argument" "$(awk 'p{print; exit} $0=="--remote-control"{p=1}' <<<"$ARGV")" "^px-[a-z0-9]+-[0-9]{4}-[0-9]{4}-it's a name\$"
+done
+# the superpowers-off lane also derives its file at start, outside the pane: run that block against the hostile path
+SPB="$(awk '/^if \[ "off" = off \]; then$/{f=1} f{print} f&&/^fi$/{exit}' <<<"$SCR")"
+[ -n "$SPB" ] || { echo "FAIL: could not extract the superpowers derive block (hostile path)"; fail=$((fail+1)); }
+mkdir -p "$HOME/.claude/it's a dir"; echo '{"env":{}}' > "$HOME/.claude/rc-firstparty.settings.json"
+SESSION=px_h LOG_FILE="$HOME/h.log" bash -c "$SPB" >/dev/null 2>&1
+ok "derive block writes the file at a path with an apostrophe and a space" \
+  "$(field "$HOME/.claude/it's a dir/rc-firstparty-no-superpowers.settings.json" enabledPlugins superpowers@claude-plugins-official 2>&1)" False
+rm -rf "$HOME/scripts-nasty" "$HOME/.claude/it's a dir" "$HOME/.claude/rc-firstparty.settings.json"
 
 # overlay line: found/absent
 GOOD="$(mktemp -d)"; mkdir -p "$GOOD/rules"; touch "$GOOD/config.sh" "$GOOD/rules/crss-host.md"

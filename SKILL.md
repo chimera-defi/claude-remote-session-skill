@@ -41,7 +41,7 @@ new-session <foldername> --alias x --set-default-alias   # ...and make it the fo
 new-session <foldername> --dry-run    # print resolved names and exit (no session spawned, store untouched)
 new-session <foldername> --force      # spawn despite the low-RAM preflight refusal (the gate is advisory otherwise)
 new-session <foldername> --backend codex  # launch Codex CLI instead of Claude Code
-new-session <foldername> --tier standard --tier-reason "..."  # right-size (see "Choosing a tier"); bare spawn = Opus
+new-session <foldername> --tier standard --tier-reason "..."  # right-size (see "Choosing a tier"); bare spawn = Opus; a tier is never Opus (heavy = Sonnet owner + Opus advisor)
 new-session --help                    # print usage and exit (no session spawned)
 
 new-session <foldername> --task "..."        # spawn AND kick off, in one shot
@@ -57,6 +57,9 @@ Relaying into an already-running session, and tearing one down:
 
 ```bash
 session-send <name> "..."             # relay a follow-up (or --file <path>)
+# Message a Codex desktop thread via its local app-server socket instead of a poll-only bus; exit 1 = uncertain, do not resend; replies still arrive by the bus.
+session-send codex:list
+session-send codex:<cs-ref> --expect-identity <id> "..."
 session-doctor reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run]
                                        # teardown (tmux + unit) + registry entry + worktree; refuses young sessions
                                        # (CRSS_REAP_MIN_AGE_H, default 24h; see _reap_age_gate, tests/test-reap-min-age.sh)
@@ -77,6 +80,13 @@ start can open a fresh conversation. `session-resume` resumes the session's own 
 by uuid through its own unit, keeps its launch flags, and refuses while anything still holds
 the session. Run `--dry-run` first. Steps: header of `scripts/session-resume.sh`, pinned by
 `tests/test-session-resume.sh`.
+
+**One unit's restart must not kill the tmux server.** Start scripts launch tmux through
+`systemd-run --user --scope`, so the shared server never sits in a session unit's cgroup
+(2026-10-24: one restart killed 29 sessions). `crss-tmux-scope` shows any server still
+TRAPPED in a `.service` cgroup; `adopt --apply` moves it to its own scope without a signal.
+For scripts generated before this fix, `migrate-scripts --apply` (backup kept). Header of
+`scripts/crss-tmux-scope.sh`.
 
 `reap` refuses protected names, and sessions with unlanded/uncommitted work unless `--force`
 (rescue first: `session-preserve <name> --rescue --wip`). It also removes the session's own
@@ -112,13 +122,13 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   ([script](scripts/merge-guard.sh), [test](tests/test-merge-guard.sh)). On a nonzero exit,
   leave the PR for the operator and report the reasons. A general rule never overrides a per-item veto.
 
-- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6-luna high builds first, Haiku low repairs a failed check (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md). Reports, benchmarks and new repos (private first, data-checked numbers, review passes): [`references/research-deliverables.md`](references/research-deliverables.md).
+- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6.1-sol high builds first (Haiku low when Codex is quota-out) and Codex/ChatGPT gpt-6.1-sol researches first (bench and roles: [`references/orchestration-flow.md`](references/orchestration-flow.md)), Haiku low repairs a failed check (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md). Reports, benchmarks and new repos (private first, data-checked numbers, review passes): [`references/research-deliverables.md`](references/research-deliverables.md).
 
 ## Tier, kickoff and naming (read before spawning)
 
 [`references/spawn-guide.md`](references/spawn-guide.md) holds the detail. The short form:
 
-- **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."`, or `--tier auto --task-type <t>` (right-size the model; a tier never selects Opus; resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
+- **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."`, or `--tier auto --task-type <t>` (right-size the model; **a tier never selects Opus**: `light` = Haiku, `standard` = Sonnet builder, `heavy` = Sonnet owner (full tools) + Opus advisor; for an Opus orchestrator omit `--tier`. `new-session` prints a `resolved:` line (backend/profile/model/effort/advisor) on every spawn: read it. Resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
 - **Kickoff:** give a finish line, not an activity; a stop rule that names the channel (`session-send <launcher>`, or the bus/mailbox when the launcher is not a tmux session; `new-session --launcher` warns); concrete anti-patterns; Codex builders first; a `TASKS.md` for long runs. Prefer `--task`/`--task-file`.
 - **Naming:** `<prefix>_<alias>-<MMDD-HHMM>`; `--alias` is per-spawn, add `--set-default-alias` only when the name describes the folder (rules: `scripts/session-alias.sh`, `tests/test-session-alias.sh`).
 
@@ -177,7 +187,7 @@ in this repo:
 
 | File | Holds |
 |---|---|
-| `config.sh` | `CRSS_*=value` settings (parsed, never sourced); loaded by most `session-*` scripts, not `session-compact`, `session-git-prep`, `session-send` |
+| `config.sh` | `CRSS_*=value` settings (parsed, never sourced); loaded by most `session-*` scripts, not `session-compact` or `session-git-prep`; `session-send` delegates Codex targets to `codex-send`, which parses `CRSS_CODEX_BRIDGE_*`/`CRSS_CODEX_BIN` |
 | `local.md` | host prose: operator handle, escalation channel, project index, routing; agents read it via a tiny user rules file that `@`-imports it |
 | `leak-denylist.txt` | host-private terms that must never reach this repo; read only by `tests/test-no-host-leaks.sh` when `CRSS_LEAK_DENYLIST` is set |
 
@@ -193,7 +203,8 @@ Durable facts other sessions should inherit go through the host's shared memory 
 (root, namespace, sync command, citation format), set up in the user-level
 `~/.claude/CLAUDE.md` or `$CRSS_HOME/local.md` — not restated here. "Who else is working
 here right now" is a different question: `session-doctor history` derives presence from
-live processes.
+live processes. Lessons are saved at compaction, not by remembering: the opt-in `PreCompact`
+hook `precompact-lessons` ([`references/precompact-lessons.md`](references/precompact-lessons.md)).
 
 ## Sessions agent scope
 

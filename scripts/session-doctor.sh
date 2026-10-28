@@ -71,6 +71,8 @@
 #                                           # Also printed as one line by the default `report`. Report only.
 #   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N
 #                                           # days, default 2); summary line in `report`. Report only.
+#   session-doctor.sh suggest-feeders       # live claude TUIs that can feed promptSuggestionUnusedStreak
+#                                           # (~/.claude.json back-off counter) + its current value. Report only.
 #   session-doctor.sh auth-heal [--apply] [--days N]
 #                                           # Nudge idle Claude lanes whose last turn failed auth, only when
 #                                           # host login is valid; DRY-RUN by default, window default 2 days.
@@ -605,8 +607,24 @@ _record_reap_event() {
 # dirty check (same ignore regex) so a fresh, otherwise-untouched worktree
 # doesn't look dirty just because the spawner touched it. Before this fix,
 # EVERY worktree was reported DIRTY unconditionally.
+#
+# "not-a-worktree" when git status fails AND there is no repo at all: no .git
+# entry in the folder and git finds none above it (a plain folder someone left
+# under the worktrees dir). Every other git status failure — a .git file whose
+# gitdir is gone (an orphan worktree that may still hold work), a repo git
+# refuses to open — stays DIRTY. Callers act only on "clean", so both are
+# fail-closed; the distinct label only keeps plain folders from reading as
+# dirty worktrees.
 _wt_dirty() {
-  local out; out="$(git -C "$1" status --porcelain 2>/dev/null)" || { echo DIRTY; return; }
+  local out
+  if ! out="$(git -C "$1" status --porcelain 2>/dev/null)"; then
+    if [ ! -e "$1/.git" ] && ! git -C "$1" rev-parse --git-dir >/dev/null 2>&1; then
+      echo not-a-worktree
+    else
+      echo DIRTY
+    fi
+    return
+  fi
   if [ -n "$out" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$out"; then
     echo DIRTY
   else
@@ -1195,6 +1213,10 @@ _tsv_git_status() {
     _TSV_LANDED="no-worktree"; _TSV_DIRTY="unknown"
   else
     _TSV_DIRTY="$(_wt_dirty "$cwd")"
+    # Defensive: git already found a repo to get here, so _wt_dirty should
+    # never answer not-a-worktree; if it does, report unknown to keep the TSV
+    # vocabulary that session-compact.sh validates.
+    [ "$_TSV_DIRTY" = not-a-worktree ] && _TSV_DIRTY=unknown
     mainrepo="$(_wt_mainrepo "$cwd")"
     if [ -n "$mainrepo" ]; then
       landedinfo="$(_wt_landed "$cwd" "$mainrepo")"
@@ -1813,6 +1835,46 @@ sys.exit(1 if ongoing else 0)
 # (CLAUDE.md "Subagent models"); an Agent call with no subagent_type/model inherits the parent's Opus.
 # Same safety conventions as _auth_scan (symlinked dir followed, symlinked files never opened, event-time
 # window). Parent transcripts on Opus are expected and not scanned. rc 0, or >1 on an internal error.
+# suggest-feeders: which live claude TUIs can write the host-wide promptSuggestionUnusedStreak (the 20-unused
+# back-off counter in ~/.claude.json). Only the interactive REPL counts (CLI 2.1.308 onSubmit path): --print,
+# stream-json/--sdk-url children and the `claude remote-control` server never do. A TUI is quiet when its env or
+# its --settings file sets CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION to 0/false; anything else is a feeder.
+# PROC_ROOT (default /proc) is overridable for tests. Report only.
+_suggest_feeders() {
+  python3 - "${PROC_ROOT:-/proc}" "$HOME/.claude.json" <<'PY'
+import sys, os, json
+root, cj = sys.argv[1], sys.argv[2]
+try: streak = json.load(open(cj)).get('promptSuggestionUnusedStreak', 0)
+except Exception: streak = '?'
+off = lambda v: str(v).strip().lower() in ('0', 'false')
+feeders, quiet = [], 0
+for pid in sorted((d for d in os.listdir(root) if d.isdigit()), key=int):
+    try:
+        argv = open(f'{root}/{pid}/cmdline', 'rb').read().split(b'\0')
+        argv = [a.decode('utf-8', 'replace') for a in argv if a]
+    except Exception: continue
+    if not argv or os.path.basename(argv[0]) not in ('claude', 'claude.exe'): continue
+    if any(a in ('-p', '--print', '--sdk-url') or a.startswith('--sdk-url') or a == 'stream-json' for a in argv): continue
+    if len(argv) > 1 and argv[1] == 'remote-control': continue
+    try: env = dict(l.split('=', 1) for l in open(f'{root}/{pid}/environ', 'rb').read().decode('utf-8', 'replace').split('\0') if '=' in l)
+    except Exception: env = {}
+    val = env.get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION')
+    arg = next((argv[i + 1] for i, a in enumerate(argv[:-1]) if a == '--settings'),
+               next((a.split('=', 1)[1] for a in argv if a.startswith('--settings=')), None))
+    if arg is not None:
+        try:
+            if not arg.lstrip().startswith('{') and not os.path.isabs(arg): arg = f'{root}/{pid}/cwd/{arg}'  # relative to the process cwd
+            d = json.loads(arg) if arg.lstrip().startswith('{') else json.load(open(arg))
+            val = d.get('env', {}).get('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION', val)
+        except Exception: pass
+    if val is not None and off(val): quiet += 1
+    else: feeders.append((pid, ' '.join(argv)[:110]))
+print(f'  promptSuggestionUnusedStreak={streak} (>=20 = back-off); interactive claude TUIs with suggestions off: {quiet}')
+if not feeders: print('  no TUI can feed the counter')
+for pid, c in feeders: print(f'  FEEDER pid={pid}: {c}')
+PY
+}
+
 _opus_subagent_scan() {
   local proj_base="$1" days="$2"
   [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
@@ -1890,6 +1952,10 @@ case "$MODE" in
   auth-scan)
     echo "=== AUTH: transcript auth-failure scan (last $DAYS day(s)) ==="
     _auth_scan "$HOME/.claude/projects" "$DAYS"
+    ;;
+  suggest-feeders)
+    echo "=== PROMPT SUGGESTIONS: TUIs that can feed the host-wide unused-streak ==="
+    _suggest_feeders
     ;;
   opus-subagents)
     echo "=== OPUS SUBAGENTS: subagent transcripts on Opus (last $DAYS day(s)) ==="
@@ -2066,7 +2132,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
   worktree-stale)
     echo "=== ~/.claude/worktrees/ dirs with no live owning session (NOT auto-removed) ==="
     WT_BASE="$HOME/.claude/worktrees"
-    cand=0; kept=0
+    cand=0; kept=0; nonwt=0
     wti_list="$(mktemp)"
     for wt in "$WT_BASE"/*/; do
       [ -d "$wt" ] || continue
@@ -2087,8 +2153,17 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       if [ -n "$tm" ] && _tmux_live_has "$tm" && proc_alive "$tm"; then
         continue
       fi
-      cand=$((cand+1))
       dirty="$(_wt_dirty "$wt")"
+      # A plain folder (no git repo at all) has nothing to remove with git:
+      # list it so it is visible, but outside the candidate count and with no
+      # command.
+      if [ "$dirty" = not-a-worktree ]; then
+        printf '  %-60s status=not-a-worktree\n' "$wt"
+        printf '    NOTE: plain folder, not a git work tree — never offered for removal; inspect it by hand\n'
+        nonwt=$((nonwt+1))
+        continue
+      fi
+      cand=$((cand+1))
       # Resolve the main repo this worktree belongs to, so the removal command
       # below is copy-pasteable without the reviewer having to hunt for the
       # repo, and so landed-ness can be checked against its REAL default
@@ -2116,8 +2191,9 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         # the NOTE says `status --ignored`) and no `branch -D`. Clean rows
         # keep `--force`: _wt_dirty deliberately ignores the spawner's untracked
         # .claude/* + .sessions-init-* baseline, which git still counts as
-        # untracked and plain remove would refuse over.
-        rmforce=" --force"; [ "$dirty" = DIRTY ] && rmforce=""
+        # untracked and plain remove would refuse over. Positive match on
+        # clean, so any status other than clean never earns --force.
+        rmforce=""; [ "$dirty" = clean ] && rmforce=" --force"
         # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
         # deletes it and status=clean never shows it. When there is some, the
         # archive step is chained AHEAD of the printed remove command (so pasting
@@ -2133,7 +2209,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
           # reachable once the worktree is gone — `reap` never deletes it either.
           # A squash-merged branch reads landed=yes via the content fallback, or via
           # a merged PR containing HEAD (_wt_pr_landed): a suggestion, never a wrong delete.
-          if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" != DIRTY ]; then
+          if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" = clean ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
           else
@@ -2163,6 +2239,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     rm -f "$wti_list"
     keepnote=""
     [ "$kept" -gt 0 ] && keepnote=", $kept KEEP (in use by a systemd unit — no removal command printed)"
+    [ "$nonwt" -gt 0 ] && keepnote="$keepnote, $nonwt not-a-worktree (plain folder — not counted, no command)"
     echo "  --- $cand candidate(s)$keepnote. VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;
   idle-report)
@@ -2631,6 +2708,6 @@ for s in arr:
       _history_footer "$wt"
     done
     ;;
-  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|opus-subagents [--days N]|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
+  *) echo "usage: session-doctor.sh [report|auth-scan [--days N]|opus-subagents [--days N]|suggest-feeders|auth-heal [--apply] [--days N]|reap-local|reap <name> [--force] [--keep-registry] [--keep-worktree]|reap-merged [--apply] [--idle-min N] [--outcome ok]|registry-stale [--days N]|registry-prune [--days N] [--apply]|worktree-stale|archive-ignored <worktree>|land-check|idle-report [--days N|--minutes N] [--tsv]|history <foldername>]" >&2; exit 2;;
 esac
 fi
