@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
@@ -172,13 +173,22 @@ class DelegateTests(unittest.TestCase):
         self.assertEqual(self.body()['model'], 'jev-test-flag')
 
     def test_check_get_only(self):
-        for models in (['jev-1.14.0'], {'models': ['jev-1.14.0']}, {'data': [{'id': 'jev-1.14.0'}]}):
+        real_models = {'models': [
+            {'name': 'jev-latest', 'description': 'Latest alias',
+             'release_date': '2026-09-10T18:38:01.391457+00:00'},
+            {'name': 'jev-preview', 'description': 'Preview alias',
+             'release_date': '2026-09-10T18:38:01.391457+00:00'}]}
+        cases = [(real_models, ['jev-latest', 'jev-preview']),
+                 (['jev-1.14.0'], ['jev-1.14.0']),
+                 ({'models': ['jev-1.14.0']}, ['jev-1.14.0']),
+                 ({'data': [{'id': 'jev-1.14.0'}]}, ['jev-1.14.0'])]
+        for models, expected in cases:
             self.server.reply = (200, models)
             out = json.loads(self.run_cli('--check').stdout)
-            self.assertEqual(out, {'ok': True, 'models': ['jev-1.14.0']})
+            self.assertEqual(out, {'ok': True, 'models': expected})
             self.assertEqual(self.server.requests[-1][0:2], ('GET', '/v1/models'))
             self.assertEqual(self.server.requests[-1][3], b'')
-        self.assertEqual(len(self.ledger()), 3)
+        self.assertEqual(len(self.ledger()), len(cases))
         self.assertEqual(self.ledger()[0]['cost_usd'], 0)
 
     def test_dry_run_no_http_or_ledger(self):
@@ -328,12 +338,24 @@ class DelegateTests(unittest.TestCase):
     def test_network_disconnect_is_call_failure(self):
         self.server.disconnect = True
         result = self.run_cli(*self.flags(), expected=3)
+        self.assertEqual(result.stderr, 'API call failed: RemoteDisconnected: '
+                         'Remote end closed connection without response\n')
         self.assertNotIn('Traceback', result.stderr)
+        self.assertEqual(self.ledger()[-1]['exit'], 3)
+
+    def test_closed_loopback_port_is_call_failure(self):
+        # Reserve a non-listening port so another process cannot claim it.
+        with socket.socket() as closed_port:
+            closed_port.bind(('127.0.0.1', 0))
+            self.env['JEV_API_BASE'] = 'http://127.0.0.1:' + str(closed_port.getsockname()[1])
+            result = self.run_cli('--check', expected=3)
+        self.assertRegex(result.stderr, r'^API call failed: URLError: <urlopen error .+>\n$')
         self.assertEqual(self.ledger()[-1]['exit'], 3)
 
     def test_timeout_and_redirect_not_followed(self):
         self.server.delay = 0.15
-        self.run_cli(*self.flags(), '--timeout', '0.02', expected=3)
+        result = self.run_cli(*self.flags(), '--timeout', '0.02', expected=3)
+        self.assertEqual(result.stderr, 'API call failed: TimeoutError: timed out\n')
         self.assertEqual(self.ledger()[-1]['exit'], 3)
         self.server.delay = 0
         self.server.response_headers = {'Location': self.env['JEV_API_BASE'] + '/redirect-target'}

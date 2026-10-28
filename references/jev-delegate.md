@@ -101,6 +101,8 @@ object state. API limits remain 64k tokens/request and 32k/question; bytes are
 not tokens. `--dry-run` validates and prints the request body without network
 or a ledger entry; a configured key is required to scan for its literal value.
 `--check` only GETs `/v1/models`, returning `{"ok":true,"models":["…"]}`.
+`/v1/models` lists aliases only (`jev-latest`, `jev-preview`); pinned versions
+such as `jev-1.14.0` are accepted by `/v1/systemone` but are not listed.
 
 A successful inference prints one JSON object containing `model`, `answers`,
 `usage`, `cost_usd`, and `latency_ms`. Input costs **$0.042/million tokens**;

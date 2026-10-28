@@ -285,16 +285,16 @@ def call(args, body, key):
         except UnicodeError:
             code = 4
             raise Failure(4, 'response is not UTF-8') from None
-        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
-            raise Failure(3, 'API call failed (network or timeout)') from None
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
+            raise Failure(3, f'API call failed: {type(exc).__name__}: {exc}') from None
         code = 4
         data = parse_json(raw, 4)
         if args.check:
-            # Accept the common plain-list and OpenAI-style model envelopes.
+            # Accept alias names, plain lists and OpenAI-style model IDs.
             models = data if isinstance(data, list) else data.get('models', data.get('data')) if isinstance(data, dict) else None
             if not isinstance(models, list):
                 raise Failure(4, 'invalid models response')
-            ids = [m if isinstance(m, str) else m.get('id') if isinstance(m, dict) else None for m in models]
+            ids = [m if isinstance(m, str) else m.get('name', m.get('id')) if isinstance(m, dict) else None for m in models]
             if not all(isinstance(m, str) and m for m in ids):
                 raise Failure(4, 'invalid model IDs')
             code = 0
