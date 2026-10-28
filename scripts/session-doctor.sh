@@ -32,7 +32,8 @@
 #                                           # DRY-RUN by default: one candidate/skipped line per live session.
 #                                           # A candidate has a MERGED PR whose head == the worktree's HEAD
 #                                           # (gh merge record, never patch-ids), no open PR, an idle pane
-#                                           # >= N min (default 120) with no busy marker or typed input, and
+#                                           # >= N min (default 120) with no busy marker, typed input, or
+#                                           # operator block (pane-blocked via session-handoff _is_blocked), and
 #                                           # a passing `reap <name> --dry-run` audit. --apply runs only that
 #                                           # plain `reap` (never --force, never deletes a branch). Rules
 #                                           # live in _reap_merged_check; tests/test-reap-merged.sh pins them.
@@ -1540,10 +1541,30 @@ _crss_overlay_report() {
 # _rm_strip_ansi — drop CSI escape sequences from stdin.
 _rm_strip_ansi() { sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g'; }
 
-# _rm_pane_state <tmux-session> -> sets RM_PANE=busy|typed|ok and RM_PANE_WHY.
+# _rm_handoff_blocked <plain-capture> — 0 blocked, 1 clear, 2 classifier unavailable.
+# Reuses session-handoff.sh _is_blocked (tail line starting BLOCKED:, or the last
+# assistant line ending in ?, with ※/Tip: chrome skipped). A subprocess, not a
+# source: these scripts deploy standalone, and sourcing handoff would redefine
+# tmux_to_base. Unavailable fails closed — reaping a lane that might be waiting
+# on the operator is the unsafe direction.
+_rm_handoff_blocked() {
+  local helper rc
+  helper="$(_find_helper session-handoff)" || return 2
+  printf '%s' "$1" | bash -c '
+    source "$1" >/dev/null || exit 2
+    cap=$(cat)
+    declare -F _is_blocked >/dev/null || exit 2
+    if _is_blocked "$cap"; then exit 0; else exit 1; fi
+  ' _ "$helper"
+  rc=$?
+  return "$rc"
+}
+
+# _rm_pane_state <tmux-session> -> sets RM_PANE=busy|blocked|typed|ok and RM_PANE_WHY.
 # Reads the pane with capture-pane -e so dim (ESC[2m) autosuggest ghost text after the prompt can
 # be told from real typed input. "busy" = a spinner/interrupt hint or a background agent/task/shell
 # counter in the last lines of the TUI; fails closed (busy) if the pane cannot be read.
+# "blocked" = idle but waiting on the operator (session-handoff _is_blocked); not ok to reap.
 _rm_pane_state() {
   local raw plain tail_ line after
   RM_PANE=ok; RM_PANE_WHY=""
@@ -1557,6 +1578,12 @@ _rm_pane_state() {
     RM_PANE=busy; RM_PANE_WHY="busy marker visible: $(grep -iE -m1 "$busy_re" <<<"$tail_" | tr -s ' ' | sed -E 's/^ //' | cut -c1-60)"
     return
   fi
+  _rm_handoff_blocked "$plain"
+  case $? in
+    1) ;;
+    0) RM_PANE=blocked; RM_PANE_WHY="pane-blocked"; return ;;
+    *) RM_PANE=blocked; RM_PANE_WHY="pane-blocked check unavailable"; return ;;
+  esac
   line="$(printf '%s\n' "$raw" | grep -E '❯|›' | tail -n 1)"
   if [ -n "$line" ]; then
     case "$line" in *❯*) after="${line#*❯}" ;; *) after="${line#*›}" ;; esac

@@ -85,11 +85,13 @@ merged() { local name="$1" base="${1/_/-}" oid; oid="${2:-$(git -C "$HOME/.claud
   printf '[{"number":%s,"headRefOid":"%s"}]' "$PRN" "$oid" > "$FIX/gh/merged/session_$base.json"; }
 
 for n in px_ok-0101-0900 px_ghost-0101-0900 px_desk-0101-0900 px_keep px_open-0101-0900 px_nomerge-0101-0900 px_stale-0101-0900 \
-         px_busy-0101-0900 px_agents-0101-0900 px_typed-0101-0900 px_active-0101-0900 px_dirty-0101-0900 px_ghfail-0101-0900 px_self-0101-0900; do
+         px_busy-0101-0900 px_agents-0101-0900 px_typed-0101-0900 px_active-0101-0900 px_dirty-0101-0900 px_ghfail-0101-0900 px_self-0101-0900 \
+         px_blocked-0101-0900 px_question-0101-0900 px_tip-0101-0900; do
   case "$n" in px_active*) mk "$n" 10;; *) mk "$n";; esac
 done
 for n in px_ok-0101-0900 px_ghost-0101-0900 px_desk-0101-0900 px_keep px_open-0101-0900 px_stale-0101-0900 px_busy-0101-0900 px_agents-0101-0900 \
-         px_typed-0101-0900 px_active-0101-0900 px_dirty-0101-0900 px_ghfail-0101-0900 px_self-0101-0900; do merged "$n"; done
+         px_typed-0101-0900 px_active-0101-0900 px_dirty-0101-0900 px_ghfail-0101-0900 px_self-0101-0900 \
+         px_blocked-0101-0900 px_question-0101-0900 px_tip-0101-0900; do merged "$n"; done
 printf '[{"number":7,"headRefOid":"x"}]' > "$FIX/gh/open/session_px-open-0101-0900.json"
 merged px_stale-0101-0900 0000000000000000000000000000000000000000
 touch "$FIX/gh/fail/session_px-ghfail-0101-0900"
@@ -97,6 +99,11 @@ printf '\033[39m❯\302\240\033[2mcontinue when the slices finish\033[0m\n  bypa
 printf '  esc to interrupt\n\033[39m❯\302\240\n  bypass permissions on\n' > "$FIX/tmux/px_busy-0101-0900.pane"
 printf '\033[39m❯\302\240\n  bypass permissions on · 1 shell · ← 3 agents\n' > "$FIX/tmux/px_agents-0101-0900.pane"      # live-calibrated: a background shell counter
 printf '\033[39m❯\302\240fix the thing now\n' > "$FIX/tmux/px_typed-0101-0900.pane"                                       # real typed text
+# Operator-blocked panes (same captures session-handoff _is_blocked classifies). A trailing Tip: must not
+# clear the question, and a tip whose own text ends in ? must not itself block.
+{ printf '%s\n' '● BLOCKED: need operator OK for X'; printf '\033[39m❯\302\240\n\033[38;5;244m────\033[39m\n  [Sonnet] x\n  bypass permissions on\n'; } > "$FIX/tmux/px_blocked-0101-0900.pane"
+{ printf '%s\n' '● Should I apply the patch?' 'Tip: shortcuts are in the footer'; printf '\033[39m❯\302\240\n\033[38;5;244m────\033[39m\n  [Sonnet] x\n  bypass permissions on\n'; } > "$FIX/tmux/px_question-0101-0900.pane"
+{ printf '%s\n' '● answer' '  ※ Tip: want a follow-up?'; printf '\033[39m❯\302\240\n\033[38;5;244m────\033[39m\n  [Sonnet] x\n  bypass permissions on\n'; } > "$FIX/tmux/px_tip-0101-0900.pane"
 echo scratch > "$HOME/.claude/worktrees/px-dirty-0101-0900/untracked.txt"
 # not in a crss worktree / not prefixed / default branch / detached
 mkdir -p "$HOME/.sessions/px-elsewhere"; printf '%s' "$HOME/.sessions/px-elsewhere" > "$FIX/tmux/px_elsewhere-0101-0900.path"; echo 0 > "$FIX/tmux/px_elsewhere-0101-0900.act"
@@ -107,6 +114,9 @@ printf '%s' "$HOME/.claude/worktrees/px-onmain-0101-0900" > "$FIX/tmux/px_onmain
 # below) refuses this one — proves a refusing `reap --dry-run` demotes a candidate to skipped and --apply never reaps it
 mk px_audit-0101-0900; merged px_audit-0101-0900
 REAL_DOCTOR="$DOCTOR"; ALT="$T/alt"; mkdir -p "$ALT"; cp "$REAL_DOCTOR" "$ALT/session-doctor.sh"
+# The copied doctor resolves session-handoff.sh beside itself. The deployed binary on PATH predates
+# _is_blocked, so the worktree script has to be the sibling or every idle pane fails closed.
+cp "$HERE/../scripts/session-handoff.sh" "$ALT/session-handoff.sh"
 cat > "$ALT/session-preserve.sh" <<WRAP
 #!/usr/bin/env bash
 case "\$1" in px_audit-*) echo "unlanded work (fixture)"; exit 1;; esac
@@ -130,6 +140,9 @@ hasre "stale-head"     "$(line px_stale-0101-0900)" "skipped.*no merged PR whose
 hasre "busy"           "$(line px_busy-0101-0900)" 'skipped.*busy marker visible'
 hasre "agents-counter" "$(line px_agents-0101-0900)" 'skipped.*busy marker visible.*1 shell'
 hasre "typed"          "$(line px_typed-0101-0900)" 'skipped.*unsent text at the prompt'
+hasre "blocked-marker" "$(line px_blocked-0101-0900)" 'skipped.*pane-blocked$'
+hasre "question-pane"  "$(line px_question-0101-0900)" 'skipped.*pane-blocked$'
+hasre "tip-is-idle"    "$(line px_tip-0101-0900)" '^candidate '
 hasre "active"         "$(line px_active-0101-0900)" 'skipped.*active 1?[0-9]m ago'
 hasre "dirty"          "$(line px_dirty-0101-0900)" 'skipped.*uncommitted work'
 hasre "gh-fail"        "$(line px_ghfail-0101-0900)" 'skipped.*gh open-PR lookup failed'
@@ -138,8 +151,8 @@ hasre "elsewhere"      "$(line px_elsewhere-0101-0900)" 'skipped.*not in a crss 
 hasre "unprefixed"     "$(line other_x)" 'skipped.*not a crss-prefixed session'
 hasre "on-default"     "$(line px_onmain-0101-0900)" 'skipped.*on default branch main'
 hasre "audit-refusal"  "$(line px_audit-0101-0900)" 'skipped.*reap audit refused'
-ok "dry-candidate-count" "$(grep -c '^candidate ' <<<"$out")" 2
-has "dry-summary" "$out" "reap-merged: 2 candidate(s)"
+ok "dry-candidate-count" "$(grep -c '^candidate ' <<<"$out")" 3
+has "dry-summary" "$out" "reap-merged: 3 candidate(s)"
 hasnt "dry-kill" "$(cat "$FIX/tmux.log")" "kill-session"
 ok "dry-no-systemctl" "$([ -e "$FIX/systemctl.log" ] && echo yes || echo no)" no
 isdir "dry-worktree-kept" "$HOME/.claude/worktrees/px-ok-0101-0900"
@@ -157,13 +170,14 @@ outa="$(FAKE_SELF=px_self-0101-0900 TMUX=/fake bash "$DOCTOR" reap-merged --appl
 ok "apply-rc" "$rca" 0
 hasre "apply-ok-reaped" "$(grep -E "^reaped +px_ok-0101-0900" <<<"$outa")" 'merged PR #'
 hasre "apply-ghost-reaped" "$(grep -E "^reaped +px_ghost-0101-0900" <<<"$outa")" 'reaped'
-ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t =px_ghost-0101-0900 tmux kill-session -t =px_ok-0101-0900 "
+ok "apply-kill-targets" "$(grep '^tmux kill-session' "$FIX/tmux.log" | sort | tr '\n' ' ')" "tmux kill-session -t =px_ghost-0101-0900 tmux kill-session -t =px_ok-0101-0900 tmux kill-session -t =px_tip-0101-0900 "
 nodir "apply-ok-worktree-removed" "$HOME/.claude/worktrees/px-ok-0101-0900"
 ok "apply-branch-kept" "$(yn git -C "$T/repo" show-ref --verify --quiet refs/heads/session/px-ok-0101-0900)" yes
-for keep in px-desk-0101-0900 px-open-0101-0900 px-busy-0101-0900 px-typed-0101-0900 px-active-0101-0900 px-dirty-0101-0900 px-audit-0101-0900; do
+for keep in px-desk-0101-0900 px-open-0101-0900 px-busy-0101-0900 px-typed-0101-0900 px-active-0101-0900 px-dirty-0101-0900 px-audit-0101-0900 px-blocked-0101-0900 px-question-0101-0900; do
   isdir "apply-untouched-$keep" "$HOME/.claude/worktrees/$keep"
 done
-ok "apply-systemctl-targets" "$(grep disable "$FIX/systemctl.log" | grep -vc 'px-ok-0101-0900\|px-ghost-0101-0900')" 0
+nodir "apply-tip-worktree-removed" "$HOME/.claude/worktrees/px-tip-0101-0900"
+ok "apply-systemctl-targets" "$(grep disable "$FIX/systemctl.log" | grep -vc 'px-ok-0101-0900\|px-ghost-0101-0900\|px-tip-0101-0900')" 0
 # the apply path may only call plain reap: no --force anywhere in the reap-merged dispatch block
 blk="$(sed -n '/^  reap-merged)/,/^  reap)/p' "$REAL_DOCTOR")"
 ok "no-force-in-block" "$(grep -v '^ *#' <<<"$blk" | grep -c -- '--force')" 0
