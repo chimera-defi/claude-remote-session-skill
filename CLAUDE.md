@@ -135,3 +135,10 @@ patch in the repo first; don't overwrite it.
 The skill docs are only live once the **canonical checkout** reflects `origin/main`. If it
 has diverged or carries someone else's uncommitted work, don't reset it — report it to the
 operator.
+
+## Usage habits (7-day audit 2026-10-28; 59% of cost was calls after hour 2)
+
+- Start a fresh session or hand off at a task boundary; don't carry one session past about 2h of work.
+- Keep the always-on prefix small: unused MCP tools and skills are denied or set name-only, not just left idle.
+- Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`session-doctor opus-subagents` lists violations).
+- Re-run the audit for free: `python3 ~/claude-usage-audit/audit.py`.
