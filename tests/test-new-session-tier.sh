@@ -162,6 +162,10 @@ for profile in orchestrator owner hub; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
   hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on the lane deny file" "$o" "^SETTINGS_FILE=$SP_LANE\$"
   hasre "$profile lane deny default" "$o" '^LANE_DENY=mcp__gbrain,SendFeedback,ReportFindings$'
+  # The delegation prompt quotes a Haiku repair as the escaped token --tools\ \"\" . That is prose, not an
+  # allowlist. Strip it so a real --tools flag (which would drop AskUserQuestion) still fails this check.
+  hasnt "$profile CLAUDE_EXTRA_FLAGS has no --tools" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o" | sed 's/--tools\\//g')" '--tools'
+  hasnt "$profile LANE_DENY omits AskUserQuestion" "$(grep '^LANE_DENY=' <<<"$o")" 'AskUserQuestion'
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" CRSS_LANE_DENY= --)"
   hasre "$profile deny opt-out keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile deny opt-out uses plain rc-firstparty" "$o" "^SETTINGS_FILE=$SP_ON\$"
   hasre "$profile deny opt-out prints empty LANE_DENY" "$o" '^LANE_DENY=$'
@@ -171,6 +175,8 @@ done
 for profile in builder copywriter; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
   hasre "$profile drops superpowers" "$o" '^SUPERPOWERS=off$'; hasre "$profile uses the derived file" "$o" "^SETTINGS_FILE=$SP_OFF\$"
+  has "$profile CLAUDE_EXTRA_FLAGS has --tools" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" '--tools'
+  hasnt "$profile CLAUDE_EXTRA_FLAGS omits AskUserQuestion" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o")" 'AskUserQuestion'
 done
 o="$(dry A=1 -- --tier standard)"; hasre "tier standard (builder) drops superpowers" "$o" '^SUPERPOWERS=off$'
 o="$(dry A=1 -- --tier heavy)"; hasre "tier heavy (owner) keeps superpowers" "$o" '^SUPERPOWERS=on$'
@@ -190,6 +196,8 @@ ok "orchestrator: every launch line uses the lane deny file" "$(grep -c -- "--se
 ok "orchestrator: no launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_O")" 0
 hasnt "orchestrator: derives nothing" "$SCR_O" 'if [ "off" = off ]'
 hasnt "orchestrator: never names the derived file" "$SCR_O" "$SP_OFF"
+# Same escaped repair token as the dry-run check; a real --tools allowlist would remain.
+hasnt "orchestrator start script has no --tools" "$(sed 's/--tools\\//g' <<<"$SCR_O")" '--tools'
 SCR_OPT="$(CLAUDE_SESSION_PROFILE=orchestrator gen CRSS_LANE_DENY=)"
 ok "orchestrator deny opt-out: every launch line uses plain rc-firstparty" "$(grep -c -- "--settings $SP_ON --remote-control" <<<"$SCR_OPT")" 3
 hasnt "orchestrator deny opt-out: no lane file" "$SCR_OPT" "rc-firstparty-lane.settings.json"
