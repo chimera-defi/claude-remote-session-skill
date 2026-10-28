@@ -40,6 +40,8 @@ cases = {
     18: {"body": "Renamed `docs/new.md` from `docs/old.md`.", "files": [{"path": "docs/old.md"}]},
     21: {"body": "Deletion of `tests/old.py` as part of cleanup.", "files": [{"path": "README.md"}]},
     22: {"body": "Addition of `docs/new.md` to cover the gap.", "files": [{"path": "README.md"}]},
+    23: {"body": "Deletions of `tests/old.py` as part of cleanup.", "files": [{"path": "README.md"}]},
+    24: {"body": "Additions: `docs/new.md`", "files": [{"path": "README.md"}]},
 }
 for n, changes in cases.items():
     pr = dict(number=n, url=f"https://example.com/owner/repo/pull/{n}", title="Rewrite",
@@ -115,6 +117,10 @@ run 21
 ok deletion-noun-form-untouched-blocks "$rc" 3
 run 22
 ok addition-noun-form-untouched-blocks "$rc" 3
+run 23
+ok plural-deletion-noun-form-untouched-blocks "$rc" 3
+run 24
+ok plural-addition-noun-form-untouched-blocks "$rc" 3
 for n in 11 12; do
   run "$n"
   ok invalid-json-exit "$rc" 2; has invalid-json-output "$out" 'merge-guard: UNKNOWN'
@@ -125,7 +131,7 @@ for args in '' '1 --repo' '1 --unknown' '1 --repo owner' '1 2'; do
   ok usage-exit "$rc" 2
 done
 ok read-only "$(snapshot)" "$before"
-ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 22
+ok one-view-per-pr "$(wc -l < "$GH_LOG" | tr -d ' ')" 24
 hasnt never-merge "$(cat "$GH_LOG")" merge
 has forwarded-repo "$(cat "$GH_LOG")" 'pr view 1 --repo owner/repo --json'
 finish merge-guard
