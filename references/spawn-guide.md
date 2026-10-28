@@ -107,7 +107,11 @@ generic defaults in those two files. What matters most for a fresh spawn:
   with a recommended option): [`handoff/references/massaging.md`](../handoff/references/massaging.md).
   A permission denial or a plain-text question in the child's pane does **not** raise an
   `AskUserQuestion` notification, so the operator never sees it. A blocked child therefore
-  `session-send`s its launcher the exact command or decision needed. Launchers sweep their
+  `session-send`s its launcher the exact command or decision needed. Builder and copywriter
+  lanes get that rule at spawn (`BUILDER_ESCALATION_PROMPT`): nobody reads the pane and
+  AskUserQuestion is off, so when a decision, input, or denied tool blocks them they
+  `session-send` the launcher, or post on the coordination bus if it is not a tmux session,
+  and print one final `BLOCKED:` line instead of waiting. Launchers sweep their
   children's panes read-only for such stalls and alert the operator; they never answer a
   permission denial on the operator's behalf. Pass `--launcher <your-session>` to
   `new-session` (auto-detected inside tmux); `telemetry-report.sh --kids` lists your

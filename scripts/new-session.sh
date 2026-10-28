@@ -579,6 +579,8 @@ fi
 # AskUserQuestion is omitted (~1.7k tokens): an unwatched builder or copywriter lane must never ask.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
+# Nobody reads a builder or copywriter pane, and AskUserQuestion is off. Escalate; do not wait.
+BUILDER_ESCALATION_PROMPT='Unattended lane: nobody reads this pane and AskUserQuestion is off. Never end a turn on a plain-text question and wait. When you need a decision or input, or a denied tool or permission blocks you: send the exact need to your launcher with session-send <launcher> --file <file> (if the launcher is not a tmux session, post on the coordination bus per ~/.config/crss/local.md Escalation), then print one final line starting BLOCKED: with that need, and keep doing any work that does not depend on it.'
 ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. One Fable review per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
 
 # --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
@@ -642,7 +644,11 @@ if [ "$BACKEND" = claude ]; then
       if [ "${CRSS_AUTONOMOUS:-0}" != 1 ] && [ "${CRSS_ORCHESTRATOR_PROMPT:-}" != off ]; then
         CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --append-system-prompt $(_shell_quote "$ORCHESTRATOR_DELEGATION_PROMPT")"
       fi ;;
-    builder|copywriter) CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS" ;;
+    builder|copywriter)
+      _builder_prompt="$BUILDER_ESCALATION_PROMPT"
+      [ -z "$LAUNCHER_ARG" ] || _builder_prompt="${_builder_prompt} Your launcher is ${LAUNCHER_ARG}."
+      CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --tools $BUILDER_TOOLS --append-system-prompt $(_shell_quote "$_builder_prompt")"
+      ;;
   esac
   [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
   # Default advisor = the pinned Opus, for sessions that are not Opus/Fable themselves (Opus advising
