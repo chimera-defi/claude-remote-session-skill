@@ -129,7 +129,7 @@ generic defaults in those two files. What matters most for a fresh spawn:
   verification each go to their own delegate (Codex first for implementation; Codex/ChatGPT gpt-6.1-sol first for read-only research, see the Research row in [orchestration-flow.md](orchestration-flow.md#roles); Claude fallback:
   `subagent_type: builder` or `model: "sonnet"`, which keeps `advisor`). Brief each completely: only the prompt string crosses over. Don't delegate a builder's own verification back to itself. Have subagents write large
   output to files and return a short summary plus the path; check each one's evidence before
-  accepting its report. Second opinion on the orchestrator's own work: Fable (see Key Rules).
+  accepting its report. Second opinion on the orchestrator's own work: Fable for the independent read, plus a gpt-6.1-sol cross-family check (Grok only when Codex is out; neither out: draft and report) (see Key Rules).
 - **A task file for long runs.** For anything multi-hour or multi-PR: *"keep a TASKS.md
   checklist with the finish line at the top; update it as you go; re-read it after any
   compaction, before acting."* Context gets summarized; the file doesn't.
