@@ -332,10 +332,12 @@ def main(argv=None):
                     add("other", G - sp*sc)
                 elif G < 0:
                     nf = sum(s for b, s in items if b != "fixed")
-                    tgt = max(C - tot["fixed"], 0.0)
+                    fx = min(tot["fixed"], C)
+                    kf = fx/tot["fixed"] if tot["fixed"] else 0
+                    tgt = max(C - fx, 0.0)
                     k = tgt/nf if nf else 0
                     for it in items:
-                        if it[0] != "fixed": it[1] *= k
+                        it[1] *= kf if it[0] == "fixed" else k
                     tot.clear()
                     for b, s in items: tot[b] += s
             # normalise rounding
@@ -385,7 +387,7 @@ def main(argv=None):
     L.append(f"Overcount if every line summed: {fmt(overcount_w)} over {overcount_n} lines vs {fmt(tot_w)} ({overcount_w/tot_w if tot_w else 0:.2f}x)")
     L.append("By session category (weighted, %, calls, sessions):")
     for k, v in sorted(by_prefix.items(), key=lambda x: -x[1][0]): L.append(f"  {k:22s} {fmt(v[0]):>15s} {100*v[0]/tot_w if tot_w else 0:5.1f}% {v[1]:>7d} {len(v[2]):>5d}")
-    L.append("By entrypoint (weighted %): " + ", ".join(f"{k}={100*v/tot_w:.0f}%" for k, v in sorted(entry_w.items(), key=lambda x: -x[1])[:5]))
+    L.append("By entrypoint (weighted %): " + ", ".join(f"{k}={100*v/tot_w if tot_w else 0:.0f}%" for k, v in sorted(entry_w.items(), key=lambda x: -x[1])[:5]))
     L.append("By project (top 12; weighted, %, calls):")
     for k, v in sorted(by_proj.items(), key=lambda x: -x[1][0])[:12]: L.append(f"  {k:40s} {fmt(v[0]):>15s} {100*v[0]/tot_w if tot_w else 0:5.1f}% {v[1]:>7d}")
     L.append(f"  ({len(by_proj)} projects total)")
