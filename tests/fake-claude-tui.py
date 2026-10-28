@@ -76,6 +76,17 @@ Usage: fake-claude-tui.py <mode>
                    (give up after only one try). See the
                    original incident in _is_collapsed_paste_in_input's
                    comment (session-handoff.sh).
+  blocked-marker  Idle claude screen (empty input, no spinner) whose last
+                   assistant line is "BLOCKED: need operator OK for X".
+                   `_state_of` reads `blocked`. Paste/Enter still use the
+                   ordinary accept path so a launcher can answer it.
+  blocked-question Idle claude screen whose last assistant line is a
+                   plain-text question ("Should I apply the patch?").
+                   `_state_of` reads `blocked`.
+  blocked-quoted  Idle screen that quotes a real "BLOCKED:" line high up,
+                   then enough ordinary output that the marker sits above
+                   the tail window, including one later line that only
+                   mentions BLOCKED: mid-sentence. Must stay `ready`.
 """
 import os
 import sys
@@ -95,6 +106,22 @@ paste_count = 0
 busy = False
 collapsed_enter_count = 0  # collapsed-paste mode only: Enters seen since the placeholder showed
 
+# Idle stall screens. render() paints these before the loop; paste/Enter keep
+# the default "accept and submit" path so `send` can answer a blocked pane.
+if MODE == "blocked-marker":
+    transcript.append("BLOCKED: need operator OK for X")
+elif MODE == "blocked-question":
+    transcript.append("Should I apply the patch?")
+elif MODE == "blocked-quoted":
+    # Line 0 is a real marker. Fourteen lines follow, so it sits above the
+    # 12-line tail. Line i==8 only quotes the token mid-sentence.
+    transcript.append("BLOCKED: need operator OK for an earlier step")
+    for _i in range(1, 15):
+        if _i == 8:
+            transcript.append("notes quote BLOCKED: from the old turn, then continued")
+        else:
+            transcript.append("normal output line %d" % _i)
+
 
 def log(line):
     with open(LOGFILE, "a") as f:
@@ -104,7 +131,10 @@ def log(line):
 def render():
     out = "\x1b[2J\x1b[H"
     if transcript:
-        for line in transcript[-6:]:
+        # blocked-quoted must keep the early marker on the visible screen,
+        # above the tail window. Other modes only need the recent lines.
+        shown = transcript if MODE == "blocked-quoted" else transcript[-6:]
+        for line in shown:
             out += BULLET + " " + line + "\r\n"
     else:
         out += BULLET + " Ready.\r\n"
