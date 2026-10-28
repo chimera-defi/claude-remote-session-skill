@@ -21,7 +21,8 @@ FAKE_KEY = 'test-key-ZZZ123'
 def answer(kind='choice'):
     if kind == 'noul':
         return {'type': kind, 'noul': 0.1}
-    base = {'type': kind, 'confidence': 0.99, 'probabilities': {'yes': 0.6, 'unclear': 0.4}}
+    labels = ('yes', 'unclear') if kind == 'choice' else ('low', 'high')
+    base = {'type': kind, 'confidence': 0.99, 'probabilities': dict(zip(labels, (0.6, 0.4)))}
     if kind == 'choice':
         base['choice'] = 'yes'
     else:
@@ -107,8 +108,18 @@ class DelegateTests(unittest.TestCase):
                                   'answers': answers if answers is not None else {'q': answer(kind)},
                                   'usage': {'input_tokens': 100, 'output_tokens': 2}})
 
-    def run_cli(self, *args, stdin=None, expected=0):
-        result = subprocess.run([sys.executable, str(SCRIPT), *args], env=self.env,
+    def run_cli(self, *args, stdin=None, expected=0, setup=None):
+        command = [sys.executable, str(SCRIPT), *args]
+        if setup is not None:
+            bootstrap = ('import importlib.util, sys, http.client, urllib.error\n'
+                         'from unittest.mock import Mock\n'
+                         'spec = importlib.util.spec_from_file_location("client", sys.argv[1])\n'
+                         'client = importlib.util.module_from_spec(spec)\n'
+                         'spec.loader.exec_module(client)\n'
+                         'sys.argv = sys.argv[1:]\n' + setup + '\n'
+                         'sys.exit(client.main())\n')
+            command = [sys.executable, '-c', bootstrap, str(SCRIPT), *args]
+        result = subprocess.run(command, env=self.env,
                                 input=stdin, text=True, capture_output=True, timeout=5)
         self.results.append(result)
         self.assertEqual(result.returncode, expected, result.stderr)
@@ -231,7 +242,54 @@ class DelegateTests(unittest.TestCase):
         result = self.run_cli(*self.flags(), expected=3)
         self.assertEqual(result.stderr, 'HTTP 500\n' + 'x' * 2000 + '\n')
         self.server.reply = (500, FAKE_KEY.encode())
-        self.assertIn('[REDACTED]', self.run_cli(*self.flags(), expected=3).stderr)
+        self.assertIn('[body withheld: contained credential]',
+                      self.run_cli(*self.flags(), expected=3).stderr)
+
+    def test_http_error_credential_crossing_truncation_boundary(self):
+        self.server.reply = (500, ('x' * 1990 + FAKE_KEY).encode())
+        result = self.run_cli(*self.flags(), expected=3)
+        for length in range(6, len(FAKE_KEY) + 1):
+            self.assertNotIn(FAKE_KEY[:length], result.stderr)
+
+    def test_http_error_withholds_decoded_json_credentials(self):
+        escaped = ''.join('\\u%04x' % ord(c) for c in FAKE_KEY)
+        for raw in ('{"detail":[{"nested":"prefix ' + escaped + ' suffix"}]}',
+                    '{"' + escaped + '":"message"}', '"' + escaped + '"'):
+            with self.subTest(raw=raw):
+                self.server.reply = (500, raw.encode())
+                result = self.run_cli(*self.flags(), expected=3)
+                self.assertEqual(result.stderr,
+                                 'HTTP 500\n[body withheld: contained credential]\n')
+
+    def test_http_error_body_read_failures_preserve_status(self):
+        for error in ('http.client.IncompleteRead(' + repr(FAKE_KEY.encode()) + ', 100)',
+                      'http.client.HTTPException(' + repr(FAKE_KEY) + ')',
+                      'OSError(' + repr(FAKE_KEY) + ')',
+                      'RuntimeError(' + repr(FAKE_KEY) + ')'):
+            for status in (402, 500):
+                with self.subTest(error=error, status=status):
+                    setup = ('error = urllib.error.HTTPError("http://unused", '
+                             + str(status) + ', "error", {}, None)\n'
+                             'error.read = Mock(side_effect=' + error + ')\n'
+                             'client.urllib.request.build_opener = Mock()\n'
+                             'client.urllib.request.build_opener.return_value.open.side_effect = error')
+                    result = self.run_cli(*self.flags(), setup=setup, expected=3)
+                    expected = 'HTTP ' + str(status) + '\n\n'
+                    if status == 402:
+                        expected += 'A console balance is not proof of API credit.\n'
+                    self.assertEqual(result.stderr, expected)
+                    self.assertEqual(self.ledger()[-1]['exit'], 3)
+        self.assertEqual(self.server.requests, [])
+
+    def test_unexpected_errors_exit_three_without_traceback(self):
+        for exception, expected in (
+                ('RuntimeError(' + repr(FAKE_KEY) + ')', 'RuntimeError'),
+                ('type(' + repr('Unexpected' + FAKE_KEY) + ', (Exception,), {})()',
+                 'Unexpected[REDACTED]')):
+            setup = 'client.call = Mock(side_effect=' + exception + ')'
+            result = self.run_cli(*self.flags(), setup=setup, expected=3)
+            self.assertEqual(result.stderr, 'internal error: ' + expected + '\n')
+        self.assertEqual(self.server.requests, [])
 
     def test_unparseable_missing_and_invalid_responses(self):
         responses = [b'not JSON', b'NaN', b'\xff', {}, [], {'answers': {}},
@@ -243,6 +301,42 @@ class DelegateTests(unittest.TestCase):
         self.respond()
         self.server.reply[1]['answers']['q']['probabilities'] = {'yes': 'bad'}
         self.run_cli(*self.flags(), expected=4)
+
+    def test_choice_and_score_probability_validation(self):
+        for kind in ('choice', 'score'):
+            first, second = ('yes', 'unclear') if kind == 'choice' else ('low', 'high')
+            invalid = [
+                {first: 1},
+                {first: 0.6, 'unknown': 0.4},
+                {first: 0.6, second: 0.4, 'extra': 0},
+                {first: '0.6', second: 0.4},
+                {first: True, second: 0},
+                {first: -0.1, second: 1.1},
+                {first: 0.2, second: 0.2},
+                {first: 0.6, second: 0.6},
+                {first: 0.4745, second: 0.4745},
+                {first: 0.5255, second: 0.5255},
+            ]
+            for probabilities in invalid:
+                with self.subTest(kind=kind, probabilities=probabilities):
+                    self.respond(kind)
+                    self.server.reply[1]['answers']['q']['probabilities'] = probabilities
+                    result = self.run_cli(*self.flags(kind), expected=4)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(self.ledger()[-1]['exit'], 4)
+            for total in (0.95, 0.96, 1.04, 1.05):
+                with self.subTest(kind=kind, total=total):
+                    self.respond(kind)
+                    self.server.reply[1]['answers']['q']['probabilities'] = {
+                        first: total / 2, second: total / 2}
+                    self.run_cli(*self.flags(kind))
+
+    def test_choice_must_be_an_offered_option(self):
+        for choice in ('unknown', 1, None):
+            with self.subTest(choice=choice):
+                self.respond()
+                self.server.reply[1]['answers']['q']['choice'] = choice
+                self.run_cli(*self.flags(), expected=4)
 
     def test_bad_options_and_input(self):
         cases = [self.flags() + ['--options', 'bad'], self.flags() + ['--options', 'a=x,a=y'],
@@ -266,8 +360,12 @@ class DelegateTests(unittest.TestCase):
 
     def test_secret_classes_refuse_without_echoing(self):
         samples = [('private key', '-----BEGIN RSA PRIVATE KEY'), ('sk token', 'sk-' + 'A1' * 12),
-                   ('GitHub token', 'ghp_' + 'A' * 22), ('Slack token', 'xoxb-' + 'synthetic'),
+                   ('GitHub token', 'ghp_' + 'A' * 22),
+                   ('GitHub token', 'github_pat_' + 'Ab_9' * 5),
+                   ('Slack token', 'xoxb-' + 'synthetic'),
                    ('AWS access key', 'AKIA' + 'A' * 16), ('JWT', 'eyJ' + 'A' * 22 + '.'),
+                   ('JWT', 'eyJ' + 'A' * 8 + '.payload'),
+                   ('JWT', 'eyJ' + 'A' * 8 + '.payload.'),
                    ('API key value', FAKE_KEY)]
         for label, secret in samples:
             result = self.run_cli('--state', secret, *self.flags('noul')[2:], expected=2)
@@ -303,6 +401,25 @@ class DelegateTests(unittest.TestCase):
         Path(self.env['JEV_LEDGER']).unlink()
         self.env['JEV_DAILY_CAP_USD'] = 'nan'
         self.run_cli(*self.flags(), expected=3)
+        self.assertEqual(self.server.requests, [])
+
+    def test_missing_or_invalid_ledger_fields_fail_closed(self):
+        today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+        entries = [{'cost_usd': 100}, {'ts': today},
+                   {'ts': None, 'cost_usd': 100}, {'ts': 123, 'cost_usd': 100},
+                   {'ts': '', 'cost_usd': 100}, {'ts': 'not-a-date', 'cost_usd': 100},
+                   {'ts': today + 'garbage', 'cost_usd': 100},
+                   {'ts': '2000-02-30', 'cost_usd': 100},
+                   {'ts': today, 'cost_usd': '100'}, {'ts': today, 'cost_usd': -1},
+                   {'ts': today, 'cost_usd': None}, {'ts': today, 'cost_usd': True}]
+        for entry in entries:
+            with self.subTest(entry=entry):
+                path = Path(self.env['JEV_LEDGER'])
+                original = json.dumps(entry) + '\n'
+                path.write_text(original)
+                result = self.run_cli(*self.flags(), expected=3)
+                self.assertEqual(result.stderr, 'cannot validate spend ledger or daily cap\n')
+                self.assertEqual(path.read_text(), original)
         self.assertEqual(self.server.requests, [])
 
     def test_ledger_fields_no_state(self):
