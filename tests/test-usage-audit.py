@@ -88,6 +88,22 @@ class UsageAuditTest(unittest.TestCase):
         self.assertRegex(text, r"Independent total .*172 vs 172 diff 0")
         self.assertNotIn("sum check", text)
 
+    def test_total_matches_direct_weighting_when_context_shrinks(self):
+        root = self.home / "projects" / "shrink"
+        root.mkdir(parents=True)
+        rows = [self.assistant("s1", "shrink", "claude-sonnet-5-5", 1000, 0, 0, 0, 0),
+                self.assistant("s2", "shrink", "claude-sonnet-5-5", 900, 0, 0, 0, 0)]
+        (root / "shrink.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        self.assertEqual(self.totals(self.run_audit(roots=[root]))[1], 1900)
+
+    def test_zero_token_record_does_not_abort(self):
+        root = self.home / "projects" / "zero"
+        root.mkdir(parents=True)
+        row = self.assistant("z1", "zero", "claude-sonnet-5-5", 0, 0, 0, 0, 0)
+        row["message"]["usage"] = {"input_tokens": 0, "output_tokens": 0}
+        (root / "zero.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        self.assertEqual(self.totals(self.run_audit(roots=[root]))[1], 0)
+
     def test_repeated_results_once_per_tool_id(self):
         text = self.run_audit()
         top = text.split("Top 5 biggest tool results", 1)[1].split("Window:", 1)[0]
