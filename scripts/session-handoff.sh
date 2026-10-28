@@ -603,7 +603,9 @@ _blocked_line_text() {
 #     (the box border sitting on top of the ❯/› prompt, the prompt, and
 #     everything under it), a line whose text starts with `BLOCKED:`.
 #   * Trailing question: the last assistant text line before that prompt box
-#     ends with `?`.
+#     ends with `?`. A Claude Code tip (text, after _blocked_line_text, starting
+#     with `※` or `Tip:`) is chrome: it is not that line, and it does not clear
+#     an earlier question.
 # A `BLOCKED:` quoted further up than that tail stays ready. A mid-sentence
 # mention inside the tail stays ready too — the marker has to start the line.
 _is_blocked() {
@@ -631,6 +633,10 @@ _is_blocked() {
   for ((i = start; i < n; i++)); do
     text="$(_blocked_line_text "${body[$i]}")"
     [ -n "$text" ] || continue
+    # Tip chrome must not become `last` for the trailing-question rule.
+    case "$text" in
+      "※"*|Tip:*) continue ;;
+    esac
     last="$text"
     case "$text" in
       BLOCKED:*) return 0 ;;
