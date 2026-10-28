@@ -78,7 +78,7 @@ o="$(dry CLAUDE_SESSION_PROFILE=orchestrator -- --tier heavy)"; hasre "explicit 
  o="$(dry A=1 -- --tier auto --task-type review)"; hasre "auto review profile" "$o" '^PROFILE=copywriter$'; hasre "auto review model" "$o" '^MODEL=haiku$'; hasre "auto review tier" "$o" '^TIER=light$'
  o="$(dry A=1 -- --tier auto --task-type research)"; hasre "auto research profile" "$o" '^PROFILE=owner$'; hasre "auto research model" "$o" '^MODEL=sonnet$'
  GOODCFG="$(mktemp -d)"; mkdir -p "$GOODCFG"; printf '%s\n' 'CRSS_CODEX_ARGS=-s danger-full-access' > "$GOODCFG/config.sh"
- o="$(dry CRSS_HOME="$GOODCFG" -- --tier auto --task-type build)"; hasre "auto build backend" "$o" '^BACKEND=codex$'; has "auto build model" "$o" '-m gpt-6.1-sol'; has "auto build effort" "$o" 'model_reasoning_effort=high'; has "auto build fast mode" "$o" 'service_tier=priority'; has "auto build keeps sandbox" "$o" '-s danger-full-access'; rm -rf "$GOODCFG"
+ o="$(dry CRSS_HOME="$GOODCFG" -- --tier auto --task-type build)"; hasre "auto build backend" "$o" '^BACKEND=codex$'; has "auto build model" "$o" '-m gpt-6.1-sol'; has "auto build effort" "$o" 'model_reasoning_effort=high'; hasnt "auto build fast mode off" "$o" 'service_tier=priority'; has "auto build keeps sandbox" "$o" '-s danger-full-access'; rm -rf "$GOODCFG"
  o="$(dry CRSS_CODEX_ARGS='-m custom -s danger-full-access' -- --tier auto --task-type build)"; hasre "env Codex args preserved" "$o" '^CODEX_ARGS=-m custom -s danger-full-access$'
  o="$(dry A=1 -- --tier auto --task 'please review the diff')"; hasre "keyword review maps light" "$o" '^TIER=light$'
  o="$(dry A=1 -- --tier auto)"; hasre "no match maps standard" "$o" '^TIER=standard$'; hasre "no match builder" "$o" '^PROFILE=builder$'
