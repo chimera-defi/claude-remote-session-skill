@@ -174,7 +174,7 @@ hasnt "BUILDER_TOOLS omits AskUserQuestion" "$(grep -m1 '^BUILDER_TOOLS=' "$NS")
 for profile in orchestrator owner hub; do
   o="$(dry CLAUDE_SESSION_PROFILE="$profile" --)"
   hasre "$profile keeps superpowers" "$o" '^SUPERPOWERS=on$'; hasre "$profile launches on the lane deny file" "$o" "^SETTINGS_FILE=$SP_LANE\$"
-  hasre "$profile lane deny default" "$o" '^LANE_DENY=mcp__gbrain,SendFeedback,ReportFindings$'
+  hasre "$profile lane deny default" "$o" '^LANE_DENY=mcp__gbrain,mcp__plugin_token-reduce_token-reduce-mcp,SendFeedback,ReportFindings$'
   # The delegation prompt quotes a Haiku repair as the escaped token --tools\ \"\" . That is prose, not an
   # allowlist. Strip it so a real --tools flag (which would drop AskUserQuestion) still fails this check.
   hasnt "$profile CLAUDE_EXTRA_FLAGS has no --tools" "$(grep '^CLAUDE_EXTRA_FLAGS=' <<<"$o" | sed 's/--tools\\//g')" '--tools'
@@ -236,7 +236,7 @@ ok "derived keeps the base URL (remote-control needs it)" "$(field "$SP_OFF" env
 ok "derived keeps the suggestion off-switch" "$(field "$SP_OFF" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
 ok "derived switches superpowers off" "$(field "$SP_OFF" enabledPlugins superpowers@claude-plugins-official)" False
 ok "derived keeps other plugin entries" "$(field "$SP_OFF" enabledPlugins other@market)" True
-ok "derived deny keeps pre-existing entries then the lane deny" "$(deny_of "$SP_OFF")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'ReportFindings']"
+ok "derived deny keeps pre-existing entries then the lane deny" "$(deny_of "$SP_OFF")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'mcp__plugin_token-reduce_token-reduce-mcp', 'ReportFindings']"
 ok "derived keeps permissions.allow" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["permissions"]["allow"])' "$SP_OFF")" "['Read']"
 ok "derived keeps env beside the deny list" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
 ok "rc-firstparty itself is not touched" "$(field "$SP_ON" enabledPlugins superpowers@claude-plugins-official)" None
@@ -245,7 +245,7 @@ echo '{"env":{"ANTHROPIC_BASE_URL":"https://edited.example"}}' > "$SP_ON"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
 ok "rerun follows a later edit to rc-firstparty" "$(field "$SP_OFF" env ANTHROPIC_BASE_URL)" "https://edited.example"
 ok "rerun drops entries rc-firstparty no longer has" "$(field "$SP_OFF" enabledPlugins other@market)" None
-ok "rerun deny list is exactly the lane deny" "$(deny_of "$SP_OFF")" "['mcp__gbrain', 'SendFeedback', 'ReportFindings']"
+ok "rerun deny list is exactly the lane deny" "$(deny_of "$SP_OFF")" "['mcp__gbrain', 'mcp__plugin_token-reduce_token-reduce-mcp', 'SendFeedback', 'ReportFindings']"
 ok "no temp file left behind" "$(find "$HOME/.claude" -name '*.tmp' | wc -l | tr -d ' ')" 0
 echo 'not json' > "$SP_ON"; chmod 600 "$SP_ON"; chmod 664 "$SP_OFF"
 SESSION=px_sp LOG_FILE="$HOME/sp.log" bash -c "$SPB" >/dev/null
@@ -264,7 +264,7 @@ ok "lane derive leaves superpowers on" "$(field "$SP_LANE" enabledPlugins superp
 ok "lane derive keeps other plugins" "$(field "$SP_LANE" enabledPlugins other@market)" True
 ok "lane derive keeps the base URL" "$(field "$SP_LANE" env ANTHROPIC_BASE_URL)" "https://api.anthropic.com"
 ok "lane derive keeps the suggestion off-switch" "$(field "$SP_LANE" env CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)" 0
-ok "lane derive unions pre-existing deny entries" "$(deny_of "$SP_LANE")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'ReportFindings']"
+ok "lane derive unions pre-existing deny entries" "$(deny_of "$SP_LANE")" "['Bash(rm *)', 'SendFeedback', 'mcp__gbrain', 'mcp__plugin_token-reduce_token-reduce-mcp', 'ReportFindings']"
 ok "lane derive keeps permissions.allow" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["permissions"]["allow"])' "$SP_LANE")" "['Read']"
 ok "lane derive takes the private mode" "$(stat -c %a "$SP_LANE")" 600
 rm -f "$SP_ON" "$SP_LANE" "$SP_OFF"
