@@ -25,7 +25,7 @@ A change is done when **all** of these are true — not before:
    CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
 2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
-   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a non-Claude family (gpt-6.1-sol, or Grok when Codex is out) has reviewed; Fable alone does not count. Name the model in the PR body.
+   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a non-Claude family (gpt-6.1-sol, or Grok when Codex is out) has reviewed; Fable alone does not count, and Fable reads are paused 2026-10-28 by the operator. Name the model in the PR body.
 3. Every changed deployable is redeployed and verified (see "Deploying" below). A fix that
    is merged but not redeployed is inert for the fleet.
 4. You've told the operator what landed, what was redeployed, and anything left undone.
