@@ -20,9 +20,10 @@ PATTERNS = (
     ('private key', r'-----BEGIN [A-Z ]*PRIVATE KEY'),
     ('sk token', r'sk-[A-Za-z0-9_-]{20,}'),
     ('GitHub token', r'ghp_[A-Za-z0-9]{20,}'),
+    ('GitHub token', r'github_pat_[A-Za-z0-9_]{20,}'),
     ('Slack token', r'xox[abp]-'),
     ('AWS access key', r'AKIA[0-9A-Z]{16}'),
-    ('JWT', r'eyJ[A-Za-z0-9_-]{20,}\.'),
+    ('JWT', r'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*\.?'),
 )
 
 
@@ -181,6 +182,17 @@ def redact_object(value, key):
     return value
 
 
+def contains_credential(value, key):
+    if isinstance(value, str):
+        return key in value
+    if isinstance(value, dict):
+        return any(contains_credential(k, key) or contains_credential(v, key)
+                   for k, v in value.items())
+    if isinstance(value, list):
+        return any(contains_credential(v, key) for v in value)
+    return False
+
+
 def ledger_open():
     root = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local' / 'state')
     path = Path(os.environ.get('JEV_LEDGER', root / 'jev-delegate' / 'ledger.jsonl'))
@@ -196,9 +208,10 @@ def ledger_open():
             total = 0.0
             for line in ledger:
                 entry = json.loads(line)
-                if not isinstance(entry, dict) or not number(entry.get('cost_usd')):
+                if (not isinstance(entry, dict) or not number(entry.get('cost_usd'))
+                        or not isinstance(entry.get('ts'), str)):
                     raise ValueError()
-                if str(entry.get('ts', '')).startswith(today):
+                if dt.datetime.fromisoformat(entry['ts']).date().isoformat() == today:
                     total += entry['cost_usd']
             if total >= cap:
                 raise Failure(3, 'daily cap reached')
@@ -235,8 +248,9 @@ def response_result(data, body, threshold):
             top = max(p, 1 - p)
         else:
             probs = answer.get('probabilities')
-            if (not isinstance(probs, dict) or not probs
+            if (not isinstance(probs, dict) or set(probs) != set(question['criteria'])
                     or not all(number(p, 0, 1) for p in probs.values())
+                    or not 0.95 <= sum(probs.values()) <= 1.05
                     or not number(answer.get('confidence'), 0, 1)):
                 raise Failure(4, 'invalid answer probabilities or confidence')
             if kind == 'choice' and (not isinstance(answer.get('choice'), str)
@@ -275,8 +289,15 @@ def call(args, body, key):
                 raw = response.read().decode('utf-8')
         except urllib.error.HTTPError as exc:
             try:
-                error_body = exc.read().decode('utf-8', errors='replace')[:2000]
-            except OSError:
+                error_body = exc.read().decode('utf-8', errors='replace')
+                try:
+                    decoded_body = json.loads(error_body)
+                except ValueError:
+                    decoded_body = error_body
+                if contains_credential(decoded_body, key):
+                    error_body = '[body withheld: contained credential]'
+                error_body = redact(error_body, key)[:2000]
+            except Exception:
                 error_body = ''
             message = f'HTTP {exc.code}\n{error_body}'
             if exc.code == 402:
@@ -362,6 +383,9 @@ def main():
     except (OSError, ValueError, OverflowError, RecursionError):
         print('invalid input or local I/O failure', file=sys.stderr)
         return 2
+    except Exception as exc:
+        print(redact('internal error: ' + type(exc).__name__, key), file=sys.stderr)
+        return 3
 
 
 if __name__ == '__main__':
