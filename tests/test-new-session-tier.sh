@@ -315,6 +315,14 @@ ARGV="$(typed <<<"$SCR" | launch_argv)"
 ok "orchestrator: the default delegation prompt arrives as one argument" \
   "$(awk 'p{print substr($0,1,26); exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")" "Delegation (operator 2026-"
 ok "orchestrator: its apostrophes arrive intact" "$(grep -c "slice's test" <<<"$ARGV")" 1
+SCR="$(CLAUDE_SESSION_PROFILE=builder gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+ARGV="$(typed <<<"$SCR" | launch_argv)"
+builder_prompt="$(awk 'p{print; exit} $0=="--append-system-prompt"{p=1}' <<<"$ARGV")"
+case "$builder_prompt" in
+  "Unattended lane:"*"does not depend on it.") builder_prompt_shape=yes ;;
+  *) builder_prompt_shape=no ;;
+esac
+ok "builder: the default delegation prompt arrives as one argument" "$builder_prompt_shape" yes
 NASTY="it's a \"test\" with \$HOME, \`date\`, \$(touch \$HOME/pwned), 'quoted' text, a \\ and a trailing quote'"
 rm -rf "$HOME/scripts-nasty"; cp -r "$HERE/../scripts" "$HOME/scripts-nasty"
 NASTY="$NASTY" python3 - "$HOME/scripts-nasty/new-session.sh" <<'PY'

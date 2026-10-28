@@ -144,6 +144,8 @@ edge_out() {
   frame "$b"
 }
 settled_cap="$(frame "$(printf '%s\n' '● Should I apply the patch?' '● Continuing with the safe default.')")"
+tip_last_cap="$(frame "$(printf '%s\n' '● answer' '  ※ Tip: want a follow-up?')")"
+question_then_tip_cap="$(frame "$(printf '%s\n' '● Should I apply the patch?' 'Tip: shortcuts are in the footer')")"
 busy_cap="$(printf '%s\n%s\n%s\n❯\n%s\n' '● BLOCKED: need operator OK for X' '✢ Incubating… (esc to interrupt · 2m 5s)' "$RULE" "$RULE")"
 
 out="$(run_check "$marker_cap")"; rc=$?
@@ -160,6 +162,10 @@ out="$(run_check "$(edge_out 12)")"; rc=$?
 has "check BLOCKED on the tail boundary is blocked" "$out" "state=blocked"; ok "check edge-inside exits 1" "$rc" "1"
 out="$(run_check "$settled_cap")"; rc=$?
 has "check earlier question then a statement stays ready" "$out" "state=ready"; ok "check settled-after-question exits 0" "$rc" "0"
+out="$(run_check "$tip_last_cap")"; rc=$?
+has "check tip question as last line stays ready" "$out" "state=ready"; ok "check tip-last exits 0" "$rc" "0"
+out="$(run_check "$question_then_tip_cap")"; rc=$?
+has "check question then tip stays blocked" "$out" "state=blocked"; ok "check question-then-tip exits 1" "$rc" "1"
 out="$(run_check "$busy_cap")"; rc=$?
 has "check busy wins over a BLOCKED line" "$out" "state=busy"; ok "check busy-over-blocked exits 1" "$rc" "1"
 out="$(run_ready "$marker_cap")"; rc=$?

@@ -55,7 +55,7 @@ STUBDIR="$(mktemp -d)"
 trap 'rm -rf "$STUBDIR"' EXIT
 
 # Stub session-handoff driven by env: STUB_LOG (calls), STUB_READY_SESSIONS (ready=SAFE), STUB_READY_REASON,
-# STUB_BUSY_POLLS (check busy N times then ready), STUB_STATE (counter dir), STUB_SEND_FAIL.
+# STUB_BUSY_POLLS (check busy N times then STUB_SETTLE_STATE, default ready), STUB_STATE (counter dir), STUB_SEND_FAIL.
 _write_stub_handoff() {
   cat > "$STUBDIR/session-handoff" <<'EOF'
 #!/usr/bin/env bash
@@ -75,7 +75,10 @@ case "$1" in
     if [ "$n" -le "$polls" ]; then
       echo "check: $s  state=busy  unit-active=yes  model=x"; exit 1
     else
-      echo "check: $s  state=ready  unit-active=yes  model=x"; exit 0
+      settle="${STUB_SETTLE_STATE:-ready}"
+      echo "check: $s  state=$settle  unit-active=yes  model=x"
+      [ "$settle" = ready ] && exit 0
+      exit 1
     fi ;;
   send)
     s="$2"
@@ -93,7 +96,7 @@ _write_stub_handoff
 _reset_stub_env() {
   STUB_LOG="$(mktemp)"; export STUB_LOG
   STUB_STATE="$(mktemp -d)"; export STUB_STATE
-  export STUB_READY_SESSIONS="" STUB_READY_REASON="busy" STUB_BUSY_POLLS=0 STUB_SEND_FAIL=no
+  export STUB_READY_SESSIONS="" STUB_READY_REASON="busy" STUB_BUSY_POLLS=0 STUB_SEND_FAIL=no STUB_SETTLE_STATE=ready
 }
 
 _reset_stub_env
@@ -125,6 +128,13 @@ out="$(_do_compact compactok 30)"; rc=$?
 ok "docompact-success-exit"   "$rc" "0"
 ok "docompact-success-output" "$out" "compacted"
 
+# blocked is idle the same way ready is: busy, then blocked, compacts (not a timeout).
+_reset_stub_env
+STUB_BUSY_POLLS=1
+STUB_SETTLE_STATE=blocked
+out="$(_do_compact compactblocked 12)"; rc=$?
+ok "docompact-blocked-after-busy-exit"   "$rc" "0"
+ok "docompact-blocked-after-busy-output" "$out" "compacted"
 
 _reset_stub_env
 STUB_SEND_FAIL=yes
