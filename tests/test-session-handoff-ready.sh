@@ -96,12 +96,15 @@ add codex-rate-limit-menu "  Approaching rate limits
 
   enter select · esc back" menu
 
-FAKE="$(mktemp -d)"; trap 'rm -rf "$FAKE"' EXIT
+FAKE="$(mktemp -d)"; trap 'tmux ls -F "#{session_name}" 2>/dev/null | grep "^hoff-ready-$$-" | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done; rm -rf "$FAKE"' EXIT
 cat > "$FAKE/tmux" <<'EOS'
 #!/usr/bin/env bash
 case "$1" in
   has-session)  [ -n "${FAKE_NO_SESSION:-}" ] && exit 1; exit 0 ;;
   capture-pane) printf '%s' "${FAKE_CAPTURE:-}" ;;
+  display-message) printf '%s\n' "${FAKE_PANE_CMD:-claude}" ;;
+  ls|list-sessions) [ -n "${FAKE_SESSIONS:-}" ] && printf '%s:\n' ${FAKE_SESSIONS} ;;
+  load-buffer|paste-buffer|send-keys) exit 0 ;;
   *)            exit 1 ;;
 esac
 EOS
@@ -118,6 +121,58 @@ for name in "${!PANE[@]}"; do
 done
 out="$(FAKE_NO_SESSION=1 PATH="$FAKE:$PATH" bash "$HANDOFF" ready ghost-session)"; rc=$?
 ok "ready: missing session exits 2" "$rc" "2"; has "ready: missing session message" "$out" "no such tmux session"
+
+# _state_of `blocked`: tail BLOCKED: marker, trailing question, quoted-high stays ready.
+# `ready` (injection safety) stays SAFE. `check` exits 1. `send` is allowed.
+frame() { printf '%s\n%s\n❯\n%s\n  [Sonnet 5] session-launcher-0718\n' "$1" "$RULE" "$RULE"; }
+run_check() { FAKE_CAPTURE="$1" FAKE_PANE_CMD=claude CRSS_AUTONOMOUS=0 PATH="$FAKE:$PATH" bash "$HANDOFF" check fake-session; }
+marker_cap="$(frame "$(printf '%s\n' '● answer the block' '● BLOCKED: need operator OK for X')")"
+bullet_cap="$(frame '  ⏺ BLOCKED: need operator OK for X')"
+question_cap="$(frame "$(printf '%s\n' '● earlier note' '● Should I apply the patch?   ')")"
+qbody='● BLOCKED: need operator OK for an earlier step'
+for i in $(seq 1 14); do
+  if [ "$i" = 8 ]; then
+    qbody+=$'\n● notes quote BLOCKED: from the old turn, then continued'
+  else
+    qbody+=$'\n● normal output line '"$i"
+  fi
+done
+quoted_cap="$(frame "$qbody")"
+edge_out() {
+  local n="$1" b='● BLOCKED: edge' i
+  for i in $(seq 2 "$n"); do b+=$'\n● plain '"$i"; done
+  frame "$b"
+}
+settled_cap="$(frame "$(printf '%s\n' '● Should I apply the patch?' '● Continuing with the safe default.')")"
+busy_cap="$(printf '%s\n%s\n%s\n❯\n%s\n' '● BLOCKED: need operator OK for X' '✢ Incubating… (esc to interrupt · 2m 5s)' "$RULE" "$RULE")"
+
+out="$(run_check "$marker_cap")"; rc=$?
+has "check blocked-marker state" "$out" "state=blocked"; ok "check blocked-marker exits 1" "$rc" "1"
+out="$(run_check "$bullet_cap")"; rc=$?
+has "check ⏺ BLOCKED state" "$out" "state=blocked"; ok "check ⏺ BLOCKED exits 1" "$rc" "1"
+out="$(run_check "$question_cap")"; rc=$?
+has "check trailing-question state" "$out" "state=blocked"; ok "check trailing-question exits 1" "$rc" "1"
+out="$(run_check "$quoted_cap")"; rc=$?
+has "check quoted-high state" "$out" "state=ready"; ok "check quoted-high exits 0" "$rc" "0"
+out="$(run_check "$(edge_out 13)")"; rc=$?
+has "check BLOCKED just outside the 12-line tail stays ready" "$out" "state=ready"; ok "check edge-outside exits 0" "$rc" "0"
+out="$(run_check "$(edge_out 12)")"; rc=$?
+has "check BLOCKED on the tail boundary is blocked" "$out" "state=blocked"; ok "check edge-inside exits 1" "$rc" "1"
+out="$(run_check "$settled_cap")"; rc=$?
+has "check earlier question then a statement stays ready" "$out" "state=ready"; ok "check settled-after-question exits 0" "$rc" "0"
+out="$(run_check "$busy_cap")"; rc=$?
+has "check busy wins over a BLOCKED line" "$out" "state=busy"; ok "check busy-over-blocked exits 1" "$rc" "1"
+out="$(run_ready "$marker_cap")"; rc=$?
+ok "ready stays SAFE on a blocked pane" "$out/$rc" "ready: fake-session SAFE/0"
+out="$(CRSS_AUTONOMOUS=0 FAKE_CAPTURE="$marker_cap" PATH="$FAKE:$PATH" bash "$HANDOFF" send fake-session "answer the block" 2>&1)"; rc=$?
+has "send blocked notes and continues" "$out" "send: note — 'fake-session' is blocked"
+has "send blocked landed" "$out" "landed on fake-session"
+hasnt "send blocked is not refused" "$out" "refusing"
+ok "send blocked exits 0" "$rc" "0"
+iso="$(mktemp -d)"
+out="$(CRSS_HOME="$iso" CRSS_SESSION_PREFIX=cs CRSS_LEGACY_PREFIXES= FAKE_SESSIONS=cs_stalllane FAKE_CAPTURE="$marker_cap" FAKE_PANE_CMD=claude PATH="$FAKE:$PATH" bash "$HANDOFF" targets 2>&1)"
+rm -rf "$iso"
+ok "targets shows blocked" "$(printf '%s\n' "$out" | awk '/^cs_stalllane /{print $2}')" "blocked"
 
 # the same classification under every awk and locale
 locales=(C)
@@ -180,5 +235,44 @@ for pat in '[❯]' '[ ❯›]' '[^❯›]' '[[:space:]❯]' '[]❯]' '[✻✽✶
 done
 ok guard-accepts-ascii-class "$(printf '%s\n' "grep -E 'x[[:space:]]*y'" | has_glyph_bracket && echo yes || echo no)" no
 ok guard-ignores-comment "$(printf '%s\n' "# grep -E '[❯]'" | has_glyph_bracket && echo yes || echo no)" no
+
+# Live fixture modes (fake-claude-tui.py): the same three stalls, on a real pane.
+if command -v tmux >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  spawn_blocked() {
+    local mode="$1" want="$2" s tries=0 cap
+    s="hoff-ready-$$-$mode"
+    : > "$FAKE/$s.log"
+    tmux new-session -d -s "$s" -x 100 -y 40 2>/dev/null
+    tmux send-keys -t "$s" "FAKE_TUI_LOG='$FAKE/$s.log' exec -a claude python3 '$HERE/fake-claude-tui.py' '$mode'" Enter
+    while [ "$tries" -lt 50 ]; do
+      if [ "$(tmux list-panes -t "$s" -F '#{pane_current_command}' 2>/dev/null | head -1)" = claude ] \
+         && cap="$(tmux capture-pane -p -t "$s" 2>/dev/null && printf x)" && cap=${cap%x} && [ -n "$cap" ] \
+         && grep -qF -- "$want" <<<"${cap%$'\n'}"; then
+        printf '%s' "$s"
+        return 0
+      fi
+      sleep 0.1; tries=$((tries + 1))
+    done
+    echo "FAIL: spawn $mode (last capture follows)" >&2
+    tmux capture-pane -p -t "$s" >&2 || true
+    printf '%s' "$s"
+    return 1
+  }
+  S="$(spawn_blocked blocked-marker "BLOCKED: need operator OK for X")"
+  out="$(bash "$HANDOFF" check "$S" 2>&1)"; rc=$?
+  has "live marker state" "$out" "state=blocked"; ok "live marker exit" "$rc" "1"
+  out="$(CRSS_AUTONOMOUS=0 bash "$HANDOFF" send "$S" "operator says yes" 2>&1)"; rc=$?
+  hasnt "live send is not refused" "$out" "refusing"
+  ok "live send exit is not 2" "$([ "$rc" -eq 2 ] && echo yes || echo no)" no
+  has "live send pasted" "$(cat "$FAKE/$S.log")" "PASTE "
+  S="$(spawn_blocked blocked-question "Should I apply the patch?")"
+  out="$(bash "$HANDOFF" check "$S" 2>&1)"; rc=$?
+  has "live question state" "$out" "state=blocked"; ok "live question exit" "$rc" "1"
+  S="$(spawn_blocked blocked-quoted "normal output line 14")"
+  cap="$(tmux capture-pane -p -t "$S" 2>/dev/null || true)"
+  has "live quoted marker still on screen" "$cap" "BLOCKED: need operator OK for an earlier step"
+  out="$(bash "$HANDOFF" check "$S" 2>&1)"; rc=$?
+  has "live quoted-high state" "$out" "state=ready"; ok "live quoted-high exit" "$rc" "0"
+fi
 
 finish "session-handoff-ready"
