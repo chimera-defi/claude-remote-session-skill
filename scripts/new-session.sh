@@ -516,11 +516,15 @@ if [ "$BACKEND" = claude ]; then
   case "$EFFORT" in ""|none|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
 
   if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
-    # Same shape as CRSS_OPUS_MODEL above and session-resume's --model: this also closes the pane-injection
+    # Same base shape as CRSS_OPUS_MODEL above and session-resume's --model: this also closes the pane-injection
     # hole the apostrophe-only escape below leaves open for "..."-breakout characters (", $, `, \) in a model
     # typed straight into `--model "..."` in the launch line.
-    [[ "$CLAUDE_SESSION_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_MODEL='$CLAUDE_SESSION_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
+    # The one extra form is the literal 1M-context suffix `[1m]` (claude-opus-5-5[1m]): brackets are inert inside
+    # those double quotes and in the %q-quoted MODEL= line, so nothing else (no other bracket text) is allowed.
+    _model_re='^[a-z0-9][a-z0-9.-]*(\[1m\])?$'
+    [[ "$CLAUDE_SESSION_MODEL" =~ $_model_re ]] || { echo "new-session: CLAUDE_SESSION_MODEL='$CLAUDE_SESSION_MODEL' must match $_model_re" >&2; exit 2; }
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
+    [[ "$MODEL" == *'[1m]' ]] && echo "note: CLAUDE_SESSION_MODEL='$MODEL' accepted: 1M context comes only from the [1m] suffix (without it, ${MODEL%'[1m]'} runs at standard context)" >&2
   else
     case "$PROFILE" in
       orchestrator) MODEL="$CRSS_OPUS_MODEL" ;;
