@@ -349,8 +349,25 @@ rm -rf "$HOME/scripts-nasty"
 rm -f "$HOME/pwn-model-inject"
 MAL_MODEL="sonnet\"; touch \"$HOME/pwn-model-inject\"; echo \""
 o="$(dry CLAUDE_SESSION_MODEL="$MAL_MODEL" --)"
-hasre "hostile CLAUDE_SESSION_MODEL (quote-breakout) is rejected, not typed into the pane" "$o" 'CLAUDE_SESSION_MODEL=.* must match \^\[a-z0-9\]\[a-z0-9\.-\]\*\$'
+hasre "hostile CLAUDE_SESSION_MODEL (quote-breakout) is rejected, not typed into the pane" "$o" 'CLAUDE_SESSION_MODEL=.* must match \^\[a-z0-9\]\[a-z0-9\.-\]\*'
 ok "hostile CLAUDE_SESSION_MODEL: nothing executed" "$(yn test -e "$HOME/pwn-model-inject")" no
+# The 1M-context suffix is the one bracket form allowed: claude must get `claude-opus-5-5[1m]` as one literal word
+# (a planted file the bracket would glob-match proves it is never expanded). Anything after or inside it still fails.
+SCR="$(CLAUDE_SESSION_PROFILE=orchestrator CLAUDE_SESSION_MODEL='claude-opus-5-5[1m]' gen CRSS_CLAUDE_BIN="$HOME/stub-claude")"
+printf '%s\n' "$SCR" > "$HOME/ss.sh"
+ok "1m model: start script parses" "$(bash -n "$HOME/ss.sh" 2>&1; echo "rc=$?")" "rc=0"
+ok "1m model: launch lines keep --model \"...\"" "$(grep -c -- '--model "claude-opus-5-5\[1m\]" ' <<<"$SCR")" 3
+ARGV="$(cd "$HOME" && touch claude-opus-5-5m && typed <<<"$SCR" | launch_argv)"
+ok "1m model reaches claude as one literal word" "$(awk 'p{print; exit} $0=="--model"{p=1}' <<<"$ARGV")" 'claude-opus-5-5[1m]'
+o="$(dry CLAUDE_SESSION_MODEL='claude-opus-5-5[1m]' --)"
+hasre "1m model: dry run resolves it" "$o" 'resolved: .* model=claude-opus-5-5\[1m\] '
+hasre "1m model: one-line advisory on stderr" "$o" "^note: CLAUDE_SESSION_MODEL='claude-opus-5-5\\[1m\\]' accepted: 1M context comes only from the \\[1m\\] suffix"
+for bad in 'claude-opus-5-5[1m]"; touch "'"$HOME"'/pwn-1m"; echo "' 'claude-opus-5-5[1m]$(touch '"$HOME"'/pwn-1m)' \
+           'claude-opus-5-5[2m]' 'claude-opus-5-5[1m][1m]' 'claude-opus-5-5[1m]x' '[1m]'; do
+  o="$(dry CLAUDE_SESSION_MODEL="$bad" --)"
+  hasre "CLAUDE_SESSION_MODEL='$bad' is rejected" "$o" 'CLAUDE_SESSION_MODEL=.* must match'
+done
+ok "hostile 1m-suffixed model: nothing executed" "$(yn test -e "$HOME/pwn-1m")" no
 
 # The settings path and the remote name are typed into the same pane text as the prompt, so an apostrophe
 # in one of them closed the send-keys quote just the same, and a space split a word. A normal spawn must keep the
