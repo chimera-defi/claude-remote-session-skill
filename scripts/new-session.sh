@@ -595,13 +595,15 @@ CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
 # 2.1.308: the last file wins, the first one's env is gone), so a second layer would drop rc-firstparty's
 # ANTHROPIC_BASE_URL and break remote-control registration. The start script derives ONE file from the healed
 # rc-firstparty layer. Superpowers-off lanes switch the plugin off (rc-firstparty-no-superpowers.settings.json).
-# CRSS_LANE_DENY (default mcp__gbrain,SendFeedback,ReportFindings; empty disables) is unioned into
+# CRSS_LANE_DENY (default mcp__gbrain,mcp__plugin_token-reduce_token-reduce-mcp,SendFeedback,ReportFindings;
+# empty disables) is unioned into
 # permissions.deny of that file; superpowers-on lanes then use rc-firstparty-lane.settings.json, and
-# CRSS_LANE_DENY= leaves them on the plain file with no derive.
+# CRSS_LANE_DENY= leaves them on the plain file with no derive. token-reduce MCP: 0 MCP calls in 30 days
+# vs 288 token-reduce CLI calls (lanes use the CLI, not the MCP server).
 SUPERPOWERS=on
 SUPERPOWERS_PLUGIN="superpowers@claude-plugins-official"
 if [ -z "${CRSS_LANE_DENY+x}" ]; then
-  CRSS_LANE_DENY="mcp__gbrain,SendFeedback,ReportFindings"
+  CRSS_LANE_DENY="mcp__gbrain,mcp__plugin_token-reduce_token-reduce-mcp,SendFeedback,ReportFindings"
 fi
 SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json"
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
@@ -964,7 +966,7 @@ SCRIPT_EOF
 # each other and would drop this layer's env. Off lanes keep the no-superpowers filename and the old failure
 # event so existing extracts still match; on lanes with a deny list use the lane file.
 _DERIVE_COMMENT='# Derive ONE file from healed rc-firstparty (every other key kept, env especially; tmp + os.replace; mode copied). Off lanes set the plugin false; permissions.deny is the existing list UNION the lane deny (order kept, no duplicates).
-# gbrain MCP ~2.6k tokens/start (110 deferred names + instructions; 6 MCP calls vs 1,087 gbrain CLI calls in 4 weeks), SendFeedback ~9KB and ReportFindings ~3KB (0 uses); deny removes them even under --dangerously-skip-permissions. CRSS_LANE_DENY= opts out. Derive failure: plain rc-firstparty copy.'
+# gbrain MCP ~2.6k tokens/start (110 deferred names + instructions; 6 MCP calls vs 1,087 gbrain CLI calls in 4 weeks), token-reduce MCP (0 MCP calls in 30 days vs 288 token-reduce CLI calls), SendFeedback ~9KB and ReportFindings ~3KB (0 uses); deny removes them even under --dangerously-skip-permissions. CRSS_LANE_DENY= opts out. Derive failure: plain rc-firstparty copy.'
 _DERIVE_PY=$(cat << 'PY'
 import json,os,sys
 src,dst,plugin,switch_off,deny_csv=sys.argv[1:6]
