@@ -25,6 +25,9 @@ chmod +x "$FLAT/session-send" "$FLAT/session-handoff"
 out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$FLAT/session-send" "$NOSESS" hello 2>&1)"; rc=$?
 has "minimal PATH: flat co-located helper found" "$out" "no such tmux session"; ok "minimal PATH: exit 2 from helper" "$rc" "2"
 hasnt "minimal PATH: no locate error" "$out" "could not locate"
+printf 'import sys; print("stub-codex-send", *sys.argv[1:])\n' > "$FLAT/codex-send"
+out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$FLAT/session-send" codex:list 2>&1)"; rc=$?
+has "minimal PATH: flat co-located codex-send found" "$out" "stub-codex-send list"; ok "minimal PATH: codex-send exit 0" "$rc" "0"
 
 # neither co-located nor on PATH
 cp "$SEND" "$ISOLATED/session-send.sh"
