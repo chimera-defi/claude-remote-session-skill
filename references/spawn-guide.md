@@ -120,10 +120,10 @@ generic defaults in those two files. What matters most for a fresh spawn:
 - **Concrete anti-patterns, not "be careful".** Name the specific mistakes to avoid in this
   domain ("don't branch from local `main`", "no deploys without explicit human approval in this session").
   A named habit gets avoided; a general caution gets ignored.
-- **Builders: Codex first, gpt-6.1-sol high at the standard tier (fast mode OFF 2026-10-28)** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high`, or `new-session --backend codex --tier auto --task-type build`, which adds those flags).
+- **Builders: Codex first, gpt-6.1-sol high in fast mode by default (operator 2026-10-30)** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority`, or `new-session --backend codex --tier auto --task-type build`, which adds those flags).
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
   - Run the task's tests first; only on a failed check does Haiku low repair, then `-m gpt-6-astra` medium (also the pick when latency matters) → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Codex out (exact quota error text): Haiku low builds, Haiku high on a failed check or a costly miss. Never luna or sol61 medium for builds.
-  - Fast mode (`service_tier=priority`) is now opt-in only (was the default 10-23 to 10-28; operator turned it off): 37% faster on the hard set, same pass rate and code, ~2x list price. Not for luna (no gain). xhigh effort adds cost and time, not quality.
+  - Fast mode (`service_tier=priority`) is the builder default again since 2026-10-30 (operator: the standard tier benchmarked too slow; off 10-28 to 10-30): 37% faster on the hard set, same pass rate and code, ~2x list price. Not for luna (no gain). xhigh effort adds cost and time, not quality.
   - Record the model that ran.
 - **Delegate every independent slice, with evidence checks.** Research, per-file edits, and
   verification each go to their own delegate (Codex first for implementation; Codex/ChatGPT gpt-6.1-sol first for read-only research, see the Research row in [orchestration-flow.md](orchestration-flow.md#roles); Claude fallback:
