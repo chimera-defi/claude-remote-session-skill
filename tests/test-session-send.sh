@@ -18,6 +18,17 @@ cp "$HERE/../scripts/session-handoff.sh" "$DEPLOY/session-handoff"; chmod +x "$D
 out="$(PATH="$DEPLOY:$PATH" bash "$DEPLOY/session-send.sh" "$NOSESS" hello 2>&1)"; rc=$?
 has "PATH fallback resolves the helper" "$out" "no such tmux session"; ok "PATH fallback exit 2" "$rc" "2"
 
+# flat deployed layout under a systemd-like PATH (no ~/.local/bin): resolve the co-located flat copy
+FLAT="$(mktemp -d)"; trap 'rm -rf "$DEPLOY" "$ISOLATED" "$FLAT"' EXIT
+cp "$SEND" "$FLAT/session-send"; cp "$HERE/../scripts/session-handoff.sh" "$FLAT/session-handoff"
+chmod +x "$FLAT/session-send" "$FLAT/session-handoff"
+out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$FLAT/session-send" "$NOSESS" hello 2>&1)"; rc=$?
+has "minimal PATH: flat co-located helper found" "$out" "no such tmux session"; ok "minimal PATH: exit 2 from helper" "$rc" "2"
+hasnt "minimal PATH: no locate error" "$out" "could not locate"
+printf 'import sys; print("stub-codex-send", *sys.argv[1:])\n' > "$FLAT/codex-send"
+out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$FLAT/session-send" codex:list 2>&1)"; rc=$?
+has "minimal PATH: flat co-located codex-send found" "$out" "stub-codex-send list"; ok "minimal PATH: codex-send exit 0" "$rc" "0"
+
 # neither co-located nor on PATH
 cp "$SEND" "$ISOLATED/session-send.sh"
 out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" bash "$ISOLATED/session-send.sh" missing-helper-test hello 2>&1)"; rc=$?
