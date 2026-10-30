@@ -165,4 +165,18 @@ for value in ['sk-'+'a'*20, 'ghp_'+'b'*25, 'github_pat_'+'c'*25,
     assert '[REDACTED]' in redact(value)
 PY
 ok 'missing command, timeout, inaccessible paths and redaction patterns' "$?" 0
+# Reproduce strict UTF-8 output even on hosts whose default is surrogateescape.
+repo="$HOME/workspace/repo$(printf '\377')x"
+mkdir "$repo"
+printf 'project instructions\n' > "$repo/CLAUDE.md"
+for mode in json md; do
+  env -u PYTHONIOENCODING LC_ALL=C.UTF-8 python3 - "$TOOL" "--$mode" --home "$HOME" --project "$HOME/workspace/sample" --config "$HOME/config.json" > /dev/null <<'PY'
+import runpy, sys
+sys.stdout.reconfigure(errors='strict')
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+PY
+  rc=$?
+  ok "$mode handles non-UTF8 filenames with strict stdout" "$rc" 0
+done
 finish "memory-total"
