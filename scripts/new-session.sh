@@ -179,8 +179,8 @@ Environment:
                                 Default: empty. Host overlays commonly set
                                 model/sandbox/approval flags here.
   CRSS_CODEX_BUILDER_TIER=<t>   Codex service tier for --task-type build
-                                lanes (default: unset, i.e. standard tier;
-                                "priority" opts in to fast mode, empty to omit).
+                                lanes (default: priority, i.e. fast mode;
+                                "default" for the normal tier, empty to omit).
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/sonnet/sonnet/haiku
@@ -414,7 +414,7 @@ else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
   # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
-  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" "${CRSS_CODEX_BUILDER_TIER-}" <<'PY'
+  CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol}" "${CRSS_CODEX_BUILDER_EFFORT:-high}" "${CRSS_CODEX_BUILDER_TIER-priority}" <<'PY'
 import shlex,sys
 args,model,effort,tier=sys.argv[1:]
 try: w=shlex.split(args)
@@ -585,7 +585,7 @@ BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,Skill,ToolSearch,WebFetch,We
 HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
 # Nobody reads a builder or copywriter pane, and AskUserQuestion is off. Escalate; do not wait.
 BUILDER_ESCALATION_PROMPT='Unattended lane: nobody reads this pane and AskUserQuestion is off. Never end a turn on a plain-text question and wait. When you need a decision or input, or a denied tool or permission blocks you: send the exact need to your launcher with session-send <launcher> --file <file> (if the launcher is not a tmux session, post on the coordination bus per ~/.config/crss/local.md Escalation), then print one final line starting BLOCKED: with that need, and keep doing any work that does not depend on it.'
-ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. Fable reads are paused (operator 2026-10-28): review with one gpt-6.1-sol call per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
+ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. Fable reads are paused (operator 2026-10-28): review with one gpt-6.1-sol call per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
 
 # --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
 # cwd/env/memory-path/git-status out of the cached system prompt into the first
