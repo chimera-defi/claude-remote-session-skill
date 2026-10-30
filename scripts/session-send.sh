@@ -22,6 +22,8 @@ if [[ "${1:-}" == codex:* ]]; then
   if [ "$target" = list ]; then set -- list "$@"; else set -- send "$target" "$@"; fi
   if [ -f "$HERE/codex-send.py" ]; then
     exec python3 "$HERE/codex-send.py" "$@"
+  elif [ -f "$HERE/codex-send" ]; then
+    exec python3 "$HERE/codex-send" "$@"
   elif command -v codex-send >/dev/null 2>&1; then
     exec codex-send "$@"
   else
@@ -30,11 +32,14 @@ if [[ "${1:-}" == codex:* ]]; then
   fi
 fi
 
-# Resolve session-handoff co-located first (repo/dev layout), then on PATH
-# (deployed layout: flat copies in ~/.local/bin with the .sh dropped, see
-# session-git-prep.sh's header comment for why).
+# Resolve session-handoff co-located first, in the repo layout (.sh) and then the
+# deployed layout (flat copies in ~/.local/bin with the .sh dropped, see
+# session-git-prep.sh's header comment for why), and only then on PATH: systemd
+# user units run with a PATH that lacks ~/.local/bin.
 if [ -f "$HERE/session-handoff.sh" ]; then
   exec bash "$HERE/session-handoff.sh" send "$@"
+elif [ -f "$HERE/session-handoff" ]; then
+  exec bash "$HERE/session-handoff" send "$@"
 elif command -v session-handoff >/dev/null 2>&1; then
   exec bash "$(command -v session-handoff)" send "$@"
 else
