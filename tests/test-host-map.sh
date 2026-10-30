@@ -185,4 +185,16 @@ for sample in samples:
 assert m.origin('https://user:pass@example.org/neutral/repo.git') == 'example.org/neutral/repo'
 PY
 ok 'timeouts, protected reads, missing commands and redaction' "$?" 0
+# Reproduce strict UTF-8 output even on hosts whose default is surrogateescape.
+mkdir "$HOME/workspace/repo$(printf '\377')x"
+for mode in json md; do
+  env -u PYTHONIOENCODING LC_ALL=C.UTF-8 python3 - "$Q" "--$mode" --home "$HOME" --config "$TMP/config.json" > /dev/null <<'PY'
+import runpy, sys
+sys.stdout.reconfigure(errors='strict')
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+PY
+  rc=$?
+  ok "$mode handles non-UTF8 filenames with strict stdout" "$rc" 0
+done
 finish "host-map"

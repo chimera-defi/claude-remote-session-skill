@@ -21,6 +21,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 from threading import Lock
 import time
 from urllib.parse import urlsplit
@@ -466,6 +467,8 @@ class Inventory:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--json", action="store_true", help="emit generic JSON sections")
