@@ -16,19 +16,14 @@ allowed-tools:
 
 # gstack-session-spawn
 
-Use when asked to: "create a session for X", "create a remote session in X", "spin up an agent for X", or "start a background Claude process for X".
-
-**Done** for a spawn means: `new-session` printed a `REMOTE_NAME`, the unit is active
-(`systemctl --user is-active <REMOTE_NAME>.service`), and — if you gave it a task —
-`--task` printed `Task sent … and verified landed.` The kickoff settles first (several
-consecutive ready polls) and refuses rather than pasting blind. If the task is not
-(verifiably) delivered, `new-session` exits 3 naming the session and why instead of
-printing `Session created` (see the kickoff block in `scripts/new-session.sh`); resend with
-`session-handoff send` once the pane is ready. On a menu/trust dialog see
-[`references/troubleshooting.md`](references/troubleshooting.md) (the default option there is
-"No, exit").
-Then tell the user the `<prefix>-<alias>-<MMDD-HHMM>` name (default `<prefix>` is `cs`,
-configurable via `CRSS_SESSION_PREFIX`).
+**Done:** `new-session` prints `REMOTE_NAME`, the unit passes
+`systemctl --user is-active <REMOTE_NAME>.service`, and, when given a task, `--task` prints
+`Task sent … and verified landed.` Readiness polling and refusal: kickoff block in
+`scripts/new-session.sh`, pinned by `tests/test-new-session-kickoff.sh`.
+Undelivered tasks exit 3 with session/reason instead of `Session created`; resend with
+`session-handoff send` when ready. Menu/trust default: "No, exit"; see
+[troubleshooting](references/troubleshooting.md). Report `<prefix>-<alias>-<MMDD-HHMM>`
+(default `cs`, configurable via `CRSS_SESSION_PREFIX`).
 
 ## Recipe
 
@@ -48,10 +43,10 @@ new-session <foldername> --task "..."        # spawn AND kick off, in one shot
 new-session <foldername> --task-file <path>  # same, task text read from a file
 ```
 
-**Prefer `--task`/`--task-file` over typing the kickoff by hand** — hand-typing often drops
-the Enter and leaves the session idle with no error; the flags poll/send/verify instead.
-Mutually exclusive; an unreadable `--task-file` fails *before* anything spawns. How to
-*write* the task: "Writing the kickoff task" below.
+Prefer `--task`/`--task-file`: they poll/send/verify; hand-typing can drop Enter and leave
+an idle session without error. Mutual exclusion and unreadable-file preflight:
+`scripts/new-session.sh`, pinned by `tests/test-new-session-kickoff.sh`.
+Task contract: [Writing the kickoff task](references/spawn-guide.md#writing-the-kickoff-task).
 
 Relaying into an already-running session, and tearing one down:
 
@@ -72,14 +67,11 @@ session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
 makes `<dir>` an environment in the Claude app, where "new session" starts one on this host. Runbook:
 [`references/phone-spawn.md`](references/phone-spawn.md).
 
-**A dead session comes back with `session-resume`, never by hand** (every agent, Codex
-included). Do not type `claude --resume <uuid> …` into a new tmux pane or
-`systemctl --user start` the unit bare: a hand relaunch drops the unit's
-`--dangerously-skip-permissions` and binary (stalls on unseen approval prompts), and a bare
-start can open a fresh conversation. `session-resume` resumes the session's own transcript
-by uuid through its own unit, keeps its launch flags, and refuses while anything still holds
-the session. Run `--dry-run` first. Steps: header of `scripts/session-resume.sh`, pinned by
-`tests/test-session-resume.sh`.
+**Resume dead sessions with `session-resume`** (Codex included); run `--dry-run` first.
+Manual `claude --resume <uuid> …` can lose the binary/`--dangerously-skip-permissions`
+and stall on approval; bare `systemctl --user start` can open a fresh conversation.
+Own-unit/transcript/flag preservation and live-holder refusal: header of
+`scripts/session-resume.sh`, pinned by `tests/test-session-resume.sh`.
 
 **One unit's restart must not kill the tmux server.** Start scripts launch tmux through
 `systemd-run --user --scope`, so the shared server never sits in a session unit's cgroup
@@ -88,10 +80,10 @@ TRAPPED in a `.service` cgroup; `adopt --apply` moves it to its own scope withou
 For scripts generated before this fix, `migrate-scripts --apply` (backup kept). Header of
 `scripts/crss-tmux-scope.sh`.
 
-`reap` refuses protected names, and sessions with unlanded/uncommitted work unless `--force`
-(rescue first: `session-preserve <name> --rescue --wip`). It also removes the session's own
-`~/.claude/worktrees/<name>` worktree (branch kept; `--keep-worktree` opts out); guards:
-`references/session-lifecycle.md`.
+Before `reap`: `session-preserve <name> --rescue --wip`. Protected-name and
+unlanded/uncommitted-work guards (`--force`), removal of `~/.claude/worktrees/<name>`
+(branch kept; `--keep-worktree` opts out): `references/session-lifecycle.md`,
+`scripts/session-doctor.sh`, pinned by `tests/test-session-doctor-reap-worktree.sh`.
 
 ### Codex Backend
 
@@ -122,22 +114,29 @@ Script lives at `~/.local/bin/new-session`; if missing, recreate it from
   ([script](scripts/merge-guard.sh), [test](tests/test-merge-guard.sh)). On a nonzero exit,
   leave the PR for the operator and report the reasons. A general rule never overrides a per-item veto.
 
-- Claude profile default is per role via `CLAUDE_SESSION_PROFILE` (`orchestrator` pinned Opus; `owner`/`hub`/`builder` Sonnet; `copywriter` Haiku); override per spawn with `CLAUDE_SESSION_MODEL=<model>`. Codex gpt-6.1-sol high builds first (Haiku low when Codex is quota-out) and Codex/ChatGPT gpt-6.1-sol researches first (bench and roles: [`references/orchestration-flow.md`](references/orchestration-flow.md)), Haiku low repairs a failed check (on a quota-out `new-session` fails over per the [quota ladder](references/orchestration-flow.md#quota-ladder)); [`haiku-reviewer`](agents/haiku-reviewer.md) checks are advisory. Tiers, advisor, second-opinion order, builder turn cap and the lane shape: [`references/spawn-guide.md`](references/spawn-guide.md). Reports, benchmarks and new repos (private first, data-checked numbers, review passes): [`references/research-deliverables.md`](references/research-deliverables.md).
+- Role models (`CLAUDE_SESSION_PROFILE`, override `CLAUDE_SESSION_MODEL=<model>`), tiers,
+  advisor, second-opinion order and builder turn cap: [`references/spawn-guide.md`](references/spawn-guide.md).
+  Build/research/repair/review routing and quota failover: [`references/orchestration-flow.md`](references/orchestration-flow.md).
+  [`haiku-reviewer`](agents/haiku-reviewer.md) is advisory. Reports, benchmarks and new repos
+  (private first, data-checked numbers, review passes): [`references/research-deliverables.md`](references/research-deliverables.md).
 
 ## Tier, kickoff and naming (read before spawning)
 
 [`references/spawn-guide.md`](references/spawn-guide.md) holds the detail. The short form:
 
-- **Tier:** pass `--tier light|standard|heavy` with `--tier-reason "..."`, or `--tier auto --task-type <t>` (right-size the model; **a tier never selects Opus**: `light` = Haiku, `standard` = Sonnet builder, `heavy` = Sonnet owner (full tools) + Opus advisor; for an Opus orchestrator omit `--tier`. `new-session` prints a `resolved:` line (backend/profile/model/effort/advisor) on every spawn: read it. Resolution is in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`).
+- **Tier:** `--tier light|standard|heavy --tier-reason "..."`, or `--tier auto --task-type <t>`.
+  Read the `resolved:` backend/profile/model/effort/advisor line. Model mapping and no-tier
+  Opus: [Choosing a tier](references/spawn-guide.md#choosing-a-tier-right-size-the-model-save-quota);
+  resolution in `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`.
 - **Kickoff:** give a finish line, not an activity; a stop rule that names the channel (`session-send <launcher>`, or the bus/mailbox when the launcher is not a tmux session; `new-session --launcher` warns); concrete anti-patterns; Codex builders first; a `TASKS.md` for long runs. Prefer `--task`/`--task-file`.
 - **Naming:** `<prefix>_<alias>-<MMDD-HHMM>`; `--alias` is per-spawn, add `--set-default-alias` only when the name describes the folder (rules: `scripts/session-alias.sh`, `tests/test-session-alias.sh`).
 
 ## Git-aware run directory (RUNDIR)
 
-For a git workdir, the start script resolves where to run via `session-git-prep`: a
-free+clean canonical checkout is used directly (on the default branch, never a stale feature
-branch); a dirty or already-owned one gets a fresh worktree. Decision logic, locking, and
-worktree reuse on restart: [`references/git-aware-rundir.md`](references/git-aware-rundir.md).
+`session-git-prep` resolves the run directory: see
+[`references/git-aware-rundir.md`](references/git-aware-rundir.md) for checkout/worktree
+selection, locking and restart reuse; implementation `scripts/session-git-prep.sh`,
+pinned by `tests/test-session-git-prep.sh`.
 
 **Check the folder is the repo you mean before spawning** — a project's *name* is not
 always its folder, and a same-named non-git stub can carry its own `CLAUDE.md`/`AGENTS.md`
@@ -170,13 +169,9 @@ Runbooks (compaction, recycling, hook-wedged and stuck-menu sessions):
 [`references/troubleshooting.md`](references/troubleshooting.md). Session layers, reaping,
 registry expiry: [`references/session-lifecycle.md`](references/session-lifecycle.md).
 
-Two rules from those runbooks bite hardest
-(["Preserve before reaping"](references/troubleshooting.md#preserve-before-reaping-recycling-a-bloated-session)):
-never use `git log @{u}..` to judge whether work is pushed (silent on a branch with no
-upstream — use `git log HEAD --not --remotes`, check `git remote` separately), and deleting
-a branch is the dangerous operation, not reaping. A respawn also starts fresh, not on the old
-session's branch — name the prior branch/transcript/progress in the kickoff, or the
-replacement re-derives it all at full cost.
+Before recycling, read [Preserve before reaping](references/troubleshooting.md#preserve-before-reaping-recycling-a-bloated-session):
+it covers the `git log @{u}..` trap, `git log HEAD --not --remotes` / `git remote`,
+branch-ref preservation and the prior branch/transcript/progress needed in a fresh kickoff.
 
 ## Host-local overlay: where host facts go
 
@@ -200,12 +195,10 @@ Optional module hooks: see [Modules](examples/crss-overlay/README.md#modules).
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
-Durable facts other sessions should inherit go through the host's shared memory convention
-(root, namespace, sync command, citation format), set up in the user-level
-`~/.claude/CLAUDE.md` or `$CRSS_HOME/local.md` — not restated here. "Who else is working
-here right now" is a different question: `session-doctor history` derives presence from
-live processes. Lessons are saved at compaction, not by remembering: the opt-in `PreCompact`
-hook `precompact-lessons` ([`references/precompact-lessons.md`](references/precompact-lessons.md)).
+Shared memory conventions (root, namespace, sync, citations) live in user-level
+`~/.claude/CLAUDE.md` or `$CRSS_HOME/local.md`; live presence comes from
+`session-doctor history`. The opt-in `PreCompact` hook `precompact-lessons` lives in the
+host module; see [Modules](examples/crss-overlay/README.md#modules).
 
 ## Sessions agent scope
 
