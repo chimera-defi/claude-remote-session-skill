@@ -163,10 +163,10 @@ home, bin_dir = root/'home', root/'bin'
 (home/'.codex').mkdir(parents=True)
 bin_dir.mkdir()
 values = ['fixture spaced value', 'q r s', 'prefix-escaped-tail', 'zz' + 'x' * 30,
-          'fixture' + '-credential-9', 'outcome-leak-7']
+          'fixture' + '-credential-9', 'outcome-leak-7', '9' * 30, 'argv-leak-probe']
 quoted = 'pass' + 'word: "' + values[0] + '"'
 for name, body in {
-    'claude': 'echo "Claude 2.1.9 ' + values[1] + '"',
+    'claude': 'echo "Claude 2.1.9 ' + values[1] + '"; exit 0\nclaude-opus-' + values[6],
     'codex': 'echo "' + quoted + '" >&2; exit 3',
     'usage-audit': 'printf "%s\\n" ' + ' '.join(repr(line) for line in (
         quoted, '{"pass' + 'word": "prefix \\"' + values[2] + '\\" tail"}',
@@ -186,7 +186,8 @@ for name, body in {
 env = dict(os.environ, HOME=str(home), PATH=f'{bin_dir}:/usr/bin:/bin',
            HOST_TOOLS_CONFIG=str(home/'config.json'))
 outputs = []
-for argv in (['--dry-run'], ['--spawn', '--force', '--json'], ['ack']):
+for argv in (['--dry-run'], ['--spawn', '--force', '--json'], ['ack'],
+             ['--max-age-days', values[7]], [values[7]]):
     result = subprocess.run([sys.executable, tool, *argv], capture_output=True, text=True, env=env, timeout=60)
     outputs += [result.stdout, result.stderr]
 state = home/'.local/state/crss/env-refresh'
@@ -197,6 +198,8 @@ leaks = [v for v in values for chunk in (v, v[:8]) if chunk in text]
 assert not leaks, leaks
 PY
 ok 'no planted secret reaches any output' "$?" 0
+printf '#!/bin/sh\necho "  no Opus subagent transcripts in the last 7 day(s) (3 subagent transcript(s) scanned)"\n' > "$TMP/bin/session-doctor"
+has 'zero Opus subagents reported' "$(run --dry-run)" '0 Opus subagents'
 cp "$TMP/history.saved" "$state/history.jsonl"
 # Compare every fixture byte and mtime, including an initially absent state dir.
 python3 - "$HOME" > "$TMP/before" <<'PY'
