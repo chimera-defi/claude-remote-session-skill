@@ -1,7 +1,6 @@
 # Troubleshooting & recycling runbooks
 
-Each section is a diagnose -> recover recipe for one failure shape. Three shapes look alike
-(session "went silent"); identify which with `tmux capture-pane -p -t <session>` before acting:
+For a silent session, run `tmux capture-pane -p -t <session>` and identify the shape:
 
 | Pane shows | Shape | Section |
 |---|---|---|
@@ -9,44 +8,40 @@ Each section is a diagnose -> recover recipe for one failure shape. Three shapes
 | repeated `UserPromptSubmit operation blocked by hook` | hook wedge | [Hook-wedged session](#detecting-a-hook-wedged-session-different-from-bloat) |
 | numbered options, `↑/↓ to navigate` | stuck on a menu | [Stuck-on-a-menu session](#detecting-a-stuck-on-a-menu-session-different-from-both-wedge-types-above) |
 
-A `--task`/`--task-file` kickoff reporting `trust dialog open` or `claude not running in
-pane` is this same menu/not-ready detection firing during spawn, not a new shape (SKILL.md
-"Done for a spawn"; pinned by `tests/test-new-session-kickoff.sh` and
-`tests/test-session-handoff-tui.sh`).
+`--task`/`--task-file` errors `trust dialog open` or `claude not running in
+pane` use the same detection: `scripts/new-session.sh`, `scripts/session-handoff.sh`,
+pinned by `tests/test-new-session-kickoff.sh` and `tests/test-session-handoff-tui.sh`;
+see SKILL.md "Done".
 
 ## Compact before relaying into an idle/stale session
 
-Relaying into a session that has sat a while pays to reprocess its whole bloated transcript
-on every later turn. Use the one command: it checks staleness, compacts, waits for
-completion, then relays.
+Before relaying into a stale session, compact to reduce later transcript processing:
 
 ```bash
 session-compact before-relay <name> "the actual task"   # or --file <path>
 ```
 
-It fails closed: if the compact can't be verified complete the message is not sent, so a
-task never lands mid-summarization. Hand-rolling (`session-send "/compact"`, eyeball
-`tmux capture-pane`, send the task) is only for hosts without `session-compact` deployed.
-Staleness signal: a status line `new task? /clear to save NNNk tokens`, or a long idle gap.
+Completion verification fails closed: `scripts/session-compact.sh`, pinned by
+`tests/test-session-compact.sh`. Only without `session-compact`, hand-roll
+`session-send "/compact"`, verify with `tmux capture-pane`, then send the task.
+Staleness: `new task? /clear to save NNNk tokens` or a long idle gap.
 
 **Don't compact a session idle under ~60 minutes**: its 1-hour prompt cache is still live,
 so that is the most expensive moment. `session-compact` defaults to `--min-idle 60`. Mechanism,
 measurements and managed-orchestrator exceptions: [`docs/session-compaction.md`](../docs/session-compaction.md).
 
-**Auto-compact is real and on by default** (checked against CLI 2.1.280; `--autocompact` still
-in `claude --help` on 2.1.285). `autoCompactEnabled` and `autoCompactWindow` are real
-`settings.json`-schema fields. Evidence:
+**Auto-compact defaults on** (CLI 2.1.280; `--autocompact` in `claude --help` on 2.1.285).
+`autoCompactEnabled` / `autoCompactWindow` are `settings.json`-schema fields:
 
 - `autoCompactWindow` is causally confirmed for a plain host: `claude -p ... --settings '{"autoCompactWindow": N}'`
   gave the same `effectiveWindow` in `-d config,settings,compact --debug-file <f>` output as the
   `--autocompact N` flag (`N=105000` -> `85000`). The clamp is the model's context window (200k
   for older models; Sonnet 5.5 reports 1M, so `N=500000` is no longer clamped).
-- `autoCompactEnabled` sits in the same schema object as `autoCompactWindow` (both on the same
-  ~118KB minified schema line, ~12.4KB apart, no object boundary between), not in the global
-  `~/.claude.json` preferences schema. Its `.describe()`: "Automatically compact conversation
-  when context fills"; it also backs the `/config` "Auto-compact" toggle. Its read-from-
-  `--settings` behaviour was not reproduced (the debug line didn't fire in a single-turn `-p`
-  run): strong but not causally confirmed.
+- `autoCompactEnabled` shares `autoCompactWindow`'s schema object (~118KB minified line,
+  ~12.4KB apart, no intervening object boundary), outside `~/.claude.json` preferences.
+  `.describe()`: "Automatically compact conversation when context fills"; backs `/config`
+  "Auto-compact". Reading it via `--settings` remains unconfirmed: no debug line in a
+  single-turn `-p` probe.
 
 Other controls: launch flag `--autocompact <auto|tokens>`, in-session `/autocompact` and
 `/config`, env `CLAUDE_CODE_DISABLE_1M_CONTEXT`. A session at 200-300k uncompacted tokens is
@@ -64,15 +59,13 @@ re-read on 2.1.300), so P=70 means ~150k at a 234000 window, ~196k at 300000 and
 else the overlay's `CRSS_COMPACT_WINDOW_<TIER>`, else `CRSS_COMPACT_WINDOW_DEFAULT` (built-in 234000;
 `host` exports nothing); see
 `scripts/new-session.sh`, pinned by `tests/test-new-session-tier.sh`, and
-`examples/crss-overlay/config.sh.example`. It affects new spawns only. A larger window is not
-free: every advisor call forwards the whole transcript and cache reads scale with context, so
-keep durable TASKS/DECISIONS files and call advisor while context is small. Lesson: verify a
-specific claim yourself before repeating it, in either direction.
+`examples/crss-overlay/config.sh.example`. New spawns only. Advisor forwards the whole
+transcript; cache reads scale with context.
+Keep durable TASKS/DECISIONS files and call advisor early. Verify claims before repeating them.
 
 ## Preserve before reaping (recycling a bloated session)
 
-Long-lived sessions accumulate context until every turn is slow and expensive. Recycle: kill
-it, spawn a fresh one on the same repo. **Never reap before `session-preserve` says it is safe.**
+For bloated context, recycle on the same repo. **Never reap before `session-preserve` says safe.**
 
 ```bash
 session-preserve <tmux-session>            # audit only. exit 0 = safe to reap
@@ -88,29 +81,24 @@ tmux kill-session -t <s>
 new-session <foldername> workspace --alias <new-alias>
 ```
 
-**Never use `git log @{u}..` to decide whether work is pushed.** With no upstream it prints
-nothing, so unpushed work reads as clean and can authorise a reap over unpushed commits. Use
-`git log HEAD --not --remotes`, and check `git remote` separately: a repo with no remote
-cannot be pushed anywhere, so its branch refs are the only copy. Pinned by
-`session-preserve.sh`'s header comment and `tests/test-session-preserve.sh` ("no-remote-flagged").
+**Never judge pushed work with `git log @{u}..`**: no upstream prints nothing. Use
+`git log HEAD --not --remotes` and check `git remote`; with no remote, branch refs are the
+only copy. See `scripts/session-preserve.sh`'s header,
+pinned by `tests/test-session-preserve.sh` ("no-remote-flagged").
 
-A reap is safe when **HEAD is reachable from a named local branch**: killing the session and
-removing its worktree can't orphan commits, which stay in the canonical repo's object store.
-So *deleting the branch* is the dangerous operation, not reaping; worktree GC must leave
-`session/*` and research branches alone.
-
-A respawned session starts on a fresh worktree cut from the default branch, **not** the old
-session's branch. Name the prior branch, prior transcript path and what it was mid-way
-through in the kickoff, or the replacement re-derives it at full cost.
+For commit reachability, **HEAD must be reachable from a named local branch** in the
+canonical object store. Keep `session/*` and research branches during worktree GC:
+deleting their refs can orphan commits; reaping the session/worktree does not.
+Respawns use a fresh default-branch worktree. Put the prior branch, transcript path and
+in-progress work in the kickoff to avoid re-derivation.
 
 ## Detecting a hook-wedged session (different from bloat)
 
-A `UserPromptSubmit` or `PreToolUse` hook in the session's `.claude/settings.json` throws
-(spawn error, missing script, unhandled exception) with **no fail-open guard**.
-`UserPromptSubmit` fires on every prompt, so every later prompt, including "try again", is
-rejected before Claude sees it; resending cannot fix it. A `PreToolUse` wedge also blocks
-Bash/Read/Grep/Glob, so even `advisor()` stalls. No automated test covers this shape (needs a
-genuinely broken hook); diagnose from outside.
+A throwing `UserPromptSubmit` / `PreToolUse` hook in `.claude/settings.json` without a
+fail-open guard wedges the session (spawn error, missing script, unhandled exception).
+`UserPromptSubmit` rejects every prompt before Claude sees it; resending cannot help.
+`PreToolUse` blocks Bash/Read/Grep/Glob and even `advisor()`. Diagnose from outside;
+no automated test covers this broken-hook shape.
 
 **Symptom** in `tmux capture-pane -p`: repeated blocks like
 
@@ -124,9 +112,8 @@ UserPromptSubmit operation blocked by hook:
 
 with no `✻`/`●` processing indicator after: process alive and idle but unreachable.
 
-**Diagnose:** `cat <rundir>/.claude/settings.json`; look at the failing hook's command. With no
-fail-open guard (compare a sibling like `[ -x <script> ] && <script> || exit 0`) a subprocess
-error is a permanent block, not a fluke.
+**Diagnose:** `cat <rundir>/.claude/settings.json`; inspect the failing command for a
+fail-open guard such as `[ -x <script> ] && <script> || exit 0`.
 
 **Recover** (same mechanics as the bloat recycle):
 
@@ -143,15 +130,11 @@ fail open (catch errors, `exit 0`); a failure there can permanently wedge the se
 
 ## Detecting a stuck-on-a-menu session (different from both wedge types above)
 
-Nothing is wrong with the session: it is mid an interactive multi-choice widget
-(`AskUserQuestion`-style: numbered options with `[ ]`/`[✔]` checkboxes, a
-`←  ☐ Next direction  ✔ Submit  →` bar, "Enter to select · ↑/↓ to navigate · Esc to cancel")
-and someone sent free text. The widget only understands arrows + Enter (and a "Type
-something" option), so plain text sits inert while the agent is healthy. Detection is pinned
-by `tests/test-session-handoff-ready.sh` (`_is_on_menu` true/false-positive cases).
-
-**Symptom:** option list with checkboxes and the `↑/↓ to navigate` hint on screen, with a
-plain-text line below it that no checkbox reflects.
+A healthy agent can be inside an `AskUserQuestion`-style widget: numbered `[ ]`/`[✔]`
+checkboxes, `←  ☐ Next direction  ✔ Submit  →`, "Enter to select · ↑/↓ to navigate · Esc to cancel".
+Free text sits below the options without changing a checkbox; use arrows + Enter or
+"Type something". Detection: `_is_on_menu` in `scripts/session-handoff.sh`, pinned by
+`tests/test-session-handoff-ready.sh` (true/false-positive cases).
 
 **Recover (no reap):**
 1. `tmux send-keys -t <s> Down` (or `Up`) and re-capture; the `❯` marker moving proves the
@@ -174,11 +157,10 @@ explains which key the CLI checks for git worktrees; pinned by `tests/test-sessi
 
 ## Autocomplete (prompt suggestions) missing in the desktop app
 
-**Verdict (operator-verified in the app, 2026-10-15, CLI 2.1.293 `/usr/bin/claude` under `--remote-control`
-and the app's `ccd-cli` 2.1.295): suggestions show in the app composer for BOTH app-started (`+`) sessions
-and crss TUI sessions, until the host-wide back-off counter (below) trips; crss now keeps its own sessions out of that counter.** The 2026-10-11 report (TUI showed one, app did not) was
-the back-off counter below (found 2026-10-15); the other common cause of "no autocomplete" is that the model
-chose to say nothing.
+**Verified 2026-10-15:** suggestions reach the app composer from app-started (`+`) and crss
+TUI sessions (CLI 2.1.293 `/usr/bin/claude --remote-control`, app `ccd-cli` 2.1.295).
+The 2026-10-11 TUI/app discrepancy was host-wide back-off (found 2026-10-15); crss now
+excludes its sessions. Model silence is the other common cause.
 
 - **Why it looks missing:** the suggestion is a model call whose prompt says "Stay silent if the next step
   isn't obvious" (also silent after errors and on sensitive topics). Open-ended turns ("reply ok", "list
@@ -211,9 +193,8 @@ chose to say nothing.
   shown suggestion bumps an in-memory per-process count; at 20 in ONE process it writes `promptSuggestionUnusedStreak: 20`
   (a step 0 -> 20, never a tally, so sampling the file cannot name the feeder). `--print`, `--sdk-url`/stream-json children
   (desktop `ccd-cli`, `claude remote-control` spawns) only send telemetry and never write it. After #166 the remaining
-  feeders are hand-launched `--remote-control` TUIs with no `--settings` layer (the operator types from the phone, so
-  nothing is ever tab-accepted). `session-doctor suggest-feeders` lists them live (it found `CHIMERA SERVER CONTROL` and
-  `chimera-server`); fix is to launch them with `--settings ~/.claude/rc-firstparty.settings.json` or
+  feeders are hand-launched `--remote-control` TUIs without `--settings` (phone input never tab-accepts).
+  `session-doctor suggest-feeders` lists them; launch with `--settings ~/.claude/rc-firstparty.settings.json` or
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` in the environment.
 - **Fix in `new-session`:** the `--settings` layer crss already passes (`rc-firstparty.settings.json`) now
   carries `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` (added when the key is absent; an explicit value is kept),
@@ -222,9 +203,8 @@ chose to say nothing.
   the control showed `run it`). Sessions already running keep generating until restarted. Pinned by
   `tests/test-new-session-tier.sh`. To watch suggestions in a crss TUI session on purpose, set the key to
   `"1"` in that file.
-- **Ruled out:** `--exclude-dynamic-system-prompt-sections` (it only moves cwd/env/memory-path/git
-  sections into the first user message). The earlier "ruled out: back-off" was wrong: the TUI line in a
-  fresh process can still render a suggestion while the shared counter holds app sessions in back-off.
+- `--exclude-dynamic-system-prompt-sections` only moves cwd/env/memory-path/git into the
+  first user message. Back-off remains possible even if a fresh TUI renders a suggestion.
 - **Cost:** each suggestion is one extra model request per turn; off for crss spawns saves that call.
 - **Probe recipe:** `new-session x sessions --alias ac-probe --tier light`, send the hello.py prompt,
   confirm the dim line in the pane, open it in the app, then reap with the tmux-style name
@@ -233,9 +213,9 @@ chose to say nothing.
 
 ## Every session stopped answering: dead login (silent on an idle fleet)
 
-All sessions on a host share one `~/.claude/.credentials.json`. If its OAuth refresh token is declared dead
-(the CLI then throws `OAuthRefreshDeadError`), every session fails the same way once the ~8 h access token
-expires, and idle remote-control sessions log nothing until someone prompts them. Exact texts seen:
+Sessions share `~/.claude/.credentials.json`. A dead OAuth refresh token
+(`OAuthRefreshDeadError`) breaks all sessions after the ~8 h access token expires;
+idle remote-control sessions log nothing until prompted. Exact errors:
 `Failed to authenticate: OAuth session expired and could not be refreshed` and
 `Login expired · Please run /login`.
 
