@@ -141,4 +141,4 @@ operator.
 - Start a fresh session or hand off at a task boundary; don't carry one session past about 2h of work.
 - Keep the always-on prefix small: unused MCP tools and skills are denied or set name-only, not just left idle.
 - Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`session-doctor opus-subagents` lists violations).
-- Re-run the audit for free: `usage-audit --days 7` (`scripts/usage-audit.py`).
+- Re-run the audit for free: `usage-audit --days 7` (lives in the host module).
