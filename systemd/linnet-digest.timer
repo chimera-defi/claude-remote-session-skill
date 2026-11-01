@@ -1,0 +1,10 @@
+[Unit]
+Description=Linnet morning and evening digest
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+OnCalendar=*-*-* 20:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
