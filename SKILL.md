@@ -196,6 +196,7 @@ prose in `local.md`; never edit `SKILL.md` or any file in this repo. Setup, the 
 script list, denylist syntax and the stricter leak check:
 [`examples/crss-overlay/README.md`](examples/crss-overlay/README.md). `session-doctor overlay`
 reports overlay health.
+Optional module hooks: see [Modules](examples/crss-overlay/README.md#modules).
 
 ## Cross-session knowledge: agent-memory, not a new bus
 
