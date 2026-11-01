@@ -181,4 +181,22 @@ PY
 mv "$HOME/bus.sqlite" "$HOME/missing.sqlite"
 run --dry-run > "$TMP/missing"
 grep -F 'Bus unavailable:' "$TMP/missing"
+# An unavailable bus preserves the cursor so recovery includes missed questions.
+python3 - "$ROOT/scripts/linnet-digest.py" "$HOME" "$XDG_STATE_HOME/crss/linnet/last.json" <<'PY'
+import datetime as dt, json, pathlib, subprocess, sys
+tool, home, cursor = map(pathlib.Path, sys.argv[1:])
+cursor.write_text(json.dumps({'window_end': (dt.datetime.now(dt.timezone.utc)
+                                          - dt.timedelta(hours=1)).isoformat()}))
+before = cursor.read_bytes()
+failed = subprocess.run([sys.executable, str(tool), '--home', str(home), '--sink', 'stdout'],
+                        check=True, capture_output=True, text=True)
+assert cursor.read_bytes() == before
+sources = failed.stdout.split('## Sources', 1)[1]
+assert 'cursor not advanced: bus unavailable' in sources
+(home/'missing.sqlite').rename(home/'bus.sqlite')
+recovered = subprocess.run([sys.executable, str(tool), '--home', str(home), '--sink', 'stdout'],
+                           check=True, capture_output=True, text=True)
+assert 'Please choose a maintenance window.' in recovered.stdout
+assert cursor.read_bytes() != before
+PY
 printf 'test-linnet-digest: PASS\n'

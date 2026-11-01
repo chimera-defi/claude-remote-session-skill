@@ -20,7 +20,9 @@ Only ack updates fingerprint.json. Dry runs never write or spawn.
 
 import argparse
 from collections import Counter
+from contextlib import ExitStack
 import datetime as dt
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -384,33 +386,41 @@ def main():
         print(redact(report), end="")
         return 10 if due else 0
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(redact(report), encoding="utf-8")
-    command = check.config.get("spawn_cmd")
-    if due and args.spawn and command:
-        try:
-            if not args.force and check.recent_spawn(fingerprint):
-                summary["spawn_note"] = "same fingerprint spawned within last 3 days"
-            elif not isinstance(command, list) or not all(isinstance(a, str) and a for a in command):
-                summary["spawn_note"] = "spawn_cmd must be an argv list"
-            else:
-                template = Path(__file__).resolve().parent.parent / "references/env-refresh-brief.md"
-                if not template.is_file():
-                    template = check.home / ".claude/skills/gstack-session-spawn/references/env-refresh-brief.md"
-                brief = template.read_text(encoding="utf-8")
-                for key, value in (("new_models", json.dumps(new_models, ensure_ascii=False)),
-                                   ("reasons", "; ".join(summary["reasons"])), ("report_path", str(report_path))):
-                    brief = brief.replace("{" + key + "}", value)
-                brief_path = check.state / ("brief-" + stamp + ".md")
-                brief_path.write_text(redact(brief), encoding="utf-8")
-                # Let the launcher finish creating its session before the
-                # oneshot unit exits and systemd cleans up its child processes.
-                check.command(command + [str(brief_path)])
-                summary.update(spawned=True, brief_path=str(brief_path))
-        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            summary["spawn_note"] = f"spawn unavailable: {exc}"
-    with (check.state / "history.jsonl").open("a", encoding="utf-8") as stream:
-        # Scrub strings before encoding, so escaped JSON quotes stay intact.
-        stream.write(json.dumps(scrub(summary), ensure_ascii=False) + "\n")
+    with ExitStack() as stack:
+        if args.spawn:
+            lock = stack.enter_context((check.state / "spawn.lock").open("a"))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("env-refresh: another run holds the lock; skipping spawn")
+                return 0
+        report_path.write_text(redact(report), encoding="utf-8")
+        command = check.config.get("spawn_cmd")
+        if due and args.spawn and command:
+            try:
+                if not args.force and check.recent_spawn(fingerprint):
+                    summary["spawn_note"] = "same fingerprint spawned within last 3 days"
+                elif not isinstance(command, list) or not all(isinstance(a, str) and a for a in command):
+                    summary["spawn_note"] = "spawn_cmd must be an argv list"
+                else:
+                    template = Path(__file__).resolve().parent.parent / "references/env-refresh-brief.md"
+                    if not template.is_file():
+                        template = check.home / ".claude/skills/gstack-session-spawn/references/env-refresh-brief.md"
+                    brief = template.read_text(encoding="utf-8")
+                    for key, value in (("new_models", json.dumps(new_models, ensure_ascii=False)),
+                                       ("reasons", "; ".join(summary["reasons"])), ("report_path", str(report_path))):
+                        brief = brief.replace("{" + key + "}", value)
+                    brief_path = check.state / ("brief-" + stamp + ".md")
+                    brief_path.write_text(redact(brief), encoding="utf-8")
+                    # Let the launcher finish creating its session before the
+                    # oneshot unit exits and systemd cleans up its child processes.
+                    check.command(command + [str(brief_path)])
+                    summary.update(spawned=True, brief_path=str(brief_path))
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                summary["spawn_note"] = f"spawn unavailable: {exc}"
+        with (check.state / "history.jsonl").open("a", encoding="utf-8") as stream:
+            # Scrub strings before encoding, so escaped JSON quotes stay intact.
+            stream.write(json.dumps(scrub(summary), ensure_ascii=False) + "\n")
     print(json.dumps(scrub(summary), ensure_ascii=False) if args.json else redact(report_path))
     return 10 if due else 0
 

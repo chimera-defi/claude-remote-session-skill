@@ -98,6 +98,31 @@ mkdir -p "$HOME/.claude/skills"
 ln -s "$HERE/.." "$HOME/.claude/skills/gstack-session-spawn"
 cp "$TOOL" "$TMP/bin/env-refresh"
 TOOL="$TMP/bin/env-refresh"
+# An overlapping run must not bypass history checks or spawn while locked.
+python3 - "$state" "$TOOL" <<'PY'
+import os, pathlib, subprocess, sys
+state, tool = map(pathlib.Path, sys.argv[1:])
+holder = subprocess.Popen([sys.executable, '-c', '''
+import fcntl, pathlib, sys
+with pathlib.Path(sys.argv[1]).open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    print('locked', flush=True)
+    sys.stdin.read()
+''', str(state/'spawn.lock')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+try:
+    assert holder.stdout.readline().strip() == 'locked'
+    result = subprocess.run([sys.executable, str(tool), '--spawn', '--force'],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result
+    assert 'env-refresh: another run holds the lock; skipping spawn' in result.stdout
+    assert not (pathlib.Path(os.environ['HOME'])/'spawns').exists()
+    dry = subprocess.run([sys.executable, str(tool), '--dry-run', '--spawn', '--force'],
+                         capture_output=True, text=True, timeout=30)
+    assert dry.returncode == 10 and '# Environment refresh' in dry.stdout, dry
+finally:
+    holder.communicate(timeout=10)
+PY
+ok 'held spawn lock skips concurrent launcher' "$?" 0
 run --spawn >/dev/null; first_rc=$?
 run --spawn >/dev/null; second_rc=$?
 python3 - "$HOME" "$state" "$TMP/acked.json" "$first_rc" "$second_rc" <<'PY'
@@ -121,7 +146,7 @@ for p in sorted(pathlib.Path(sys.argv[1]).rglob('*')):
     print(p, p.stat().st_mtime_ns, p.read_bytes() if p.is_file() else '')
 PY
 run --dry-run --spawn --force > "$TMP/dry-report"; rc=$?
-run --dry-run --state-dir "$HOME/absent" >/dev/null
+run --dry-run --spawn --force --state-dir "$HOME/absent" >/dev/null
 python3 - "$HOME" > "$TMP/after" <<'PY'
 import pathlib, sys
 for p in sorted(pathlib.Path(sys.argv[1]).rglob('*')):

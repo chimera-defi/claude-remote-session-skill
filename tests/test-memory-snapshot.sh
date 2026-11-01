@@ -41,7 +41,7 @@ run > "$TMP/output"
 grep -F 'dirty: committed 2' "$TMP/output"
 grep -F 'clean: clean' "$TMP/output"
 grep -F 'secret: committed 1' "$TMP/output"
-grep -F 'secret-pattern' "$TMP/output"
+grep -F 'skipped(secret)' "$TMP/output"
 grep -F 'locked: skipped(index.lock)' "$TMP/output"
 grep -F 'merging: skipped(merge/rebase in progress)' "$TMP/output"
 grep -F 'staged: skipped(' "$TMP/output"
@@ -53,4 +53,32 @@ for path in "$HOME/agent-memory/"* "$HOME/extra"; do
   test -z "$(git -C "$path" remote)"
 done
 if grep -F 'TEST1234' "$TMP/output"; then exit 1; fi
+# Secret filenames, assignments and wallet keys are excluded; checksums are notes.
+python3 - "$HOME/agent-memory/dirty" <<'PY'
+import pathlib, sys
+repo = pathlib.Path(sys.argv[1])
+files = {
+    '.env': 'DATABASE_PASSWORD=fixture-password',
+    'wallet-note': 'wallet private key: 0x' + 'ab' * 32,
+    'checksum-note': 'sha256: ' + 'ab' * 32,
+    'assignment-note': '"Api-Key": "TEST-fixture-credential"',
+}
+for name in ('.env.local', 'cert.pem', 'wallet.key', 'cert.p12', 'cert.pfx',
+             'id_rsa.pub', 'id_ed25519.backup', 'local-keystore.json', 'secrets/note'):
+    files[name] = 'fixture'
+for name, text in files.items():
+    path = repo / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+PY
+run > "$TMP/secret-output"
+python3 - "$HOME/agent-memory/dirty" "$TMP/secret-output" <<'PY'
+import pathlib, subprocess, sys
+repo, output = map(pathlib.Path, sys.argv[1:])
+tracked = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '-z']).split(b'\0')
+assert set(tracked) - {b''} == {b'.gitignore', b'note', b'checksum-note'}, tracked
+text = output.read_text()
+assert 'dirty: committed 1' in text and 'skipped(secret)' in text
+assert all(value not in text for value in ('fixture-password', 'TEST-fixture-credential', 'ab' * 32))
+PY
 printf 'test-memory-snapshot: PASS\n'

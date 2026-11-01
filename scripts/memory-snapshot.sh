@@ -3,6 +3,7 @@
 exec python3 - "$@" <<'PY'
 """Commit local notes, excluding secret-shaped files. Never contact remotes."""
 import argparse
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,21 @@ SECRET = re.compile(
     rb'github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|'
     rb'xox[abprs]-[A-Za-z0-9-]{10,}|'
     rb'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}')
+ASSIGNMENT = re.compile(
+    rb'''(password|passwd|secret|token|api[_-]?key|private[_-]?key|mnemonic|seed phrase)\s*["']?\s*[:=]\s*["']?[^\s"']{6,}''', re.I)
+HEX_KEY = re.compile(rb'(?<![0-9a-f])(?:0x)?[0-9a-f]{64}(?![0-9a-f])', re.I)
+KEY_CONTEXT = re.compile(rb'key|private|secret|wallet|seed', re.I)
+
+
+def secret(name, content):
+    path = Path(name)
+    if 'secrets' in path.parts[:-1] or any(fnmatchcase(path.name, pattern) for pattern in
+            ('.env', '.env.*', '*.pem', '*.key', '*.p12', '*.pfx',
+             'id_rsa*', 'id_ed25519*', '*keystore*')):
+        return True
+    return bool(SECRET.search(content) or any(
+        ASSIGNMENT.search(line) or (HEX_KEY.search(line) and KEY_CONTEXT.search(line))
+        for line in content.splitlines()))
 
 
 def git(repo, *args):
@@ -47,6 +63,7 @@ def snapshot(repo, dry):
     if not pending:
         return 'clean'
     skipped = set()
+    nested = set()
     for name in pending:
         path = repo / name
         if path.is_symlink():
@@ -55,11 +72,11 @@ def snapshot(repo, dry):
             content = path.read_bytes()
         elif path.is_dir():
             # Nested repositories are visited separately, never staged as gitlinks.
-            skipped.add(name)
+            nested.add(name)
             continue
         else:
             content = b''  # A deletion contains no new secret.
-        if SECRET.search(content):
+        if secret(name, content):
             skipped.add(name)
     for name in staged:
         entries = git(repo, 'ls-files', '--stage', '-z', '--', name)
@@ -68,15 +85,19 @@ def snapshot(repo, dry):
                 metadata = entry.split(b'\t', 1)[0].split()
                 if metadata[2] != b'0':
                     return 'skipped(unmerged index)'
-                if metadata[0] != b'160000' and SECRET.search(
-                        git(repo, 'cat-file', 'blob', metadata[1].decode())):
+                if metadata[0] != b'160000' and secret(
+                        name, git(repo, 'cat-file', 'blob', metadata[1].decode())):
                     skipped.add(name)
     if staged & skipped:
-        return 'skipped(secret-pattern or nested repo in index; index preserved)'
-    safe = sorted(pending - skipped)
-    note = f'; skipped(secret-pattern or nested repo: {len(skipped)} files)' if skipped else ''
+        return 'skipped(secret); index preserved'
+    if staged & nested:
+        return 'skipped(nested repo in index; index preserved)'
+    safe = sorted(pending - skipped - nested)
+    note = f'; skipped(secret): {len(skipped)} files' if skipped else ''
+    if nested:
+        note += f'; skipped(nested repo): {len(nested)} files'
     if not safe:
-        return 'skipped(secret-pattern or nested repo)' + note
+        return note.removeprefix('; ')
     if dry:
         return f'skipped(dry-run: would stage {len(safe)} files)' + note
     # Literal pathspecs handle whitespace, newlines, leading dashes and colons.
@@ -87,9 +108,9 @@ def snapshot(repo, dry):
         for entry in git(repo, 'ls-files', '--stage', '-z', '--', name).split(b'\0'):
             if entry:
                 metadata = entry.split(b'\t', 1)[0].split()
-                if metadata[0] != b'160000' and SECRET.search(
-                        git(repo, 'cat-file', 'blob', metadata[1].decode())):
-                    return 'skipped(secret-pattern in staged content)'
+                if metadata[0] != b'160000' and secret(
+                        name, git(repo, 'cat-file', 'blob', metadata[1].decode())):
+                    return 'skipped(secret); found in staged content'
     if not changed:
         return 'clean' + note
     git(repo, 'commit', '-m', f'snapshot: {len(changed)} files (memory-snapshot)')
