@@ -62,6 +62,8 @@ files = {
     'wallet-note': 'wallet private key: 0x' + 'ab' * 32,
     'checksum-note': 'sha256: ' + 'ab' * 32,
     'assignment-note': '"Api-Key": "TEST-fixture-credential"',
+    'quoted-note': 'password: ' + '"fixture spaced value"',
+    'nextline-note': 'private_key:\n0x' + 'cd' * 32,
 }
 for name in ('.env.local', 'cert.pem', 'wallet.key', 'cert.p12', 'cert.pfx',
              'id_rsa.pub', 'id_ed25519.backup', 'local-keystore.json', 'secrets/note'):
@@ -79,6 +81,7 @@ tracked = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '-z']).sp
 assert set(tracked) - {b''} == {b'.gitignore', b'note', b'checksum-note'}, tracked
 text = output.read_text()
 assert 'dirty: committed 1' in text and 'skipped(secret)' in text
-assert all(value not in text for value in ('fixture-password', 'TEST-fixture-credential', 'ab' * 32))
+assert all(value not in text for value in ('fixture-password', 'TEST-fixture-credential', 'ab' * 32,
+                                                 'fixture spaced value', 'cd' * 32))
 PY
 printf 'test-memory-snapshot: PASS\n'
