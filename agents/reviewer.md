@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Independent second-opinion reviewer, pinned to Fable. Use for reviewing a diff, a decision, or a transcript when you want a genuinely separate read rather than the orchestrating model checking its own reasoning. Spawn via `subagent_type: reviewer`, or call the Agent tool directly with `model: "fable"` for a one-off.
+description: PAUSED 2026-10-28 by the operator; do not spawn until lifted (use one gpt-6.1-sol call instead). Independent second-opinion reviewer, pinned to Fable. Use for reviewing a diff, a decision, or a transcript when you want a genuinely separate read rather than the orchestrating model checking its own reasoning. Spawn via `subagent_type: reviewer`, or call the Agent tool directly with `model: "fable"` for a one-off.
 model: fable
 ---
 

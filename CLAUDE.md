@@ -104,7 +104,7 @@ sessions whose subagent transcripts ran on Opus (one summary line is also in `re
 claim: re-run the command it cites, open the file:line it names, or diff the change. No
 evidence means unverified. Consolidate verified results in one table at the end.
 
-**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor). This is a Claude read, not the second-family review on line 28. If Fable is unavailable, mark it UNVERIFIED; do not substitute another tier.
+**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor). This is a Claude read, not the second-family review on line 28. Fable reads are paused (operator 2026-10-28): until lifted, the independent read is one gpt-6.1-sol call on the same frozen packet (Grok only when Codex is out); otherwise mark it UNVERIFIED.
 
 ## Long runs: keep a task file
 
@@ -141,4 +141,4 @@ operator.
 - Start a fresh session or hand off at a task boundary; don't carry one session past about 2h of work.
 - Keep the always-on prefix small: unused MCP tools and skills are denied or set name-only, not just left idle.
 - Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`session-doctor opus-subagents` lists violations).
-- Re-run the audit for free: `python3 ~/claude-usage-audit/audit.py`.
+- Re-run the audit for free: `usage-audit --days 7` (`scripts/usage-audit.py`).
