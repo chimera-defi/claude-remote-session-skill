@@ -112,9 +112,10 @@ Two Claude-native schedulers exist; pick by where Claude runs.
   user's own computer, so a session on an SSH host cannot create one; the app
   refuses with "scheduled tasks run on the user's own computer and this session
   works on an SSH host". Use the in-session scheduler instead: in a Claude session
-  on the host, `/loop` or `CronCreate` with the same prompt. These jobs belong
-  to that session: they fire only while it is open and idle, pause while it is
-  closed, and a recurring one expires after 7 days. Treat this path as a short-lived or test
+  on the host, a fixed-interval `/loop` (for example `/loop 12h ...`) or
+  `CronCreate` with the same prompt. These jobs belong to that session: they
+  fire only while it is open and idle, and a recurring one expires after 7 days.
+  Check after any restart that the job is still listed, and recreate it if not. Treat this path as a short-lived or test
   path; the systemd timer (path A) is the durable one.
 
 Use one scheduler at a time to avoid duplicate runs.
