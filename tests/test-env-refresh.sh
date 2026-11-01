@@ -152,6 +152,19 @@ PY
 run --spawn >/dev/null
 python3 -c 'import pathlib, sys; assert len(pathlib.Path(sys.argv[1]).read_text().splitlines()) == 1' "$HOME/spawns"
 ok 'newer history spawn suppresses a repeat' "$?" 0
+# Quoted values with spaces and JSON-quoted keys are redacted in full.
+python3 - "$HERE/../scripts/env-refresh.py" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('env_refresh', sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+for text in ('password: ' + '"q r s"', json.dumps({'pass' + 'word': 'fixture spaced value'})):
+    out = mod.redact(text)
+    assert all(word not in out for word in ('q r', 'r s', 'fixture', 'spaced')), out
+assert mod.scrub({'api_token': 'a b'}) == {'api_token': '[REDACTED]'}
+assert mod.scrub({'claude_models': ['m']}) == {'claude_models': ['m']}
+PY
+ok 'quoted credentials redacted' "$?" 0
 cp "$TMP/history.saved" "$state/history.jsonl"
 # Compare every fixture byte and mtime, including an initially absent state dir.
 python3 - "$HOME" > "$TMP/before" <<'PY'

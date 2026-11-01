@@ -19,7 +19,7 @@ SECRET = re.compile(
     rb'xox[abprs]-[A-Za-z0-9-]{10,}|'
     rb'eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}')
 ASSIGNMENT = re.compile(
-    rb'''(password|passwd|secret|token|api[_-]?key|private[_-]?key|mnemonic|seed phrase)\s*["']?\s*[:=]\s*(?:"[^"\n]{6,}"|'[^'\n]{6,}'|[^\s"']{6,})''', re.I)
+    rb'''(password|passwd|secret|token|api[_-]?key|private[_-]?key|mnemonic|seed phrase)\s*["']?\s*[:=]\s*(?:"[^"\n]+"|'[^'\n]+'|[^\s"']{6,})''', re.I)
 HEX_KEY = re.compile(rb'(?<![0-9a-f])(?:0x)?[0-9a-f]{64}(?![0-9a-f])', re.I)
 KEY_CONTEXT = re.compile(rb'key|private|secret|wallet|seed', re.I)
 
