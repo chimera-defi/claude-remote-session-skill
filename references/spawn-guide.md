@@ -35,7 +35,9 @@ Extracted from always-loaded `SKILL.md` on 2026-10-15.
   `.claude/agents/` and roles table own call-out details; `$CRSS_HOME/local.md` lists availability.
 - `$CRSS_HOME/local.md` orders second opinions (cheap strong reviewer, different-family
   check, expensive reviewer last). Merge/operator-facing reviews require multiple model
-  families when available; with one available, merge and record `models_ran` in the PR body.
+  families. Single-family review counts only when Claude is quota-out (gpt-6.1-sol builds and a
+  separate gpt-6.1-sol call reviews); if Codex is out, the PR stays draft with the review marked
+  UNVERIFIED. Record `models_ran` in the PR body.
   The orchestrator's Fable sanity check above is separate.
 
 ## Choosing a tier (right-size the model, save quota)
@@ -129,7 +131,7 @@ otherwise use those generic defaults.
   `subagent_type: builder` / `model: "sonnet"` keeps `advisor`). Only the prompt crosses over:
   brief fully, use another reader for verification, write large output to files and return
   summary/path; check evidence. Orchestrator's independent read: Fable plus gpt-6.1-sol
-  cross-family check (Grok only if Codex out; neither available: draft/report); see Key Rules.
+  cross-family check (gpt-6.1-sol only; never Grok; Codex out: draft/report, UNVERIFIED); see Key Rules.
 - **Multi-hour/multi-PR:** keep `TASKS.md` with finish line atop, update as you go,
   re-read after compaction before acting; the file survives context summarization.
 - **Eval/hillclimb campaigns need a budget gate.** For prompt/model/grader/harness loops,
