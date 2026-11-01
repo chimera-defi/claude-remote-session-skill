@@ -297,7 +297,8 @@ class Check:
                     try:
                         row = json.loads(line)
                         if (row.get("spawned") and row.get("fingerprint") == fingerprint
-                                and self.now - 3 * 86400 <= epoch(row["generated"]) <= self.now):
+                                and epoch(row["generated"]) >= self.now - 3 * 86400):
+                            # No upper bound: a newer run's spawn must still count.
                             return True
                     except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
                         continue

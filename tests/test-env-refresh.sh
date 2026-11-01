@@ -139,6 +139,20 @@ history = [json.loads(line) for line in (state/'history.jsonl').read_text().spli
 assert sum(row.get('spawned', False) for row in history) == 1
 PY
 ok 'one spawn carries rendered brief; repeat suppressed; ack untouched' "$?" 0
+# A spawn stamped after this run started (a newer overlapping run) still suppresses.
+cp "$state/history.jsonl" "$TMP/history.saved"
+python3 - "$state/history.jsonl" <<'PY'
+import datetime as dt, json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+rows = [json.loads(line) for line in path.read_text().splitlines()]
+future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).isoformat()
+rows = [dict(row, generated=future) if row.get('spawned') else row for row in rows]
+path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+PY
+run --spawn >/dev/null
+python3 -c 'import pathlib, sys; assert len(pathlib.Path(sys.argv[1]).read_text().splitlines()) == 1' "$HOME/spawns"
+ok 'newer history spawn suppresses a repeat' "$?" 0
+cp "$TMP/history.saved" "$state/history.jsonl"
 # Compare every fixture byte and mtime, including an initially absent state dir.
 python3 - "$HOME" > "$TMP/before" <<'PY'
 import pathlib, sys
