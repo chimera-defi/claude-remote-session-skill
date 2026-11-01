@@ -202,6 +202,9 @@ class Digest:
                 for (sender, kind), count in sorted(counts.items()):
                     self.happened.append(f'{mailbox}: {sender} / {kind}: {count}')
                 for message in messages:
+                    # Linnet's own digest header mentions the operator; never re-flag it.
+                    if message['sender'] == self.config.get('self_sender', 'linnet'):
+                        continue
                     summary = message['summary'] or ''
                     evidence = message['evidence_json'] or ''
                     if message['kind'] == 'question' or APPROVAL.search(summary + '\n' + evidence):

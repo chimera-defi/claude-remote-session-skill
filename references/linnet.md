@@ -40,7 +40,7 @@ paths. All keys are optional; configure sources and delivery before enabling.
 }
 ```
 
-Defaults: no bus database or mailboxes; `kepler_sender` is `kepler`;
+Defaults: no bus database or mailboxes; `kepler_sender` is `kepler`; `self_sender` (Linnet's own bus sender, never re-flagged) is `linnet`;
 `operator_units`, `owners`, and `bus_recipients` are empty. `sinks` defaults to
 `["stdout"]`. `publish_dir` defaults to `~/agent-memory/shared/public/linnet`.
 Command values are argv arrays, never shell commands. Bus posting must use a
@@ -112,9 +112,9 @@ Two Claude-native schedulers exist; pick by where Claude runs.
   user's own computer, so a session on an SSH host cannot create one; the app
   refuses with "scheduled tasks run on the user's own computer and this session
   works on an SSH host". Use the in-session scheduler instead: in a Claude session
-  on the host, `/loop` or `CronCreate` with the same prompt. These jobs are
-  session-only: they fire only while that session is idle, die with it, and a
-  recurring one expires after 7 days. Treat this path as a short-lived or test
+  on the host, `/loop` or `CronCreate` with the same prompt. These jobs belong
+  to that session: they fire only while it is open and idle, pause while it is
+  closed, and a recurring one expires after 7 days. Treat this path as a short-lived or test
   path; the systemd timer (path A) is the durable one.
 
 Use one scheduler at a time to avoid duplicate runs.
