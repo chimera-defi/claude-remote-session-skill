@@ -60,6 +60,13 @@ def error(exc):
     return type(exc).__name__
 
 
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse would echo the bad argument; print fixed text instead.
+        self.print_usage(sys.stderr)
+        self.exit(2, "env-refresh: invalid arguments\n")
+
+
 class MetricTimeout(Exception):
     """A whole-metric deadline, distinct from recoverable per-file errors."""
 
@@ -158,7 +165,7 @@ class Check:
                     models.update(m.group().decode("ascii") for m in pattern.finditer(data)
                                   if m.start() < cutoff)
                     carry = data[-64:]
-            fp["claude_models"] = sorted(models)
+            fp["claude_models"] = model_ids(models)
         except (OSError, ValueError) as exc:
             self.warnings.append(f"claude_models unavailable: {error(exc)}")
         try:
@@ -272,6 +279,8 @@ class Check:
             lines = self.command(self.config.get("opus_subagents_cmd", ["session-doctor", "opus-subagents", "--days", "7"])).splitlines()
             rows = [f"{m[1]} Opus subagents across {m[2]} sessions" for m in
                     (re.search(r"Opus subagents: (\d+) across (\d+) session", line) for line in lines) if m]
+            if not rows and any(re.match(r"\s*no Opus subagent transcripts", line) for line in lines):
+                rows = ["0 Opus subagents"]
             return rows[:1] or [f"no summary row in {len(lines)} lines"]
 
         def timeout_handler(_signum, _frame):
@@ -335,7 +344,7 @@ def write_json(path, value):
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?", choices=["ack"])
     parser.add_argument("--home", default=os.environ.get("HOME", str(Path.home())), metavar="PATH")
     parser.add_argument("--state-dir", metavar="PATH")
