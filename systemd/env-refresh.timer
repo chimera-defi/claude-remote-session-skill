@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily environment refresh check
+
+[Timer]
+OnCalendar=*-*-* 06:40
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
