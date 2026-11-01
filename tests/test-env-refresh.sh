@@ -69,7 +69,7 @@ assert len(s.splitlines()) < 120
 assert 'no ack' in s and 'usage fixture ready' in s and '2 lines' in s
 assert 'saved = 1' in s and 'skipped = 1' in s
 assert 'dirty: dirty=1' in s and 'remote: dirty=0' in s
-assert 'no remote=yes' in s and 'no remote=no' in s and 'NONE' in s
+assert 'remote=none' in s and 'remote=yes' in s and 'none configured' in s
 assert '~/.claude/projects: 6 bytes' in s and '~/.codex/sessions: 5 bytes' in s
 assert 'abc123secretvalue' not in s and '[REDACTED]' in s
 PY

@@ -10,7 +10,8 @@ usage_audit_cmd (argv; default ["usage-audit", "--days", "7"]),
 opus_subagents_cmd (argv; default ["session-doctor", "opus-subagents",
 "--days", "7"]), lessons_log (default
 ~/.local/state/crss/precompact-lessons.jsonl), backup_marker (path; mtime
-of last successful off-box backup), spawn_cmd (argv; brief path appended).
+of last successful off-box backup), spawn_cmd (argv; brief path appended),
+extra_repos (paths of further local git repos to report, e.g. ~/.config/crss).
 Paths expand ~ using --home; relative config paths resolve against --home.
 The brief is read beside the repository's scripts/ directory, or from the
 installed ~/.claude/skills/gstack-session-spawn/references/ directory.
@@ -202,6 +203,12 @@ class Check:
             raise FileNotFoundError("memory_root unavailable")
         rows = []
 
+        def label(directory):
+            try:
+                return str(directory.relative_to(root))
+            except ValueError:
+                return str(directory)
+
         def visit(directory, depth):
             if (directory / ".git").exists():
                 prefix = ["git", "-C", str(directory)]
@@ -213,7 +220,7 @@ class Check:
                         age = f"{max(0, (self.now - committed) / 86400):.1f} days"
                     except ValueError:
                         age = "no commits"
-                    rows.append(f"{directory.relative_to(root)}: dirty={dirty}; last commit={age}; no remote={'no' if remote else 'yes'}")
+                    rows.append(f"{label(directory)}: dirty={dirty}; last commit={age}; remote={'yes' if remote else 'none'}")
                 except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                     rows.append(f"{directory.relative_to(root)}: unavailable: {exc}")
             if depth < 5:
@@ -222,12 +229,15 @@ class Check:
                         visit(child, depth + 1)
 
         visit(root, 0)
+        for extra in self.config.get("extra_repos", []):
+            if isinstance(extra, str) and self.path(extra).is_dir():
+                visit(self.path(extra), 5)
         return rows or ["No git repositories found (depth <= 5)."]
 
     def backup(self):
         marker = self.config.get("backup_marker")
         if not marker or not self.path(marker).exists():
-            return ["NONE (no off-box backup)"]
+            return ["none configured (backup_marker unset or missing)"]
         return [f"{max(0, (self.now - self.path(marker).stat().st_mtime) / 86400):.1f} days"]
 
     def transcripts(self):
