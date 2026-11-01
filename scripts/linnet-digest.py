@@ -103,6 +103,7 @@ class Digest:
         self.wait = []
         self.kepler = []
         self.sources = []
+        self.bus_available = False
         self.failing = 0
         overlay = os.environ.get('CRSS_HOME') or str(
             Path(os.environ.get('XDG_CONFIG_HOME') or self.home / '.config') / 'crss')
@@ -272,11 +273,14 @@ class Digest:
                            ('Environment refresh', self.environment)):
             try:
                 read()
+                if name == 'Bus':
+                    self.bus_available = True
             except (OSError, ValueError, TypeError, KeyError, AttributeError,
                     OverflowError, sqlite3.Error, subprocess.TimeoutExpired) as exc:
                 self.sources.append(f'{name} unavailable: {one_line(exc)}')
                 if name == 'Bus':
                     self.kepler.append(f'unavailable: {one_line(exc)}')
+                    self.sources.append('cursor not advanced: bus unavailable')
         if self.ok_runs:
             names = sorted(set(self.ok_runs))
             self.happened.insert(0, f'{len(names)} scheduled jobs ran OK: ' + ', '.join(names))
@@ -380,8 +384,9 @@ class Digest:
                 phone.append(f'{len(self.needs) - 12} more; read latest.md')
             atomic_write(phone_file, '\n'.join(phone) + '\n')
             command(phone_call)
-        self.state.mkdir(parents=True, exist_ok=True)
-        atomic_write(self.state / 'last.json', json.dumps({'window_end': self.now.isoformat()}) + '\n')
+        if self.bus_available:
+            self.state.mkdir(parents=True, exist_ok=True)
+            atomic_write(self.state / 'last.json', json.dumps({'window_end': self.now.isoformat()}) + '\n')
 
 
 def atomic_write(path, text):
