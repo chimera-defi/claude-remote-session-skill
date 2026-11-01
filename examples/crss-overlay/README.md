@@ -45,8 +45,26 @@ So by default it's `~/.config/crss`. Inside it:
   host-agnostic checks (absolute home paths, emails, github owners, …); this
   file adds host-specific coverage locally, and — being outside the repo —
   never becomes a second copy of the leak it's checking for.
-- anything else you want to keep here (per-project notes, etc.) — crss
-  itself only looks for `config.sh` and `local.md`.
+- anything else you want to keep here (per-project notes, etc.).
+
+## Modules
+
+Deploy `scripts/crss-module.sh` as `~/.local/bin/crss-module`. Modules live in
+`$CRSS_HOME/modules/<name>/`, where names match `^[a-z0-9][a-z0-9-]*$`; each has
+an executable `install.sh` and an optional executable `test.sh`. `crss-module list`
+prints names and whether `install.sh` exists (a missing modules directory is empty);
+`path <name>` prints the module directory. `install <name>` or `install --all` runs
+installers with `CRSS_MODULE_DIR` and `CRSS_BIN_DIR` (default `~/.local/bin`);
+append `--dry-run` to set `CRSS_DRY_RUN=1` (otherwise `0`), which the installer must
+honor. `test <name>` runs its test hook with the same environment. Hook exit codes
+are preserved; `--all` stops at the first failure.
+
+```text
+$CRSS_HOME/modules/
+└── demo/
+    ├── install.sh  (executable)
+    └── test.sh     (optional, executable)
+```
 
 ## Setting it up
 
