@@ -16,6 +16,11 @@ Audit these surfaces:
 - The memory index, curated memory and checkpoints.
 - Backup coverage and the report's off-box backup age.
 
+Local by design: agent-memory and $CRSS_HOME are local git repos with
+no remote. Do not add remotes or push them; "remote=none" is expected.
+A dirty count means uncommitted notes: commit them locally. Transcripts
+and Hermes/OpenClaw state need no backup.
+
 Before changing any file, back it up. Keep a short before/after list
 that includes each file and its backup location.
 
