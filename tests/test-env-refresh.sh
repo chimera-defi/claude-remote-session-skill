@@ -28,11 +28,12 @@ SH
 cat > "$TMP/bin/usage-audit" <<'SH'
 #!/bin/sh
 echo 'token=abc123secretvalue'
-echo 'usage fixture ready'
+echo '  claude-opus-5-5   10   2,000   30,000'
+echo 'SESSIONS=3 TOTAL_WEIGHTED=99'
 SH
 cat > "$TMP/bin/session-doctor" <<'SH'
 #!/bin/sh
-printf '%s\n' 'opus fixture one' 'opus fixture two'
+printf '%s\n' '  Opus subagents: 2 across 1 session(s) in the last 7 day(s)' 'opus fixture row'
 SH
 cat > "$TMP/bin/record-spawn" <<'SH'
 #!/bin/sh
@@ -66,14 +67,16 @@ python3 - "$report" <<'PY'
 import pathlib, sys
 s = pathlib.Path(sys.argv[1]).read_text()
 assert len(s.splitlines()) < 120
-assert 'no ack' in s and 'usage fixture ready' in s and '2 lines' in s
+assert 'no ack' in s and 'sessions = 3; weighted tokens = 99' in s
+assert 'claude-opus-5-5: calls 10; weighted 2,000; tokens 30,000' in s
+assert '2 Opus subagents across 1 sessions' in s and 'opus fixture row' not in s
 assert 'saved = 1' in s and 'skipped = 1' in s
 assert 'dirty: dirty=1' in s and 'remote: dirty=0' in s
 assert 'remote=none' in s and 'remote=yes' in s and 'none configured' in s
 assert '~/.claude/projects: 6 bytes' in s and '~/.codex/sessions: 5 bytes' in s
-assert 'abc123secretvalue' not in s and '[REDACTED]' in s
+assert 'abc123secretvalue' not in s and 'token=' not in s
 PY
-ok 'report metrics, line budget and credential redaction' "$?" 0
+ok 'report metrics, line budget and allowlisted output' "$?" 0
 run ack >/dev/null
 run >/dev/null; rc=$?
 ok 'acked fingerprint is OK' "$rc" 0
@@ -152,20 +155,48 @@ PY
 run --spawn >/dev/null
 python3 -c 'import pathlib, sys; assert len(pathlib.Path(sys.argv[1]).read_text().splitlines()) == 1' "$HOME/spawns"
 ok 'newer history spawn suppresses a repeat' "$?" 0
-# Quoted values with spaces and JSON-quoted keys are redacted in full.
-python3 - "$HERE/../scripts/env-refresh.py" <<'PY'
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location('env_refresh', sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-for text in ('password: ' + '"q r s"', json.dumps({'pass' + 'word': 'fixture spaced value'}),
-             json.dumps({'pass' + 'word': 'fixture "spaced" tail'})):
-    out = mod.redact(text)
-    assert all(word not in out for word in ('q r', 'r s', 'fixture', 'spaced', 'tail')), out
-assert mod.scrub({'api_token': 'a b'}) == {'api_token': '[REDACTED]'}
-assert mod.scrub({'claude_models': ['m']}) == {'claude_models': ['m']}
+# Secrets planted in every source never reach the report, JSON, history or stderr.
+python3 - "$TOOL" "$TMP/leak" <<'PY'
+import json, os, pathlib, subprocess, sys
+tool, root = sys.argv[1], pathlib.Path(sys.argv[2])
+home, bin_dir = root/'home', root/'bin'
+(home/'.codex').mkdir(parents=True)
+bin_dir.mkdir()
+values = ['fixture spaced value', 'q r s', 'prefix-escaped-tail', 'zz' + 'x' * 30,
+          'fixture' + '-credential-9', 'outcome-leak-7']
+quoted = 'pass' + 'word: "' + values[0] + '"'
+for name, body in {
+    'claude': 'echo "Claude 2.1.9 ' + values[1] + '"',
+    'codex': 'echo "' + quoted + '" >&2; exit 3',
+    'usage-audit': 'printf "%s\\n" ' + ' '.join(repr(line) for line in (
+        quoted, '{"pass' + 'word": "prefix \\"' + values[2] + '\\" tail"}',
+        '  ' + values[3] + '  1  2  3', 'SESSIONS=1 TOTAL_WEIGHTED=2')),
+    'session-doctor': 'echo "Opus subagents: 1 across 1 session ' + values[4] + '"',
+    'spawn': 'echo "' + quoted + '" >&2; exit 4',
+}.items():
+    (bin_dir/name).write_text('#!/bin/sh\n' + body + '\n')
+    (bin_dir/name).chmod(0o755)
+(home/'.codex/models_cache.json').write_text(json.dumps({'models': [
+    {'slug': 'gpt-6.1-sol'}, {'slug': values[3]}, {'slug': values[0]}]}))
+(home/'lessons.jsonl').write_text(json.dumps({'ts': '2099-01-01T00:00:00Z', 'outcome': values[5]}) + '\n'
+    + json.dumps({'ts': __import__('datetime').datetime.now().astimezone().isoformat(), 'outcome': 'saved:' + values[5]}) + '\n')
+(home/'config.json').write_text(json.dumps({'env-refresh': {
+    'lessons_log': '~/lessons.jsonl', 'spawn_cmd': ['spawn'], 'memory_root': '~/missing',
+    'backup_marker': quoted, 'api_token': values[4]}}))
+env = dict(os.environ, HOME=str(home), PATH=f'{bin_dir}:/usr/bin:/bin',
+           HOST_TOOLS_CONFIG=str(home/'config.json'))
+outputs = []
+for argv in (['--dry-run'], ['--spawn', '--force', '--json'], ['ack']):
+    result = subprocess.run([sys.executable, tool, *argv], capture_output=True, text=True, env=env, timeout=60)
+    outputs += [result.stdout, result.stderr]
+state = home/'.local/state/crss/env-refresh'
+outputs += [p.read_text() for p in state.rglob('*') if p.is_file() and p.suffix in ('.md', '.json', '.jsonl')]
+text = '\n'.join(outputs)
+assert 'gpt-6.1-sol' in text and '2.1.9' in text and 'sessions = 1' in text, text
+leaks = [v for v in values for chunk in (v, v[:8]) if chunk in text]
+assert not leaks, leaks
 PY
-ok 'quoted credentials redacted' "$?" 0
+ok 'no planted secret reaches any output' "$?" 0
 cp "$TMP/history.saved" "$state/history.jsonl"
 # Compare every fixture byte and mtime, including an initially absent state dir.
 python3 - "$HOME" > "$TMP/before" <<'PY'

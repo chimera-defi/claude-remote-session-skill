@@ -16,6 +16,11 @@ Paths expand ~ using --home; relative config paths resolve against --home.
 The brief is read beside the repository's scripts/ directory, or from the
 installed ~/.claude/skills/gstack-session-spawn/references/ directory.
 Only ack updates fingerprint.json. Dry runs never write or spawn.
+
+Output is allowlisted, not redacted: reports, history, acks and stderr carry
+only numbers, model ids, version numbers, file paths, fixed labels and
+exception class names. Command output and logs are parsed for those fields;
+no other text from them, or any config value other than a path, is printed.
 """
 
 import argparse
@@ -35,43 +40,24 @@ import sys
 import time
 
 
-SECRET_NAME = r"(?:\w*?(?:key|token|secret|password|passwd|apikey|api_key|auth))"
+# Model ids and slugs: short lowercase segments, so a token or key cannot pass.
+MODEL = re.compile(r"[a-z][a-z0-9]{0,11}(?:[.-][a-z0-9]{1,12}){0,6}")
+VERSION = re.compile(r"\d+(?:\.\d+)+(?:-[0-9A-Za-z]{1,12}(?:\.[0-9A-Za-z]{1,12})*)?")
+NUMBER = r"\d[\d,]*"
 
 
-def redact(s):
-    """Scrub credentials from every output string, including keys and notes."""
-    s = re.sub(r"://[^/\s:@]+:[^/\s@]+@", "://[REDACTED]@", str(s))
-    patterns = (
-        r"sk-[A-Za-z0-9_-]{16,}", r"gh[pousr]_[A-Za-z0-9]{20,}",
-        r"github_pat_[A-Za-z0-9_]{20,}", r"xox[abprs]-[A-Za-z0-9-]{10,}",
-        r"AKIA[0-9A-Z]{16}",
-        r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
-        r"\b[0-9a-fA-F]{40,}\b", r"[A-Za-z0-9+=_-]{48,}",
-    )
-    for pattern in patterns:
-        s = re.sub(pattern, "[REDACTED]", s)
-    # Quoted values may hold spaces or escaped quotes, and JSON quotes the key itself.
-    s = re.sub(r"(%s[\"']?\s*[=:]\s*)(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|[^\s\"']+)" % SECRET_NAME,
-               r"\1[REDACTED]", s, flags=re.I)
-    s = re.sub(r"\bBearer\s+\S+", "Bearer [REDACTED]", s, flags=re.I)
-    return re.sub(r"Environment\s*=.*", "[REDACTED]", s)
+def model_ids(values):
+    return sorted({v for v in values if isinstance(v, str) and len(v) <= 40
+                   and MODEL.fullmatch(v)})
 
 
-def scrub(value):
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, list):
-        return [scrub(v) for v in value]
-    if isinstance(value, dict):
-        return {redact(k): "[REDACTED]" if re.fullmatch(SECRET_NAME, str(k), re.I) and v else scrub(v)
-                for k, v in value.items()}
-    return value
+def version(text):
+    match = VERSION.search(str(text))
+    return match.group() if match else "unparsed"
 
 
-class Parser(argparse.ArgumentParser):
-    def _print_message(self, message, file=None):
-        if message:
-            super()._print_message(redact(message), file)
+def error(exc):
+    return type(exc).__name__
 
 
 class MetricTimeout(Exception):
@@ -119,7 +105,7 @@ class Check:
         except FileNotFoundError:
             return default
         except (OSError, ValueError) as exc:
-            self.warnings.append(f"{path.name}: {exc}")
+            self.warnings.append(f"{path} unreadable: {error(exc)}")
             return default
 
     def command(self, argv, timeout=120):
@@ -143,7 +129,7 @@ class Check:
             try:
                 binary = self.path(binary).resolve()
             except (OSError, RuntimeError) as exc:
-                self.warnings.append(f"claude_bin unavailable: {exc}")
+                self.warnings.append(f"claude_bin unavailable: {error(exc)}")
                 binary = None
         for key, argv in (("claude_cli_version", [str(binary), "--version"] if binary else []),
                           ("codex_cli_version", ["codex", "--version"])):
@@ -151,9 +137,9 @@ class Check:
                 lines = self.command(argv, timeout=20).splitlines()
                 if not lines:
                     raise ValueError("empty version output")
-                fp[key] = lines[0]
+                fp[key] = version(lines[0])
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-                self.warnings.append(f"{key} unavailable: {exc}")
+                self.warnings.append(f"{key} unavailable: {error(exc)}")
         try:
             if not binary:
                 raise FileNotFoundError("claude not found on PATH")
@@ -174,7 +160,7 @@ class Check:
                     carry = data[-64:]
             fp["claude_models"] = sorted(models)
         except (OSError, ValueError) as exc:
-            self.warnings.append(f"claude_models unavailable: {exc}")
+            self.warnings.append(f"claude_models unavailable: {error(exc)}")
         try:
             cache = self.path(self.config.get("codex_models_cache", "~/.codex/models_cache.json"))
             document = json.loads(cache.read_text(encoding="utf-8"))
@@ -182,10 +168,10 @@ class Check:
             if not isinstance(models, list):
                 raise ValueError("models must be a list")
             slugs = [m.get("slug") or m.get("id") for m in models if isinstance(m, dict)]
-            fp["codex_models"] = sorted({s for s in slugs if isinstance(s, str) and s})
+            fp["codex_models"] = model_ids(slugs)
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self.warnings.append(f"codex_models unavailable: {exc}")
-        return scrub(fp)
+            self.warnings.append(f"codex_models unavailable: {error(exc)}")
+        return fp
 
     def lessons(self):
         counts = Counter()
@@ -196,13 +182,13 @@ class Check:
                 try:
                     entry = json.loads(line)
                     if self.now - 7 * 86400 <= epoch(entry["ts"]) <= self.now:
-                        counts[str(entry["outcome"])] += 1
+                        outcome = str(entry["outcome"])
+                        counts["saved" if outcome.startswith("saved:") else
+                               "skipped" if outcome.startswith("skip:") else "other"] += 1
                 except (ValueError, TypeError, KeyError, OverflowError):
                     invalid += 1
-        saved = sum(n for k, n in counts.items() if k.startswith("saved:"))
-        skipped = sum(n for k, n in counts.items() if k.startswith("skip:"))
-        return [f"saved = {saved}; skipped = {skipped}; malformed = {invalid}",
-                "By outcome: " + json.dumps(dict(sorted(counts.items())), ensure_ascii=False)]
+        return [f"saved = {counts['saved']}; skipped = {counts['skipped']}; "
+                f"other = {counts['other']}; malformed = {invalid}"]
 
     def memory(self):
         root = self.path(self.config.get("memory_root", "~/agent-memory"))
@@ -229,7 +215,7 @@ class Check:
                         age = "no commits"
                     rows.append(f"{label(directory)}: dirty={dirty}; last commit={age}; remote={'yes' if remote else 'none'}")
                 except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-                    rows.append(f"{directory.relative_to(root)}: unavailable: {exc}")
+                    rows.append(f"{label(directory)}: unavailable: {error(exc)}")
             if depth < 5:
                 for child in sorted(directory.iterdir()):
                     if child.name != ".git" and not child.is_symlink() and child.is_dir():
@@ -265,16 +251,28 @@ class Check:
             try:
                 rows.append(f"{value}: {size(self.path(value), set())} bytes")
             except (OSError, RuntimeError) as exc:
-                rows.append(f"{value}: unavailable: {exc}")
+                rows.append(f"{value}: unavailable: {error(exc)}")
         return rows
 
     def metrics(self):
         def usage():
-            return self.command(self.config.get("usage_audit_cmd", ["usage-audit", "--days", "7"])).splitlines()[-40:]
+            # Keep only the totals line and per-model rows (id, calls, weighted, tokens).
+            lines = self.command(self.config.get("usage_audit_cmd", ["usage-audit", "--days", "7"])).splitlines()
+            rows = []
+            for line in lines:
+                total = re.fullmatch(r"\s*SESSIONS=(\d+) TOTAL_WEIGHTED=(\d+)\s*", line)
+                model = re.fullmatch(rf"\s*(\S+)\s+({NUMBER})\s+({NUMBER})\s+({NUMBER})\s*", line)
+                if total:
+                    rows.append(f"sessions = {total[1]}; weighted tokens = {total[2]}")
+                elif model and model_ids([model[1]]):
+                    rows.append(f"{model[1]}: calls {model[2]}; weighted {model[3]}; tokens {model[4]}")
+            return rows or [f"no parsable rows in {len(lines)} lines"]
 
         def opus():
             lines = self.command(self.config.get("opus_subagents_cmd", ["session-doctor", "opus-subagents", "--days", "7"])).splitlines()
-            return [f"{len(lines)} lines", *lines[:10]]
+            rows = [f"{m[1]} Opus subagents across {m[2]} sessions" for m in
+                    (re.search(r"Opus subagents: (\d+) across (\d+) session", line) for line in lines) if m]
+            return rows[:1] or [f"no summary row in {len(lines)} lines"]
 
         def timeout_handler(_signum, _frame):
             raise MetricTimeout("metric exceeded 120s")
@@ -288,7 +286,7 @@ class Check:
             try:
                 lines = collect() or ["No output."]
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, MetricTimeout) as exc:
-                lines = [f"Unavailable/skipped: {exc}"]
+                lines = [f"Unavailable/skipped: {error(exc)}"]
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
                 signal.signal(signal.SIGALRM, previous)
@@ -315,29 +313,29 @@ class Check:
 def markdown(summary, sections, warnings):
     lines = ["# Environment refresh", f"Generated: {summary['generated']}", "",
              f"{summary['status']}: {'; '.join(summary['reasons'])}", "", "## Fingerprint"]
-    lines += [f"- {key}: {one_line(json.dumps(scrub(value), ensure_ascii=False))}"
+    lines += [f"- {key}: {one_line(json.dumps(value, ensure_ascii=False))}"
               for key, value in summary["fingerprint"].items()]
-    lines += ["New models: " + one_line(json.dumps(scrub(summary["new_models"]), ensure_ascii=False)),
+    lines += ["New models: " + one_line(json.dumps(summary["new_models"], ensure_ascii=False)),
               "Warnings: " + one_line("; ".join(warnings) or "none")]
     # Preserve every repo's measurements, folding long inventories onto one line.
     for title, rows in sections:
         if title == "Memory health" and len(rows) > 20:
             rows = rows[:19] + [" ; ".join(rows[19:])]
         lines += ["", f"## {title}", *rows]
-    return redact("\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"
 
 
 def write_json(path, value):
     # Atomic replacement prevents an interrupted ack from erasing its baseline.
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(scrub(value), ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(value, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
-    parser = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action", nargs="?", choices=["ack"])
     parser.add_argument("--home", default=os.environ.get("HOME", str(Path.home())), metavar="PATH")
     parser.add_argument("--state-dir", metavar="PATH")
@@ -358,7 +356,7 @@ def main():
         if not args.dry_run:
             check.state.mkdir(parents=True, exist_ok=True)
             write_json(check.state / "fingerprint.json", ack)
-        print(json.dumps(scrub(ack), ensure_ascii=False))
+        print(json.dumps(ack, ensure_ascii=False))
         return 0
     ack = check.read_json(check.state / "fingerprint.json", {})
     reasons = []
@@ -389,7 +387,7 @@ def main():
                "report_path": str(report_path), "spawned": False}
     report = markdown(summary, check.metrics(), check.warnings)
     if args.dry_run:
-        print(redact(report), end="")
+        print(report, end="")
         return 10 if due else 0
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with ExitStack() as stack:
@@ -400,7 +398,7 @@ def main():
             except BlockingIOError:
                 print("env-refresh: another run holds the lock; skipping spawn")
                 return 0
-        report_path.write_text(redact(report), encoding="utf-8")
+        report_path.write_text(report, encoding="utf-8")
         command = check.config.get("spawn_cmd")
         if due and args.spawn and command:
             try:
@@ -417,17 +415,16 @@ def main():
                                        ("reasons", "; ".join(summary["reasons"])), ("report_path", str(report_path))):
                         brief = brief.replace("{" + key + "}", value)
                     brief_path = check.state / ("brief-" + stamp + ".md")
-                    brief_path.write_text(redact(brief), encoding="utf-8")
+                    brief_path.write_text(brief, encoding="utf-8")
                     # Let the launcher finish creating its session before the
                     # oneshot unit exits and systemd cleans up its child processes.
                     check.command(command + [str(brief_path)])
                     summary.update(spawned=True, brief_path=str(brief_path))
             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-                summary["spawn_note"] = f"spawn unavailable: {exc}"
+                summary["spawn_note"] = f"spawn unavailable: {error(exc)}"
         with (check.state / "history.jsonl").open("a", encoding="utf-8") as stream:
-            # Scrub strings before encoding, so escaped JSON quotes stay intact.
-            stream.write(json.dumps(scrub(summary), ensure_ascii=False) + "\n")
-    print(json.dumps(scrub(summary), ensure_ascii=False) if args.json else redact(report_path))
+            stream.write(json.dumps(summary, ensure_ascii=False) + "\n")
+    print(json.dumps(summary, ensure_ascii=False) if args.json else report_path)
     return 10 if due else 0
 
 
@@ -435,5 +432,5 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (OSError, ValueError, RuntimeError) as error:
-        print(redact(f"env-refresh: {error}"), file=sys.stderr)
+        print(f"env-refresh: {type(error).__name__}", file=sys.stderr)
         sys.exit(2)
