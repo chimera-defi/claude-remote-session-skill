@@ -35,6 +35,9 @@ import sys
 import time
 
 
+SECRET_NAME = r"(?:\w*?(?:key|token|secret|password|passwd|apikey|api_key|auth))"
+
+
 def redact(s):
     """Scrub credentials from every output string, including keys and notes."""
     s = re.sub(r"://[^/\s:@]+:[^/\s@]+@", "://[REDACTED]@", str(s))
@@ -47,8 +50,9 @@ def redact(s):
     )
     for pattern in patterns:
         s = re.sub(pattern, "[REDACTED]", s)
-    s = re.sub(r"((?:key|token|secret|password|passwd|apikey|api_key|auth)"
-               r"\s*[=:]\s*[\"']?)[^\s\"']+", r"\1[REDACTED]", s, flags=re.I)
+    # Quoted values may hold spaces, and JSON quotes the key itself.
+    s = re.sub(r"(%s[\"']?\s*[=:]\s*)(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+)" % SECRET_NAME,
+               r"\1[REDACTED]", s, flags=re.I)
     s = re.sub(r"\bBearer\s+\S+", "Bearer [REDACTED]", s, flags=re.I)
     return re.sub(r"Environment\s*=.*", "[REDACTED]", s)
 
@@ -59,7 +63,8 @@ def scrub(value):
     if isinstance(value, list):
         return [scrub(v) for v in value]
     if isinstance(value, dict):
-        return {redact(k): scrub(v) for k, v in value.items()}
+        return {redact(k): "[REDACTED]" if re.fullmatch(SECRET_NAME, str(k), re.I) and v else scrub(v)
+                for k, v in value.items()}
     return value
 
 
