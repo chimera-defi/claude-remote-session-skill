@@ -57,9 +57,10 @@ with sqlite3.connect(h/'bus.sqlite') as db:
             (3, 'three', 'kepler', 'reports', '', 'report', 'Research report finished.', '{}', now),
             (4, 'four', 'worker', 'alerts', '', 'question', 'Please choose a maintenance window.', '{}', now),
             (5, 'five', 'worker', 'alerts', '', 'report', 'Decision recorded.', '{"decision":"EXECUTION_APPROVED pending"}', now),
-            (6, 'six', 'worker', 'alerts', '', 'report', 'Gate pinned tests ran; APPROVAL.json updated; approved execution chain ok.', '{}', now)]
+            (6, 'six', 'worker', 'alerts', '', 'report', 'Gate pinned tests ran; APPROVAL.json updated; approved execution chain ok.', '{}', now),
+            (7, 'seven', 'linnet', 'alerts', '', 'report', 'WHAT: Linnet digest x / STATUS: 2 need operator', '{}', now)]
     db.executemany('INSERT INTO coordination_messages VALUES (?,?,?,?,?,?,?,?,?)', rows)
-    db.execute('INSERT INTO coordination_acks VALUES (?,?)', ('two', 'alerts'))
+    db.executemany('INSERT INTO coordination_acks VALUES (?,?)', [('two', 'alerts'), ('seven', 'alerts')])
 (c/'host-tools.json').write_text(json.dumps({'linnet-digest': {
     'bus_db': '~/bus.sqlite', 'mailboxes': ['alerts'],
     'operator_units': ['urgent.service'], 'owners': {'later.service': 'job owner'},
@@ -83,6 +84,7 @@ assert 'Please choose a maintenance window.' in needs
 assert 'Decision recorded.' in needs
 assert '{"decision":"EXECUTION_APPROVED pending"}' in needs
 assert 'Gate pinned tests ran' not in needs
+assert 'Linnet digest x' not in needs
 assert 'urgent.service' in needs
 assert 'later.service' not in needs
 assert 'job owner' in text and 'never.service' in text

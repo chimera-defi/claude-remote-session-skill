@@ -40,7 +40,7 @@ paths. All keys are optional; configure sources and delivery before enabling.
 }
 ```
 
-Defaults: no bus database or mailboxes; `kepler_sender` is `kepler`;
+Defaults: no bus database or mailboxes; `kepler_sender` is `kepler`; `self_sender` (Linnet's own bus sender, never re-flagged) is `linnet`;
 `operator_units`, `owners`, and `bus_recipients` are empty. `sinks` defaults to
 `["stdout"]`. `publish_dir` defaults to `~/agent-memory/shared/public/linnet`.
 Command values are argv arrays, never shell commands. Bus posting must use a
@@ -98,18 +98,27 @@ operator section." A session launch is a single run; use the timer for cadence.
 
 ## Start path B: Claude native
 
-Create a local scheduled task in Claude Desktop on the machine that has these
-sources and the installed executable. In **Scheduled → New task → Set up
-manually**, name it Linnet, select the local working folder, and set a daily
-08:15 schedule. Create a second task for 20:15 if the form supports one time per
-task. Use this prompt verbatim:
+Two Claude-native schedulers exist; pick by where Claude runs.
 
-> Run `linnet-digest --sink file --sink bus` and reply with the Needs-the-operator section
+- **Claude Desktop scheduled task, Claude on the same machine as the sources.**
+  In **Scheduled → New task → Set up manually**, name it Linnet, select the local
+  working folder, and set 08:15 and 20:15. Prompt, verbatim:
 
-Save and run once to verify executable access and permissions. A local task
-needs this host's files and tools; a cloud task without host access cannot read
-these sources. Use either the native schedule or the systemd timer to avoid
-duplicate runs. See the [official scheduled-task creation instructions](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork).
+  > Run `linnet-digest --sink file --sink bus` and reply with the Needs-the-operator section
+
+  Save and run once to verify access. See the [official scheduled-task
+  instructions](https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork).
+- **Desktop app driving a remote (SSH) host.** Desktop scheduled tasks run on the
+  user's own computer, so a session on an SSH host cannot create one; the app
+  refuses with "scheduled tasks run on the user's own computer and this session
+  works on an SSH host". Use the in-session scheduler instead: in a Claude session
+  on the host, a fixed-interval `/loop` (for example `/loop 12h ...`) or
+  `CronCreate` with the same prompt. These jobs belong to that session: they
+  fire only while it is open and idle, and a recurring one expires after 7 days.
+  Check after any restart that the job is still listed, and recreate it if not. Treat this path as a short-lived or test
+  path; the systemd timer (path A) is the durable one.
+
+Use one scheduler at a time to avoid duplicate runs.
 
 ## Reading and division of work
 
@@ -122,4 +131,36 @@ not an HTTP endpoint. Linnet never duplicates Kepler's report.
 
 ## Sample digest
 
-_To be filled by the orchestrator._
+Trimmed from the first live run (2026-11-01); names are generic here.
+
+```markdown
+# Linnet digest 20261101T102731Z
+Window: 2026-10-31T10:27:31+00:00 to 2026-11-01T10:27:31+00:00
+
+## Needs the operator (pass-through; still delivered by their own route)
+
+- launcher-mailbox, sequence 12118:
+Escalation: an alert book still fires for a withdrawn order [... full text: bus sequence 12118]
+
+## What happened
+
+- 5 scheduled jobs failed (listed below)
+- 18 scheduled jobs ran OK: ack-hygiene, bus-router, morning-brief, ...
+- launcher-mailbox: 13 messages since the window start
+- launcher-mailbox: kepler / report: 2
+
+## Can wait
+
+- health-audit.service failed: exit-code (exit 1); owner: fleet ops
+- qt-rotation-collect.service has never run
+- launcher-mailbox: unacked: 260 (all ages; delivery routes remain active)
+
+## Kepler
+
+- [sequence 12189](bus:sequence/12189): Not executed: task access is disabled ...
+
+## Sources
+
+- Systemd user timers: 25 checked
+- Bus: SQLite opened with mode=ro; no acknowledgments sent
+```
