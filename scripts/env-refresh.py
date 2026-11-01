@@ -50,8 +50,8 @@ def redact(s):
     )
     for pattern in patterns:
         s = re.sub(pattern, "[REDACTED]", s)
-    # Quoted values may hold spaces, and JSON quotes the key itself.
-    s = re.sub(r"(%s[\"']?\s*[=:]\s*)(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s\"']+)" % SECRET_NAME,
+    # Quoted values may hold spaces or escaped quotes, and JSON quotes the key itself.
+    s = re.sub(r"(%s[\"']?\s*[=:]\s*)(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|[^\s\"']+)" % SECRET_NAME,
                r"\1[REDACTED]", s, flags=re.I)
     s = re.sub(r"\bBearer\s+\S+", "Bearer [REDACTED]", s, flags=re.I)
     return re.sub(r"Environment\s*=.*", "[REDACTED]", s)
@@ -315,9 +315,9 @@ class Check:
 def markdown(summary, sections, warnings):
     lines = ["# Environment refresh", f"Generated: {summary['generated']}", "",
              f"{summary['status']}: {'; '.join(summary['reasons'])}", "", "## Fingerprint"]
-    lines += [f"- {key}: {one_line(json.dumps(value, ensure_ascii=False))}"
+    lines += [f"- {key}: {one_line(json.dumps(scrub(value), ensure_ascii=False))}"
               for key, value in summary["fingerprint"].items()]
-    lines += ["New models: " + one_line(json.dumps(summary["new_models"], ensure_ascii=False)),
+    lines += ["New models: " + one_line(json.dumps(scrub(summary["new_models"]), ensure_ascii=False)),
               "Warnings: " + one_line("; ".join(warnings) or "none")]
     # Preserve every repo's measurements, folding long inventories onto one line.
     for title, rows in sections:

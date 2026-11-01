@@ -158,9 +158,10 @@ import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location('env_refresh', sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-for text in ('password: ' + '"q r s"', json.dumps({'pass' + 'word': 'fixture spaced value'})):
+for text in ('password: ' + '"q r s"', json.dumps({'pass' + 'word': 'fixture spaced value'}),
+             json.dumps({'pass' + 'word': 'fixture "spaced" tail'})):
     out = mod.redact(text)
-    assert all(word not in out for word in ('q r', 'r s', 'fixture', 'spaced')), out
+    assert all(word not in out for word in ('q r', 'r s', 'fixture', 'spaced', 'tail')), out
 assert mod.scrub({'api_token': 'a b'}) == {'api_token': '[REDACTED]'}
 assert mod.scrub({'claude_models': ['m']}) == {'claude_models': ['m']}
 PY
