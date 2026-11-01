@@ -23,7 +23,10 @@ from urllib.parse import quote
 
 
 UTC = dt.timezone.utc
-APPROVAL = re.compile(r'APPROVAL|EXECUTION_APPROVED|approve|GATE', re.I)
+# Explicit asks only: bare words like 'approve' or 'gate' match ordinary reports.
+APPROVAL = re.compile(r'EXECUTION_APPROVED|\bAPPROVAL\s*:|\bGATE\s*:|approve me\b|approval (needed|required|pending)'
+                      r'|awaiting (your |operator )?approval|operator to (confirm|approve|decide)|needs? (the )?operator', re.I)
+EXCERPT = 300
 DATED = re.compile(r'\d{8}T\d{12}Z\.md')
 
 
@@ -96,6 +99,7 @@ class Digest:
         self.stamp = self.now.strftime('%Y%m%dT%H%M%S%fZ')
         self.needs = []
         self.happened = []
+        self.ok_runs = []
         self.wait = []
         self.kepler = []
         self.sources = []
@@ -159,8 +163,8 @@ class Digest:
                     self.wait.append(f'{unit} has never run')
                     continue
                 last = instant(last)
-                if self.start <= last <= self.now:
-                    self.happened.append(f'{unit} ran at {last.isoformat()}: {result or "unknown result"}')
+                if self.start <= last <= self.now and not failed:
+                    self.ok_runs.append(unit.removesuffix('.service'))
                 try:
                     period = period_seconds(timer)
                     if period and (self.now - last).total_seconds() > 2 * period:
@@ -201,8 +205,11 @@ class Digest:
                     evidence = message['evidence_json'] or ''
                     if message['kind'] == 'question' or APPROVAL.search(summary + '\n' + evidence):
                         # Preserve the original text, including its line breaks.
+                        # Verbatim excerpt; the full text still reaches the operator by its own route.
+                        def cut(text, n):
+                            return text if len(text) <= n else text[:n] + f' [... full text: bus sequence {message["sequence"]}]'
                         self.needs.append(f'{mailbox}, sequence {message["sequence"]}:\n'
-                                          + summary + ('\n' + evidence if evidence else ''))
+                                          + cut(summary, EXCERPT) + ('\n' + cut(evidence, 200) if evidence.strip() not in ('', '[]', '{}') else ''))
                 self.acks(db, mailbox)
             try:
                 message = db.execute(
@@ -270,6 +277,11 @@ class Digest:
                 self.sources.append(f'{name} unavailable: {one_line(exc)}')
                 if name == 'Bus':
                     self.kepler.append(f'unavailable: {one_line(exc)}')
+        if self.ok_runs:
+            names = sorted(set(self.ok_runs))
+            self.happened.insert(0, f'{len(names)} scheduled jobs ran OK: ' + ', '.join(names))
+        if self.failing:
+            self.happened.insert(0, f'{self.failing} scheduled jobs failed (listed below)')
         if not self.happened:
             self.happened.append('No activity found in the available sources')
         summarize = self.config.get('summarize_cmd')

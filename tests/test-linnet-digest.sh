@@ -34,7 +34,7 @@ cat > "$TMP/bin/systemd-analyze" <<'STUB'
 #!/bin/sh
 printf '%s\n' '    Next elapse: Thu 2000-01-01 01:00:00 UTC' '   Iteration #2: Thu 2000-01-01 02:00:00 UTC'
 STUB
-cat > "$TMP/bin/hermes" <<'STUB'
+cat > "$TMP/bin/phone-send" <<'STUB'
 #!/usr/bin/env python3
 import json, os, pathlib, sys
 with open(os.environ['HOME'] + '/calls', 'a') as f:
@@ -56,14 +56,15 @@ with sqlite3.connect(h/'bus.sqlite') as db:
             (2, 'two', 'worker', 'alerts', '', 'report', 'Routine task finished.', '{}', now),
             (3, 'three', 'kepler', 'reports', '', 'report', 'Research report finished.', '{}', now),
             (4, 'four', 'worker', 'alerts', '', 'question', 'Please choose a maintenance window.', '{}', now),
-            (5, 'five', 'worker', 'alerts', '', 'report', 'Decision recorded.', '{"decision":"EXECUTION_APPROVED pending"}', now)]
+            (5, 'five', 'worker', 'alerts', '', 'report', 'Decision recorded.', '{"decision":"EXECUTION_APPROVED pending"}', now),
+            (6, 'six', 'worker', 'alerts', '', 'report', 'Gate pinned tests ran; APPROVAL.json updated; approved execution chain ok.', '{}', now)]
     db.executemany('INSERT INTO coordination_messages VALUES (?,?,?,?,?,?,?,?,?)', rows)
     db.execute('INSERT INTO coordination_acks VALUES (?,?)', ('two', 'alerts'))
 (c/'host-tools.json').write_text(json.dumps({'linnet-digest': {
     'bus_db': '~/bus.sqlite', 'mailboxes': ['alerts'],
     'operator_units': ['urgent.service'], 'owners': {'later.service': 'job owner'},
-    'bus_post_cmd': ['hermes', 'post', '--recipient', '{recipient}', '--summary-file', '{summary_file}', '--key', '{idempotency_key}'],
-    'bus_recipients': ['digest-reader'], 'phone_cmd': ['hermes', 'send', '--to', 'telegram', '--quiet', '--file', '{file}']}}))
+    'bus_post_cmd': ['phone-send', 'post', '--recipient', '{recipient}', '--summary-file', '{summary_file}', '--key', '{idempotency_key}'],
+    'bus_recipients': ['digest-reader'], 'phone_cmd': ['phone-send', 'send', '--to', 'telegram', '--quiet', '--file', '{file}']}}))
 PY
 run() { python3 "$ROOT/scripts/linnet-digest.py" --home "$HOME" "$@"; }
 sha256sum "$HOME/bus.sqlite" > "$TMP/before"
@@ -81,13 +82,14 @@ assert '{"detail":"EXECUTION_APPROVED remains pending"}' in needs
 assert 'Please choose a maintenance window.' in needs
 assert 'Decision recorded.' in needs
 assert '{"decision":"EXECUTION_APPROVED pending"}' in needs
+assert 'Gate pinned tests ran' not in needs
 assert 'urgent.service' in needs
 assert 'later.service' not in needs
 assert 'job owner' in text and 'never.service' in text
 wait = text.split('## Can wait', 1)[1].split('## Kepler', 1)[0]
 assert 'stale.service last ran' in wait
 assert 'calendar.service last ran' in wait
-assert 'unacked: 3' in text and 'worker / report: 3' in text
+assert 'unacked: 4' in text and 'worker / report: 4' in text
 assert 'sequence 3' in text and 'Research report finished.' in text
 assert 'mode=ro' in text
 PY

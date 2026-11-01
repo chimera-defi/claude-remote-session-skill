@@ -10,7 +10,7 @@ Unsupported periods and broken sources are marked `unavailable:`.
 Source access is read-only: SQLite is opened with `file:<path>?mode=ro`. Linnet
 never invokes a bus read/ack command, writes a source table, acknowledges,
 consumes, mutes, or suppresses alerts. Questions and approval/execution alerts
-are copied verbatim, including evidence, under **Needs the operator
+are copied verbatim (first 300 characters, then a bus sequence pointer; evidence first 200), under **Needs the operator
 (pass-through; still delivered by their own route)**. Other delivery routes
 continue independently. Counts of unacked messages cover all ages; message
 activity and pass-through alerts use the digest window. Unknown ack schemas
@@ -35,7 +35,7 @@ paths. All keys are optional; configure sources and delivery before enabling.
     "publish_dir": "~/agent-memory/shared/public/linnet",
     "bus_post_cmd": ["bus-post", "--recipient", "{recipient}", "--summary-file", "{summary_file}", "--idempotency-key", "{idempotency_key}"],
     "bus_recipients": ["digest-reader"],
-    "phone_cmd": ["hermes", "send", "--to", "telegram", "--quiet", "--file", "{file}"]
+    "phone_cmd": ["phone-send", "--file", "{file}"]
   }
 }
 ```
