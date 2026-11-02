@@ -47,7 +47,7 @@ private `dispatchbench` (formerly `model-routing-bench`). IDs/flags are bench-ti
   sol61-high matches Codex flagships on lint (0.03 warnings/solution) and complexity;
   ~28% faster than reference, never worse growth. Blind Fable read: 20 solutions, 7.25/10,
   no blocks (all 3 blocks were sonnet-medium); no high/xhigh code-quality deficit observed.
-- Trusted Codex builders (2026-10-23, same report): gpt-6.1-sol high and gpt-6-astra medium never failed on any set (function 60/60, L7 15/15, hard 35/35, agentic 12/12). sol61-high is the default: about a quarter of astra's list price, at the cost of time.
+- Trusted Codex builders (2026-10-23, same report): gpt-6.1-sol high and gpt-6-astra medium never failed on any set (function 60/60, L7 15/15, hard 35/35, agentic 12/12). sol61-high was the default until 2026-11-02 (now terra61-low, escalation sol61-high): about a quarter of astra's list price, at the cost of time.
 - Claude parity (2026-10-24, same report; exploratory after main results): haiku-high
   function 60/60, L7 15/15, hard 35/35, agentic 12/12; L1–L6 $0.0028/pass, ~4x cheaper
   than sonnet-medium. Median 14.7 s vs sonnet-medium 10.1 s; long tail p90 38 s.
