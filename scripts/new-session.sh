@@ -181,6 +181,7 @@ Environment:
   CRSS_CODEX_BUILDER_TIER=<t>   Codex service tier for --task-type build
                                 lanes (default: priority, i.e. fast mode;
                                 "default" for the normal tier, empty to omit).
+  CRSS_CODEX_LANE_MODEL=<m>, CRSS_CODEX_LANE_EFFORT=<e>  Model/effort for non-build Codex lanes (default gpt-6.1-sol, high).
   CLAUDE_SESSION_MODEL=<model>  Claude backend model. Unset → the PROFILE's
                                 per-role default (see below): claude-opus-5-5
                                 (pinned) for orchestrator; sonnet/sonnet/sonnet/haiku
@@ -435,6 +436,10 @@ PY
 )"
 }
 [ "${TIER_AUTO_TYPE:-}" = build ] && [ "$BACKEND" = codex ] && _apply_codex_builder_args
+# Non-build Codex lanes (owners, reviewers, workers) keep gpt-6.1-sol high: the global ~/.codex default is the
+# terra-low builder (2026-11-02), which the bench did not cover for this work.
+_apply_codex_lane_args() { CRSS_CODEX_BUILDER_MODEL=${CRSS_CODEX_LANE_MODEL:-gpt-6.1-sol} CRSS_CODEX_BUILDER_EFFORT=${CRSS_CODEX_LANE_EFFORT:-high} _apply_codex_builder_args; }
+[ "$BACKEND" = codex ] && [ "${TIER_AUTO_TYPE:-}" != build ] && _apply_codex_lane_args
 QUOTA_RESULT=none; QUOTA_FROM=""; QUOTA_EVIDENCE=""
 if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
   if [ -z "$QUOTA_CHECK" ]; then echo 'new-session: quota-check.sh missing; quota failover skipped' >&2
@@ -449,7 +454,7 @@ if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
       if [ "$BACKEND" = codex ]; then
         QUOTA_RESULT=codex-out; QUOTA_FROM=codex; QUOTA_EVIDENCE=$_out; BACKEND=claude; CLAUDE_SESSION_PROFILE=${CLAUDE_SESSION_PROFILE:-builder}; CLAUDE_SESSION_MODEL=${CLAUDE_SESSION_MODEL:-sonnet}; CLAUDE_SESSION_EFFORT=${CLAUDE_SESSION_EFFORT:-low}; [ -n "$TIER_ARG" ] || TIER_ARG=standard; TIER_REASON="${TIER_REASON:+$TIER_REASON; }quota failover codex->claude"; echo "quota failover: Codex out ($_out) -> Claude builder sonnet low" >&2
       else
-        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; if [ "${TIER_AUTO_TYPE:-}" = build ]; then _apply_codex_builder_args; else CRSS_CODEX_BUILDER_MODEL=${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-sol} CRSS_CODEX_BUILDER_EFFORT=${CRSS_CODEX_BUILDER_EFFORT:-high} _apply_codex_builder_args; fi; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6.1-terra low builds and gpt-6.1-sol reviews; PR must say "single-family review (Claude quota-out)")' >&2
+        QUOTA_RESULT=claude-out; QUOTA_FROM=claude; QUOTA_EVIDENCE=$_out; BACKEND=codex; if [ "${TIER_AUTO_TYPE:-}" = build ]; then _apply_codex_builder_args; else _apply_codex_lane_args; fi; echo 'quota failover: Claude out ('"$_out"') -> Codex-only (gpt-6.1-terra low builds and gpt-6.1-sol reviews; PR must say "single-family review (Claude quota-out)")' >&2
       fi
     fi
   fi

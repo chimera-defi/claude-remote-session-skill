@@ -95,6 +95,7 @@ printf '{"type":"user","timestamp":"%s","isApiErrorMessage":true,"message":{"con
 o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/empty" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" --)"; hasre "Claude quota failover" "$o" '^BACKEND=codex$'; hasre "Claude quota decision shown" "$o" '^QUOTA=claude-out$'
 o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/empty" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" -- --tier auto --task-type review)"; has "failover review lane keeps sol" "$o" '-m gpt-6.1-sol'; has "failover review lane keeps high effort" "$o" 'model_reasoning_effort=high'
 o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/empty" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" -- --tier auto --task-type build)"; has "failover build lane uses terra" "$o" '-m gpt-6.1-terra'
+o="$(dry CRSS_HOME="$GOODCFG" -- --backend codex)"; has "plain codex lane pins sol" "$o" '-m gpt-6.1-sol'; has "plain codex lane pins high effort" "$o" 'model_reasoning_effort=high'
 o="$(dry CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" --)"; hasre "both quotas out exits 3" "$o" 'both quotas out: pausing' # exit is separately pinned below
 set +e; env HOME="$QHOME" CRSS_SESSION_PREFIX=px CRSS_WORKSPACE="$QHOME/workspace" CRSS_SESSIONS_DIR="$QHOME/sessions" CRSS_CODEX_SESSIONS_DIR="$QHOME/codex" CRSS_CLAUDE_PROJECTS_DIR="$QHOME/claude" bash "$NS" proj workspace --dry-run >/dev/null 2>&1; _both_rc=$?; set +e
 ok "both quotas exit code" "$_both_rc" 3
