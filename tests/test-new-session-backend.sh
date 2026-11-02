@@ -52,8 +52,8 @@ has "default-model-claude" "$out" '^MODEL=claude-opus-5-5$'
 # Generic config/env default can select Codex.
 out_env="$(HOME="$WORKHOME" CRSS_SESSION_BACKEND=codex bash "$NS" --dry-run backend-env 2>/dev/null)"
 has "env-backend-codex" "$out_env" '^BACKEND=codex$'
-has "env-codex-model-generic" "$out_env" '^MODEL=codex$'
-has "env-codex-model-src" "$out_env" '^MODEL_SRC=backend-default$'
+has "env-codex-model-pinned-sol" "$out_env" '^MODEL=gpt-6.1-sol$'
+has "env-codex-model-src" "$out_env" '^MODEL_SRC=codex-args$'
 
 # --backend overrides CRSS_SESSION_BACKEND for a single spawn.
 out_flag="$(HOME="$WORKHOME" CRSS_SESSION_BACKEND=claude bash "$NS" --dry-run backend-flag --backend codex 2>/dev/null)"
