@@ -1,4 +1,4 @@
-# Orchestration flow: Opus orchestrates, gpt-6.1-sol builds, Haiku checks, Opus/Fable attack
+# Orchestration flow: Opus orchestrates, gpt-6.1-terra builds, Haiku checks, Opus/Fable attack
 
 Link this flow in non-trivial multi-file/multi-step kickoff briefs. Host pins/quota policy:
 host overlay and `~/.claude/CLAUDE.md`.
@@ -8,7 +8,7 @@ host overlay and `~/.claude/CLAUDE.md`.
 | Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
 | Orchestrator | Opus (pinned id), effort medium; high at risky forks | Claude | blind check: medium 8.3 vs high 8.0, $0.10 vs $0.17 a plan |
-| Builder (default) | gpt-6.1-sol high, fast mode (priority tier, default again 2026-10-30), [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | routing bench 2026-10-23: 60/60 functions, 15/15 L7, 35/35 hard set, 12/12 agentic; $0.0186/pass list price, 27 s median (agentic ~110 s). luna high 31/35 on the hard set |
+| Builder (default) | gpt-6.1-terra low, fast mode (priority tier, default 2026-11-02), [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6.1-terra -c model_reasoning_effort=low -c service_tier=priority`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | sol61-high routing bench 2026-10-23: 60/60 functions, 15/15 L7, 35/35 hard set, 12/12 agentic; $0.0186/pass list price, 27 s median (agentic ~110 s). luna high 31/35 on the hard set |
 | Builder repair (fallback) | Light check: task tests (or statement examples); on failure, Haiku low reads statement + code, returns corrected code; re-run check | Claude `claude -p --model haiku --effort low --tools ""` with repair prompt; `haiku-reviewer` only reports | hard set: sol61-high/astra-medium 35/35, 0 repairs, $0 Claude; their repair quality UNMEASURED. luna high → Haiku low 32/35: examples missed 3/35 bad answers (REPORT:444). Use real tests. |
 | Builder escalation | gpt-6-astra medium after a failed Haiku repair, or first when latency matters ([ladder](#escalation-ladder)) | Codex `codex exec -m gpt-6-astra -c model_reasoning_effort=medium` | routing bench: perfect on every set like sol61-high, ~25% faster (21 s function median, agentic ~85 s), ~4× the list price ($0.075/pass; quota use assumed to track list price, unverified) |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
@@ -62,12 +62,13 @@ private `dispatchbench` (formerly `model-routing-bench`). IDs/flags are bench-ti
 
 ## Escalation ladder
 
-Default: gpt-6.1-sol high (2026-10-23, replacing luna high; operator proposed astra medium;
-sol61-high matched its pass rate at ~quarter list price). Switch:
+Default: gpt-6.1-terra low.
+2026-11-02: dispatchbench f77c040 found terra61-low fast had equal pass rate, ~3x lower cost and 2.5–3x faster; sol61-high remains the escalation for uncovered work, including L7 hard problems p13–p15, which terra was not run on.
+Switch:
 `CRSS_CODEX_BUILDER_MODEL=gpt-6-astra CRSS_CODEX_BUILDER_EFFORT=medium`.
 Codex-first preserves Claude quota; repairs/reviews spend it.
 
-sol61-high → light check (tests/examples) → Haiku low repair on failure → astra-medium → Sonnet builder.
+terra61-low → light check (tests/examples) → Haiku low repair on failure → astra-medium → Sonnet builder.
 
 - Hop on a failed check or Haiku review, or when the task needs judgement, ambiguity resolution or architecture.
 - Log every hop in the [routing log](#self-improving-routing) so the table self-corrects.
@@ -77,8 +78,8 @@ sol61-high → light check (tests/examples) → Haiku low repair on failure → 
 
 luna and gpt-6.1-sol share one Codex quota (one `limit_id: "codex"`); astra is assumed to share it too (no astra rollout checked), so hopping between Codex models never escapes a quota-out.
 
-- **Codex out** (only on the exact quota error text) → one-shot builds go to Haiku low (`claude -p --model haiku --effort low --tools ""`), same light check; a failed check, or a task where a miss is costly, goes to Haiku high. A whole lane (`new-session` failover) becomes a Sonnet low builder. Return to sol61-high when Codex resets.
-- **Claude out** → Codex-only: sol61-high builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
+- **Codex out** (only on the exact quota error text) → one-shot builds go to Haiku low (`claude -p --model haiku --effort low --tools ""`), same light check; a failed check, or a task where a miss is costly, goes to Haiku high. A whole lane (`new-session` failover) becomes a Sonnet low builder. Return to terra61-low when Codex resets.
+- **Claude out** → Codex-only: terra61-low builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
 - **Both out** → pause and report the exact error text.
 - `--fallback-model` cannot detect cross-family quota-outs; `new-session` owns this ladder.
   Availability/retry semantics: [spawn guide](spawn-guide.md#choosing-a-tier-right-size-the-model-save-quota).
