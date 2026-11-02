@@ -20,7 +20,7 @@ Extracted from always-loaded `SKILL.md` on 2026-10-15.
   worktree, then continue with SendMessage to keep context/edits; a fresh spawn orphans them.
 - Hub sessions run Sonnet by default and keep both native `advisor` and the Opus one-shot
   consult contract in [`references/hub-opus-consult.md`](hub-opus-consult.md).
-- The standard lane shape (Opus orchestrates, Codex gpt-6.1-sol high builds, Haiku checks, Opus
+- The standard lane shape (Opus orchestrates, Codex gpt-6.1-terra low builds, Haiku checks, Opus
   adversarial review) is in [`references/orchestration-flow.md`](orchestration-flow.md);
   link it in kickoff briefs instead of restating it.
 - `advisor` verified 2026-10-15, CLI 2.1.300: interactive `--model opus` listed it and a call
@@ -35,7 +35,7 @@ Extracted from always-loaded `SKILL.md` on 2026-10-15.
   `.claude/agents/` and roles table own call-out details; `$CRSS_HOME/local.md` lists availability.
 - `$CRSS_HOME/local.md` orders second opinions (cheap strong reviewer, different-family
   check, expensive reviewer last). Merge/operator-facing reviews require multiple model
-  families. Single-family review counts only when Claude is quota-out (gpt-6.1-sol builds and a
+  families. Single-family review counts only when Claude is quota-out (gpt-6.1-terra low builds and a
   separate gpt-6.1-sol call reviews); if Codex is out, the PR stays draft with the review marked
   UNVERIFIED. Record `models_ran` in the PR body.
   The orchestrator's Fable sanity check above is separate.
@@ -50,7 +50,7 @@ Auto mapping, printed reason, routing log and explicit `--backend`/env precedenc
 | Tier | Pick it when the task is | Defaults |
 |---|---|---|
 | `light` | mechanical, doc/copy-only, a bounded edit with a clear check | copywriter profile, haiku, `--effort low` |
-| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex gpt-6.1-sol high first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
+| `standard` | debugging or review in one repo; implementation only as the Claude fallback (implementation goes to Codex gpt-6.1-terra low first: `--tier auto --task-type build`) | builder profile, sonnet, `--effort low` |
 | `heavy` | ambiguous design, long-lived lane, gating review, needs `Workflow` fan-out | owner profile (full tools), **sonnet** + Opus advisor. Not Opus: for an Opus orchestrator omit `--tier` |
 
 - Tier defaults unchanged: the 2026-10-22 bench did not test Haiku as an agentic builder (the 10-24 follow-up ran haiku-high 12/12 agentic, used only on the Codex-out ladder); `light`/`standard` already use effort low, and higher effort bought nothing ([bench evidence](orchestration-flow.md#bench-evidence)).
@@ -118,7 +118,7 @@ otherwise use those generic defaults.
   `tests/test-telemetry.sh`.
 - **Concrete anti-patterns:** e.g. "don't branch from local `main`", "no deploys without
   explicit human approval in this session"; specific mistakes beat "be careful".
-- **Builders: Codex first, gpt-6.1-sol high in fast mode by default (operator 2026-10-30)** (`codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority`, or `new-session --backend codex --tier auto --task-type build`, which adds those flags).
+- **Builders: Codex first, gpt-6.1-terra low in fast mode by default (operator 2026-11-02)** (`codex exec -m gpt-6.1-terra -c model_reasoning_effort=low -c service_tier=priority`, or `new-session --backend codex --tier auto --task-type build`, which adds those flags).
   - Trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`.
   - Run the task's tests first; only on a failed check does Haiku low repair, then `-m gpt-6-astra` medium (also the pick when latency matters) → Sonnet 5.5 low ([ladder](orchestration-flow.md#escalation-ladder)). Codex out (exact quota error text): Haiku low builds, Haiku high on a failed check or a costly miss. Never luna or sol61 medium for builds.
   - Fast mode (`service_tier=priority`): default again 2026-10-30; off 10-28 to 10-30
