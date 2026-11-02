@@ -1,4 +1,4 @@
-# Orchestration flow: Opus orchestrates, gpt-6.1-sol builds, Haiku checks, Opus/Fable attack
+# Orchestration flow: Opus orchestrates, gpt-6.1-terra builds, Haiku checks, Opus/Fable attack
 
 Link this flow in non-trivial multi-file/multi-step kickoff briefs. Host pins/quota policy:
 host overlay and `~/.claude/CLAUDE.md`.
@@ -8,7 +8,7 @@ host overlay and `~/.claude/CLAUDE.md`.
 | Job | Model + effort | Backend | Evidence |
 |---|---|---|---|
 | Orchestrator | Opus (pinned id), effort medium; high at risky forks | Claude | blind check: medium 8.3 vs high 8.0, $0.10 vs $0.17 a plan |
-| Builder (default) | gpt-6.1-sol high, fast mode (priority tier, default again 2026-10-30), [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6.1-sol -c model_reasoning_effort=high -c service_tier=priority`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | routing bench 2026-10-23: 60/60 functions, 15/15 L7, 35/35 hard set, 12/12 agentic; $0.0186/pass list price, 27 s median (agentic ~110 s). luna high 31/35 on the hard set |
+| Builder (default) | gpt-6.1-terra low, fast mode (priority tier, default 2026-11-02), [trim flags](#codex-flags); any bounded, well-specified task | Codex `codex exec -m gpt-6.1-terra -c model_reasoning_effort=low -c service_tier=priority`, or `new-session --backend codex` (`--tier auto --task-type build` sets it) | sol61-high routing bench 2026-10-23: 60/60 functions, 15/15 L7, 35/35 hard set, 12/12 agentic; $0.0186/pass list price, 27 s median (agentic ~110 s). luna high 31/35 on the hard set |
 | Builder repair (fallback) | Light check: task tests (or statement examples); on failure, Haiku low reads statement + code, returns corrected code; re-run check | Claude `claude -p --model haiku --effort low --tools ""` with repair prompt; `haiku-reviewer` only reports | hard set: sol61-high/astra-medium 35/35, 0 repairs, $0 Claude; their repair quality UNMEASURED. luna high → Haiku low 32/35: examples missed 3/35 bad answers (REPORT:444). Use real tests. |
 | Builder escalation | gpt-6-astra medium after a failed Haiku repair, or first when latency matters ([ladder](#escalation-ladder)) | Codex `codex exec -m gpt-6-astra -c model_reasoning_effort=medium` | routing bench: perfect on every set like sol61-high, ~25% faster (21 s function median, agentic ~85 s), ~4× the list price ($0.075/pass; quota use assumed to track list price, unverified) |
 | Builder fallback | Sonnet 5.5 low, `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) | Claude | C: 7/7, 17–29 s, $0.09; when Codex cannot run the task |
@@ -47,7 +47,7 @@ private `dispatchbench` (formerly `model-routing-bench`). IDs/flags are bench-ti
   sol61-high matches Codex flagships on lint (0.03 warnings/solution) and complexity;
   ~28% faster than reference, never worse growth. Blind Fable read: 20 solutions, 7.25/10,
   no blocks (all 3 blocks were sonnet-medium); no high/xhigh code-quality deficit observed.
-- Trusted Codex builders (2026-10-23, same report): gpt-6.1-sol high and gpt-6-astra medium never failed on any set (function 60/60, L7 15/15, hard 35/35, agentic 12/12). sol61-high is the default: about a quarter of astra's list price, at the cost of time.
+- Trusted Codex builders (2026-10-23, same report): gpt-6.1-sol high and gpt-6-astra medium never failed on any set (function 60/60, L7 15/15, hard 35/35, agentic 12/12). sol61-high was the default until 2026-11-02 (now terra61-low, escalation sol61-high): about a quarter of astra's list price, at the cost of time.
 - Claude parity (2026-10-24, same report; exploratory after main results): haiku-high
   function 60/60, L7 15/15, hard 35/35, agentic 12/12; L1–L6 $0.0028/pass, ~4x cheaper
   than sonnet-medium. Median 14.7 s vs sonnet-medium 10.1 s; long tail p90 38 s.
@@ -62,23 +62,24 @@ private `dispatchbench` (formerly `model-routing-bench`). IDs/flags are bench-ti
 
 ## Escalation ladder
 
-Default: gpt-6.1-sol high (2026-10-23, replacing luna high; operator proposed astra medium;
-sol61-high matched its pass rate at ~quarter list price). Switch:
+Default: gpt-6.1-terra low.
+2026-11-02: dispatchbench f77c040 found terra61-low fast had equal pass rate, ~3x lower cost and 2.5–3x faster; sol61-high remains the escalation for uncovered work, including L7 hard problems p13–p15, which terra was not run on.
+Switch:
 `CRSS_CODEX_BUILDER_MODEL=gpt-6-astra CRSS_CODEX_BUILDER_EFFORT=medium`.
 Codex-first preserves Claude quota; repairs/reviews spend it.
 
-sol61-high → light check (tests/examples) → Haiku low repair on failure → astra-medium → Sonnet builder.
+terra61-low → light check (tests/examples) → Haiku low repair on failure → astra-medium → Sonnet builder.
 
 - Hop on a failed check or Haiku review, or when the task needs judgement, ambiguity resolution or architecture.
 - Log every hop in the [routing log](#self-improving-routing) so the table self-corrects.
-- Don't build with luna (any effort) or sol61 medium: luna low/medium barely reason and failed 40% of the hard set; luna high and sol61 medium miss without a gate. Revisit the default if sol61-high's logged fail rate exceeds ~5%.
+- Don't build with luna (any effort) or sol61 medium: luna low/medium barely reason and failed 40% of the hard set; luna high and sol61 medium miss without a gate. Revisit the default if terra61-low's logged fail rate exceeds ~5% (then fall back to sol61-high).
 
 ### Quota ladder
 
 luna and gpt-6.1-sol share one Codex quota (one `limit_id: "codex"`); astra is assumed to share it too (no astra rollout checked), so hopping between Codex models never escapes a quota-out.
 
-- **Codex out** (only on the exact quota error text) → one-shot builds go to Haiku low (`claude -p --model haiku --effort low --tools ""`), same light check; a failed check, or a task where a miss is costly, goes to Haiku high. A whole lane (`new-session` failover) becomes a Sonnet low builder. Return to sol61-high when Codex resets.
-- **Claude out** → Codex-only: sol61-high builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
+- **Codex out** (only on the exact quota error text) → one-shot builds go to Haiku low (`claude -p --model haiku --effort low --tools ""`), same light check; a failed check, or a task where a miss is costly, goes to Haiku high. A whole lane (`new-session` failover) becomes a Sonnet low builder. Return to terra61-low when Codex resets.
+- **Claude out** → Codex-only: terra61-low builds, gpt-6.1-sol reviews; the PR says "single-family review (Claude quota-out)".
 - **Both out** → pause and report the exact error text.
 - `--fallback-model` cannot detect cross-family quota-outs; `new-session` owns this ladder.
   Availability/retry semantics: [spawn guide](spawn-guide.md#choosing-a-tier-right-size-the-model-save-quota).
@@ -98,7 +99,7 @@ Claude-out permits single-family review with `models_ran`.
 
 - Builder trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0` (input ~28k → ~14.5k tokens).
 - Tool-less one-shots (stripped harness) may add `-c include_environment_context=false -c model_instructions_file=<file>` and disable the shell features: input ~14.7k → ~6.2k tokens, same accuracy. The host `AGENTS.md` in `$CODEX_HOME` cannot be dropped by any flag (Codex 0.163).
-- Commits from a sandboxed builder in a linked worktree: `workspace-write` makes `.git` read-only, so `git commit` fails with `index.lock': Read-only file system` (PR 218 case study, 2026-10-28; reproduced on codex-cli 0.164). Run `mapfile -d '' -t R < <(codex-git-roots -0 "$dir")` (`scripts/codex-git-roots.sh`, deployed as `codex-git-roots`) and add `"${R[@]}"` to `codex exec -s workspace-write -C "$dir"`codex exec -s workspace-write -C "$dir"`: it adds the worktree gitdir plus the common `objects`/`refs`/`logs` as writable roots. Adding the `.git` dir itself does not work. Agent Host MCP workers keep the common dir read-only on purpose (the server commits), so they need no flag.
+- Commits from a sandboxed builder in a linked worktree: `workspace-write` makes `.git` read-only, so `git commit` fails with `index.lock': Read-only file system` (PR 218 case study, 2026-10-28; reproduced on codex-cli 0.164). Run `mapfile -d '' -t R < <(codex-git-roots -0 "$dir")` (`scripts/codex-git-roots.sh`, deployed as `codex-git-roots`) and add `"${R[@]}"` to `codex exec -s workspace-write -C "$dir"`: it adds the worktree gitdir plus the common `objects`/`refs`/`logs` as writable roots. Adding the `.git` dir itself does not work. Agent Host MCP workers keep the common dir read-only on purpose (the server commits), so they need no flag.
 - Priority (fast mode): on by default since 2026-10-30 (operator: benchmarks showed the standard tier was too slow; it was on 10-23 to 10-28, then off 10-28 to 10-30). Set in `~/.codex/config.toml` (`service_tier = "priority"`, so interactive Codex gets it too), in the recipe via `-c service_tier=priority`, and by `CRSS_CODEX_BUILDER_TIER` (default `priority`) for `--task-type build` lanes, which passes the flag explicitly so lanes keep it on hosts or benches without that config. Claude fast mode stays off except a deadline push the operator asks for. Hard set, run side by side: sol61-high fast 35/35 at 18.9 s median vs 30.1 s default (37% faster), same output size and code quality; about 2x the list price (published multiplier). No gain on luna.
 
 ## Self-improving routing
