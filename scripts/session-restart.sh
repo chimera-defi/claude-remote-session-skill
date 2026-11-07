@@ -64,9 +64,9 @@ CPID="" R="" SID="" PIN="" EXP="" REGV="" LAUNCH="" RW="" RM="" FSTATUS="" NSUF=
 REG_SID="" REG_VER="" REG_STATUS="" PREV_HAS=0 PREV="" ARGV=() NARGV=() CA=()
 out() { echo "session-restart: $S: $*"; }
 protected() {
-  local v
+  local v rc
   [ -n "$CRSS_PROTECT_NAMES" ] || return 1
-  for v in "$1" "${1//_/-}" "${1//-/_}"; do grep -qiE -- "$CRSS_PROTECT_NAMES" <<<"$v" && return 0; done
+  for v in "$1" "${1//_/-}" "${1//-/_}"; do grep -qiE -- "$CRSS_PROTECT_NAMES" <<<"$v" 2>/dev/null; rc=$?; [ "$rc" -ne 1 ] && return 0; done
   return 1
 }
 if protected "$S"; then out "REFUSED(protected) session name matches CRSS_PROTECT_NAMES; never restarted"; exit 1; fi
@@ -192,7 +192,7 @@ restore_pin() { if [ "$PREV_HAS" = 1 ]; then printf '%s\n' "$PREV" > "$PIN"; els
 # run_flow: pin, /exit, relaunch, verify. 0 OK, 1 refused before the relaunch (nothing changed), 3 FAIL,
 # 4 SKIPPED. FSTATUS holds the status text for every return.
 run_flow() {
-  local typed t0 newpid vf="" NRC NRES
+  local typed t0 newpid vf="" NRC NRES cap why rs
   PREV_HAS=0; PREV=""
   if [ -e "$PIN" ]; then PREV_HAS=1; PREV="$(head -1 "$PIN")"; fi
   mkdir -p "$(dirname "$PIN")"
@@ -201,22 +201,31 @@ run_flow() {
   fi
   tmux send-keys -t "=$S:" -l '/exit'
   sleep "$POLL"
-  typed="$(tmux capture-pane -e -p -t "=$S:" 2>/dev/null | python3 -c "$PANE_PY" typed)"
-  if [ "$typed" != /exit ]; then
+  cap="$(tmux capture-pane -e -p -t "=$S:" 2>/dev/null)"
+  typed="$(python3 -c "$PANE_PY" typed <<<"$cap")"
+  why="$(python3 -c "$PANE_PY" busy <<<"$cap")"
+  reg_read "$CPID"
+  rs=""
+  if [ "$typed" != /exit ]; then rs="prompt shows '$typed', not /exit"
+  elif [ -n "$why" ] && [ "$why" != "typed input on the prompt" ]; then rs="$why"
+  elif [ -n "$REG_STATUS" ] && [ "$REG_STATUS" != idle ]; then rs="registry status '$REG_STATUS'"
+  fi
+  if [ -n "$rs" ]; then
     for _ in 1 2 3 4 5; do tmux send-keys -t "=$S:" BSpace; done
-    restore_pin; FSTATUS="REFUSED(busy) prompt shows '$typed', not /exit"; return 1
+    restore_pin; FSTATUS="REFUSED(busy) $rs"; return 1
   fi
   tmux send-keys -t "=$S:" Enter
   t0="$(date +%s)"
   while :; do
     sleep "$POLL"
-    if grep -qF 'Exit and stop tasks' <<<"$(tmux capture-pane -p -t "=$S:" 2>/dev/null)"; then
+    if kill -0 "$CPID" 2>/dev/null && grep -qF 'Exit and stop tasks' <<<"$(tmux capture-pane -p -t "=$S:" 2>/dev/null)"; then
       tmux send-keys -t "=$S:" Escape; restore_pin
       FSTATUS="SKIPPED(scheduled-tasks) exit dialog cancelled; session unchanged"; return 4
     fi
     if [ $(( $(date +%s) - t0 )) -ge "$WAIT" ]; then
       FSTATUS="FAIL(timeout) no verified relaunch after ${WAIT}s; pin left in place"; return 3
     fi
+    if ! kill -0 "$CPID" 2>/dev/null; then printf '%s\n' "$SID" > "$PIN.tmp.$$" && mv -f "$PIN.tmp.$$" "$PIN"; fi
     newpid="$(claude_under "$(tmux display-message -p -t "=$S:" '#{pane_pid}' 2>/dev/null)")"
     if [ -z "$newpid" ] || [ "$newpid" = "$CPID" ] || ! reg_read "$newpid"; then continue; fi
     for _ in 1 2 3 4 5; do [ "$REG_SID" = "$SID" ] && break; sleep 2; reg_read "$newpid"; done
@@ -265,7 +274,11 @@ main() {
       [ "$NUDGE" = 1 ] && nudge
       out "$FSTATUS$NSUF"; exit 0
     fi
-    if [ "$rc" = 1 ] && [ "$WAITIDLE" = 1 ]; then count=0; sleep "$INTERVAL"; continue; fi
+    if [ "$rc" = 1 ] && [ "$WAITIDLE" = 1 ]; then
+      count=0
+      if [ $(( $(date +%s) - t0 )) -ge "$MAX_WAIT" ]; then out "REFUSED(deadline) still not restartable after ${MAX_WAIT}s: $FSTATUS"; exit 1; fi
+      sleep "$INTERVAL"; continue
+    fi
     out "$FSTATUS"
     [ "$rc" = 3 ] && exit 3
     exit 1
