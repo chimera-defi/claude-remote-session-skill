@@ -54,11 +54,12 @@ has "broken-warn-notprefix" "$out" "also_not_crss_prefixed=1"
 has "broken-rules-no-import-warn" "$out" "no @import of local.md found"
 has "broken-local-absent"   "$out" "local.md: absent"
 
-# ── PROTECT from config.sh is actually honoured by the running script (not
-#    just reported by `overlay`) — belt-and-suspenders alongside
-#    test-session-doctor.sh's own env-based PROTECT coverage.
-protect_out="$(CRSS_HOME="$GOOD" bash -c "source '$DOCTOR'; echo \"PROTECT=[\$PROTECT]\"")"
-has "protect-from-config-file" "$protect_out" "PROTECT=[claude-remote|goodtest]"
+# ── CRSS_PROTECT_NAMES from config.sh is actually honoured by the running script
+#    (not just reported by `overlay`) — belt-and-suspenders alongside
+#    test-session-doctor.sh's own env-based protection coverage.
+protect_out="$(CRSS_HOME="$GOOD" bash -c "source '$DOCTOR'; echo \"NAMES=[\$CRSS_PROTECT_NAMES]\"; _is_protected cs_goodtest_x && echo GOODTEST-PROTECTED")"
+has "protect-from-config-file" "$protect_out" "NAMES=[claude-remote|goodtest]"
+has "protect-from-config-file-honoured" "$protect_out" "GOODTEST-PROTECTED"
 
 # ── overlay section is folded into the default `report` output too ─────────
 # Checked statically (grep on the source), not by running `report` mode: a

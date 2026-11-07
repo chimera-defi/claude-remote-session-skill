@@ -31,6 +31,7 @@ set -uo pipefail
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
 # shellcheck source=scripts/crss-lib.sh
 . "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
+declare -F tmux_to_base >/dev/null || { echo "${0##*/}: $_crss_lib is out of date; install crss-lib.sh next to this script" >&2; exit 2; }
 _crss_load_config
 
 # Session-name prefix: see crss-lib.sh.
@@ -72,16 +73,6 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
   cpid=$(pgrep -P "$pid" 2>/dev/null | head -1)
   [ -n "$cpid" ] || return 1
   readlink "/proc/$cpid/cwd" 2>/dev/null
-}
-
-# tmux_to_base: <prefix>_slug -> <prefix>-slug (first "_" becomes "-"), or "" when not ours.
-# Mirrors session-doctor.sh; a local copy, because each script here is standalone.
-tmux_to_base() {
-  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
-    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
-  else
-    echo ""
-  fi
 }
 
 # worktree_of <tmux-session>: best guess at the worktree on disk when no live process is found.

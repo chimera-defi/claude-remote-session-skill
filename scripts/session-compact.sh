@@ -12,35 +12,13 @@
 #   --managed-only limits sweep to names in $SESSION_COMPACT_MANAGED_FILE; a missing list means zero sessions.
 set -uo pipefail
 
-# Admission for autonomous compaction goes through the single Agent Host helper.
-_crss_admit() {
-  local helper_dir helper
-  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
-    helper="$helper_dir/autonomous-admission.sh"
-  else
-    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
-  fi
-  bash "$helper" "$@"
-}
+# Shared helpers: see crss-lib.sh.
+_crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
+# shellcheck source=scripts/crss-lib.sh
+. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
+declare -F _crss_admit _find_helper _encode_cwd >/dev/null || { echo "${0##*/}: $_crss_lib is out of date; install crss-lib.sh next to this script" >&2; exit 2; }
 
 # ── helpers ──
-
-# _find_helper <basename> — co-located <basename>.sh first, then PATH; fails safe on a miss.
-_find_helper() {
-  local base="$1" here
-  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-  if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
-  if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
-  return 1
-}
-
-# _encode_cwd <path> — transcript dir name. '.' -> '-' must run before '/' -> '-'.
-_encode_cwd() {
-  local p="$1"
-  p="${p//./-}"
-  printf '%s\n' "${p//\//-}"
-}
 
 # _compact_marker_newer <cwd> <baseline> -> newest compact marker timestamp after baseline, or empty.
 # Python does the string compare: POSIX [ ] has no string ordering and [[ ]] is avoided here.

@@ -153,7 +153,7 @@ cat <<SCRIPT_EOF
         self.assertEqual(p.returncode,0,p.stderr); self.assertEqual(self.calls(),'')
     def test_paste_denies_zero_tmux_calls(self):
         source=(ROOT/'scripts/session-handoff.sh').read_text()
-        helper=source[source.index('_crss_admit()'):source.index('# ── Host-local overlay')]
+        helper="source '"+str(ROOT/'scripts/crss-lib.sh')+"'"  # _crss_admit lives in the shared lib
         function=source[source.index('_paste_and_wait()'):source.index('# _model_of')]
         p=self.run_shell(helper+'\n'+function+'\n_paste_and_wait fake frag message',CRSS_AUTONOMOUS='1')
         self.assertEqual(p.returncode,2,p.stderr); self.assertIn('admission-denied',p.stdout)

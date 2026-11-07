@@ -39,15 +39,26 @@ LOADER_SOURCE_LINES=(
   '. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }'
   '_crss_load_config'
 )
-# has_loader_window FILE: the 4 loader lines appear consecutively in FILE.
+# has_loader_window FILE [no-config]: the 3 lookup lines appear consecutively in FILE, then the
+# optional `declare -F` helper check, then _crss_load_config. With no-config the last line is not
+# checked: session-compact.sh loads no config, and session-resume.sh loads it after its admission
+# gate (checked below).
 has_loader_window() {
-  local n
+  local n next
   n="$(grep -n -F -x -- "${LOADER_SOURCE_LINES[0]}" "$1" | head -1 | cut -d: -f1)"
   [ -n "$n" ] || return 1
-  [ "$(sed -n "${n},$((n+3))p" "$1")" = "$(printf '%s\n' "${LOADER_SOURCE_LINES[@]}")" ]
+  [ "$(sed -n "${n},$((n+2))p" "$1")" = "$(printf '%s\n' "${LOADER_SOURCE_LINES[@]:0:3}")" ] || return 1
+  [ "${2:-}" = no-config ] && return 0
+  next=$((n+3)); [[ "$(sed -n "${next}p" "$1")" == "declare -F "* ]] && next=$((next+1))
+  [ "$(sed -n "${next}p" "$1")" = "${LOADER_SOURCE_LINES[3]}" ]
 }
+ok "loader-sources-lib-session-compact.sh" "$(has_loader_window "$REPO/scripts/session-compact.sh" no-config && echo yes || echo no)" yes
+admit_n="$(grep -n '_crss_admit restart' "$REPO/scripts/session-resume.sh" | head -1 | cut -d: -f1)"
+load_n="$(grep -nx '_crss_load_config' "$REPO/scripts/session-resume.sh" | head -1 | cut -d: -f1)"
+ok "resume-admits-before-config" "$([ -n "$admit_n" ] && [ -n "$load_n" ] && [ "$admit_n" -lt "$load_n" ] && echo yes || echo no)" yes
 for f in "${LOADER_FILES[@]}"; do
-  ok "loader-sources-lib-$f" "$(has_loader_window "$REPO/scripts/$f" && echo yes || echo no)" yes
+  mode=""; [ "$f" = session-resume.sh ] && mode=no-config
+  ok "loader-sources-lib-$f" "$(has_loader_window "$REPO/scripts/$f" "$mode" && echo yes || echo no)" yes
   ok "no-loader-copy-$f" "$(grep -qE '_crss_load_config\(\) \{|CRSS-CONFIG-LOADER' "$REPO/scripts/$f" && echo yes || echo no)" no
 done
 for f in "${PREFIX_RE_FILES[@]}"; do
@@ -57,6 +68,25 @@ done
 ok "lib-defines-each-function-once" "$(grep -cE '^_crss_(load_config|valid_prefix_tok|prefix_init)\(\) \{' "$LIB")" 3
 other_defs="$(grep -lE '_crss_(load_config|prefix_init|valid_prefix_tok)\(\) \{' "$REPO"/scripts/*.sh | grep -v '/crss-lib\.sh$' || true)"
 ok "no-other-file-defines-lib-functions" "$other_defs" ""
+# Shared helpers (admission, lookup, tmux naming, cwd encoding, protection) live once, in the lib.
+ok "lib-defines-shared-helpers-once" "$(grep -cE '^(_crss_admit|_find_helper|tmux_to_base|_encode_cwd|_is_protected)\(\) \{' "$LIB")" 5
+shared_defs="$(grep -lE '^(_crss_admit|_find_helper|tmux_to_base|_encode_cwd|_is_protected|protected)\(\) \{' "$REPO"/scripts/*.sh | grep -v '/crss-lib\.sh$' || true)"
+ok "no-other-file-defines-shared-helpers" "$shared_defs" ""
+# A script that calls a shared helper checks it right after sourcing (declare -F), so an out-of-date
+# lib exits 2 instead of each call returning 127 (which _is_protected callers read as "not protected").
+SHARED_HELPERS=(_crss_admit _find_helper tmux_to_base _encode_cwd _is_protected)
+unchecked=""
+for f in "$REPO"/scripts/*.sh; do
+  [ "${f##*/}" = crss-lib.sh ] && continue
+  src_n="$(grep -n -F -x -- "${LOADER_SOURCE_LINES[2]}" "$f" | head -1 | cut -d: -f1)"
+  check=""; [ -n "$src_n" ] && check="$(sed -n "$((src_n+1))p" "$f")"
+  for h in "${SHARED_HELPERS[@]}"; do
+    # grep -c, not -q: with pipefail, -q exiting early SIGPIPEs the first grep on a big file.
+    [ "$(grep -v '^[[:space:]]*#' "$f" | grep -cE "(^|[^[:alnum:]_])$h([^[:alnum:]_]|\$)")" -gt 0 ] || continue
+    [[ "$check" == "declare -F "* && " $check " == *" $h "* ]] || unchecked+=" ${f##*/}:$h"
+  done
+done
+ok "helper-callers-check-lib" "$unchecked" ""
 
 # ── 2. Loader behavior — source the lib into a fresh bash process per scenario, then call it
 
@@ -138,6 +168,27 @@ has "invalid-legacy-element-drops-whole-list" "$out" "RE=px"
 has "invalid-legacy-element-not-oldhost" "$(grep -qF 'RE=px|oldhost' <<<"$out" && echo yes || echo no)" "no"
 has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
 
+# ── 3b. Shared helpers: behavior against the lib ─────────────────────────────
+has "protected-match" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES=claude-remote; _is_protected cs_claude_remote; echo RC=\$?")" "RC=0"
+has "protected-no-match" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES=claude-remote; _is_protected cs_other; echo RC=\$?")" "RC=1"
+has "protected-bad-regex-fails-closed" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES='bad('; _is_protected anything; echo RC=\$?")" "RC=0"
+has "protected-leading-dash" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES='-x'; _is_protected 'a-x'; echo RC=\$?")" "RC=0"
+
+# _find_helper and _crss_admit look beside the CALLING script (BASH_SOURCE[1]), not the lib.
+FH="$(mktemp -d)"
+cat > "$FH/caller.sh" <<EOF
+#!/usr/bin/env bash
+. '$LIB'
+_find_helper zzhelper
+_crss_admit launch subj
+EOF
+: > "$FH/zzhelper.sh"
+echo 'echo "ADMIT $*"' > "$FH/autonomous-admission.sh"
+out="$(bash "$FH/caller.sh" 2>&1)"
+ok "find-helper-beside-caller" "$(head -1 <<<"$out")" "$FH/zzhelper.sh"
+ok "admit-beside-caller" "$(sed -n 2p <<<"$out")" "ADMIT launch subj"
+rm -rf "$FH"
+
 # ── 4. Installed layout: a script without crss-lib.sh beside it exits 2; with it, it runs
 E2E="$(mktemp -d)"
 mkdir -p "$E2E/alone" "$E2E/beside"
@@ -149,6 +200,23 @@ has "missing-lib-names-crss-lib" "$(cat "$E2E/alone.err")" "crss-lib.sh"
 cp "$REPO/scripts/session-registry.sh" "$LIB" "$E2E/beside/"
 bash "$E2E/beside/session-registry.sh" -h >/dev/null 2>&1; rc=$?
 ok "lib-beside-copy-works" "$rc" 0
+# An out-of-date lib (here: one without _is_protected) stops session-restart before its protection
+# check; with the current lib the same run refuses the protected name. Stub tmux/systemctl come first
+# on PATH so a regression past the check can never reach the live tmux server.
+mkdir -p "$E2E/stale" "$E2E/stubs"
+printf '#!/bin/sh\nexit 1\n' > "$E2E/stubs/tmux"; cp "$E2E/stubs/tmux" "$E2E/stubs/systemctl"; chmod +x "$E2E/stubs/"*
+cp "$REPO/scripts/session-restart.sh" "$E2E/stale/"
+sed '/^_is_protected() {/,/^}/d' "$LIB" > "$E2E/stale/crss-lib.sh"
+ok "stale-lib-fixture-lacks-helper" "$(grep -c '^_is_protected()' "$E2E/stale/crss-lib.sh")" 0
+env -i HOME="$E2E" PATH="$E2E/stubs:/usr/bin:/bin" CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
+  bash "$E2E/stale/session-restart.sh" cs_keep --dry-run >"$E2E/stale.out" 2>&1; rc=$?
+ok "stale-lib-exits-2" "$rc" 2
+has "stale-lib-says-out-of-date" "$(cat "$E2E/stale.out")" "is out of date; install crss-lib.sh next to this script"
+ok "stale-lib-never-reaches-plan" "$(grep -c 'REFUSED' "$E2E/stale.out")" 0
+cp "$LIB" "$E2E/stale/crss-lib.sh"
+env -i HOME="$E2E" PATH="$E2E/stubs:/usr/bin:/bin" CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
+  bash "$E2E/stale/session-restart.sh" cs_keep --dry-run >"$E2E/stale.out" 2>&1; rc=$?
+ok "current-lib-refuses-protected" "$rc:$(grep -c 'REFUSED(protected)' "$E2E/stale.out")" "1:1"
 rm -rf "$E2E"
 
 finish "test-crss-overlay-config"
