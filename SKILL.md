@@ -61,6 +61,8 @@ session-doctor reap <name> [--force] [--allow-young] [--keep-registry] [--keep-w
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
                                        # bring a DEAD session back on its own unit + transcript
+session-restart <name> [--dry-run] [--wait-idle] [--nudge]
+                                       # move a LIVE idle session onto the installed CLI, same transcript
 ```
 
 **Start sessions from the phone** with a Remote Control spawn server: `session-spawn-server install <dir>`
@@ -72,6 +74,13 @@ Manual `claude --resume <uuid> …` can lose the binary/`--dangerously-skip-perm
 and stall on approval; bare `systemctl --user start` can open a fresh conversation.
 Own-unit/transcript/flag preservation and live-holder refusal: header of
 `scripts/session-resume.sh`, pinned by `tests/test-session-resume.sh`.
+
+**Update live sessions with `session-restart`**, not by killing panes: it refuses a busy
+session (`--wait-idle` waits for an idle point instead), pins the running sessionId, sends
+`/exit`, and checks that the start-script loop relaunched the same conversation on the new
+version. Busy rules, refusals and exit codes are in the header of `scripts/session-restart.sh`,
+pinned by `tests/test-session-restart.sh`. Fleet procedure:
+[`references/session-lifecycle.md`](references/session-lifecycle.md).
 
 **One unit's restart must not kill the tmux server.** Start scripts launch tmux through
 `systemd-run --user --scope`, so the shared server never sits in a session unit's cgroup
