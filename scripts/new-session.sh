@@ -16,30 +16,11 @@ _crss_admit() {
   bash "$helper" "$@"
 }
 
-# Host overlay: $CRSS_HOME/config.sh is parsed, never sourced. Env vars already set win; a missing file is fine.
-# See examples/crss-overlay/README.md and tests/test-crss-overlay-config.sh.
-# CRSS-CONFIG-LOADER-START
-_crss_load_config() {
-  local _crss_home _crss_cfg _crss_line _crss_key _crss_val
-  _crss_home="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}"
-  export CRSS_HOME="$_crss_home"
-  _crss_cfg="$_crss_home/config.sh"
-  [ -r "$_crss_cfg" ] || return 0
-  while IFS= read -r _crss_line || [ -n "$_crss_line" ]; do
-    [[ "$_crss_line" =~ ^(CRSS_[A-Z0-9_]+)=(.*)$ ]] || continue
-    _crss_key="${BASH_REMATCH[1]}"
-    _crss_val="${BASH_REMATCH[2]}"
-    _crss_val="${_crss_val%$'\r'}"
-    case "$_crss_val" in
-      \"*\") _crss_val="${_crss_val#\"}"; _crss_val="${_crss_val%\"}" ;;
-      \'*\') _crss_val="${_crss_val#\'}"; _crss_val="${_crss_val%\'}" ;;
-    esac
-    if [ -z "${!_crss_key+x}" ]; then export "${_crss_key}=${_crss_val}"; fi
-  done < "$_crss_cfg"
-  return 0
-}
+# Host overlay config: see crss-lib.sh.
+_crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
+# shellcheck source=scripts/crss-lib.sh
+. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
 _crss_load_config
-# CRSS-CONFIG-LOADER-END
 : "${CRSS_WORKSPACE:=$HOME/workspace}"
 : "${CRSS_SESSIONS_DIR:=$HOME/.sessions}"
 : "${CRSS_CLAUDE_HOME:=$HOME/.claude}"
@@ -59,39 +40,8 @@ if [ -z "${CRSS_CODEX_BIN:-}" ]; then
 fi
 : "${CRSS_CODEX_ARGS:=}"
 
-# Session-name prefixes. CRSS_SESSION_PREFIX names new sessions (default cs). CRSS_LEGACY_PREFIXES
-# (|-separated) are recognised when parsing old names but never generated. Both feed _crss_prefix_re.
-# Elements must match ^[a-z][a-z0-9]{0,15}$, which also makes them regex-safe. Any invalid legacy
-# element drops the whole list: an empty pattern would match every session in a reap path.
-# Copied verbatim in other scripts; see tests/test-crss-overlay-config.sh.
-# CRSS-PREFIX-RE-START
-_crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
-if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
-  CRSS_SESSION_PREFIX=cs
-fi
-if ! _crss_valid_prefix_tok "$CRSS_SESSION_PREFIX"; then
-  echo "crss: CRSS_SESSION_PREFIX '$CRSS_SESSION_PREFIX' is invalid (want ^[a-z][a-z0-9]{0,15}\$) — falling back to 'cs'" >&2
-  CRSS_SESSION_PREFIX=cs
-fi
-_crss_prefix_re="$CRSS_SESSION_PREFIX"
-if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
-  _crss_legacy_re=""
-  _crss_legacy_ok=yes
-  while IFS= read -r _crss_legacy_tok; do
-    [ -n "$_crss_legacy_tok" ] || continue
-    if _crss_valid_prefix_tok "$_crss_legacy_tok"; then
-      _crss_legacy_re="${_crss_legacy_re}|${_crss_legacy_tok}"
-    else
-      _crss_legacy_ok=no
-    fi
-  done < <(printf '%s\n' "$CRSS_LEGACY_PREFIXES" | tr '|' '\n')
-  if [ "$_crss_legacy_ok" = yes ]; then
-    _crss_prefix_re="${_crss_prefix_re}${_crss_legacy_re}"
-  else
-    echo "crss: CRSS_LEGACY_PREFIXES '$CRSS_LEGACY_PREFIXES' has an invalid element (want each ^[a-z][a-z0-9]{0,15}\$) — ignoring ALL legacy prefixes" >&2
-  fi
-fi
-# CRSS-PREFIX-RE-END
+# Session-name prefix: see crss-lib.sh.
+_crss_prefix_init
 
 # Overlay state line, shown in --dry-run and the spawn confirmation so a missing overlay is visible.
 _crss_overlay_cfg_state=absent; [ -f "$CRSS_HOME/config.sh" ] && _crss_overlay_cfg_state=found
@@ -596,7 +546,7 @@ else
 fi
 
 # Naming
-# Name is <prefix>-<alias>-<MMDD-HHMM>. Prefix is $CRSS_SESSION_PREFIX (see CRSS-PREFIX-RE above).
+# Name is <prefix>-<alias>-<MMDD-HHMM>. Prefix is $CRSS_SESSION_PREFIX (see crss-lib.sh).
 # session-doctor does not parse the date, so the order is free.
 ID=$(date +%m%d-%H%M)
 # In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.

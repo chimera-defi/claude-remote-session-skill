@@ -12,7 +12,7 @@ export CRSS_SESSION_PREFIX=px
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 export HOME="$T/home"; mkdir -p "$HOME"
 BIN="$T/bin"; mkdir -p "$BIN"
-cp "$HERE/../scripts/new-session.sh" "$BIN/new-session.sh"
+cp "$HERE/../scripts/new-session.sh" "$BIN/new-session.sh"; cp "$HERE/../scripts/crss-lib.sh" "$BIN/crss-lib.sh"
 cat > "$BIN/systemctl" <<'EOS'
 #!/usr/bin/env bash
 [ -n "${STUB_SYSTEMCTL_FAIL:-}" ] && { echo "Failed to enable unit" >&2; exit 1; }
