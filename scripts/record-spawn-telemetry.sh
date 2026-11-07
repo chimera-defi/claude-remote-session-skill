@@ -7,24 +7,15 @@
 #        record-spawn-telemetry.sh --reap <session> <forced:yes|no> [outcome] [note] [clean:yes|no|unknown]
 #        record-spawn-telemetry.sh --tier-of <session>   # prints the tier of its latest spawn, else nothing
 #        record-spawn-telemetry.sh --whoami   # prints launcher name and session id, tab-separated
-#   --reap appends a teardown event (called by session-doctor) through this same
-#   path resolution. outcome is only what the caller states (ok|failed|escalated|
-#   abandoned); default "unknown" — teardown cannot tell whether the task succeeded.
+#   --reap: teardown event from session-doctor. outcome is what the caller states; default unknown.
 #
-# Env overrides (for testing / non-standard installs):
-#   CLAUDE_SKILLS_DIR   default: $HOME/.claude/skills
-#   TELEMETRY_ROOT       default: this script's repo root (git rev-parse), else
-#                         $CRSS_WORKSPACE/claude-remote-session-skill (see
-#                         examples/crss-overlay/README.md)
-#   CRSS_TEST_SUITE      set (by tests/lib.sh): spawn/reap writes need an explicit
-#                         TELEMETRY_ROOT, else they are skipped
+# Env overrides (tests / non-standard installs): CLAUDE_SKILLS_DIR; TELEMETRY_ROOT (else the repo
+# root, then $CRSS_WORKSPACE/claude-remote-session-skill). CRSS_TEST_SUITE with no TELEMETRY_ROOT
+# skips writes.
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -53,16 +44,8 @@ FOLDERNAME="${1:-}"; ALIAS="${2:-}"; REMOTE_NAME="${3:-}"; SESSION="${4:-}"; TYP
 TIER="${8:-}"; EFFORT="${9:-}"; TIER_REASON="${10:-}"; COMPACT_WINDOW="${11:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-# This script is deployed as a flat copy to ~/.local/bin (see SKILL.md — "Scripts
-# are local-only") for every real spawn, so `git -C "$SCRIPT_DIR" rev-parse` fails
-# there (no .git above ~/.local/bin) and must NOT fall back to a path derived from
-# the deployed location — that silently scatters events under ~/.local/artifacts/
-# instead of the repo (caught via a live spawn: event landed at
-# ~/.local/artifacts/telemetry/events.jsonl, not the repo, before this fix).
-# git rev-parse still succeeds when this script runs from the repo checkout
-# (tests/, or scripts/ during dev), so prefer it there; otherwise fall back to
-# CRSS_WORKSPACE/claude-remote-session-skill (host-local overlay dir + this
-# project's own repo name, not a host-specific value).
+# Deployed as a flat copy to ~/.local/bin, where git finds no repo: never derive the path from
+# SCRIPT_DIR, or events scatter outside the repo. Prefer git from a checkout, else CRSS_WORKSPACE.
 REPO_ROOT="${TELEMETRY_ROOT:-}"
 if [ -z "$REPO_ROOT" ]; then
   REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$CRSS_WORKSPACE/claude-remote-session-skill"
@@ -70,8 +53,7 @@ fi
 SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
 
-# Shared launcher identity for spawn events and --whoami. Only ask tmux
-# inside a pane; Desktop callers must not inherit an unrelated session.
+# Ask tmux only inside a pane: Desktop callers must not inherit an unrelated session.
 # Never reads messaging, OAuth or account environment variables.
 _launcher_detect() {
   L_NAME="${CRSS_LAUNCHER:-}"
@@ -101,10 +83,8 @@ PYEOF
   exit 0
 fi
 
-# Test-suite quarantine: tests/lib.sh exports CRSS_TEST_SUITE=1 alongside a private
-# TELEMETRY_ROOT. If a test path loses TELEMETRY_ROOT (cleared, or a deployed copy
-# that falls back to the live checkout), write nothing rather than pollute the live
-# events.jsonl (76 test rows landed there 09-28..10-06). Reads above still work.
+# Test quarantine: with CRSS_TEST_SUITE set and no TELEMETRY_ROOT, write nothing, so tests never
+# pollute the live events.jsonl. Reads still work.
 if [ -n "${CRSS_TEST_SUITE:-}" ] && [ -z "${TELEMETRY_ROOT:-}" ]; then exit 0; fi
 
 if [ "${1:-}" = --reap ]; then
@@ -130,10 +110,7 @@ fi
 
 case "${1:-}" in --*) echo "unknown flag $1" >&2; exit 0 ;; esac
 
-# Context-size proxies: how much a freshly spawned session's global skill
-# catalog and project CLAUDE.md weigh, so a future scoping change has a
-# before/after baseline instead of guessing. Every lookup is best-effort —
-# a missing/unreadable dir just reports 0, it never aborts the spawn.
+# Context-size proxies (before/after baseline for scoping changes). Best-effort: a missing dir reports 0.
 skills_count=0
 skills_bytes=0
 if [ -d "$SKILLS_DIR" ]; then
@@ -142,9 +119,7 @@ if [ -d "$SKILLS_DIR" ]; then
 fi
 
 claude_md_bytes=0
-# An empty WORKDIR (arg 7 omitted) would otherwise probe "/.claude/CLAUDE.md"
-# and "/CLAUDE.md" — real filesystem paths, not "missing" ones — and
-# misattribute whatever happens to live at filesystem root to this spawn.
+# An empty WORKDIR must not probe /CLAUDE.md, which would misattribute a root-level file.
 if [ -n "$WORKDIR" ]; then
   for candidate in "$WORKDIR/.claude/CLAUDE.md" "$WORKDIR/CLAUDE.md"; do
     if [ -f "$candidate" ]; then

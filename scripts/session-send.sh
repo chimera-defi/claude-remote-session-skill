@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# session-send.sh — relay a follow-up message into an ALREADY-RUNNING session,
-# under a shorter name than `session-handoff send`. All the mechanics (queued-
-# input handling, bracketed paste, whitespace-only rejection, Enter + landed/
-# unverified verdict) live in session-handoff.sh's `send` mode — this is a
-# thin passthrough, not a second copy of that logic. A codex: target goes to
-# codex-send instead: a Codex desktop thread, queued through its local
-# app-server socket (replies still come by the bus).
+# session-send.sh: relay a follow-up message into a running session. A thin passthrough to
+# session-handoff.sh's `send` mode; codex: targets go to codex-send (a Codex desktop thread).
 #
 # Usage:
 #   session-send <tmux-session> <msg>
@@ -32,10 +27,8 @@ if [[ "${1:-}" == codex:* ]]; then
   fi
 fi
 
-# Resolve session-handoff co-located first, in the repo layout (.sh) and then the
-# deployed layout (flat copies in ~/.local/bin with the .sh dropped, see
-# session-git-prep.sh's header comment for why), and only then on PATH: systemd
-# user units run with a PATH that lacks ~/.local/bin.
+# Resolve session-handoff next to this script first, then on PATH. systemd user units run
+# with a PATH that lacks ~/.local/bin.
 if [ -f "$HERE/session-handoff.sh" ]; then
   exec bash "$HERE/session-handoff.sh" send "$@"
 elif [ -f "$HERE/session-handoff" ]; then
