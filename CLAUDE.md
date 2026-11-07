@@ -126,7 +126,7 @@ After merge, for each changed deployable:
 | Repo source | Deployed to | How |
 |---|---|---|
 | `scripts/crss-lib.sh` | `~/.local/bin/crss-lib.sh` | `diff` first, then `install -m 644`, **before** any script that sources it |
-| `scripts/<x>.sh`, `scripts/<x>.py` (not `crss-lib.sh`) | `~/.local/bin/<x>` | `diff` first, then `install -m 755`; a script that sources `crss-lib.sh` exits 2 if it is missing |
+| `scripts/<x>.sh`, `scripts/<x>.py` (not `crss-lib.sh`) | `~/.local/bin/<x>` | `diff` first, then `install -m 755`; a script that sources `crss-lib.sh` exits 2 if it is missing or out of date |
 | `agents/<name>.md` | `~/.claude/agents/<name>.md` | `diff` first, then `install -m 644` |
 | `SKILL.md`, `handoff/`, `references/`, `.claude/commands/create-session.md` | symlinked from the canonical checkout | canonical checkout must be on `origin/main` |
 

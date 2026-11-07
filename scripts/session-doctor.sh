@@ -45,7 +45,7 @@
 #     before removal, because `git worktree remove` deletes them and status=clean hides
 #     them. If archiving fails, the worktree is kept. See _wt_archive_ignored.
 #   * Other worktree removal is not automated; worktree-stale prints candidates for review.
-#   * registry-prune never touches a PROTECT-matching title, a title matching a live
+#   * registry-prune never touches a CRSS_PROTECT_NAMES-matching title, a title matching a live
 #     tmux session, or a requires_action row (stale >2xN days rows are flagged only).
 #     It mutates only with --apply and exits non-zero if any delete failed. registry-stale
 #     never deletes. reap's registry cleanup reuses the same check and delete for one
@@ -58,21 +58,16 @@ set -uo pipefail
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
 # shellcheck source=scripts/crss-lib.sh
 . "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
+declare -F _find_helper tmux_to_base _encode_cwd _is_protected >/dev/null || { echo "${0##*/}: $_crss_lib is out of date; install crss-lib.sh next to this script" >&2; exit 2; }
 _crss_load_config
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
-# CRSS_PROTECT_NAMES (default: claude-remote) is never reaped. An empty value must fall back to a pattern that
-# matches nothing: an empty ERE matches every line, which would protect everything.
+# CRSS_PROTECT_NAMES (default: claude-remote; an empty value gets the default too) is never reaped; _is_protected
+# (crss-lib.sh) matches it. An invalid ERE makes _is_protected protect everything (no reaps); say so.
 : "${CRSS_PROTECT_NAMES:=claude-remote}"
-PROTECT="$CRSS_PROTECT_NAMES"
-[ -n "$PROTECT" ] || PROTECT='^$'
-# An invalid ERE makes `grep -qiE "$PROTECT"` exit 2, which every caller reads as
-# "not protected". Fail closed instead: protect everything (no reaps) and say so.
-_crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_crss_rc" -le 1 ] || {
-  echo "session-doctor: CRSS_PROTECT_NAMES is not a valid regex ('$PROTECT'); treating EVERY session as protected until it's fixed" >&2
-  PROTECT='.'
-}
+_crss_rc=0; grep -qiE -- "$CRSS_PROTECT_NAMES" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_crss_rc" -le 1 ] ||
+  echo "session-doctor: CRSS_PROTECT_NAMES is not a valid regex ('$CRSS_PROTECT_NAMES'); treating EVERY session as protected until it's fixed" >&2
 
 # Session-name prefix: see crss-lib.sh.
 _crss_prefix_init
@@ -251,8 +246,8 @@ for s in cand:
 "
 }
 
-# _title_protected <title> — PROTECT is written for hyphenated machine names, but registry titles can
-# contain spaces. Squeeze whitespace to '-' before matching; PROTECT itself stays unwidened.
+# _title_protected <title> — CRSS_PROTECT_NAMES is written for hyphenated machine names, but registry titles can
+# contain spaces. Squeeze whitespace to '-' before matching; the pattern itself stays unwidened.
 # A failed producer counts as not protected. The trailing x sentinel keeps the exact bytes.
 _title_protected() {
   local t
@@ -1083,7 +1078,7 @@ _crss_overlay_report() {
 _rm_strip_ansi() { sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g'; }
 
 # _rm_handoff_blocked <plain-capture> — 0 blocked, 1 clear, 2 unavailable. Runs session-handoff's _is_blocked in a
-# subprocess (sourcing it would redefine tmux_to_base). Unavailable fails closed: reaping a lane that may be waiting
+# subprocess, so its globals stay out of this shell. Unavailable fails closed: reaping a lane that may be waiting
 # on the operator is the unsafe direction.
 _rm_handoff_blocked() {
   local helper rc

@@ -108,7 +108,7 @@ transcript history stay Claude-specific.
 
 Script lives at `~/.local/bin/new-session`; if missing, recreate it from
 `references/fallback-recipe.md` (or copy `scripts/new-session.sh`, with `scripts/crss-lib.sh`
-beside it as `crss-lib.sh`: without it the script exits 2).
+beside it as `crss-lib.sh`: without it, or with an older one, the script exits 2).
 
 **Deployed copies drift:** `~/.local/bin/*` are real copies of `scripts/`. Diff before
 `install`, and redeploy after landing — `CLAUDE.md` "Deploying".

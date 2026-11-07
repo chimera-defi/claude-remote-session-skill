@@ -1,7 +1,10 @@
 # shellcheck shell=bash
 # crss-lib.sh — functions shared by the crss scripts. Sourced, never run: it only defines
 # functions. Each script finds it next to its own resolved path (never via PATH) and exits 2
-# if it is missing. Deploy it to ~/.local/bin/crss-lib.sh before any script that sources it.
+# if it is missing. A script that calls a shared helper checks it with `declare -F` right after
+# sourcing, so an out-of-date lib also exits 2 (a missing _is_protected would otherwise return
+# 127, which callers read as "not protected"). Deploy it to ~/.local/bin/crss-lib.sh before any
+# script that sources it.
 # tests/test-crss-overlay-config.sh pins the behavior.
 
 # _crss_load_config — parses (never sources) $CRSS_HOME/config.sh for CRSS_* vars; an env var
