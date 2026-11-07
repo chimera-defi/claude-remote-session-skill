@@ -89,6 +89,30 @@ different CLI binary, and has no unit, so it stalls on approval prompts; a bare
 `systemctl start` of an externally-killed session started a *fresh* conversation because the
 `--continue` sentinel was only written when claude exited on its own.
 
+## Moving live sessions onto a new CLI: `scripts/session-restart.sh`
+
+Installing a new `claude` does not touch running sessions; each keeps the old binary until it
+restarts. `session-restart <name>` restarts one live session at an idle point and keeps its
+conversation. It writes the running sessionId to the start script's resume pin, sends `/exit`,
+and lets the supervisor loop relaunch `--resume <uuid>`. It then checks that the new process has
+the expected version, the same sessionId and the same `--remote-control` name. It refuses a
+busy session, a protected name (`CRSS_PROTECT_NAMES`) and a start script whose loop has no pin.
+It never fires the "Exit and stop tasks" dialog's exit: it cancels it (exit 4, session
+unchanged). The busy rules and exit codes are in the script header.
+
+Fleet update, after `claude update` (or a new `/usr/bin/claude`):
+
+1. `session-restart <name> --dry-run` on a few sessions: each prints `DRY-RUN` or the reason
+   it would refuse.
+2. Run one background job per session. Each waits for 3 idle polls (60s apart), restarts, then
+   nudges the session that wakeups and crons armed in the old process are gone:
+   `session-restart <name> --if-outdated --wait-idle --nudge > <log> 2>&1 &`.
+3. Read the last line of each log: `OK`, `UP-TO-DATE`, `SKIPPED(scheduled-tasks)` (the session has
+   in-session scheduled tasks: rerun once they are done, or leave it), `REFUSED(...)` or
+   `FAIL(...)` (exit 3: inspect that session).
+
+A resumed run keeps the pin file until it exits after 30s or more; the loop then removes it.
+
 ## Recommended cadence
 
 1. **Weekly:** `session-doctor.sh report`; if orphan units or dead tmux pile up,

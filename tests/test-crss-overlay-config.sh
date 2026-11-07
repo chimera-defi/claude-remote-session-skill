@@ -27,14 +27,14 @@ REPO="$HERE/.."
 
 # Every script that reads overlay config — keep this list in sync with
 # the scripts if a new one gains the loader.
-LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh session-spawn-server.sh)
+LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh telemetry-report.sh record-spawn-telemetry.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh session-spawn-server.sh session-restart.sh)
 
 # Every script that reads CRSS_SESSION_PREFIX/CRSS_LEGACY_PREFIXES — keep in
 # sync with the scripts if a new one gains the block. Deliberately a SUBSET of LOADER_FILES: fleet-status.sh,
 # telemetry-report.sh and record-spawn-telemetry.sh have the config loader
 # but never parse/generate a session name themselves (fleet-status delegates
 # to session-doctor), so they don't need this block.
-PREFIX_RE_FILES=(new-session.sh session-doctor.sh session-alias.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh)
+PREFIX_RE_FILES=(new-session.sh session-doctor.sh session-alias.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh session-restart.sh)
 
 extract_block() {  # $1 = script path, $2 = START marker, $3 = END marker -> block (markers inclusive) on stdout
   sed -n "/# $2/,/# $3/p" "$1"
