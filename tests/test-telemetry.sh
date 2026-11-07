@@ -27,7 +27,7 @@ has "spawn: CLAUDE.md bytes" "$line" '"claude_md_bytes": 21'
 hasre "spawn: routing" "$line" '"routing": \{"compact_window": "600000", "effort": "low", "reason": "doc typo fix", "tier": "light"\}'
 # quarantine: under the test-suite flag a recorder with no TELEMETRY_ROOT (deployed flat copy -> live
 # checkout fallback) writes nothing, spawn or reap; --whoami still answers
-mkdir -p "$T/flat"; cp "$RECORD" "$T/flat/rst.sh"
+mkdir -p "$T/flat"; cp "$RECORD" "$T/flat/rst.sh"; cp "$HERE/../scripts/crss-lib.sh" "$T/flat/crss-lib.sh"
 TELEMETRY_ROOT='' CRSS_WORKSPACE="$T/ws" bash "$T/flat/rst.sh" q q q q workspace sonnet "$T/workdir" >/dev/null 2>&1
 TELEMETRY_ROOT='' CRSS_WORKSPACE="$T/ws" bash "$T/flat/rst.sh" --reap q no ok >/dev/null 2>&1
 gone "quarantine: nothing written without TELEMETRY_ROOT" "$T/ws/claude-remote-session-skill/artifacts/telemetry/events.jsonl"
@@ -202,7 +202,7 @@ PYHASH
   ok "kids: no identity exit" "$rc" 2
   has "kids: no identity message" "$o" 'pass --of <name|uuid>'
   # Deployed layout: report alone in its dir, recorder on PATH without .sh.
-  mkdir -p "$T/dep/rep" "$T/dep/bin"; cp "$REPORT" "$T/dep/rep/"; cp "$RECORD" "$T/dep/bin/record-spawn-telemetry"
+  mkdir -p "$T/dep/rep" "$T/dep/bin"; cp "$REPORT" "$T/dep/rep/"; cp "$RECORD" "$T/dep/bin/record-spawn-telemetry"; cp "$HERE/../scripts/crss-lib.sh" "$T/dep/rep/crss-lib.sh"; cp "$HERE/../scripts/crss-lib.sh" "$T/dep/bin/crss-lib.sh"
   has "kids: extensionless deployed recorder" "$(TELEMETRY_ROOT="$T/r" PATH="$T/dep/bin:$PATH" bash "$T/dep/rep/$(basename "$REPORT")" --kids)" 'px_done-0101'
   ok "kids: scans read-only" "$(digest)" "$before"
   python3 - "$CRSS_CLAUDE_HOME/projects" <<'PYPAD' || exit 1
@@ -251,7 +251,7 @@ PYMTIME
   has "kids: reused live name" "$(bash "$REPORT" --kids)" '5 matched (1 live, 2 reaped, 2 gone)'
   before="$(digest)"; rec --future-flag >/dev/null 2>&1
   ok "kids: unknown recorder flag cannot write" "$(digest)" "$before"
-  mkdir -p "$T/skew"; cp "$REPORT" "$T/skew/telemetry-report.sh"
+  mkdir -p "$T/skew"; cp "$REPORT" "$T/skew/telemetry-report.sh"; cp "$HERE/../scripts/crss-lib.sh" "$T/skew/crss-lib.sh"
   printf '#!/usr/bin/env bash\necho junk >> "$TELEMETRY_ROOT/artifacts/telemetry/events.jsonl"\n' > "$T/skew/record-spawn-telemetry.sh"
   chmod +x "$T/skew/record-spawn-telemetry.sh"
   env -u CLAUDE_CODE_SESSION_ID bash "$T/skew/telemetry-report.sh" --kids >/dev/null 2>&1
