@@ -60,3 +60,56 @@ _crss_prefix_init() {
     fi
   fi
 }
+
+# _crss_admit <args...> — run the single Agent Host admission gate (autonomous-admission.sh) for
+# an autonomous action. Looks for the helper beside the CALLING script (BASH_SOURCE[1]; falls
+# back to this lib's own dir for top-level calls), then on PATH; fails closed (exit 2) if neither.
+_crss_admit() {
+  local helper_dir helper
+  helper_dir="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)"
+  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
+    helper="$helper_dir/autonomous-admission.sh"
+  else
+    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
+  fi
+  bash "$helper" "$@"
+}
+
+# _find_helper <basename> — co-located <basename>.sh first (beside the CALLING script, via
+# BASH_SOURCE[1]; falls back to this lib's dir for top-level calls), then PATH; fails safe on a miss.
+_find_helper() {
+  local base="$1" here
+  here="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" >/dev/null 2>&1 && pwd)"
+  if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
+  if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
+  return 1
+}
+
+# tmux_to_base — tmux session name to remote-control name ("<prefix>_slug" -> "<prefix>-slug"),
+# or "" when the name is not ours. Needs _crss_prefix_init to have run first.
+tmux_to_base() {
+  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
+    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+  else
+    echo ""
+  fi
+}
+
+# _encode_cwd <path> — the ~/.claude/projects/<encoded> dir name for a cwd. Pure string transform;
+# '.' -> '-' must run before '/' -> '-'.
+_encode_cwd() {
+  local p="$1"
+  p="${p//./-}"
+  printf '%s\n' "${p//\//-}"
+}
+
+# _is_protected <text> — match CRSS_PROTECT_NAMES against the text and its hyphen/underscore
+# forms, so one term protects tmux, unit and title names alike. Fails closed: a grep error
+# (invalid regex) counts as protected.
+# shellcheck disable=SC2154  # CRSS_PROTECT_NAMES is set by _crss_load_config in the caller
+_is_protected() {
+  local v rc
+  [ -n "$CRSS_PROTECT_NAMES" ] || return 1
+  for v in "$1" "${1//_/-}" "${1//-/_}"; do grep -qiE -- "$CRSS_PROTECT_NAMES" <<<"$v" 2>/dev/null; rc=$?; [ "$rc" -ne 1 ] && return 0; done
+  return 1
+}

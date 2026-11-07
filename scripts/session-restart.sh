@@ -46,13 +46,7 @@ done
 CPID="" R="" SID="" PIN="" EXP="" REGV="" LAUNCH="" RW="" RM="" FSTATUS="" NSUF="" SCRIPT=""
 REG_SID="" REG_VER="" REG_STATUS="" PREV_HAS=0 PREV="" ARGV=() NARGV=() CA=()
 out() { echo "session-restart: $S: $*"; }
-protected() {
-  local v rc
-  [ -n "$CRSS_PROTECT_NAMES" ] || return 1
-  for v in "$1" "${1//_/-}" "${1//-/_}"; do grep -qiE -- "$CRSS_PROTECT_NAMES" <<<"$v" 2>/dev/null; rc=$?; [ "$rc" -ne 1 ] && return 0; done
-  return 1
-}
-if protected "$S"; then out "REFUSED(protected) session name matches CRSS_PROTECT_NAMES; never restarted"; exit 1; fi
+if _is_protected "$S"; then out "REFUSED(protected) session name matches CRSS_PROTECT_NAMES; never restarted"; exit 1; fi
 
 # Pane analysis, read from stdin with capture-pane -e. Mode busy prints the first busy reason; mode typed prints
 # the non-dim text on the prompt line with whitespace removed. Glyphs are built with chr() so this file stays ASCII.
@@ -131,7 +125,7 @@ resolve() {
   mapfile -d '' -t ARGV < "/proc/$CPID/cmdline" 2>/dev/null
   R="$(argval --remote-control "${ARGV[@]}")"
   [ -n "$R" ] || { fail no-claude "claude pid $CPID has no --remote-control name"; return; }
-  protected "$R" && { fail protected "remote name $R matches CRSS_PROTECT_NAMES; never restarted"; return; }
+  _is_protected "$R" && { fail protected "remote name $R matches CRSS_PROTECT_NAMES; never restarted"; return; }
   # The binary to ask for the expected version: argv[0], or the claude element when argv[0] is a script interpreter.
   LAUNCH="${ARGV[0]:-}"
   for a in "${ARGV[@]}"; do [ "$(basename -- "$a")" = claude ] && { LAUNCH="$a"; break; }; done
