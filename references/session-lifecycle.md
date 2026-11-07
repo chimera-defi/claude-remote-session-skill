@@ -89,6 +89,26 @@ different CLI binary, and has no unit, so it stalls on approval prompts; a bare
 `systemctl start` of an externally-killed session started a *fresh* conversation because the
 `--continue` sentinel was only written when claude exited on its own.
 
+## Moving live sessions onto a new CLI: `scripts/session-restart.sh`
+
+Installing a new `claude` does not touch running sessions; each keeps the old binary until it
+restarts. `session-restart <name>` restarts one idle session and keeps its conversation: it writes
+the running sessionId to the start script's resume pin, sends `/exit`, lets the supervisor loop
+relaunch `--resume <uuid>`, then checks the new process's version, sessionId and
+`--remote-control` name. It refuses busy and protected (`CRSS_PROTECT_NAMES`) sessions, and it
+cancels the "Exit and stop tasks" dialog instead of confirming it. Busy rules and exit codes: the
+script header.
+
+Fleet update, after `claude update`:
+
+1. Find outdated sessions: `jq -r '.version' ~/.claude/sessions/<pid>.json` against
+   `claude --version`. `session-restart <name> --dry-run` shows what would happen.
+2. One background job per session: `session-restart <name> --wait-idle --nudge > <log> 2>&1 &`.
+   It waits for 3 idle polls 60s apart, restarts, and tells the session that wakeups and crons
+   from the old process are gone.
+3. Read each log's last line. `OK` is done. `SKIPPED(scheduled-tasks)` and `REFUSED(...)` mean
+   nothing changed. `FAIL(...)` (exit 3) means `/exit` was sent: inspect that session.
+
 ## Recommended cadence
 
 1. **Weekly:** `session-doctor.sh report`; if orphan units or dead tmux pile up,
