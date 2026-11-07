@@ -87,8 +87,7 @@ cmd_status_adopt() {
   return "$rc"
 }
 
-# Matches only a line that STARTS with a bare `tmux new-session` (already-wrapped lines start with
-# systemd-run or the generated _crss_tmux helper and are left alone).
+# Only a bare `tmux new-session` line is migrated; already-wrapped lines are left alone.
 cmd_migrate() {
   local f rc=0 n=0
   for f in "$BIN_DIR"/*-start.sh; do

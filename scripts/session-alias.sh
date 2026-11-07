@@ -8,11 +8,8 @@
 # --set-default alongside it to actually persist the new default.
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -37,23 +34,11 @@ _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
 # ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# CRSS_SESSION_PREFIX names NEW sessions (default "cs"). CRSS_LEGACY_PREFIXES are extra prefixes
+# recognised when parsing but never generated (see examples/crss-overlay/). Each token must match
+# ^[a-z][a-z0-9]{0,15}$, which also makes the alternation safe. An invalid prefix falls back to the
+# default; any invalid legacy token drops the WHOLE list, never an empty pattern (that would match
+# everything on a reap path). Copied verbatim into each script that needs it.
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -83,22 +68,10 @@ if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
 fi
 # CRSS-PREFIX-RE-END
 
-# ALIAS_PROTECT — folders never aliased, so their identifying token survives in
-# the session name (session-doctor protects sessions by substring-matching the
-# name; stripping the token via an acronym would silently drop that protection).
-#
-# INTENTIONALLY NARROWER than session-doctor.sh's reap PROTECT (which defaults
-# to the skill's own name, "claude-remote"): a folder whose name merely
-# *contains* "claude-remote" (e.g. this repo, claude-remote-session-skill) is a
-# normal dev session that SHOULD alias and SHOULD be reapable when dead. Do
-# not fold this into CRSS_PROTECT_NAMES. Generic default is empty (no folders
-# alias-protected); a host that runs other always-on bridge sessions can set
-# CRSS_ALIAS_PROTECT_NAMES to e.g. my-other-bridge via $CRSS_HOME/config.sh
-# (see examples/crss-overlay/) to protect those too. An empty ALIAS_PROTECT
-# would make the `grep -qiE` below match EVERY folder (an empty ERE matches
-# any line) — the opposite of
-# the intended "protect nothing" default — so empty falls back to a pattern
-# that matches nothing.
+# ALIAS_PROTECT: folders never aliased, so their token survives in the session name (session-doctor
+# protects by substring). Narrower than session-doctor PROTECT on purpose: a dev folder that merely
+# contains "claude-remote" should alias. Empty means protect nothing; an empty ERE would match every
+# folder, so fall back to a pattern that matches nothing.
 : "${CRSS_ALIAS_PROTECT_NAMES:=}"
 ALIAS_PROTECT="$CRSS_ALIAS_PROTECT_NAMES"
 [ -n "$ALIAS_PROTECT" ] || ALIAS_PROTECT='^$'
@@ -125,13 +98,8 @@ save() { [ "$NOSAVE" = yes ] || store_upsert "$1" "$2"; }
 
 sanitize() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'; }
 
-# has_mmdd_group — true if some hyphen-delimited field of $1 is itself a
-# calendar-plausible MMDD (month 01-12, day 01-31). Used to gate the long-
-# numeric-run check below: a random-suffix run of 5+ digits (as seen in legacy
-# session names like `discovery-0718-153051-4107171`) is only real
-# session-name evidence when paired with an actual date fragment elsewhere in
-# the string — a folder that merely HAS a long number (a port >= 10000, an
-# invoice/issue/build id, a ticket suffix, ...) is not one just for being long.
+# has_mmdd_group: true if a hyphen field of $1 is a plausible MMDD. Gates the long-numeric-run check,
+# so a port or ticket number is not mistaken for a session name.
 has_mmdd_group() {
   local IFS='-' f mm dd
   for f in $1; do
@@ -145,39 +113,15 @@ has_mmdd_group() {
   return 1
 }
 
-# looks_like_session_name — a value that IS (or is a dated/timestamped fragment of)
-# a generated session name. Such a value must never be used or STORED as an alias:
-# doing so yields doubled `<prefix>-<prefix>-...-MMDD-MMDD` names and re-poisons
-# the store. Matches: the configured prefix ($_crss_prefix_re, see the
-# CRSS-PREFIX-RE block above) with a -/_ separator; a long numeric run (timestamp/random suffix, e.g.
-# -153051 / -4107171) PAIRED WITH a real MMDD date fragment elsewhere in the
-# string (see has_mmdd_group); an MMDD-HHMM timestamp pair; or a trailing -MMDD
-# date — the latter two only when the digits validate as a real date/time
-# (below), so an arbitrary run of digits (a year, port, chain id, ticket
-# suffix, a second unrelated number, ...) is not mistaken for one. Silently
-# treating any digit run as date-shaped previously collided distinct folders
-# onto the same alias (found live: sprint-2024/sprint-2025 -> both "sprint";
-# chain-8453 -> "chain"; port-8080 -> "port"; sprint-2024-2025 / port-8080-9090
-# -> same, via the two-group check; port-12345/port-54321 -> both "port" via
-# the un-gated long-numeric-run check). ${d:0:2} form needs base-10 forcing so
-# a leading zero (e.g. the "07" in 0728) isn't parsed as invalid octal by [ -ge ].
-#
-# Case-fold to lowercase before the prefix check: the store is documented as
-# user-editable (session-aliases.example: "edit freely") and this is also the
-# read-path guard for values from an external writer, so a hand-typed value with
-# the prefix upper-cased (e.g. `<PREFIX>-foo-bar`, no embedded date, so none of
-# the digit checks below would catch it either) must not slip past a
-# case-sensitive prefix match — found via targeted probing of the read path
-# with a mixed-case stored value.
+# looks_like_session_name: true when $1 IS, or is a dated fragment of, a generated session name.
+# Such a value is never used or stored as an alias (it would double the prefix and re-poison the store).
+# Matches: the configured prefix; a long numeric run PAIRED with an MMDD group; an MMDD-HHMM pair; or
+# a trailing -MMDD. Digits must validate as a real date. Case-fold first: the store is user-editable.
 looks_like_session_name() {
   local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   [[ "$v" =~ ^(${_crss_prefix_re})[-_] ]] && return 0
   grep -qE -- '-[0-9]{5,}' <<<"$v" && has_mmdd_group "$v" && return 0
-  # Check EVERY [0-9]{4}-[0-9]{4} run, not just the first: a value can carry an
-  # earlier non-date-shaped digit pair before the real embedded timestamp (e.g.
-  # `project-2024-2025-0715-2359` — "2024-2025" fails the date check, but the
-  # `head -1` this used to take would stop there and never look at the genuinely
-  # poisoned "0715-2359" that follows). Any single matching pair is disqualifying.
+# Check every [0-9]{4}-[0-9]{4} run, not just the first: an earlier non-date pair must not hide a real timestamp.
   local pair mm dd hh mi
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
@@ -194,25 +138,13 @@ looks_like_session_name() {
   [ "$mm" -ge 1 ] && [ "$mm" -le 12 ] && [ "$dd" -ge 1 ] && [ "$dd" -le 31 ]
 }
 
-# desessionify — strip session-name decoration (recognised prefix, trailing
-# date/timestamp runs) so a folder that is itself a session name yields a
-# clean alias from the meaningful part instead of doubling the decoration.
-# Prefix match is case-insensitive (sed's `I` flag) to match
-# looks_like_session_name's case-folding: without it, a mixed-case folder
-# like `PFX-project-0101-1234` keeps its `PFX-` prefix after the date is
-# stripped, the fixed-point loop in infer() can't make progress past
-# `PFX-project`, and infer() falls back to an opaque checksum alias via its
-# final safety net instead of the clean `project` a same-cased folder would get.
+# desessionify: strip the prefix (case-insensitive, like looks_like_session_name) and trailing date/time
+# runs, so a session-named folder yields a clean alias.
 desessionify() { printf '%s' "$1" | sed -E "s/^(${_crss_prefix_re})[-_]//I; s/(-[0-9]{4,})+\$//"; }
 
 infer() { # $1 = folder ; echo alias
   local f="$1" acr="" w a prev=""
-  # De-sessionify to a fixed point, not just once: a folder that is poisoned
-  # MORE than one layer deep (e.g. `<prefix>-<prefix>-x-0722-0725`, itself the
-  # doubled name a prior poisoning incident produces) would otherwise survive a
-  # single pass still wearing the configured prefix and re-trigger the exact
-  # doubling this guard exists to stop. Loop until desessionify stops changing
-  # the string.
+# Strip to a fixed point: a folder poisoned more than one layer deep would otherwise keep the prefix.
   while looks_like_session_name "$f" && [ "$f" != "$prev" ]; do
     prev="$f"; f="$(desessionify "$f")"
   done
@@ -223,17 +155,9 @@ infer() { # $1 = folder ; echo alias
     acr="$(sanitize "$acr")"
     if [ "${#acr}" -ge 2 ]; then a="$acr"; else a="$(sanitize "${f:0:$CAP}")"; fi
   fi
-  # Never emit an empty alias. A folder name with no [a-z0-9-] content after
-  # normalization (e.g. a non-ASCII-only or symbols-only name) would otherwise
-  # sanitize to "" here, which would then flow into a tmux/systemd name with a
-  # dangling separator (e.g. "px-0715-0630-"). Fall back to a short,
-  # deterministic, charset-safe token derived from the folder name.
+# Never emit an empty alias (e.g. a symbols-only name): fall back to a charset-safe checksum.
   [ -n "$a" ] || a="s$(printf '%s' "$f" | cksum | cut -d' ' -f1)"
-  # Final safety net: infer() must never itself emit a session-name-shaped
-  # alias. The fixed-point loop above handles known layered-poisoning shapes,
-  # but this catches anything unforeseen (e.g. the CAP/acronym branch
-  # reintroducing a matching shape) so a still-poisoned value can never flow
-  # out silently unstored.
+# Final safety net: infer() must never emit a session-name-shaped alias.
   looks_like_session_name "$a" && a="s$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
   printf '%s' "$a"
 }
@@ -265,18 +189,8 @@ store_upsert() { # $1 folder $2 alias — atomic; refuses to persist a poisoned 
   flock -u 9
 }
 
-# --audit-store — read-only: scan every stored folder<TAB>alias line and report
-# entries where a fresh infer() (today's, fixed logic) disagrees with what's
-# stored. This surfaces candidates for a stale/mis-inferred alias — e.g. one
-# collapsed by a since-fixed inference bug (sprint-2024/sprint-2025 both
-# stored as "sprint" from before the MMDD-validation fix) — WITHOUT touching
-# the store: the stored value already looks like a legitimate short alias
-# (that's why the read-path self-heal in rule 2 doesn't catch it), and the
-# store is documented as user-editable (session-aliases.example: "edit
-# freely"), so auto-overwriting a flagged entry could just as easily clobber
-# a deliberately chosen short alias. A human reviews the printed candidates
-# and decides: leave it, set an explicit --alias, or delete the line so the
-# next spawn re-infers cleanly.
+# --audit-store: read-only report of stored entries where a fresh infer() disagrees. Nothing is rewritten:
+# a stored value may be a deliberate short alias. Review by hand: keep it, set --alias, or delete the line.
 if [ "$AUDIT" = yes ]; then
   drifted=0; total=0
   if [ -f "$STORE" ]; then
@@ -293,26 +207,15 @@ if [ "$AUDIT" = yes ]; then
   echo "audit: $drifted drifted / $total total entries in $STORE (not modified — review manually)"
   exit 0
 fi
-# Resolution order (see spec):
+# Resolution order:
 # 0. protected -> sanitized folder, never stored, --alias ignored (warn)
-# The old `printf '%s' "$FOLDER" | grep -q` saw zero bytes for an empty FOLDER (the default
-# ALIAS_PROTECT is '^$', which a here-string's lone empty line would match), and ${FOLDER%$'\n'}
-# keeps the one-line-per-newline shape of the printf bytes.
+# Never grep an empty FOLDER: the default '^$' pattern would match it.
 if [ -n "$FOLDER" ] && grep -qiE "$ALIAS_PROTECT" <<<"${FOLDER%$'\n'}"; then
   [ -n "$ALIAS_ARG" ] && echo "session-alias: '$FOLDER' is protected; ignoring --alias" >&2
   sanitize "$FOLDER"; exit 0
 fi
-# 1. explicit --alias -> sanitize, validate, print. PER-SPAWN ONLY: it does NOT
-# become the folder's stored default unless --set-default is passed.
-#
-# It used to persist unconditionally, and that was the dominant source of alias
-# drift in practice. `--alias` names the *task* far more often than the *folder*
-# (`--alias crss-prs`, `trs-fix`, `db-migrate`, `api-cleanup`), so one spawn
-# permanently renamed the folder and every later bare `new-session <folder>`
-# inherited a name describing work that finished weeks ago. Two audits found
-# 11-of-37 and 11-of-42 entries drifted, and every single one was this shape --
-# none were collisions. Making the common case non-destructive is the fix; the
-# rare "I really do want to rename this folder for good" case opts in explicitly.
+# 1. explicit --alias: per-spawn only. Persisting it renamed folders after their tasks ended (drift),
+# so it is stored only with --set-default.
 if [ -n "$ALIAS_ARG" ]; then
   a="$(sanitize "$ALIAS_ARG")"
   if [ -z "$a" ] || looks_like_session_name "$a"; then
