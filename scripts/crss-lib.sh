@@ -62,8 +62,9 @@ _crss_prefix_init() {
 }
 
 # _crss_admit <args...> — run the single Agent Host admission gate (autonomous-admission.sh) for
-# an autonomous action. Looks for the helper beside the CALLING script (BASH_SOURCE[1]; falls
-# back to this lib's own dir for top-level calls), then on PATH; fails closed (exit 2) if neither.
+# an autonomous action; no provider/model fallback. Looks for the helper beside the CALLING script
+# (BASH_SOURCE[1]; this lib's own dir when there is no calling file, e.g. bash -c), then on PATH;
+# fails closed (return 2) if neither.
 _crss_admit() {
   local helper_dir helper
   helper_dir="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" && pwd)"
@@ -76,7 +77,8 @@ _crss_admit() {
 }
 
 # _find_helper <basename> — co-located <basename>.sh first (beside the CALLING script, via
-# BASH_SOURCE[1]; falls back to this lib's dir for top-level calls), then PATH; fails safe on a miss.
+# BASH_SOURCE[1], as in _crss_admit), then PATH. Returns 1 on a miss; callers must fail SAFE
+# (refuse), never skip what the helper was gating.
 _find_helper() {
   local base="$1" here
   here="$(cd "$(dirname "${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}")" >/dev/null 2>&1 && pwd)"
@@ -86,7 +88,8 @@ _find_helper() {
 }
 
 # tmux_to_base — tmux session name to remote-control name ("<prefix>_slug" -> "<prefix>-slug"),
-# or "" when the name is not ours. Needs _crss_prefix_init to have run first.
+# or "" when the name is not ours. Only the recognised prefixes ($_crss_prefix_re) are ours;
+# anything else (e.g. codexhost_) must be left alone. Needs _crss_prefix_init to have run first.
 tmux_to_base() {
   if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
     echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
