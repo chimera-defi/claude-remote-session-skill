@@ -1,38 +1,19 @@
 #!/usr/bin/env bash
 # session-resume <session> [--uuid <transcript-uuid>] [--model <alias-or-id>] [--dry-run]
 #
-# Bring a dead Claude session back ON ITS OWN systemd unit, resuming ITS OWN
-# transcript by explicit uuid. This is the supported replacement for
-# hand-relaunching (`claude --resume <uuid> ...` typed into a fresh tmux pane),
-# which can silently drop --dangerously-skip-permissions, swap the claude
-# binary for a different install and leave the unit failed+disabled, so the
-# relaunched session stalls on approval prompts nobody can see.
-#
-# What it does (every step is printed; --dry-run stops before any change):
-#   1. Reads the unit's ExecStart -> the generated start script, and from that
-#      script SESSION / REMOTE_NAME / WORKDIR and the exact claude launch line
-#      (binary + flags). Nothing about the launch is re-typed from memory.
-#   2. Refuses if anything still holds the session: the tmux session exists,
-#      the unit is active, a process runs `--remote-control <remote>`, or a
-#      live Claude process has the transcript uuid open.
-#   3. Resolves the run directory the unit will start in and the transcript
-#      uuid to resume (--uuid, which must live in that same cwd's transcript dir;
-#      omitted, it is taken only when exactly ONE transcript exists — with
-#      several it refuses and lists them, never guessing "newest").
-#   4. If the start script predates resume pins, patches its supervisor loop
-#      once (backup kept): a one-shot pin file makes the loop launch the SAME
-#      binary+flags with `--resume <uuid>` instead of `--continue`/fresh.
-#      --model rewrites the script's model (MODEL= and every --model "...").
-#   5. Writes the pin, then `systemctl --user reset-failed/enable/start` the unit.
-#   6. Verifies the relaunched claude process: same binary, skip-permissions,
-#      --remote-control <remote>, --resume <uuid>, and Claude's own session
-#      registry showing that sessionId. A missing registry entry is a WARN and
-#      exit 3, never OK.
-#
-# Exit: 0 resumed+verified (or dry-run with nothing blocking); 1 refused or
-# failed BEFORE the unit start (nothing is running); 2 usage error; 3 the unit
-# started but the relaunched process failed verification (something IS running
-# — inspect it before retrying).
+# Resumes a dead Claude session on its own systemd unit, by explicit transcript uuid. The supported
+# replacement for hand-relaunching `claude --resume` in a pane, which can drop
+# --dangerously-skip-permissions and leave the unit failed and disabled.
+#   1. Reads SESSION / REMOTE_NAME / WORKDIR and the exact claude launch line from the start script.
+#   2. Refuses if anything still holds the session (tmux session, active unit, a --remote-control
+#      process, or a live Claude process with the uuid open).
+#   3. Picks the run dir and transcript uuid. Auto-picks a transcript only when exactly one exists.
+#   4. Patches an old start script's loop once (backup kept) to honour a one-shot resume pin.
+#   5. Writes the pin, then reset-failed/enable/start the unit.
+#   6. Verifies the process: binary, skip-permissions, --resume uuid, and Claude's session registry.
+# --dry-run prints the plan and changes nothing.
+# Exit: 0 resumed and verified (or dry-run); 1 refused before the unit start; 2 usage; 3 started but
+# verification failed (something IS running; inspect it before retrying).
 set -uo pipefail
 
 # Autonomous actuation uses the single Agent Host authority; diagnostics/manual
@@ -63,11 +44,8 @@ if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$_admission_read_only" = 0 ]; then
   _crss_admit restart "${CRSS_ADMISSION_SUBJECT:-${_admission_target:-unknown}}" >&2 || exit 2
 fi
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -91,12 +69,8 @@ _crss_load_config() {
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
-# ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get; CRSS_LEGACY_PREFIXES is a
-# `|`-separated list of EXTRA prefixes still RECOGNISED when parsing an existing
-# name (see scripts/session-registry.sh for the full contract). Both feed one
-# validated alternation, _crss_prefix_re. Copied verbatim in every script that
-# needs it — see tests/test-crss-overlay-config.sh.
+# CRSS_SESSION_PREFIX names new sessions; CRSS_LEGACY_PREFIXES are parse-only extras (see session-registry.sh).
+# Copied verbatim into every script that needs it (tests/test-crss-overlay-config.sh).
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -161,10 +135,9 @@ refuse() { REFUSE+=("$1"); }
 say() { printf '%s\n' "$*"; }
 
 # ── 1. unit -> start script -> fields ────────────────────────────────────────
-# Accept the tmux name (<prefix>_x), the remote/unit name (<prefix>-x) or the unit file name.
+# Accept the tmux name, the remote name or the unit file name.
 base="${TARGET%.service}"
-# Every recognised prefix (current + legacy, from _crss_prefix_re) maps
-# `<prefix>_x` -> `<prefix>-x`.
+# Map <prefix>_x to <prefix>-x.
 if [[ "$base" =~ ^($_crss_prefix_re)_(.+)$ ]]; then
   base="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
 fi
@@ -206,8 +179,7 @@ if [ "$BACKEND" != claude ]; then
   exit 1
 fi
 
-# The claude launch line: the loop's no-sentinel branch (binary + flags, no
-# --continue). Both loop shapes (pre-pin and pin-aware) contain it verbatim.
+# The launch line is the loop's no-sentinel branch (binary + flags, no --continue); both loop shapes contain it.
 LAUNCH="$(python3 - "$SCRIPT" <<'PY'
 import re, sys
 lines = open(sys.argv[1]).read().splitlines()
@@ -226,13 +198,10 @@ case " $LAUNCH " in
 esac
 
 # ── 2. run directory + transcript ────────────────────────────────────────────
-# Where the unit will start: session-git-prep reuses this session's own
-# registered worktree (<claude-home>/worktrees/<remote>) first, else runs in
-# the canonical WORKDIR when it is clean and unclaimed.
+# Run dir: session-git-prep reuses this session's own worktree first, else the canonical WORKDIR if clean and unclaimed.
 OWN_WT="$CLAUDE_HOME/worktrees/$REMOTE"
 LOGGED_RUNDIR="$(grep -F "session=$SESSION rundir=" "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/.* rundir=//')"
-# (Capture, then grep: `git … | grep -q` under pipefail reads a SIGPIPE'd git
-# as "not found".)
+# Capture first: under pipefail, `git | grep -q` reads a SIGPIPE'd git as not found.
 WT_LIST="$(git -C "$WORKDIR" worktree list --porcelain 2>/dev/null || true)"
 if [ -d "$OWN_WT" ] && grep -qxF "worktree $OWN_WT" <<<"$WT_LIST"; then
   RUNDIR="$OWN_WT"
@@ -245,9 +214,7 @@ else
   if [ -n "$st" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$st"; then
     refuse "run directory: the canonical tree $WORKDIR is dirty and there is no own worktree $OWN_WT, so the unit would start in a NEW worktree — not where this session's transcript lives (commit or WIP-commit the canonical tree's changes first, or spawn fresh with new-session)"
   fi
-  # session-git-prep also treats the canonical tree as busy while its owner lock
-  # (same key derivation, current and legacy format) names another live tmux
-  # session; then it would put this session in a new worktree too.
+# session-git-prep would also put this session in a new worktree if a live session owns the canonical tree.
   flat="$(printf '%s' "$WORKDIR" | tr '/ ' '__')"
   for lk in "${flat}_$(printf '%s' "$WORKDIR" | cksum | cut -d' ' -f1)" "$flat"; do
     owner="$(cat "$CLAUDE_HOME/session-locks/$lk.owner" 2>/dev/null || true)"
@@ -275,10 +242,7 @@ if [ -z "$UUID" ]; then
   UUID="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | head -1)"
   UUID="${UUID%.jsonl}"
   [ -n "$UUID" ] || refuse "transcript: no <uuid>.jsonl under $PROJ — nothing to resume (pass --uuid, or spawn fresh with new-session)"
-  # Never guess between transcripts: the newest one is not necessarily the real
-  # one (a bare restart can make a fresh, newest
-  # transcript that sits over the conversation to recover). Auto-pick only when
-  # exactly one exists; otherwise the caller names the uuid.
+# Never guess between transcripts: the newest is not necessarily the real conversation.
   # shellcheck disable=SC2012
   all="$(ls -t "$PROJ" 2>/dev/null | grep -E '^[0-9a-f-]{36}\.jsonl$' | sed 's/\.jsonl$//' || true)"
   if [ "$(printf '%s\n' "$all" | grep -c .)" -gt 1 ]; then
@@ -313,8 +277,7 @@ d=json.load(open(sys.argv[1])); print(d.get("pid",""), d.get("sessionId",""))' "
 fi
 
 # ── 4. plan ──────────────────────────────────────────────────────────────────
-# A pin-aware script (new-session since session-resume, or one this tool
-# already patched) names its own pin path; honour it over the default.
+# A pin-aware script names its own pin path; honour it over the default.
 NEEDS_PATCH=0
 PIN="$(field RESUME_PIN)" || { PIN="$PIN_DIR/$REMOTE.uuid"; NEEDS_PATCH=1; }
 say "plan:"
@@ -413,8 +376,7 @@ PY
 fi
 
 mkdir -p "$(dirname "$PIN")" && printf '%s\n' "$UUID" > "$PIN" || { echo "session-resume: cannot write $PIN" >&2; exit 1; }
-# A human resume gets one exact-UUID launch on the generated script; automatic
-# relaunches cannot reuse the intent once consumed. Older scripts ignore it.
+# A manual resume gets one exact-UUID launch; automatic relaunches cannot reuse it.
 MANUAL_LAUNCH="$(field MANUAL_LAUNCH)" || MANUAL_LAUNCH=""
 if [ "${CRSS_AUTONOMOUS:-0}" != 1 ] && [ -n "$MANUAL_LAUNCH" ]; then
   printf '%s\n' "$UUID" > "$MANUAL_LAUNCH" || { echo "session-resume: cannot record manual launch intent" >&2; exit 1; }
