@@ -113,7 +113,10 @@ _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
 - **Symlinked into a fake bin by a test:** `readlink -f` resolves back to `scripts/`.
 
 A missing lib exits 2 with that message. There is deliberately no fallback copy: a silent
-fallback would let a stale copy run unnoticed.
+fallback would let a stale copy run unnoticed. A script that calls a shared helper also runs
+`declare -F <helpers> >/dev/null || … exit 2` on the next line, so a lib older than the script
+exits 2 too; otherwise a missing `_is_protected` returns 127, which callers read as "not
+protected".
 
 A caller that runs a script with no file path (`bash -s`, `bash -c "$(cat …)"`, process
 substitution) has no `BASH_SOURCE` path, so the lookup falls back to `./crss-lib.sh` in the
@@ -128,7 +131,7 @@ the lib, and a new script without it fails at once. The lib PR changes the deplo
 | Repo source | Deployed to | How |
 |---|---|---|
 | `scripts/crss-lib.sh` | `~/.local/bin/crss-lib.sh` | `diff` first, then `install -m 644`, **before** any script that sources it |
-| `scripts/<x>.sh`, `scripts/<x>.py` | `~/.local/bin/<x>` | `diff` first, then `install -m 755`; a script that sources `crss-lib.sh` exits 2 if it is missing |
+| `scripts/<x>.sh`, `scripts/<x>.py` | `~/.local/bin/<x>` | `diff` first, then `install -m 755`; a script that sources `crss-lib.sh` exits 2 if it is missing or out of date |
 
 **Rollback.** Reinstall the previous script copies. The lib can stay in place, because
 nothing old reads it.

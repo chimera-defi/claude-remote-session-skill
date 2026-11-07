@@ -20,6 +20,7 @@ set -uo pipefail
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
 # shellcheck source=scripts/crss-lib.sh
 . "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
+declare -F _crss_admit >/dev/null || { echo "${0##*/}: $_crss_lib is out of date; install crss-lib.sh next to this script" >&2; exit 2; }
 
 _admission_read_only=0
 _admission_target=""
