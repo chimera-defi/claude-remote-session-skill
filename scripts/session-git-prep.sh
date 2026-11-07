@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 # session-git-prep <repo> <tmux_session> <remote_name>
 #
-# Decides WHERE a spawned Claude session should run when the target is a git
-# repo, so sessions start from the default branch instead of whatever branch
-# happened to be checked out, and parallel sessions on the same repo never
-# collide:
-#
-#   free + clean canonical tree -> put it on the default branch, run there
-#   dirty OR already owned       -> run in a fresh per-session worktree
-#                                   branched from the default branch
-#
-# Prints the chosen run directory to stdout (and nothing else). All diagnostics
-# go to stderr. This never fails the spawn: on any problem it falls back to the
-# canonical repo path so the session still starts.
+# Picks the run dir for a spawned session when the target is a git repo:
+#   free + clean canonical tree -> check out the default branch there and claim it
+#   dirty or owned             -> a fresh worktree from the default branch
+# Prints only the run dir on stdout. Never fails the spawn: any problem falls back to the repo path.
 set -u
 
 REPO="${1:?usage: session-git-prep <repo> <tmux_session> <remote_name>}"
@@ -56,24 +48,17 @@ if [ "$HAS_ORIGIN" = 1 ]; then
   fi
 fi
 
-# Dirty? Ignore the spawn skill's own housekeeping (.claude/ skills symlink and
-# bootstrap edits, .sessions-init-* sentinels) so it never looks like real
-# uncommitted work.
+# Ignore the skill's own housekeeping (.claude/ symlink, .sessions-init-* sentinels).
 DIRTY=""
 if git -C "$REPO" status --porcelain 2>/dev/null \
      | grep -qvE '^.. (\.claude(/|$)|\.sessions-init)'; then
   DIRTY=1
 fi
 
-# Busy? Is the canonical tree currently owned by a live session? The owner lock
-# lives OUTSIDE the repo so claiming it never dirties the working tree.
+# Owner lock lives outside the repo, so claiming it never dirties the tree.
 LOCK_DIR="$HOME/.claude/session-locks"
 mkdir -p "$LOCK_DIR" 2>/dev/null || true
-# tr '/ ' '__' alone is not injective — /a/b_c and /a/b/c both flatten to
-# "_a_b_c", so two genuinely different repos could share one lock file and
-# corrupt each other's busy/free decision. Append a checksum of the
-# unflattened path (same s$(cksum) pattern session-alias.sh uses) to keep the
-# key both readable and collision-resistant.
+# Key = flattened path + cksum: tr alone is not injective (/a/b_c and /a/b/c collide).
 FLAT_KEY="$(printf '%s' "$REPO" | tr '/ ' '__')"
 LOCK_KEY="${FLAT_KEY}_$(printf '%s' "$REPO" | cksum | cut -d' ' -f1)"
 LOCK="$LOCK_DIR/${LOCK_KEY}.owner"
@@ -98,16 +83,9 @@ mkdir -p "$WT_BASE" 2>/dev/null || true
 WT="$WT_BASE/$REMOTE"
 BR="session/$REMOTE"
 
-# REMOTE is stable across systemd restarts of the SAME session (it's baked into
-# that session's generated start script, not regenerated per spawn) — so a
-# worktree already registered at $WT is almost always this session's own from
-# a prior run, not a stray collision. Reuse it BEFORE anything else:
-#   - before the clean+free canonical branch below: a restart that lands in the
-#     canonical tree loses its own transcript dir, so `--continue` and
-#     `session-resume` find nothing to resume there;
-#   - before the -$$ suffix: unconditionally suffixing used to orphan the prior
-#     worktree, and any uncommitted work inside it, on every restart of a
-#     session whose canonical repo was dirty/busy at spawn time.
+# REMOTE is stable across restarts of one session, so a worktree registered at $WT is that session's own.
+# Reuse it first: a restart in the canonical tree loses its transcript dir (--continue and
+# session-resume find nothing), and a -$$ suffix would orphan uncommitted work.
 if [ -d "$WT" ] && git -C "$REPO" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $WT"; then
   log "worktree at $WT already registered (prior run of '$REMOTE'); reusing -> $WT"
   emit "$WT"
@@ -138,9 +116,7 @@ if git -C "$REPO" worktree add --quiet -b "$BR" "$WT" "$BASE" 2>/dev/null; then
   emit "$WT"
 fi
 
-# Worktree add still failed (e.g. branch "$BR" exists but isn't the $WT we
-# just checked). Retry once with a unique suffix so a second session doesn't
-# collide.
+# Add failed (e.g. the branch exists): retry once with a unique suffix.
 WT2="$WT_BASE/${REMOTE}-$$"
 BR2="session/${REMOTE}-$$"
 if git -C "$REPO" worktree add --quiet -b "$BR2" "$WT2" "$BASE" 2>/dev/null; then

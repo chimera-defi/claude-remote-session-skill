@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# fleet-status.sh — one-shot composite view of "how's the fleet/server doing":
-# sessions (tmux/systemd/registry), host resources + knowledge-index health, and token-savings
-# telemetry. Orchestrates existing tools rather than re-implementing any of
-# them — session-doctor.sh owns sessions, a host health-audit service (optional,
-# configured via CRSS_HEALTH_SNAPSHOT_DIR) owns host checks (this reads its
-# latest JSON snapshot instead of re-running the slow checks live), and a
-# token-stats CLI (if on PATH) owns token stats. Read-only; never reaps, never deletes, never starts/stops units.
+# fleet-status.sh: one-shot view of sessions, host health and token savings. Read-only; never
+# reaps, deletes or starts/stops units. session-doctor owns sessions; host health is read from the
+# latest snapshot in CRSS_HEALTH_SNAPSHOT_DIR (optional); token stats come from rtk.
 #
 # Usage:
 #   fleet-status.sh              # everything: sessions + host health + token stats
@@ -13,11 +9,8 @@
 #   fleet-status.sh --host       # host health section only
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -44,9 +37,7 @@ _crss_load_config
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-# Resolve session-doctor co-located first (repo/dev layout), then on PATH
-# (deployed layout: flat copies in ~/.local/bin with the .sh dropped — see
-# session-send.sh's header comment for why this two-step resolution exists).
+# session-doctor: repo layout first, then PATH (deployed copies drop the .sh).
 _session_doctor() {
   if [ -f "$HERE/session-doctor.sh" ]; then
     bash "$HERE/session-doctor.sh" "$@"
@@ -69,9 +60,7 @@ print_sessions() {
 
 print_host() {
   echo "########## HOST HEALTH ##########"
-  # The health-audit service writes a fresh JSON snapshot periodically —
-  # read the latest one instead of re-running a full df/free/systemctl sweep
-  # (and index diagnostics) live on every call. Falls back to a note if the audit has never run.
+# Read the latest snapshot instead of a live df/free/systemctl sweep on every call.
   local runs_dir="$CRSS_HEALTH_SNAPSHOT_DIR"
   if [ -z "$runs_dir" ]; then
     echo "  (no health snapshot configured — set CRSS_HEALTH_SNAPSHOT_DIR in \$CRSS_HOME/config.sh)"
@@ -79,11 +68,8 @@ print_host() {
   fi
   local -a dirs
   local d latest=""
-  # Directory names are UTC timestamps (YYYYMMDDTHHMMSSZ), so lexical sort
-  # order == chronological order — sort descending via a plain glob (no `ls`
-  # parsing) and pick the newest COMPLETE one. summary.json lands after the
-  # dir itself, so the very-newest dir can transiently lack it while the
-  # audit service is still writing it; skip that one rather than failing.
+# Dir names are UTC timestamps, so reverse lexical order is newest first. Skip a newest dir
+# that is still missing summary.json (the audit is writing it).
   mapfile -t dirs < <(printf '%s\n' "$runs_dir"/*/ | sort -r)
   for d in "${dirs[@]}"; do
     [ -f "${d}summary.json" ] && { latest="$d"; break; }
@@ -93,10 +79,7 @@ print_host() {
   else
     local run_id iso run_epoch age_s
     run_id="$(basename "${latest%/}")"
-    # run_id is a compact UTC timestamp like 20260919T194659Z; GNU date -d
-    # rejects that form without separators, so re-punctuate to
-    # 2026-09-19T19:46:59Z before parsing. Falls back to printing the raw id
-    # if the host's date(1) still can't parse it.
+# GNU date rejects the compact run id, so re-punctuate it; print the raw id if parsing fails.
     iso="${run_id:0:4}-${run_id:4:2}-${run_id:6:2}T${run_id:9:2}:${run_id:11:2}:${run_id:13:2}Z"
     run_epoch="$(date -u -d "$iso" +%s 2>/dev/null || echo "")"
     if [ -n "$run_epoch" ]; then
@@ -105,9 +88,7 @@ print_host() {
     else
       echo "  snapshot: $run_id"
     fi
-    # NOTE: the `.gbrain` JSON key read below is a data contract with the
-    # snapshot writer (an overlay-side tool) and is kept as-is; only the
-    # printed label is generic.
+# The .gbrain key is a data contract with the snapshot writer; keep it as-is.
     jq -r '
       "  status: \(.status)",
       "  resources: disk=\(.resources.disk_used_pct)% mem=\(.resources.memory_used_pct)% load_1m=\(.resources.load_1m)",

@@ -1,33 +1,14 @@
 #!/usr/bin/env bash
-# session-trust-seed <dir> [<dir>...]
-#
-# Pre-accept Claude Code's first-launch "Do you trust this folder?" dialog for
-# the directory a session is about to run in, so an unattended spawn is never
-# parked on a prompt nobody can answer. It writes the same key the CLI writes on
-# accept: projects.<key>.hasTrustDialogAccepted = true in the global config
-# ($CLAUDE_CONFIG_DIR/.claude.json, else $HOME/.claude.json).
-#
-# <key> is what the CLI would ask about, not always <dir> (verified live against
-# the installed CLI, see tests/test-session-trust-seed.sh):
-#   * a git repo or ANY of its worktrees -> the MAIN repo root (the dirname of
-#     `git rev-parse --git-common-dir`). Trust given there covers every worktree.
-#     Ancestors do NOT confer trust on a git repo, however trusted they are.
-#   * a non-git dir -> the dir itself (ancestors would also do; the exact key is
-#     harmless and independent of that).
-#
-# Safe on a file many sessions write: an flock'd read-merge-write, temp file +
-# atomic rename, original mode kept, every other key untouched, no write at all
-# when already trusted. Missing or invalid JSON is an error (exit 1) and the file
-# is never touched. A one-time backup <config>.crss-bak is made before the first
-# write. Exit: 0 ok, 1 error, 2 usage.
-#
-# The CLI takes no lock we can share, so only our own seeders are serialised by
-# flock. Against the CLI it is optimistic: size/mtime/sha256 of what was read are
-# re-checked just before the rename; on a change it re-reads, re-merges and retries
-# (6 tries, jittered), else exits 1 with the file untouched. The remaining race is
-# the instant between that re-check and the rename.
-# Test-only: CRSS_TRUST_SEED_TEST_HOOK=<shell cmd> runs once between the read and
-# the re-check, to simulate a concurrent writer (tests/test-session-trust-seed.sh).
+# session-trust-seed <dir> [<dir>...]: pre-accept Claude Code's "Do you trust this folder?" dialog
+# so an unattended spawn never parks on it. Writes projects.<key>.hasTrustDialogAccepted = true to
+# $CLAUDE_CONFIG_DIR/.claude.json (else ~/.claude.json).
+#   key: a git repo or any of its worktrees -> the MAIN repo root (ancestors confer no trust);
+#        a non-git dir -> the dir itself.
+# Safe on a shared file: flock'd read-merge-write, temp file + atomic rename, other keys and mode
+# kept, no write when already trusted. Invalid JSON exits 1 and the file is left alone.
+# Backs up <config>.crss-bak once. Exit: 0 ok, 1 error, 2 usage.
+# The CLI takes no lock: size/mtime/sha256 are rechecked before the rename, and the merge retries
+# (6 tries). CRSS_TRUST_SEED_TEST_HOOK is test-only (tests/test-session-trust-seed.sh).
 set -u
 [ $# -ge 1 ] || { echo "usage: session-trust-seed <dir> [<dir>...]" >&2; exit 2; }
 exec python3 - "$@" <<'PY'

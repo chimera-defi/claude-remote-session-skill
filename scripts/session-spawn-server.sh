@@ -12,19 +12,12 @@
 #   session-spawn-server status
 #   session-spawn-server uninstall <name>
 #
-# Why each choice (see references/phone-spawn.md):
-#   * `remote-control` takes no --settings/--model (verified: "Unknown argument: --settings"), so the
-#     first-party base URL the bridge needs and the optional model go in as env on the exec line;
-#     spawned sessions inherit them. A proxy ANTHROPIC_BASE_URL silently stops registration.
-#   * Plain relaunch on exit, never `-c`: `remote-control -c` errors when nothing was recorded in the
-#     last ~4h, so a server down overnight would crash-loop.
-#   * Names live under `crss-spawn-*`, outside the session prefix, so session-doctor never sees the
-#     unit as a session (or an orphan to reap).
-#   * Spawned sessions default to --permission-mode auto (the CLI's classifier gates each action),
-#     not bypassPermissions: anyone holding the account on a phone can start one, unattended crss
-#     lanes are a different trust case. bypassPermissions is an explicit --permission-mode opt-in.
-#   * In a git dir the pre-created session is off (--no-create-session-in-dir): it would sit in the
-#     checkout itself, which may be a canonical checkout on local main.
+# Why (references/phone-spawn.md): remote-control takes no --settings/--model, so the base URL and
+# model go in as env. A proxy ANTHROPIC_BASE_URL silently stops registration.
+# Relaunch never uses `-c`: it errors after ~4h idle, so a server down overnight would crash-loop.
+# Unit names are crss-spawn-*, outside the session prefix, so session-doctor never reaps them.
+# Default permission mode is auto, not bypassPermissions: anyone holding the phone can start one.
+# No pre-created session in a git dir: it would sit in a canonical checkout.
 # Tests: tests/test-session-spawn-server.sh.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -51,7 +44,6 @@ _crss_load_config() {
 }
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
-# Same claude resolution as new-session.
 if [ -z "${CRSS_CLAUDE_BIN:-}" ]; then
   if [ -x /usr/bin/claude ]; then CRSS_CLAUDE_BIN=/usr/bin/claude; else CRSS_CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"; fi
 fi
@@ -111,7 +103,6 @@ cmd_install() {
   for v in "$start" "$HOME" "$PATH" "$CRSS_TMUX"; do
     case "$v" in *[[:space:]%\"\'\\]*) die "path not usable in a systemd unit as written (space, %, quote or backslash): $v" 2 ;; esac
   done
-  # Everything the generated script needs is serialised once with %q and only used quoted after that.
   local q_dir q_log q_start q_claude q_tmux
   q_dir="$(printf '%q' "$dir")"; q_log="$(printf '%q' "$log")"; q_start="$(printf '%q' "$start")"
   q_claude="$(printf '%q' "$CRSS_CLAUDE_BIN")"; q_tmux="$(printf '%q' "$CRSS_TMUX")"
