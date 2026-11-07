@@ -11,23 +11,13 @@
 # log_start() (see scripts/new-session.sh) on every invocation, including
 # respawns of an already-running session ("already-running" event). This
 # script is a pure read-only query layer over that existing log, not a fresh
-# cache — a second source of truth here would just be one more thing to keep
-# in sync. No new-session.sh change was needed to satisfy "self-registers".
-#
-# AGE = the EARLIEST log line for this session name (the original spawn), not
-# the most recent restart. tmux's own #{session_created} resets on every
-# systemd restart while the tmux session NAME stays the same, so it
-# under-reports age for a bounced session — the dangerous direction for a
-# reap/cull decision. #{session_created} is used only as a last-resort
-# fallback for a live session with zero log entries (e.g. spawned before
-# logging existed).
+# Age = the EARLIEST log line for the session name, not the latest restart. tmux's
+# #{session_created} resets on each systemd restart and under-reports age (the dangerous
+# direction for reap). It is a fallback only for live sessions with no log entry.
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh for CRSS_* vars; env vars win. Copied verbatim
+# into every script that reads it (tests/test-crss-overlay-config.sh pins it).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -51,24 +41,11 @@ _crss_load_config() {
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
-# ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# CRSS_SESSION_PREFIX names NEW sessions (default "cs"). CRSS_LEGACY_PREFIXES are extra
+# prefixes recognised when parsing but never generated. Each token must match
+# ^[a-z][a-z0-9]{0,15}$, which also makes the alternation safe. An invalid prefix falls back
+# to the default; any invalid legacy token drops the WHOLE legacy list, never an empty
+# pattern (that would match everything on a reap path). Copied verbatim into each script that needs it.
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -111,19 +88,11 @@ while [ $# -gt 0 ]; do
         *h) n="${v%h}"; unit=3600 ;;
         *)  echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
       esac
-      # The numeric part must be validated BEFORE it reaches bash arithmetic:
-      # an unvalidated value (empty, non-digit, or fractional — e.g. 'd', 'abcd',
-      # '3.5d') is spliced verbatim into `$(( n * unit ))` and either throws an
-      # unbound-variable/syntax error with the wrong exit code (1, not the usage
-      # exit 2) or — for a case bash's arithmetic parses as a bare word rather
-      # than erroring — silently falls through with OLDER_THAN_SEC left unset,
-      # reporting a bogus "no session matches" instead of a usage error.
+# Validate before arithmetic: a non-digit or fractional value would error or skip the threshold.
       case "$n" in
         ''|*[!0-9]*) echo "session-registry: --older-than wants Nd or Nh, got '$v'" >&2; exit 2 ;;
       esac
-      # 10# forces base-10 so a leading zero (e.g. '08d') isn't parsed as an
-      # invalid octal literal (same class of bug session-doctor.sh's --days
-      # guards against with the same fix).
+# 10# forces base 10 so a leading zero (08d) is not read as octal.
       OLDER_THAN_SEC=$(( 10#$n * unit ))
       ;;
     --first-seen)
@@ -145,8 +114,7 @@ first_seen() { # $1 = tmux session name -> epoch of earliest log line, or empty
   date -u -d "$ts" +%s 2>/dev/null
 }
 
-# --first-seen NAME: log-derived epoch only (no tmux session_created fallback — that resets on restart and
-# would under-report age). Used by session-doctor's reap min-age gate (_reap_age_gate).
+# --first-seen NAME: log epoch only, no tmux fallback (it resets on restart). The reap age gate uses it.
 if [ -n "$FIRST_SEEN_NAME" ]; then
   fs="$(first_seen "$FIRST_SEEN_NAME")"
   [ -n "$fs" ] || exit 1

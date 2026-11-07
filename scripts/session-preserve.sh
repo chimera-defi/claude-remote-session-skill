@@ -27,11 +27,8 @@
 # be mistaken for an audited, actually-clean worktree.
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -55,24 +52,10 @@ _crss_load_config() {
 _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
-# ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# CRSS_SESSION_PREFIX names NEW sessions (default "cs"); CRSS_LEGACY_PREFIXES are extra prefixes
+# recognised when parsing, never generated. Each token must match ^[a-z][a-z0-9]{0,15}$. An invalid
+# prefix falls back to the default; ANY invalid legacy token drops the WHOLE list, never to an empty
+# pattern (that would match everything on a reap path). Copied verbatim into each script that needs it.
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -105,12 +88,8 @@ fi
 RESCUE_ROOT="$HOME/.sessions/rescued-$(date +%Y-%m-%d)"
 # Junk that every session regenerates — never worth rescuing or blocking a reap.
 JUNK_RE='(^|/)(\.claude/skills|\.claude/token-reduce-state|\.claude/tmp-briefs|\.superpowers|__pycache__|\.pytest_cache|node_modules|\.venv|\.gstack)(/|$)'
-# CRSS_JUNK_RE_EXTRA (default empty — today's behaviour is unchanged) appends
-# host-specific extra scaffolding patterns without touching the base list
-# above. session-doctor.sh's _WT_IGNORED_DENY_RE takes the SAME env var,
-# appended the same way — but the two BASE lists are not identical
-# (pre-existing drift, see CLAUDE.md's "cruft pass" note); this only keeps
-# the ADDITIVE suffix in sync, it does not reconcile the bases.
+# CRSS_JUNK_RE_EXTRA appends host patterns. session-doctor.sh takes the same var; the base lists
+# differ (known drift), so only the additive suffix is kept in sync.
 if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
   # An invalid extra pattern would break the whole combined regex; drop it (built-in list still applies).
   _crss_rc=0; grep -qE -- "$CRSS_JUNK_RE_EXTRA" </dev/null 2>/dev/null || _crss_rc=$?
@@ -120,17 +99,8 @@ if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
     echo "$(basename "$0"): ignoring invalid CRSS_JUNK_RE_EXTRA regex ('$CRSS_JUNK_RE_EXTRA')" >&2
   fi
 fi
-# The spawner's own untracked .sessions-init-<remote> sentinel (see
-# new-session.sh), which sits at the worktree ROOT for the life of every
-# session — session-git-prep.sh and session-doctor.sh's _wt_dirty already
-# ignore it when deciding clean/DIRTY; without an exclusion here, EVERY live
-# session audited without --rescue was misreported NOT-SAFE-TO-REAP on that
-# sentinel alone, defeating the audit for the common case (found in review,
-# PR #76). Kept as its own whole-path anchor, NOT folded into JUNK_RE's
-# (^|/)...(/|$) group: that group matches a component at any depth, so it
-# would also swallow real work like a nested docs/.sessions-init-notes file
-# or anything inside a .sessions-init-output/ directory (caught by Codex
-# review on PR #77) — the real sentinel is always a single root-level file.
+# The spawner's .sessions-init-<remote> sentinel sits at the worktree root for a session's life and
+# is never real work. Anchored to the root only: a nested match would hide real files.
 SENTINEL_RE='^\.sessions-init-[^/]*$'
 
 MODE_RESCUE=no; MODE_WIP=no; TARGET=""; ALL=no
@@ -153,14 +123,8 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
   readlink "/proc/$cpid/cwd" 2>/dev/null
 }
 
-# tmux_to_base <tmux-session> -> worktree/systemd-unit base name, or "" if
-# not one of ours. Mirrors session-doctor.sh's tmux_to_base exactly (same
-# name, same logic — kept as a local copy rather than sourced, matching how
-# every script in this repo is a standalone deployable file): the first "_"
-# after the recognised prefix ($_crss_prefix_re — the configured
-# CRSS_SESSION_PREFIX or a CRSS_LEGACY_PREFIXES entry) becomes "-".
-# <prefix>_hh-0717-0224 -> <prefix>-hh-0717-0224. Any later "_" in the
-# slug is left alone.
+# tmux_to_base: <prefix>_slug -> <prefix>-slug (first "_" becomes "-"), or "" when not ours.
+# Mirrors session-doctor.sh; a local copy, because each script here is standalone.
 tmux_to_base() {
   if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
     echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
@@ -169,27 +133,10 @@ tmux_to_base() {
   fi
 }
 
-# worktree_of <tmux-session> -> best-guess worktree dir on disk, used when
-# rundir_of() can't find a live process to ask. Scans every dir under the
-# worktrees root ONCE, preferring a BRANCH match (session/<base>) over a
-# dirname match, not the reverse:
-#
-# session-git-prep.sh suffixes the worktree DIRECTORY with -$$ on a name
-# collision while leaving the branch (session/<base>) unsuffixed (see
-# session-doctor.sh worktree-stale, which special-cases this the same way).
-# So on a collision, TWO dirs can exist for the same <base> — the original
-# $dir/$base (left behind on whatever branch it happened to be on, possibly
-# clean) and the real, suffixed $dir/$base-<pid> (on session/<base>, possibly
-# dirty). Trusting the dirname hit first would silently audit the WRONG one
-# and report the real, dirty worktree as untouched — the exact fail-open
-# class this whole fix exists to close. The branch is therefore checked
-# first and wins immediately; a dirname match is only used as a fallback if
-# no directory anywhere under the root carries that branch.
-#
-# There is no fixed list of "known main repos" in this codebase to run
-# `git worktree list` against from the other side; asking each worktree for
-# its own branch is the same authoritative signal without needing one.
-# Prints nothing and returns 1 if neither lookup finds a directory.
+# worktree_of <tmux-session>: best guess at the worktree on disk when no live process is found.
+# A branch match (session/<base>) wins over a dirname match: a name collision leaves a stale dir
+# beside the real -$$ one, and trusting the dirname would audit the wrong, possibly clean, one.
+# Prints nothing and returns 1 when neither matches.
 worktree_of() {
   local sess="$1" base dir wt branch fallback=""
   base="$(tmux_to_base "$sess")"
@@ -212,8 +159,7 @@ worktree_of() {
 _already_rescued() {
   local s="$1" cwd="$2" rel="$3" d
   for d in "$HOME"/.sessions/rescued-*/"$s"/"$rel"; do
-    # A symlink is never "already rescued": cp/cmp dereference it, so the
-    # copy proves nothing about the link itself.
+# A symlink is never already rescued: cp/cmp dereference it.
     [ -L "$cwd/$rel" ] && return 1
     [ -f "$d" ] && cmp -s "$cwd/$rel" "$d" && return 0
   done
@@ -251,12 +197,8 @@ audit_one() {
     echo "      until a remote is added; the local branch ref IS the only copy."
   fi
 
-  # What actually decides reap safety: is HEAD reachable from a named branch?
-  # If yes, removing the worktree/tmux session cannot orphan the commits.
-  # The branch list is captured whole with its status checked, then each name is tested. Only
-  # merge-base status 0 proves reachability (1 = not an ancestor, anything else = an error, which
-  # proves nothing). A failed listing is unreach=yes whatever it printed first, as the old pipe
-  # under pipefail said; no early-exiting consumer sits downstream of the producer.
+# Reap safety: HEAD must be reachable from a named local branch. Only merge-base status 0 proves it;
+# a failed listing counts as unreachable.
   unreach=yes
   if brs="$(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads && printf x)"; then
     brs=${brs%x}
@@ -270,11 +212,8 @@ audit_one() {
 
   dirty=$(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE" | wc -l)
   untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" | wc -l)
-  # An untracked file whose byte-identical copy already sits in a rescued-*
-  # dir for this session (an earlier --rescue run, same day or not) is saved:
-  # `rescue` copies but leaves the original, so without this a later audit —
-  # notably the one `session-doctor reap` re-runs — flags it again and the
-  # "rescue first" loop can only be escaped with --force.
+# A byte-identical copy already in a rescued-* dir counts as saved; otherwise re-audits flag it
+# again and --force becomes the only exit.
   unrescued=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | grep -vE "$JUNK_RE" | grep -vE "$SENTINEL_RE" \
       | while read -r rel; do _already_rescued "$s" "$cwd" "$rel" || echo "$rel"; done)
   untracked=$(printf '%s' "$unrescued" | grep -c .)
@@ -283,22 +222,11 @@ audit_one() {
   [ "$untracked" -gt 0 ] && printf '%s\n' "$unrescued" | head -10 | sed 's/^/       /'
 
   if [ "$MODE_WIP" = yes ] && [ "$dirty" -gt 0 ]; then
-    # Stage exactly the paths counted as "dirty" above (git diff --name-only
-    # HEAD, filtered by the SAME $JUNK_RE) — not `git add -A`. -A also picks up
-    # any new untracked file (only .claude/skills was ever excluded from it),
-    # so a tracked-but-JUNK_RE-matched path (e.g. a committed node_modules/ or
-    # .venv/ file, unusual but real for vendored deps) that was modified would
-    # get silently staged and WIP-committed even though the audit above never
-    # counted it as dirty and told the operator it wasn't there. Building the
-    # add list from the identical filtered diff guarantees the commit can
-    # never contain more than what was actually reported.
+# --wip stages exactly the paths counted as dirty (same JUNK_RE filter), never git add -A,
+# so the commit cannot exceed what was reported.
     mapfile -t wip_files < <(git -C "$cwd" diff --name-only HEAD 2>/dev/null | grep -vE "$JUNK_RE")
     [ "${#wip_files[@]}" -gt 0 ] && git -C "$cwd" add -- "${wip_files[@]}" 2>/dev/null
-    # Only clear `dirty` when the commit actually lands. A failed commit (no
-    # git identity configured, a rejecting pre-commit hook, GPG signing
-    # misconfigured, ...) must fall through to NOT-SAFE-TO-REAP below —
-    # otherwise the printed "do not reap" warning is immediately contradicted
-    # by a SAFE-TO-REAP verdict a few lines later.
+# Clear dirty only when the commit lands; a failed commit must stay NOT-SAFE-TO-REAP.
     if git -C "$cwd" commit -q -m "wip(session-preserve): checkpoint before reaping $s" 2>/dev/null; then
       echo "   WIP committed on $br"
       dirty=0
@@ -308,23 +236,9 @@ audit_one() {
   fi
 
   if [ "$MODE_RESCUE" = yes ] && [ "$untracked" -gt 0 ]; then
-    # Preserve the relative path under the session's own subdir instead of
-    # flattening it (old: tr '/' '_' into one shared directory) — two distinct
-    # untracked paths that flatten to the same string (e.g. src/util.txt and
-    # src_util.txt) would otherwise collide on one filename, and the second
-    # cp -f silently overwrites the first while both still print "rescued".
-    #
-    # A path component can itself collide across two rescues of the SAME
-    # session on the SAME day (one $RESCUE_ROOT): if untracked "foo" (a file)
-    # was rescued earlier and "foo" later becomes a directory containing an
-    # untracked "foo/bar", `mkdir -p .../foo` fails because "foo" already
-    # exists there as a plain file — so the rescue for "foo/bar" cannot land.
-    # Track that per-file so `untracked` is only cleared when every rescue
-    # actually succeeded; otherwise the audit must keep reporting
-    # NOT-SAFE-TO-REAP instead of a false SAFE-TO-REAP over a lost file.
-    # (`< <(...)` process substitution, not a `| while` pipe, so
-    # rescue_failed set inside the loop is visible after it — a pipe would
-    # run the loop in a subshell and silently drop that state.)
+    # Keep the relative path under the session's own subdir: flattening collides (src/util.txt vs src_util.txt).
+    # A path component can clash with an earlier rescue (file, then dir), so count a file saved only when
+    # every rescue succeeds. Process substitution, not a pipe, keeps rescue_failed visible after the loop.
     rescue_failed=0
     while read -r rel; do
       dest="$RESCUE_ROOT/$s/$rel"

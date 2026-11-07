@@ -5,11 +5,8 @@
 #   telemetry-report.sh --kids [--of <name|uuid>] [--limit N]   # this launcher's children (live/reaped/gone), brief, final report, transcript, next action; report only
 set -uo pipefail
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim into every script
+# that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -35,13 +32,8 @@ _crss_load_config
 : "${CRSS_WORKSPACE:=$HOME/workspace}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-# See record-spawn-telemetry.sh for why the fallback is derived from
-# CRSS_WORKSPACE (host-local overlay, see examples/crss-overlay/) rather than
-# from $SCRIPT_DIR: this script is also deployed as a flat copy to
-# ~/.local/bin, where git rev-parse has nothing to find and a fallback
-# derived from the deployed location would silently point at the wrong
-# directory. "claude-remote-session-skill" is this project's own repo name,
-# not a host-specific value.
+# Fallback is CRSS_WORKSPACE, not SCRIPT_DIR: the deployed flat copy in ~/.local/bin has no repo
+# to find, and a path derived from it would silently point at the wrong directory.
 REPO_ROOT="${TELEMETRY_ROOT:-$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$CRSS_WORKSPACE/claude-remote-session-skill")}"
 EVENTS_FILE="$REPO_ROOT/artifacts/telemetry/events.jsonl"
 
@@ -61,8 +53,7 @@ LIVE=""
 if [ "$MODE" = kids ]; then
   if [ -z "$OF" ]; then
     ME=""
-    # Install the recorder before the reporter; old recorders treat flags as spawns.
-    # Sibling .sh (repo layout) first, then PATH (deployed layout may drop the .sh).
+# Install the recorder before the reporter: old recorders treat flags as spawns.
     REC="$SCRIPT_DIR/record-spawn-telemetry.sh"
     [ -f "$REC" ] || REC="$(command -v record-spawn-telemetry.sh || command -v record-spawn-telemetry || true)"
     if [ -n "$REC" ] && grep -q -- '--whoami' "$REC"; then
