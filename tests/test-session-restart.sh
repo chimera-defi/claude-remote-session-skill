@@ -26,7 +26,7 @@ case $cmd in
   display-message) cat "$STATE/$s.panepid" ;;
   capture-pane) while IFS= read -r l; do printf '%s\n' "${l//@PROMPT@/$(printf '\342\235\257') $typed}"; done < "$STATE/$s.pane" ;;
   send-keys)
-    if [ "$lit" = 1 ]; then printf '%s' "${keys[0]}" > "$STATE/typed"; exit 0; fi
+    if [ "$lit" = 1 ]; then printf '%s' "${keys[0]}" > "$STATE/typed"; [ -e "$STATE/race" ] && echo 'esc to interrupt' >> "$STATE/$s.pane"; exit 0; fi
     for k in "${keys[@]}"; do
       case $k in
         Enter) [ "$typed" = /exit ] && { [ -f "$STATE/dialog" ] && echo "Exit and stop tasks" >> "$STATE/$s.pane" || touch "$STATE/exit-$(cat "$STATE/claudepid")"; }; : > "$STATE/typed" ;;
@@ -76,10 +76,11 @@ start_case() {
 RESUME_PIN="\$HOME/pins/$R.uuid"
 echo \$\$ > "$STATE/$S.panepid"
 while :; do
-  a=(--remote-control $R)
-  [ -s "\$RESUME_PIN" ] && a+=(--resume "\$(cat "\$RESUME_PIN")")
+  a=(--remote-control $R); p=0
+  [ -s "\$RESUME_PIN" ] && { a+=(--resume "\$(cat "\$RESUME_PIN")"); p=1; }
   claude "\${a[@]}"
-  sleep 0.2
+  [ "\$p" = 1 ] && rm -f "\$RESUME_PIN"
+  sleep 0.6
 done
 EOT
   setsid bash "$CRSS_BIN_DIR/$R-start.sh" >/dev/null 2>&1 &
@@ -106,6 +107,7 @@ OUT="$(CRSS_HOME="$F/crss" bash "$SCRIPT" fx-guard-1 2>&1)"; RC=$?
 ok "protected rc" "$RC" 1; has "protected" "$OUT" "REFUSED(protected)"; hasnt "config not executed" "$OUT" "command not found"
 ok "claude still alive" "$(yn kill -0 "$OLD")" yes
 ok "pin untouched" "$(yn test -e "$HOME/pins/$R.uuid")" no
+OUT="$(CRSS_PROTECT_NAMES='fx-main|bad(' bash "$SCRIPT" "$S" --dry-run 2>&1)"; has "bad regex protected" "$OUT" "REFUSED(protected)"
 
 # 2. Restart with --nudge: pin written, /exit sent, relaunch verified, nudge logged.
 start_case; run --nudge; ok "restart rc" "$RC" 0
@@ -115,6 +117,10 @@ has "nudge sent" "$OUT" "nudge=sent"
 ok "pin holds sid" "$(head -1 "$HOME/pins/$R.uuid")" "$SID"
 ok "claude relaunched" "$(yn test "$(cat "$STATE/claudepid")" != "$OLD")" yes
 has "nudge body" "$(cat "$STATE/sent.log")" "Fleet maintenance"
+run; ok "second restart rc" "$RC" 0
+has "second ok" "$OUT" "OK pid "
+has "second sessionId" "$OUT" "sessionId $SID"
+ok "pin still holds sid" "$(head -1 "$HOME/pins/$R.uuid")" "$SID"
 
 # 3. Scheduled-tasks exit dialog: cancelled, pin removed, claude untouched.
 start_case; touch "$STATE/dialog"
@@ -138,5 +144,11 @@ has "ok after wait" "$OUT" "OK pid $OLD -> "
 wait "$W"
 start_case; printf 'esc to interrupt\n' >> "$STATE/$S.pane"
 run --wait-idle; ok "deadline rc" "$RC" 1; has "deadline" "$OUT" "REFUSED(deadline) still busy after 2s"
+
+# 6. Busy race: a footer appears between typing /exit and Enter; refused, old claude kept, pin removed.
+start_case; touch "$STATE/race"
+run; ok "race rc" "$RC" 1; has "race busy" "$OUT" "REFUSED(busy)"
+ok "race claude alive" "$(yn kill -0 "$OLD")" yes
+ok "race pin absent" "$(yn test -e "$HOME/pins/$R.uuid")" no
 
 finish "test-session-restart"
