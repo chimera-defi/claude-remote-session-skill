@@ -16,18 +16,12 @@
 # verification failed (something IS running; inspect it before retrying).
 set -uo pipefail
 
-# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
-# control retain their existing behavior. No provider/model fallback here.
-_crss_admit() {
-  local helper_dir helper
-  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
-    helper="$helper_dir/autonomous-admission.sh"
-  else
-    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
-  fi
-  bash "$helper" "$@"
-}
+# Shared helpers: see crss-lib.sh.
+_crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
+# shellcheck source=scripts/crss-lib.sh
+. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
+declare -F _crss_admit >/dev/null || { echo "${0##*/}: $_crss_lib is out of date; install crss-lib.sh next to this script" >&2; exit 2; }
+
 _admission_read_only=0
 _admission_target=""
 _admission_skip_next=0
@@ -44,10 +38,6 @@ if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$_admission_read_only" = 0 ]; then
   _crss_admit restart "${CRSS_ADMISSION_SUBJECT:-${_admission_target:-unknown}}" >&2 || exit 2
 fi
 
-# Host overlay config: see crss-lib.sh.
-_crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
-# shellcheck source=scripts/crss-lib.sh
-. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }
 _crss_load_config
 
 # Session-name prefix: see crss-lib.sh.
