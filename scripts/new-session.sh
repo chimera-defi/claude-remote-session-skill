@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# new-session.sh — generate a per-remote start script + systemd unit for a
-# persistent Claude Code session running in a tmux window with --remote-control.
-#
-# Usage: new-session <foldername> [workspace|sessions]
-#   workspace (default when $CRSS_WORKSPACE/<name> exists) — repo sessions
-#   sessions  — utility sessions (monitors, managers, etc.)
+# new-session — generate a per-remote start script and systemd unit for a persistent
+# Claude Code session in tmux with --remote-control. Usage: new-session <foldername> [workspace|sessions]
+# workspace (default when $CRSS_WORKSPACE/<name> exists) = repo sessions; sessions = utility sessions.
 set -e
 _crss_codex_args_from_env=${CRSS_CODEX_ARGS+yes}
-# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
-# control retain their existing behavior. No provider/model fallback here.
+# Autonomous actuation goes through the single admission authority; no provider/model fallback.
 _crss_admit() {
   local helper_dir helper
   helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,11 +16,8 @@ _crss_admit() {
   bash "$helper" "$@"
 }
 
-# ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Host overlay: $CRSS_HOME/config.sh is parsed, never sourced. Env vars already set win; a missing file is fine.
+# See examples/crss-overlay/README.md and tests/test-crss-overlay-config.sh.
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -66,24 +59,11 @@ if [ -z "${CRSS_CODEX_BIN:-}" ]; then
 fi
 : "${CRSS_CODEX_ARGS:=}"
 
-# ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# Session-name prefixes. CRSS_SESSION_PREFIX names new sessions (default cs). CRSS_LEGACY_PREFIXES
+# (|-separated) are recognised when parsing old names but never generated. Both feed _crss_prefix_re.
+# Elements must match ^[a-z][a-z0-9]{0,15}$, which also makes them regex-safe. Any invalid legacy
+# element drops the whole list: an empty pattern would match every session in a reap path.
+# Copied verbatim in other scripts; see tests/test-crss-overlay-config.sh.
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -113,13 +93,12 @@ if [ -n "${CRSS_LEGACY_PREFIXES:-}" ]; then
 fi
 # CRSS-PREFIX-RE-END
 
-# Overlay visibility line, printed in --dry-run output and in the final
-# spawn confirmation below — a missing overlay should be visible, not silent.
+# Overlay state line, shown in --dry-run and the spawn confirmation so a missing overlay is visible.
 _crss_overlay_cfg_state=absent; [ -f "$CRSS_HOME/config.sh" ] && _crss_overlay_cfg_state=found
 _crss_overlay_rules_state=absent; [ -f "$CRSS_CLAUDE_HOME/rules/crss-host.md" ] && _crss_overlay_rules_state=found
 OVERLAY_LINE="overlay: ${CRSS_HOME} (config: ${_crss_overlay_cfg_state}, rules: ${_crss_overlay_rules_state})"
 
-# ── Help ─────────────────────────────────────────────────────────────────────
+# Help
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<HELP_EOF
 Usage: new-session <foldername> [workspace|sessions|auto] [--alias X] [--backend claude|codex] [--dry-run]
@@ -243,7 +222,7 @@ HELP_EOF
   exit 0
 fi
 
-# ── Inputs ──────────────────────────────────────────────────────────────────
+# Inputs
 FOLDERNAME=""; TYPE="auto"; ALIAS_ARG=""; BACKEND_ARG=""; DRYRUN=no; FORCE=no; TASK_ARG=""; TASK_FILE_ARG=""; TASK_TYPE=""; TIER_AUTO=no; SETDEFAULT_ALIAS=no; NPOS=0
 TIER_ARG=""; TIER_REASON=""; ESCALATE_FROM=""; LAUNCHER_ARG=""
 while [ $# -gt 0 ]; do
@@ -260,10 +239,7 @@ while [ $# -gt 0 ]; do
     --tier-reason) TIER_REASON="${2:?--tier-reason needs a value}"; shift 2 ;;
     --task)      TASK_ARG="${2:?--task needs a value}"; shift 2 ;;
     --task-file) TASK_FILE_ARG="${2:?--task-file needs a value}"; shift 2 ;;
-    # NB: workspace/sessions/auto are only a TYPE when they appear AS the second
-    # positional (after the folder). Matching them as the first positional would
-    # make a folder literally named `sessions`/`workspace`/`auto` unspawnable
-    # (e.g. the live `sessions` management session).
+    # workspace/sessions/auto are a TYPE only as the second positional; as the first, a folder named sessions would be unspawnable.
     -*) echo "new-session: unknown option '$1' (see --help)" >&2; exit 2 ;;
     *) if [ "$NPOS" -eq 0 ]; then FOLDERNAME="$1"; elif [ "$NPOS" -eq 1 ]; then TYPE="$1"
        else echo "new-session: too many positional arguments ('$1') — usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2; fi
@@ -274,13 +250,11 @@ if [ -n "$LAUNCHER_ARG" ] && { ! [[ "$LAUNCHER_ARG" =~ ^[A-Za-z0-9_.:-]{1,100}$ 
   echo "--launcher: invalid session name '$LAUNCHER_ARG'" >&2; exit 1
 fi
 if [ -n "$LAUNCHER_ARG" ] && ! tmux has-session -t "=$LAUNCHER_ARG" 2>/dev/null; then
-  # A desktop/app launcher is no tmux session, so session-send cannot reach it: the kickoff must say to report on the bus/mailbox.
+  # Desktop launchers are not tmux sessions, so session-send cannot reach them.
   echo "new-session: note: launcher '$LAUNCHER_ARG' is not a live tmux session; session-send cannot reach it, so tell the lane to report via the host's bus/mailbox instead." >&2
 fi
-# Validate the positionals BEFORE any side effect (pinned by tests/test-new-session-names.sh).
-# FOLDERNAME is a bare name that gets joined onto the workspace/sessions root, never a
-# path: `new-session ~/.sessions fleet-v2` once made WORKDIR=<root>/<root> (the first
-# positional was a directory, the second was taken as TYPE).
+# Validate positionals before any side effect (pinned by tests/test-new-session-names.sh).
+# FOLDERNAME is joined onto the workspace/sessions root, so it must be a bare name, not a path.
 case "$FOLDERNAME" in
   ""|.|..|/*|*/*) echo "new-session: foldername '$FOLDERNAME' must be a bare name (no '/', not empty/./..) — it is joined onto \$CRSS_WORKSPACE or \$CRSS_SESSIONS_DIR. usage: new-session <foldername> [workspace|sessions|auto] [options]" >&2; exit 2 ;;
 esac
@@ -293,8 +267,7 @@ case "$TIER_ARG" in
   *) echo "new-session: unknown --tier '$TIER_ARG' (valid: light|standard|heavy|auto)" >&2; exit 2 ;;
 esac
 case "$TASK_TYPE" in ""|orchestrate|review|mechanical|research|build) ;; *) echo "new-session: invalid --task-type '$TASK_TYPE' (valid: orchestrate|review|mechanical|research|build)" >&2; exit 2 ;; esac
-# --escalate-from <session>: respawn one tier above that session's recorded tier (an
-# explicit --tier wins). Launcher-initiated, never automatic; recorded in telemetry.
+# --escalate-from: respawn one tier above the session's recorded tier; an explicit --tier wins. Never automatic.
 if [ -n "$ESCALATE_FROM" ]; then
   SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
   if [ -z "$TIER_ARG" ]; then
@@ -309,8 +282,7 @@ if [ -n "$ESCALATE_FROM" ]; then
     case "$TIER_REASON" in "") TIER_REASON="escalated from $ESCALATE_FROM ($_prev_tier)" ;; esac
   fi
 fi
-# The overlay is read literally (no $HOME or ~ expansion), so a relative root would put the run
-# directory under whatever cwd the start script has. Refuse before any side effect.
+# Overlay roots are read literally (no $HOME or ~ expansion): a relative root would land the run dir in the cwd.
 for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
   case "${!_root_var}" in
     /*) ;;
@@ -318,7 +290,7 @@ for _root_var in CRSS_WORKSPACE CRSS_SESSIONS_DIR; do
   esac
 done
 
-# ── Backend selection ────────────────────────────────────────────────────────
+# Backend selection
 BACKEND="${BACKEND_ARG:-${CRSS_SESSION_BACKEND:-claude}}"
 case "$BACKEND" in
   claude|codex) ;;
@@ -340,10 +312,8 @@ _codex_model_from_args() {
   done
 }
 
-# _shell_words_literal — split an overlay arg string into words the way a shell
-# would (quotes group, e.g. -c 'k="a b"'), without executing anything, then
-# %q-escape each word. The value is parsed as data, never evaluated. If quoting
-# is unbalanced it falls back to a plain whitespace split.
+# Split an overlay arg string like a shell would (quotes group), without evaluating it, then %q-escape each word.
+# Unbalanced quotes fall back to a whitespace split.
 _shell_words_literal() {
   local tok
   while IFS= read -r -d '' tok; do
@@ -364,9 +334,7 @@ _shell_quote() {
   printf '%q' "$1"
 }
 
-# --task/--task-file: validate up front so a bad kickoff argument fails loudly
-# BEFORE anything spawns, not after (a spawned-but-unkicked session is a worse
-# failure mode than no session at all — it looks like it worked).
+# Validate --task/--task-file before spawning: a spawned-but-unkicked session looks like it worked.
 if [ -n "$TASK_ARG" ] && [ -n "$TASK_FILE_ARG" ]; then
   echo "new-session: --task and --task-file are mutually exclusive" >&2
   exit 2
@@ -382,7 +350,7 @@ elif [ -n "$TASK_ARG" ]; then
   TASK="$TASK_ARG"
 fi
 
-# ── Auto tier routing and quota checks ──────────────────────────────────────
+# Auto tier routing and quota checks
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # quota-check: co-located (repo layout) first, then PATH (deployed layout, .sh dropped).
 QUOTA_CHECK=""
@@ -392,8 +360,7 @@ if [ "$TIER_AUTO" = yes ]; then
   _brief="${TASK,,}"; [ -n "$_brief" ] || _brief="${FOLDERNAME,,}"
   _tt="$TASK_TYPE"; _why_src=no\ match; _kw=""
   if [ -z "$_tt" ]; then
-    # First rule with a whole-word keyword in the brief wins ("add" never matches "address");
-    # stems spell their endings out ([a-z]*).
+    # First rule with a whole-word keyword wins; stems spell out endings ([a-z]*), so add never matches address.
     for _rule in 'orchestrate:orchestrat[a-z]*|coordinat[a-z]*|plan the|lead the' 'review:reviews?|audits?|check|verify|lint' \
                  'mechanical:inventory|grep|triage|rename|move docs|mechanical' 'research:research|investigat[a-z]*|debug|design|root cause|why' \
                  'build:implement[a-z]*|build|fix|add|refactor|migrat[a-z]*|tests?|write'; do
@@ -414,7 +381,7 @@ if [ "$TIER_AUTO" = yes ]; then
 else TIER_AUTO_TYPE=""; fi
 _apply_codex_builder_args() {
   [ "${_crss_codex_args_from_env:-}" = yes ] && return 0
-  # rewrite in Python and re-serialize with shlex.join, the quoting _shell_words_literal parses back
+  # Rewrite in Python; shlex.join output is the quoting _shell_words_literal parses back.
   CRSS_CODEX_ARGS="$(python3 - "${CRSS_CODEX_ARGS:-}" "${CRSS_CODEX_BUILDER_MODEL:-gpt-6.1-terra}" "${CRSS_CODEX_BUILDER_EFFORT:-low}" "${CRSS_CODEX_BUILDER_TIER-priority}" <<'PY'
 import shlex,sys
 args,model,effort,tier=sys.argv[1:]
@@ -436,8 +403,7 @@ PY
 )"
 }
 [ "${TIER_AUTO_TYPE:-}" = build ] && [ "$BACKEND" = codex ] && _apply_codex_builder_args
-# Non-build Codex lanes (owners, reviewers, workers) keep gpt-6.1-sol high: the global ~/.codex default is the
-# terra-low builder (2026-11-02), which the bench did not cover for this work.
+# Non-build Codex lanes keep gpt-6.1-sol high: the ~/.codex default is terra-low, which the bench did not cover for reviews.
 _apply_codex_lane_args() { CRSS_CODEX_BUILDER_MODEL=${CRSS_CODEX_LANE_MODEL:-gpt-6.1-sol} CRSS_CODEX_BUILDER_EFFORT=${CRSS_CODEX_LANE_EFFORT:-high} _apply_codex_builder_args; }
 [ "$BACKEND" = codex ] && [ "${TIER_AUTO_TYPE:-}" != build ] && _apply_codex_lane_args
 QUOTA_RESULT=none; QUOTA_FROM=""; QUOTA_EVIDENCE=""
@@ -460,23 +426,11 @@ if [ "${CRSS_QUOTA_FAILOVER:-1}" != 0 ]; then
   fi
 fi
 
-# ── Preflight capacity gate ──────────────────────────────────────────────────
-# Sessions are long-lived and nothing reaps them automatically, so spawns
-# accumulate until the box runs out of RAM and every session degrades together
-# (observed on a loaded box: dozens of live sessions, little free RAM, heavy
-# swap, high load — turns taking 10+ minutes, commands hanging with no output).
-# A wedged fleet looks like a Claude bug but is really host exhaustion, so
-# refuse to make it worse. Advisory by default; only a genuinely unsafe box
-# hard-blocks, and --force always overrides.
+# Preflight capacity gate. Nothing reaps sessions, so spawns pile up until RAM runs out and the whole
+# fleet degrades (host exhaustion looks like a Claude bug). Advisory by default; only an unsafe box
+# hard-blocks, and --force overrides.
 preflight_capacity() {
-  # --dry-run is documented as a pure, side-effect-free preview ("print the
-  # resolved names and exit — no session spawned, store untouched"), but this
-  # gate ran unconditionally BEFORE $DRYRUN is consulted (it isn't checked
-  # again until the naming section below), so a --dry-run on a genuinely
-  # low-memory host hard-refused with no name output at all unless --force
-  # was also passed — defeating the exact "check what this would resolve to"
-  # use case --dry-run exists for (e.g. debugging a memory-pressure incident).
-  # A dry-run spawns nothing and consumes no RAM, so it never needs this gate.
+  # --dry-run must stay a side-effect-free preview, so it skips the gate even on a low-memory host.
   [ "$DRYRUN" = yes ] && return 0
   local avail_mb load1 cpus sess hard=no
   avail_mb=$(awk '/^MemAvailable:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 99999)
@@ -499,13 +453,10 @@ preflight_capacity() {
 }
 preflight_capacity || exit 1
 
-# ── Profile/model selection ─────────────────────────────────────────────────
+# Profile/model selection
 if [ "$BACKEND" = claude ]; then
-  # CLAUDE_SESSION_PROFILE selects BOTH the built-in tool-schema footprint AND
-  # the default model for the spawned Claude session.
-  # --tier picks defaults only (explicit CLAUDE_SESSION_PROFILE/_MODEL/_EFFORT win): light = copywriter
-  # (haiku, effort low: Haiku 5.5 supports effort), standard = builder, heavy = owner. A tier never selects Opus; Opus is the
-  # no-tier default or an explicit profile/model. Pinned by tests/test-new-session-tier.sh.
+  # CLAUDE_SESSION_PROFILE sets both the tool-schema footprint and the default model.
+  # --tier sets defaults only (explicit env vars win). A tier never selects Opus (pinned by tests/test-new-session-tier.sh).
   [[ "$CRSS_OPUS_MODEL" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CRSS_OPUS_MODEL='$CRSS_OPUS_MODEL' must match ^[a-z0-9][a-z0-9.-]*\$" >&2; exit 2; }
   case "$TIER_ARG" in light) T_PROFILE=copywriter; T_EFFORT=low ;; standard) T_PROFILE=builder; T_EFFORT=low ;;
     heavy) T_PROFILE=owner; T_EFFORT="" ;; *) T_PROFILE=orchestrator; T_EFFORT="" ;; esac
@@ -521,11 +472,8 @@ if [ "$BACKEND" = claude ]; then
   case "$EFFORT" in ""|none|low|medium|high|xhigh|max) ;; *) echo "new-session: CLAUDE_SESSION_EFFORT='$EFFORT' invalid (low|medium|high|xhigh|max)" >&2; exit 2 ;; esac
 
   if [ -n "${CLAUDE_SESSION_MODEL:-}" ]; then
-    # Same base shape as CRSS_OPUS_MODEL above and session-resume's --model: this also closes the pane-injection
-    # hole the apostrophe-only escape below leaves open for "..."-breakout characters (", $, `, \) in a model
-    # typed straight into `--model "..."` in the launch line.
-    # The one extra form is the literal 1M-context suffix `[1m]` (claude-opus-5-5[1m]): brackets are inert inside
-    # those double quotes and in the %q-quoted MODEL= line, so nothing else (no other bracket text) is allowed.
+    # Same shape as CRSS_OPUS_MODEL: a model in the "..." launch line must not break out with " $ ` or backslash.
+    # [1m] (1M context) is the one bracket form allowed; brackets are inert inside those quotes.
     _model_re='^[a-z0-9][a-z0-9.-]*(\[1m\])?$'
     [[ "$CLAUDE_SESSION_MODEL" =~ $_model_re ]] || { echo "new-session: CLAUDE_SESSION_MODEL='$CLAUDE_SESSION_MODEL' must match $_model_re" >&2; exit 2; }
     MODEL="$CLAUDE_SESSION_MODEL"; MODEL_SRC=explicit
@@ -557,58 +505,23 @@ else
   fi
 fi
 
-# Builder keep-list: the built-ins a hands-on-implementation session needs.
-# Shared by the `builder` and `copywriter` profiles (both are trimmed, non-fan-out
-# roles). Comma-separated, NO spaces, so it stays a single shell word when baked
-# into the generated claude command line.
-#
-# IMPORTANT: --tools is an EXHAUSTIVE allowlist over the BUILT-IN set — it gates
-# the *deferred* built-ins (WebFetch, WebSearch, Task*, plan-mode, …) too, not
-# just the upfront-schema ones. Verified empirically: a built-in omitted here is
-# unreachable even via ToolSearch. (MCP-server tools are a separate namespace and
-# stay reachable regardless of this list.) Deferred built-ins cost 0 upfront
-# tokens, so re-listing them is FREE (measured: System tools = 8.2k with OR
-# without them) — we keep the useful ones so a builder stays fully capable:
-# web fetch/search, task tracking, plan mode, notebook edits, background monitor.
-#
-# The ~10.3k saving comes from DROPPING 5 upfront-schema tools: Workflow (~7.8k
-# — multi-agent fan-out, THE orchestrator-defining tool) plus Artifact,
-# SendUserFile, ReportFindings, ScheduleWakeup (~2.5k combined — the
-# reporting/scheduling surface). A builder that genuinely needs one of those
-# should add it here (~1k each) or just use the orchestrator profile.
-#
-# `advisor` is KEPT (~1k), unlike its reporting-surface neighbours: the builder
-# role is the one that actually reaches for a second opinion, and --tools gates
-# deferred built-ins too, so omitting it here made it unreachable ENTIRELY —
-# which presents as "advisor is broken" rather than "never allowlisted".
-# NB it is ALSO gated on the agent's own model, independent of this list
-# (verified against the installed CLI: the sonnet line has it, the opus 5.x
-# line does not).
-# This allowlist is necessary but not sufficient — keep builder on sonnet.
-# AskUserQuestion is omitted (~1.7k tokens): an unwatched builder or copywriter lane must never ask.
+# Builder/copywriter built-in allowlist, comma-separated with no spaces (one shell word in the claude command).
+# --tools is exhaustive over built-ins, deferred ones too: an omitted built-in is unreachable even via ToolSearch.
+# Dropping Workflow, Artifact, SendUserFile, ReportFindings and ScheduleWakeup saves ~10k of upfront schema.
+# advisor stays: builders reach for a second opinion, and it is gated on the agent's own model (sonnet has it).
+# AskUserQuestion is omitted: an unwatched lane must never ask.
 BUILDER_TOOLS="Bash,Read,Edit,Write,Glob,Grep,Agent,Skill,ToolSearch,WebFetch,WebSearch,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskStop,TaskOutput,EnterPlanMode,ExitPlanMode,NotebookEdit,Monitor,advisor"
 HUB_CONSULT_PROMPT='You are a Sonnet hub. At forks consult Opus one-shot via Agent(model:"opus") after first writing a frozen packet to .claude/hub-opus-frozen-packet.md. Packet only: state, options, your recommendation, UNVERIFIED list, file paths; never transcripts. Forks: before destructive/irreversible actions, design under real ambiguity, and before declaring a multi-step task done. Never use Opus/Fable as polling or waiting sessions. Builders default Codex-first (new-session --backend codex, codex exec), then Sonnet fallback. Record models_ran with actual models.'
-# Nobody reads a builder or copywriter pane, and AskUserQuestion is off. Escalate; do not wait.
+# Unattended lanes escalate rather than wait.
 BUILDER_ESCALATION_PROMPT='Unattended lane: nobody reads this pane and AskUserQuestion is off. Never end a turn on a plain-text question and wait. When you need a decision or input, or a denied tool or permission blocks you: send the exact need to your launcher with session-send <launcher> --file <file> (if the launcher is not a tmux session, post on the coordination bus per ~/.config/crss/local.md Escalation), then print one final line starting BLOCKED: with that need, and keep doing any work that does not depend on it.'
 ORCHESTRATOR_DELEGATION_PROMPT='Delegation (operator 2026-10-25, keep quota): you orchestrate and write no code yourself. Every build, fix, script, test or doc edit goes to Codex: codex exec -m gpt-6.1-terra -c model_reasoning_effort=low -c service_tier=priority -c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0 "<bounded task, files, test command>" </dev/null, or a kid via new-session --backend codex. Fan out: run independent slices as parallel background codex exec jobs. Run each slice'\''s test; only on failure: Haiku low repair (claude -p --model haiku --effort low --tools ""), then gpt-6-astra medium, then a Sonnet builder. Read-only research: Haiku high or gpt-6.1-sol low, never an Opus subagent. Fable reads are paused (operator 2026-10-28): review with one gpt-6.1-sol call per bundle. Codex quota-out only on the exact error text. End each Codex brief with: commit only on this branch, no merge or push; propose, do not do: list other changes under PROPOSED. Name a done-check it cannot game, and diff-check renames and allowlist or skip edits before accepting. At most 3 parallel builders per repo, on disjoint files. Read-only scans and prose drafts: Haiku high, written to a file. Re-run each builder'\''s cited check yourself before reporting done. See references/orchestration-flow.md.'
 
-# --exclude-dynamic-system-prompt-sections (BOTH profiles, unconditional): moves
-# cwd/env/memory-path/git-status out of the cached system prompt into the first
-# user message — a prompt-cache-reuse win across spawns. NB: this RELOCATES those
-# sections, it does not shrink the raw token total.
+# Moves cwd/env/git-status out of the cached system prompt: a prompt-cache win that relocates tokens, not shrinks them.
 CLAUDE_EXTRA_FLAGS="--exclude-dynamic-system-prompt-sections"
-# Superpowers plugin: its SessionStart hook (startup|clear|compact) injects ~900 tokens on every start, clear
-# and compact, on top of ~840 always-on tokens, and its text pushes the brainstorming skill before any reply,
-# the wrong habit for a cheap builder lane. Builder, copywriter and autonomous spawns (any profile) run
-# without it; orchestrator, owner and hub keep it. Repeated --settings flags REPLACE each other (probed on CLI
-# 2.1.308: the last file wins, the first one's env is gone), so a second layer would drop rc-firstparty's
-# ANTHROPIC_BASE_URL and break remote-control registration. The start script derives ONE file from the healed
-# rc-firstparty layer. Superpowers-off lanes switch the plugin off (rc-firstparty-no-superpowers.settings.json).
-# CRSS_LANE_DENY (default mcp__gbrain,mcp__plugin_token-reduce_token-reduce-mcp,SendFeedback,ReportFindings;
-# empty disables) is unioned into
-# permissions.deny of that file; superpowers-on lanes then use rc-firstparty-lane.settings.json, and
-# CRSS_LANE_DENY= leaves them on the plain file with no derive. token-reduce MCP: 0 MCP calls in 30 days
-# vs 288 token-reduce CLI calls (lanes use the CLI, not the MCP server).
+# Superpowers SessionStart costs ~900 tokens per start/clear/compact and pushes brainstorming before any reply,
+# so builder, copywriter and autonomous spawns run without it. Repeated --settings flags replace each other
+# (last wins), so the lane file is derived from rc-firstparty, which keeps ANTHROPIC_BASE_URL for remote-control.
+# CRSS_LANE_DENY (empty disables) is unioned into permissions.deny; the token-reduce MCP is unused (lanes use the CLI).
 SUPERPOWERS=on
 SUPERPOWERS_PLUGIN="superpowers@claude-plugins-official"
 if [ -z "${CRSS_LANE_DENY+x}" ]; then
@@ -621,11 +534,9 @@ if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
 fi
 COMPACT_WINDOW=""
 if [ "$BACKEND" = claude ]; then
-  # Auto-compact window: per-spawn CLAUDE_SESSION_COMPACT_WINDOW=<n|host> wins, else the tier's
-  # CRSS_COMPACT_WINDOW_<TIER> overlay value, else CRSS_COMPACT_WINDOW_DEFAULT (234000: with the
-  # host's CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70 that compacts at ~150k). "host" = export nothing
-  # (host settings.json default). Only a launch-environment export reaches claude; see
-  # references/troubleshooting.md.
+  # Auto-compact window: per-spawn CLAUDE_SESSION_COMPACT_WINDOW, then the tier's CRSS_COMPACT_WINDOW_<TIER>,
+  # then the default (234000, about 150k with CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70). "host" exports nothing.
+  # Only a launch-environment export reaches claude (references/troubleshooting.md).
   _cw_var=""
   [ -z "$TIER_ARG" ] || _cw_var="CRSS_COMPACT_WINDOW_$(printf '%s' "$TIER_ARG" | tr '[:lower:]' '[:upper:]')"
   if [ -n "${CLAUDE_SESSION_COMPACT_WINDOW:-}" ]; then
@@ -645,7 +556,7 @@ if [ "$BACKEND" = claude ]; then
   case "$PROFILE" in builder|copywriter) SUPERPOWERS=off ;; esac
   [ "${CRSS_AUTONOMOUS:-0}" != 1 ] || SUPERPOWERS=off
   [ "$SUPERPOWERS" = on ] || SETTINGS_FILE="${CRSS_CLAUDE_HOME}/rc-firstparty-no-superpowers.settings.json"
-  # Leaf is a suffix of the plain path so the hostile-path test's two prefix rewrites still cover every file.
+  # Keep the lane file name a suffix of the plain path: the hostile-path test rewrites that prefix.
   if [ "$SUPERPOWERS" = on ] && [ -n "$CRSS_LANE_DENY" ]; then
     SETTINGS_FILE="${SETTINGS_FILE%.settings.json}-lane.settings.json"
   fi
@@ -662,10 +573,8 @@ if [ "$BACKEND" = claude ]; then
       ;;
   esac
   [ -z "$EFFORT" ] || CLAUDE_EXTRA_FLAGS="$CLAUDE_EXTRA_FLAGS --effort $EFFORT"
-  # Default advisor = the pinned Opus, for sessions that are not Opus/Fable themselves (Opus advising
-  # Opus is self-advice, so those default to no --advisor flag). The advisor sees the whole transcript,
-  # so on a long session this is Opus spend: CLAUDE_SESSION_ADVISOR=none (or another model id) changes
-  # it, and an explicit id is honoured on Opus/Fable too (e.g. a Fable advisor on an Opus orchestrator).
+  # Default advisor is the pinned Opus, except on Opus/Fable sessions (self-advice). The advisor reads the
+  # whole transcript, so it is Opus spend; CLAUDE_SESSION_ADVISOR overrides it (an explicit id is honoured).
   ADVISOR="${CLAUDE_SESSION_ADVISOR:-$CRSS_OPUS_MODEL}"
   [ -n "${CLAUDE_SESSION_ADVISOR:-}" ] || case "$MODEL" in *opus*|*fable*) ADVISOR=none ;; esac
   [[ "$ADVISOR" == none || "$ADVISOR" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "new-session: CLAUDE_SESSION_ADVISOR='$ADVISOR' invalid (model id or none)" >&2; exit 2; }
@@ -674,7 +583,7 @@ else
   CLAUDE_EXTRA_FLAGS=""; ADVISOR=none; SUPERPOWERS=n/a
 fi
 
-# ── Resolve workdir ─────────────────────────────────────────────────────────
+# Resolve workdir
 # TYPE was validated with the other positionals above.
 if [ "$TYPE" = "auto" ]; then
   [ -d "${CRSS_WORKSPACE}/${FOLDERNAME}" ] && TYPE="workspace" || TYPE="sessions"
@@ -686,14 +595,9 @@ else
   WORKDIR="${CRSS_SESSIONS_DIR}/${FOLDERNAME}"
 fi
 
-# ── Naming ──────────────────────────────────────────────────────────────────
-# Name-first, date last: `<prefix>-<alias>-<MMDD-HHMM>`. Aliases are short
-# (capped / acronym'd), so the whole name fits the mobile window while reading
-# naturally and grouping by project. Prefix is $CRSS_SESSION_PREFIX (generic
-# default "cs"; a host migrating off an old hardcoded prefix sets it to that
-# value instead — see the CRSS-PREFIX-RE block above); session-doctor
-# understands the configured prefix plus $CRSS_LEGACY_PREFIXES and does not
-# parse the date, so order is opaque to it.
+# Naming
+# Name is <prefix>-<alias>-<MMDD-HHMM>. Prefix is $CRSS_SESSION_PREFIX (see CRSS-PREFIX-RE above).
+# session-doctor does not parse the date, so the order is free.
 ID=$(date +%m%d-%H%M)
 # In --dry-run, resolve read-only (--no-save) so a preview never mutates the store.
 DRYFLAG=""; [ "$DRYRUN" = yes ] && DRYFLAG="--no-save"
@@ -702,42 +606,17 @@ SETDEFFLAG=""; [ "$SETDEFAULT_ALIAS" = yes ] && SETDEFFLAG="--set-default"
 if command -v session-alias >/dev/null 2>&1; then
   ALIAS=$(session-alias "$FOLDERNAME" ${ALIAS_ARG:+--alias "$ALIAS_ARG"} ${SETDEFFLAG:+$SETDEFFLAG} ${DRYFLAG:+$DRYFLAG} 2>/dev/null) || ALIAS=""
 fi
-# Fallback if the helper is missing (mirrors fallback-recipe): sanitized folder.
+# Fallback when session-alias is missing: sanitized folder name.
 [ -n "$ALIAS" ] || ALIAS=$(printf '%s' "$FOLDERNAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
 BODY="${ALIAS}-${ID}"
 SESSION="${CRSS_SESSION_PREFIX}_${BODY}"
 REMOTE_NAME="${CRSS_SESSION_PREFIX}-${BODY}"
-# MMDD-HHMM is minute-granularity, so spawning the same folder twice inside one
-# clock-minute would otherwise collide on SESSION. That's not just a cosmetic
-# dupe: the generated script's own already-running guard (line ~130) would then
-# silently exit on the second spawn, discarding whatever --alias/
-# CLAUDE_SESSION_MODEL that call passed while still printing "Session created"
-# below. Disambiguate against a live tmux session of the same name so every
-# spawn really does get its own session, matching the documented guarantee.
-#
-# A plain "check tmux, then act" has a TOCTOU race: two invocations for the
-# same folder started concurrently could both pass the has-session check
-# before either has actually created its tmux session, and would then both
-# settle on the same name (caught in review). Close that window with an
-# mkdir-based lock — mkdir is atomic on POSIX filesystems, so only one
-# concurrent invocation can ever hold a given name's lock — held only for the
-# duration of this process (released on exit via the trap below) once the
-# name is confirmed free. --dry-run never reserves anything (mirrors
-# session-alias's --no-save: a preview must not mutate shared state), so it
-# only does the plain liveness check.
-# name_taken <session> <remote_name> — is this candidate name unavailable?
-# Live tmux session -> yes. Also yes when a worktree is still registered at
-# ~/.claude/worktrees/<remote_name>: reap-local never removes worktree files
-# (see session-doctor.sh reap), so a reaped session's worktree can outlive
-# its tmux session and its systemd unit. Respawning the SAME folder+alias
-# within the same clock-minute (ID is minute-granularity) would otherwise
-# reissue that reaped session's exact REMOTE_NAME, and session-git-prep.sh
-# treats a REMOTE_NAME's own registered worktree as safe to reuse across a
-# restart (by design, so a live session's restart doesn't orphan itself) —
-# which would silently hand this brand-new session someone else's leftover,
-# possibly-dirty worktree (found in review, chatgpt-codex-connector, PR #72).
-# Reserving the name until a human runs worktree-stale keeps that reuse path
-# limited to genuine restarts of the SAME session.
+# MMDD-HHMM is minute-granular, so a same-minute respawn would collide. The start script's already-running
+# guard would then exit silently. Pick a free name under an mkdir lock (atomic, so concurrent spawns cannot
+# both take it). Dry-run reserves nothing and only checks liveness.
+# name_taken: a live tmux session, or a worktree still at ~/.claude/worktrees/<name>, makes a name unavailable.
+# Reap leaves worktree dirs behind, and session-git-prep reuses a same-name worktree as a restart, so a
+# reused name would hand a new session leftover dirty state.
 name_taken() {
   tmux has-session -t "$1" 2>/dev/null && return 0
   [ -e "$HOME/.claude/worktrees/$2" ] && return 0
@@ -753,34 +632,19 @@ if command -v tmux >/dev/null 2>&1; then
     LOCKROOT="$HOME/.claude/session-spawn-locks"
     mkdir -p "$LOCKROOT" 2>/dev/null || true
     n=2
-    # Bounded, not `while :`: this loop only ever needs to advance past names a
-    # CONCURRENT spawn is actively racing for, which is inherently self-limiting.
-    # A persistent (non-transient) `mkdir` failure — LOCKROOT on a read-only/full
-    # filesystem, or a plain file occupying that path — makes every iteration
-    # fail identically forever; an unbounded loop then spins with no sleep, no
-    # cap, and no diagnostic, hanging the whole spawn with no sign of why. Fail
-    # loudly instead once a persistent failure is implausibly still "just a race".
+    # Bounded: a persistent mkdir failure (read-only or full filesystem) would otherwise spin forever silently.
     while :; do
       if mkdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null; then
         if name_taken "$SESSION" "$REMOTE_NAME"; then
-          # Name was already live or worktree-retained (a prior, non-racing
-          # spawn or a reaped-but-uncleaned session) — free the lock we just
-          # took and move on to the next candidate name.
+          # Taken: free the lock and try the next candidate.
           rmdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null
         else
-          # A lock dir surviving past this process's exit is a crashed/killed
-          # prior attempt (the trap below did not run) — a benign leak: it
-          # just makes this exact name unavailable until removed by hand,
-          # future spawns still get a working (suffixed) name.
+          # A lock dir left by a killed prior attempt only blocks this exact name until removed by hand.
           trap 'rmdir "$LOCKROOT/${SESSION}.lock" 2>/dev/null' EXIT
           break
         fi
       fi
-      # Build the next candidate from the CURRENT n before incrementing — not
-      # after — so the first retry after the bare base name is "-2" (matching
-      # the dry-run branch above and the collision-suffix numbering the tests
-      # assert), not "-3" (found by Codex review on this PR: incrementing
-      # first skipped "-2" on every real, non-dry-run collision).
+      # Build from the current n, then increment, so the first retry is -2 (as the dry-run branch and tests expect).
       BODY="${ALIAS}-${ID}-${n}"; SESSION="${CRSS_SESSION_PREFIX}_${BODY}"; REMOTE_NAME="${CRSS_SESSION_PREFIX}-${BODY}"
       n=$((n+1))
       if [ "$n" -gt 1000 ]; then
@@ -790,7 +654,7 @@ if command -v tmux >/dev/null 2>&1; then
     done
   fi
 fi
-# Persist admission configuration in generated loops, including after reboot.
+# Admission config is written into the generated loops, so it survives reboot.
 ADMISSION_SUBJECT="${CRSS_ADMISSION_SUBJECT:-$SESSION}"
 ADMISSION_CONFIG_INVALID=0
 [[ "$ADMISSION_SUBJECT" =~ ^[a-zA-Z0-9_./:-]+$ ]] || ADMISSION_CONFIG_INVALID=1
@@ -805,15 +669,13 @@ if [ "$ADMISSION_CONFIG_INVALID" = 1 ]; then
   if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] && [ "$DRYRUN" != yes ]; then
     echo "new-session: invalid admission configuration" >&2; exit 2
   fi
-  # Bad spending configuration must not brick a human launch or preview.
-  # Serialize only safe empty configuration: future automatic passes deny.
+  # A bad config must not block a human launch or preview; autonomous passes still fail closed.
   ADMISSION_SUBJECT=manual
   ADMISSION_HELPER=""
   AGENT_HOST_ADMISSION_CLI=""; AGENT_HOST_ADMISSION_DB=""; AGENT_HOST_ADMISSION_EVIDENCE=""
 fi
-# Restart passes consult admission only when something can answer: an autonomous spawn,
-# a configured authority, or a broken config (fails closed). A manual session with no
-# authority configured restarts freely, so a reboot or crash doesn't strand it.
+# Restarts consult admission only when something can answer (autonomous, a configured authority, or a broken
+# config, which fails closed). A manual session with no authority restarts freely.
 ADMISSION_GATED=0
 if [ "${CRSS_AUTONOMOUS:-0}" = 1 ] || [ "$ADMISSION_CONFIG_INVALID" = 1 ] || [ -n "${AGENT_HOST_ADMISSION_CLI:-}" ]; then
   ADMISSION_GATED=1
@@ -838,7 +700,7 @@ if [ "$QUOTA_RESULT" != none ] && [ "$DRYRUN" != yes ]; then "$QUOTA_CHECK" log 
 _shown_effort="${EFFORT:-default}"
 if [ "$BACKEND" = codex ] && [[ "$CRSS_CODEX_ARGS" =~ model_reasoning_effort=([a-z]+) ]]; then _shown_effort=${BASH_REMATCH[1]}; fi
 if [ "$TIER_AUTO" = yes ]; then printf 'tier auto: %s -> tier=%s backend=%s model=%s effort=%s (why: %s)\n' "$TIER_AUTO_TYPE" "${TIER_ARG:-none}" "$BACKEND" "$MODEL" "$_shown_effort" "$TIER_REASON" >&2; [ "$DRYRUN" = yes ] || "$QUOTA_CHECK" log event=tier-auto session="$SESSION" task_type="$TIER_AUTO_TYPE" tier="${TIER_ARG:-}" backend="$BACKEND" model="$MODEL" effort="$_shown_effort" why="$TIER_REASON" || true; fi
-# What this spawn actually runs, every time, so a tier name can't be misread as a model choice.
+# Always show what this spawn runs, so a tier name is not misread as a model.
 _shown_adv="${ADVISOR:-}"; [ "$BACKEND" = claude ] || _shown_adv=n/a
 printf 'resolved: backend=%s profile=%s model=%s effort=%s advisor=%s tier=%s\n' "$BACKEND" "${PROFILE:-codex}" "$MODEL" "$_shown_effort" "${_shown_adv:-none}" "${TIER_ARG:-none}" >&2
 if [ "$BACKEND" = claude ] && [ -n "$TIER_ARG" ] && [[ "$MODEL" != *opus* && "$MODEL" != *fable* ]]; then
@@ -857,17 +719,14 @@ if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
   _crss_admit launch "$ADMISSION_SUBJECT" --packet-chars "${#TASK}" >&2 || exit 2
 fi
 
-# One id per start attempt, logged on every start-script line and required by the Codex start
-# verdict below, so a stale or concurrent line can never stand in for THIS spawn. Generated after
-# the dry-run exit (a dry run needs no RNG) and before any start script or unit is written. od's own status is
-# checked, not tr's: an od that prints 32 hex characters and then fails is refused.
+# Per-attempt start id, logged on every start-script line and checked by the Codex start verdict,
+# so a stale line cannot stand in for this spawn. od's own status is checked, not tr's.
 START_ID="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null)" || START_ID=""
 START_ID="${START_ID//[$' \n']/}"
 [[ "$START_ID" =~ ^[0-9a-f]{32}$ ]] || { echo "new-session: could not generate a start id from /dev/urandom" >&2; exit 1; }
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-# Folder-trust pre-seed helper, baked into the start script: co-located (repo layout)
-# first, then PATH (deployed layout, .sh dropped). Empty when neither exists.
+# Folder-trust seed helper, baked into the start script; empty when neither copy exists.
 TRUST_SEED=""
 if [ -f "$SELF_DIR/session-trust-seed.sh" ]; then TRUST_SEED="$SELF_DIR/session-trust-seed.sh"
 elif command -v session-trust-seed >/dev/null 2>&1; then TRUST_SEED="$(command -v session-trust-seed)"; fi
@@ -877,7 +736,7 @@ if [ -n "$HUB_CONSULT_PROMPT_FILE" ]; then
   printf '%s\n' "$HUB_CONSULT_PROMPT" > "$HUB_CONSULT_PROMPT_FILE"
 fi
 
-# ── Generate start script ────────────────────────────────────────────────────
+# Generate start script
 # Variables without backslash expand NOW (baked into generated script).
 # Variables with backslash (\$) expand at runtime in the generated script.
 cat > "$SCRIPT" << SCRIPT_EOF
@@ -971,9 +830,7 @@ if 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' not in e:
     e['CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION']='0';json.dump(d,open(f,'w'));open(f,'a').write('\\n')
 " ${CRSS_CLAUDE_HOME}/rc-firstparty.settings.json 2>/dev/null || true
 SCRIPT_EOF
-# Derive runs in the start script (rebuilt every start). One --settings flag only: repeated flags replace
-# each other and would drop this layer's env. Off lanes keep the no-superpowers filename and the old failure
-# event so existing extracts still match; on lanes with a deny list use the lane file.
+# Derive runs in the start script on every start. Only one --settings flag: repeated flags replace each other and drop this layer's env.
 _DERIVE_COMMENT='# Derive ONE file from healed rc-firstparty (every other key kept, env especially; tmp + os.replace; mode copied). Off lanes set the plugin false; permissions.deny is the existing list UNION the lane deny (order kept, no duplicates).
 # gbrain MCP ~2.6k tokens/start (110 deferred names + instructions; 6 MCP calls vs 1,087 gbrain CLI calls in 4 weeks), token-reduce MCP (0 MCP calls in 30 days vs 288 token-reduce CLI calls), SendFeedback ~9KB and ReportFindings ~3KB (0 uses); deny removes them even under --dangerously-skip-permissions. CRSS_LANE_DENY= opts out. Derive failure: plain rc-firstparty copy.'
 _DERIVE_PY=$(cat << 'PY'
@@ -1075,27 +932,13 @@ done
 # pane_current_command shows the loop actually launched.
 SCRIPT_EOF
 
-# Claude supervisor loop, first match wins each iteration:
-#   resume pin  -> `--resume <uuid>` (written by `session-resume`). The pin is
-#                  cleared only after claude has run 30s+ (or by session-resume
-#                  once the registry confirms it): a bad uuid that exits at once
-#                  is retried after the backoff, never silently downgraded to
-#                  `--continue` (which could open the wrong conversation).
-#   sentinel    -> `--continue` (a restart of this session)
-#   neither     -> fresh session. The sentinel is touched BEFORE that first launch:
-#                  touching it after claude exits meant a session killed from outside
-#                  (tmux kill-session, unit stop) never got one, and its next unit
-#                  start was a fresh conversation.
-#                  `--continue` with no prior conversation just starts fresh (checked
-#                  on 2.1.285), so touching early costs nothing.
+# Claude supervisor loop, first match wins: resume pin (--resume <uuid>, cleared only after 30s+ so a bad
+# uuid is retried, never downgraded to --continue), sentinel (--continue), else fresh. The sentinel is
+# touched before the first launch so a session killed from outside still restarts its conversation.
 if [ "$BACKEND" = claude ]; then
-  # The loop is typed into the pane by `tmux send-keys '...'`, so a literal ' in the flags (printf %q writes an
-  # apostrophe as \') would end that quote early and leave the start script unparseable (orchestrator/owner
-  # spawns since the delegation prompt gained apostrophes). Close the quote, emit a quoted ', reopen: the pane
-  # still receives the %q text unchanged. The model, settings path and remote name are typed into the same
-  # pane text, so they get the same escape: %q first for the two unquoted words (a space stays one word), a plain
-  # escape for the values that sit inside double quotes. The launch line keeps `--model "..."`: session-resume
-  # --model rewrites exactly that shape.
+  # The loop is typed with send-keys, so a literal ' in the flags would end that quote early. Close the
+  # quote, emit a quoted ', reopen. Model, settings and remote name get the same escape. The launch line
+  # keeps --model "..." because session-resume rewrites that exact shape.
   _sq="'"; _sq_esc="'\\''"
   _sq_escape() { printf '%s' "${1//"$_sq"/$_sq_esc}"; }
   _pane_word() { _sq_escape "$(_shell_quote "$1")"; }
@@ -1308,7 +1151,7 @@ fi
 SCRIPT_EOF
 chmod +x "$SCRIPT"
 
-# ── Generate systemd unit ────────────────────────────────────────────────────
+# Generate systemd unit
 cat > "$SERVICE" << UNIT_EOF
 [Unit]
 Description=CRSS ${BACKEND} Session - ${REMOTE_NAME}
@@ -1326,12 +1169,11 @@ Environment=TMUX_TMPDIR=/tmp
 WantedBy=default.target
 UNIT_EOF
 
-# ── Enable and start ─────────────────────────────────────────────────────────
+# Enable and start
 # bash's own clock (no `date` fork): several test harnesses put a recursing `date` stub on PATH
 t0="$(TZ=UTC printf '%(%Y-%m-%dT%H:%M:%SZ)T' -1)"
 if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basename "$SERVICE")"; }; then
-  # The unit may now be enabled and failed: a later boot would re-run the start script and refuse
-  # again. Best effort, output discarded: disable it and clear the failed state. The unit file stays.
+  # An enabled, failed unit would re-run and refuse at boot: disable it and clear the failed state (file stays).
   _unit="$(basename "$SERVICE")"
   if systemctl --user disable "$_unit" >/dev/null 2>&1; then
     _after="The unit was disabled, so a reboot will not re-run it."
@@ -1343,11 +1185,8 @@ if ! { systemctl --user daemon-reload && systemctl --user enable --now "$(basena
   exit 1
 fi
 
-# A Codex lane is reported started only from explicit evidence: the LAST well-formed log line for
-# this session written at or after t0 AND carrying THIS start attempt's start_id (so a stale or
-# concurrent same-second line cannot count) must end exactly in ` event=started`. A fresh
-# fail-closed line, any UNVERIFIED line, a stale line, a line from another attempt, a malformed
-# timestamp, or no line at all exits 3.
+# A Codex lane counts as started only on the last log line for this session and start id, at or after t0,
+# ending in event=started. Anything else exits 3.
 START_FAIL_CLOSED=""; START_UNVERIFIED=""; START_VERDICT=""
 if [ "$BACKEND" = codex ]; then
   _sl="$HOME/.sessions/session-starts.log"; _last=""
@@ -1362,24 +1201,14 @@ if [ "$BACKEND" = codex ]; then
   esac
 fi
 
-# ── Telemetry (best-effort, never fails the spawn) ──────────────────────────
-# Prefer the directory the session actually launched in over WORKDIR:
-# session-git-prep redirects into a fresh worktree whenever the canonical tree
-# is dirty or already owned, and the bootstrap CLAUDE.md fragment (line ~197
-# above) is appended there — not in WORKDIR — so WORKDIR's CLAUDE.md would be
-# stale/wrong for worktree spawns. `systemctl --user enable --now` above
-# blocks until ExecStart (the generated script) completes, and that script
-# logs "session=$SESSION rundir=..." before returning, so the line is already
-# there to read back. Falls back to WORKDIR if the log line isn't found.
+# Telemetry (best-effort, never fails the spawn)
+# Prefer the launch dir over WORKDIR: session-git-prep may redirect into a fresh worktree, which gets the
+# CLAUDE.md fragment. The start script logs rundir= before enable --now returns; fall back to WORKDIR.
 TELEMETRY_DIR="$WORKDIR"
 SPAWN_LOG="$HOME/.sessions/session-starts.log"
 if [ -f "$SPAWN_LOG" ]; then
   LOGLINE="$(grep "session=${SESSION} rundir=" "$SPAWN_LOG" | tail -1)"
-  # Bash's ${#*pat} removes the SHORTEST match from the front — unlike a
-  # greedy sed s/.*rundir=//, which would strip up through the LAST
-  # occurrence of "rundir=" in the line. A run directory whose path itself
-  # contains the literal substring "rundir=" (e.g. .../repo-rundir=trial)
-  # would otherwise get truncated to whatever follows its own last match.
+  # ${#*pat} strips the shortest prefix; a greedy sed would cut at the last rundir= and break paths containing it.
   RD="${LOGLINE#*session="${SESSION}" rundir=}"
   [ -n "$RD" ] && TELEMETRY_DIR="$RD"
 fi
@@ -1387,19 +1216,10 @@ if [ -x "$SELF_DIR/record-spawn-telemetry.sh" ]; then
   CRSS_ESCALATED_FROM="$ESCALATE_FROM" CRSS_LAUNCHER="$LAUNCHER_ARG" CRSS_SPAWN_BACKEND="$BACKEND" "$SELF_DIR/record-spawn-telemetry.sh" "$FOLDERNAME" "$ALIAS" "$REMOTE_NAME" "$SESSION" "$TYPE" "$MODEL" "$TELEMETRY_DIR" "${TIER_ARG:-}" "${EFFORT:-}" "$TIER_REASON" "$COMPACT_WINDOW" || true
 fi
 
-# ── Kickoff task (--task/--task-file) ───────────────────────────────────────
-# Replaces the fragile manual dance (spawn, hand-type the prompt, eyeball it
-# landed, hit Enter) with the SAME poll-then-verify path session-handoff.sh
-# already uses for a live session's follow-ups — not a second copy of that
-# logic. Resolve the helper co-located first (repo/dev layout: session-
-# handoff.sh next to this script) then on PATH (deployed layout: flat copies
-# in ~/.local/bin with the .sh dropped, see session-git-prep.sh's header) so
-# this works in both. Invoked via `bash` so the helper's exec bit (664 in-repo)
-# never matters.
-# TASK_FAILED collects why the task was not (verifiably) delivered; any value makes the
-# spawn exit 3 below, after naming the session, so a launcher never mistakes it for success.
-# Codex does not inherit Claude's output hook. Keep this advisory local to its
-# kickoff, after backend/quota routing, without requiring rtk or changing CLI config.
+# Kickoff task (--task/--task-file)
+# Reuses session-handoff's poll-then-verify send (no second copy). Helper: co-located, then PATH; run via bash.
+# TASK_FAILED collects why delivery failed; any value makes the spawn exit 3, so a launcher never reads it as success.
+# Codex has no output hook: keep this advisory and local to kickoff (no rtk, no CLI config change).
 if [ "$BACKEND" = codex ] && [ -n "$TASK" ]; then
   TASK=$'Shell output: use rtk for supported noisy commands (e.g. rtk git log -20, rtk ls, rtk test <command>) when installed; use the original command if rtk is unavailable or unfiltered output is needed.\n\n'"$TASK"
 fi
@@ -1416,25 +1236,17 @@ elif [ -n "$TASK" ]; then
   if [ -z "$HANDOFF" ]; then
     TASK_FAILED="could not locate session-handoff (looked next to this script and on PATH) — task NOT sent; send it by hand: session-handoff send ${SESSION} ..."
   else
-    # Require `check` to report ready for NEW_SESSION_TASK_SETTLE (default 3)
-    # CONSECUTIVE 1s-apart polls, not just once, before the first send: on a freshly
-    # booted TUI the first paste right after the prompt renders can be silently
-    # dropped. This only cuts how often that race is hit; session-handoff.sh's
-    # `send` ("dropped-first-paste recovery") is what catches one that slips past.
+    # Need NEW_SESSION_TASK_SETTLE (default 3) consecutive ready polls: a fresh TUI can drop the first paste.
+    # session-handoff's send recovers any paste that still slips through.
     ready=no
     trust_dialog=no
     gone=no
     settle_need="${NEW_SESSION_TASK_SETTLE:-3}"
     settle_have=0
     for _i in $(seq 1 "${NEW_SESSION_TASK_READY_TRIES:-90}"); do
-      # `check` exits non-zero for every not-ready state, so the status must be
-      # captured WITHOUT tripping `set -e` (a bare `x="$(cmd)"` exits the whole
-      # script silently — the first not-ready poll killed the spawn after the
-      # systemd symlink line, with no "Session created" and no warning).
+      # check exits non-zero when not ready: capture the status without tripping set -e, or the spawn dies silently.
       check_rc=0; check_out="$(bash "$HANDOFF" check "$SESSION" 2>&1)" || check_rc=$?
-      # A menu/dialog (typically the folder-trust prompt) waits on a human and
-      # cannot resolve by itself: stop polling at once. The start script pre-seeds
-      # trust (session-trust-seed), so seeing it here means seeding failed.
+      # A dialog (typically folder trust) needs a human: stop polling now. The start script pre-seeds trust, so seeing it means seeding failed.
       if printf '%s' "$check_out" | grep -q 'state=menu'; then
         trust_dialog=yes
         break
@@ -1449,8 +1261,7 @@ elif [ -n "$TASK" ]; then
       sleep 1
     done
     if [ "$trust_dialog" = yes ] && tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -qiE 'retires on|Try new model|Use existing model'; then
-      # Codex's model-retirement notice is a menu too, but answering it is a model
-      # choice, not a trust grant: name it distinctly and never pick for the operator.
+      # Codex's model-retirement menu is a model choice, not a trust grant: never pick for the operator.
       TASK_FAILED="'${SESSION}' is parked on the Codex model-retirement menu ('Try new model' / 'Use existing model') — task NOT sent. Attach and choose deliberately (not an auto-pick; 'Use existing model' keeps the configured model, 'Try new model' switches it), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
     elif [ "$trust_dialog" = yes ]; then
       TASK_FAILED="'${SESSION}' is parked on a menu/trust dialog — task NOT sent (pre-seeding trust failed: see $HOME/.sessions/session-starts.log). Attach and choose 'Yes, I trust this folder' (the highlighted default is 'No, exit', so do not press Enter blindly), then: session-handoff send ${SESSION} ${TASK_FILE_ARG:+--file $(_shell_quote "$TASK_FILE_ARG")}"
@@ -1466,7 +1277,7 @@ elif [ -n "$TASK" ]; then
   fi
 fi
 
-# ── Confirm ──────────────────────────────────────────────────────────────────
+# Confirm
 if [ -n "$START_FAIL_CLOSED" ]; then
   echo "" >&2
   echo "new-session: session ${REMOTE_NAME} (tmux ${SESSION}) started FAIL-CLOSED (reason=${START_FAIL_CLOSED}): codex was NOT launched and the loop retries after its backoff. ${TASK_FAILED:+${TASK_FAILED}. }Inspect: grep -a 'session=${SESSION} ' $HOME/.sessions/session-starts.log | tail" >&2
