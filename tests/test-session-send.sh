@@ -14,13 +14,13 @@ has "forwards the helper's error" "$out" "no such tmux session"; ok "forwards ex
 # deployed layout: session-send alone next to a flat `session-handoff` on PATH
 DEPLOY="$(mktemp -d)"; ISOLATED="$(mktemp -d)"; trap 'rm -rf "$DEPLOY" "$ISOLATED"' EXIT
 cp "$SEND" "$DEPLOY/session-send.sh"
-cp "$HERE/../scripts/session-handoff.sh" "$DEPLOY/session-handoff"; chmod +x "$DEPLOY/session-handoff"
+cp "$HERE/../scripts/session-handoff.sh" "$DEPLOY/session-handoff"; cp "$HERE/../scripts/crss-lib.sh" "$DEPLOY/crss-lib.sh"; chmod +x "$DEPLOY/session-handoff"
 out="$(PATH="$DEPLOY:$PATH" bash "$DEPLOY/session-send.sh" "$NOSESS" hello 2>&1)"; rc=$?
 has "PATH fallback resolves the helper" "$out" "no such tmux session"; ok "PATH fallback exit 2" "$rc" "2"
 
 # flat deployed layout under a systemd-like PATH (no ~/.local/bin): resolve the co-located flat copy
 FLAT="$(mktemp -d)"; trap 'rm -rf "$DEPLOY" "$ISOLATED" "$FLAT"' EXIT
-cp "$SEND" "$FLAT/session-send"; cp "$HERE/../scripts/session-handoff.sh" "$FLAT/session-handoff"
+cp "$SEND" "$FLAT/session-send"; cp "$HERE/../scripts/session-handoff.sh" "$FLAT/session-handoff"; cp "$HERE/../scripts/crss-lib.sh" "$FLAT/crss-lib.sh"
 chmod +x "$FLAT/session-send" "$FLAT/session-handoff"
 out="$(env -i PATH=/usr/bin:/bin HOME="$HOME" "$FLAT/session-send" "$NOSESS" hello 2>&1)"; rc=$?
 has "minimal PATH: flat co-located helper found" "$out" "no such tmux session"; ok "minimal PATH: exit 2 from helper" "$rc" "2"

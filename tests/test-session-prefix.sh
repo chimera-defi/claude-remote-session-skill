@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CRSS_SESSION_PREFIX / CRSS_LEGACY_PREFIXES across every session-name parse/generate site in the six scripts that
-# carry the CRSS-PREFIX-RE block (the block's own byte-identity/fallback rules are pinned by test-crss-overlay-config.sh).
+# CRSS_SESSION_PREFIX / CRSS_LEGACY_PREFIXES across every session-name parse/generate site in the scripts that call
+# _crss_prefix_init from crss-lib.sh (its fallback rules are pinned by test-crss-overlay-config.sh).
 # Each site is exercised under: configured (px + legacy oldhost), generic default (cs), custom (zz), foreign names
 # (never recognised), and invalid prefix values (fall back safely, never match everything).
 set -uo pipefail

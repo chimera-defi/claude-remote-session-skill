@@ -6,7 +6,7 @@ source "$HERE/lib.sh"
 isolate_overlay
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 BIN="$T/bin"; mkdir -p "$BIN"
-cp "$HERE/../scripts/new-session.sh" "$BIN/new-session.sh"
+cp "$HERE/../scripts/new-session.sh" "$BIN/new-session.sh"; cp "$HERE/../scripts/crss-lib.sh" "$BIN/crss-lib.sh"
 ln -s "$HERE/../scripts/session-alias.sh" "$BIN/session-alias"
 cat > "$BIN/systemctl" <<'EOS'
 #!/usr/bin/env bash

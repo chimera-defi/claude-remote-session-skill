@@ -19,7 +19,7 @@ source "$SCRIPT"   # for _encode_cwd / _managed_task_state_for_cwd (source-guard
 ISO="$(mktemp -d)"; BIN="$(mktemp -d)"; FIXTURE_DIR="$(mktemp -d)"; FAKE_HOME="$(mktemp -d)"
 trap 'rm -rf "$ISO" "$BIN" "$FIXTURE_DIR" "$FAKE_HOME"' EXIT
 cp "$SCRIPT" "$ISO/session-compact.sh"
-cp "$HANDOFF" "$ISO/session-handoff.sh"   # co-located: busy detection runs for real
+cp "$HANDOFF" "$ISO/session-handoff.sh"; cp "$HERE/../scripts/crss-lib.sh" "$ISO/crss-lib.sh"   # co-located: busy detection runs for real
 
 # fake tmux: STUB_TMUX_SESSIONS exist; STUB_TMUX_BUSY_SESSIONS show the spinner; the rest capture as a SAFE pane
 cat > "$BIN/tmux" <<'EOF'

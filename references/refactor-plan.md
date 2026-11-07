@@ -116,9 +116,10 @@ A missing lib exits 2 with that message. There is deliberately no fallback copy:
 fallback would let a stale copy run unnoticed.
 
 A caller that runs a script with no file path (`bash -s`, `bash -c "$(cat …)"`, process
-substitution) has no `BASH_SOURCE` path either, so that script would exit 2. On 2026-11-07
-a grep of `scripts/`, the host overlay and `~/.local/bin` for those forms found none; re-run
-it before PR 3.
+substitution) has no `BASH_SOURCE` path, so the lookup falls back to `./crss-lib.sh` in the
+current directory: it exits 2 unless a lib happens to sit there. Don't run crss scripts that
+way. On 2026-11-07 a grep of `scripts/`, the host overlay, `~/.local/bin` and the systemd
+user units for those forms found none (re-checked when PR 3 landed).
 
 **Deploy.** The lib is installed before any script that sources it. An old script ignores
 the lib, and a new script without it fails at once. The lib PR changes the deploy table in

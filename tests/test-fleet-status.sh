@@ -50,7 +50,7 @@ ok  "unset-snapshot-exit0" "$rc" "0"
 # fleet-status.sh ALONE into an isolated dir so co-located resolution misses
 # too, same trick test-session-send.sh uses for its own helper.
 ISOLATED="$(mktemp -d)"
-cp "$FS" "$ISOLATED/fleet-status.sh"
+cp "$FS" "$ISOLATED/fleet-status.sh"; cp "$HERE/../scripts/crss-lib.sh" "$ISOLATED/crss-lib.sh"
 out="$(HOME="$FAKE_HOME" PATH="/usr/bin:/bin" bash "$ISOLATED/fleet-status.sh" --sessions 2>&1)"
 has "session-doctor-missing-reported" "$out" "session-doctor not found"
 rm -rf "$ISOLATED"

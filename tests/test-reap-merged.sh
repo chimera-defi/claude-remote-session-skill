@@ -116,7 +116,7 @@ mk px_audit-0101-0900; merged px_audit-0101-0900
 REAL_DOCTOR="$DOCTOR"; ALT="$T/alt"; mkdir -p "$ALT"; cp "$REAL_DOCTOR" "$ALT/session-doctor.sh"
 # The copied doctor resolves session-handoff.sh beside itself. The deployed binary on PATH predates
 # _is_blocked, so the worktree script has to be the sibling or every idle pane fails closed.
-cp "$HERE/../scripts/session-handoff.sh" "$ALT/session-handoff.sh"
+cp "$HERE/../scripts/session-handoff.sh" "$ALT/session-handoff.sh"; cp "$HERE/../scripts/crss-lib.sh" "$ALT/crss-lib.sh"
 cat > "$ALT/session-preserve.sh" <<WRAP
 #!/usr/bin/env bash
 case "\$1" in px_audit-*) echo "unlanded work (fixture)"; exit 1;; esac
