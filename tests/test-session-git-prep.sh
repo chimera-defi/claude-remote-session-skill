@@ -121,6 +121,8 @@ if command -v tmux >/dev/null 2>&1; then
   R8="$WORK/repo8"; mkrepo "$R8"
   LEGACY_OWNER="sgp-test-legacy-owner-$$"
   tmux new-session -d -s "$LEGACY_OWNER" 2>/dev/null
+  # The owner must really be live, or the case passes for the wrong reason.
+  ok "old-format-owner-live" "$(tmux has-session -t "=$LEGACY_OWNER" 2>/dev/null && echo live)" "live"
   LEGACY_KEY8="$(printf '%s' "$R8" | tr '/ ' '__')"
   mkdir -p "$HOME/.claude/session-locks"
   printf '%s' "$LEGACY_OWNER" > "$HOME/.claude/session-locks/${LEGACY_KEY8}.owner"
