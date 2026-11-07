@@ -214,14 +214,12 @@ else
   if [ -n "$st" ] && grep -qvE '^.. (\.claude(/|$)|\.sessions-init)' <<<"$st"; then
     refuse "run directory: the canonical tree $WORKDIR is dirty and there is no own worktree $OWN_WT, so the unit would start in a NEW worktree — not where this session's transcript lives (commit or WIP-commit the canonical tree's changes first, or spawn fresh with new-session)"
   fi
-# session-git-prep would also put this session in a new worktree if a live session owns the canonical tree.
-  flat="$(printf '%s' "$WORKDIR" | tr '/ ' '__')"
-  for lk in "${flat}_$(printf '%s' "$WORKDIR" | cksum | cut -d' ' -f1)" "$flat"; do
-    owner="$(cat "$CLAUDE_HOME/session-locks/$lk.owner" 2>/dev/null || true)"
-    if [ -n "$owner" ] && [ "$owner" != "$SESSION" ] && tmux has-session -t "=$owner" 2>/dev/null; then
-      refuse "run directory: live session $owner holds the canonical tree $WORKDIR, so the unit would start in a NEW worktree — not where this session's transcript lives"
-    fi
-  done
+  # session-git-prep would also put this session in a new worktree if a live session owns the canonical tree.
+  lk="$(printf '%s' "$WORKDIR" | tr '/ ' '__')_$(printf '%s' "$WORKDIR" | cksum | cut -d' ' -f1)"
+  owner="$(cat "$CLAUDE_HOME/session-locks/$lk.owner" 2>/dev/null || true)"
+  if [ -n "$owner" ] && [ "$owner" != "$SESSION" ] && tmux has-session -t "=$owner" 2>/dev/null; then
+    refuse "run directory: live session $owner holds the canonical tree $WORKDIR, so the unit would start in a NEW worktree — not where this session's transcript lives"
+  fi
 fi
 say "run dir:      $RUNDIR${LOGGED_RUNDIR:+   (last logged: $LOGGED_RUNDIR)}"
 if [ -n "$LOGGED_RUNDIR" ] && [ "$LOGGED_RUNDIR" != "$RUNDIR" ]; then
