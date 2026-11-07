@@ -201,18 +201,20 @@ cp "$REPO/scripts/session-registry.sh" "$LIB" "$E2E/beside/"
 bash "$E2E/beside/session-registry.sh" -h >/dev/null 2>&1; rc=$?
 ok "lib-beside-copy-works" "$rc" 0
 # An out-of-date lib (here: one without _is_protected) stops session-restart before its protection
-# check; with the current lib the same run refuses the protected name.
-mkdir -p "$E2E/stale"
+# check; with the current lib the same run refuses the protected name. Stub tmux/systemctl come first
+# on PATH so a regression past the check can never reach the live tmux server.
+mkdir -p "$E2E/stale" "$E2E/stubs"
+printf '#!/bin/sh\nexit 1\n' > "$E2E/stubs/tmux"; cp "$E2E/stubs/tmux" "$E2E/stubs/systemctl"; chmod +x "$E2E/stubs/"*
 cp "$REPO/scripts/session-restart.sh" "$E2E/stale/"
 sed '/^_is_protected() {/,/^}/d' "$LIB" > "$E2E/stale/crss-lib.sh"
 ok "stale-lib-fixture-lacks-helper" "$(grep -c '^_is_protected()' "$E2E/stale/crss-lib.sh")" 0
-env -i HOME="$E2E" PATH=/usr/bin:/bin CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
+env -i HOME="$E2E" PATH="$E2E/stubs:/usr/bin:/bin" CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
   bash "$E2E/stale/session-restart.sh" cs_keep --dry-run >"$E2E/stale.out" 2>&1; rc=$?
 ok "stale-lib-exits-2" "$rc" 2
 has "stale-lib-says-out-of-date" "$(cat "$E2E/stale.out")" "is out of date; install crss-lib.sh next to this script"
 ok "stale-lib-never-reaches-plan" "$(grep -c 'REFUSED' "$E2E/stale.out")" 0
 cp "$LIB" "$E2E/stale/crss-lib.sh"
-env -i HOME="$E2E" PATH=/usr/bin:/bin CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
+env -i HOME="$E2E" PATH="$E2E/stubs:/usr/bin:/bin" CRSS_HOME="$E2E/none" CRSS_PROTECT_NAMES=keep \
   bash "$E2E/stale/session-restart.sh" cs_keep --dry-run >"$E2E/stale.out" 2>&1; rc=$?
 ok "current-lib-refuses-protected" "$rc:$(grep -c 'REFUSED(protected)' "$E2E/stale.out")" "1:1"
 rm -rf "$E2E"
