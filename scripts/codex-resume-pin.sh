@@ -42,8 +42,7 @@ CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
-# The one argv grammar (codex 0.160). Fails closed (exit 1) on anything it cannot classify, so
-# this parser and codex's own clap can never disagree about which token is a flag.
+# The one argv grammar (codex 0.160). Fails closed (exit 1) on any token it cannot classify.
 sandbox_of() {
   python3 -I - "$@" <<'PY'
 import os, sys
@@ -154,9 +153,8 @@ print(s)
 PY
 }
 
-# stdout: the single rollout's resolved path. Exit as documented under `exists`. Symlinks are
-# followed (find -L); a broken one anywhere under the root means the search cannot prove absence.
-# Matches are counted as distinct FILES (realpath), so an in-root alias is not a second rollout.
+# stdout: the single rollout path. Symlinks are followed (find -L); a broken one means absence
+# cannot be proven. Matches are counted as distinct files (realpath).
 _find_rollout() {
   local id="$1" root tmp etmp rc m r msg
   local -a res=() uniq=()
