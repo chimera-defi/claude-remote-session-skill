@@ -27,7 +27,7 @@ _crss_load_config() {
 }
 
 # _crss_prefix_init — sets _crss_prefix_re. CRSS_SESSION_PREFIX names NEW sessions (default
-# "cs"). CRSS_LEGACY_PREFIXES are extra prefixes recognised when parsing but never generated.
+# "cs"). CRSS_LEGACY_PREFIXES (|-separated) are recognised when parsing but never generated.
 # Each token must match ^[a-z][a-z0-9]{0,15}$, which also makes the alternation safe. An invalid
 # prefix falls back to the default; any invalid legacy token drops the WHOLE legacy list, never
 # an empty pattern (that would match everything on a reap path).
