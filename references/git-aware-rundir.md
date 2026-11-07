@@ -24,8 +24,8 @@ dirty OR already owned       -> run in a fresh per-session worktree
   canonical repo path as-is.
 - **Non-git workdirs** skip this silently.
 
-Precedence and edge cases (legacy lock-key format, retry-with-suffix on worktree-add
-collision): `scripts/session-git-prep.sh`, pinned by `tests/test-session-git-prep.sh`.
+Precedence and edge cases (retry-with-suffix on worktree-add collision):
+`scripts/session-git-prep.sh`, pinned by `tests/test-session-git-prep.sh`.
 
 A fresh worktree would otherwise park claude on its folder-trust dialog, so the start script then
 runs `scripts/session-trust-seed.sh` on the chosen run directory (which key it writes, and why it is
