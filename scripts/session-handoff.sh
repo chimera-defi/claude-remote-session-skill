@@ -8,19 +8,6 @@
 # Ready is not idle: `ready` also refuses a pane with a draft in its input box.
 set -uo pipefail
 
-# Autonomous actuation uses the single Agent Host authority; diagnostics/manual
-# control retain their existing behavior. No provider/model fallback here.
-_crss_admit() {
-  local helper_dir helper
-  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
-    helper="$helper_dir/autonomous-admission.sh"
-  else
-    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
-  fi
-  bash "$helper" "$@"
-}
-
 # ── Host-local overlay config ────────────────────────────────────────────────
 # Host overlay config: see crss-lib.sh.
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
@@ -197,16 +184,6 @@ _verdict() {
 }
 
 # ── live helpers ──────────────────────────────────────────────────────────────
-
-# tmux_to_base — tmux session name to remote-control name. Keep identical to
-# session-doctor.sh's and session-preserve.sh's copies (scripts deploy standalone).
-tmux_to_base() {
-  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
-    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
-  else
-    echo ""
-  fi
-}
 
 _start_script_field() {
   local sc="$1" name="$2" line value

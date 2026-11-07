@@ -198,9 +198,10 @@ ok "docompact-transcript-failclosed-exit"   "$rc" "1"
 ok "docompact-transcript-failclosed-output" "$out" "timeout"
 rm -rf "$DOTB_HOME2"
 
-# Layer 3: CLI. Copy session-compact.sh ALONE into an isolated dir (PATH-only helper resolution), stub session-handoff and systemctl.
+# Layer 3: CLI. Copy session-compact.sh into an isolated dir with crss-lib.sh (the shared helpers it sources) but NO helper scripts (PATH-only helper resolution); stub session-handoff and systemctl.
 ISO="$(mktemp -d)"
 cp "$SCRIPT" "$ISO/session-compact.sh"
+cp "$HERE/../scripts/crss-lib.sh" "$ISO/crss-lib.sh"
 BIN="$(mktemp -d)"
 cp "$STUBDIR/session-handoff" "$BIN/session-handoff"
 cat > "$BIN/systemctl" <<'EOF'

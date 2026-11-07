@@ -74,16 +74,6 @@ rundir_of() {  # $1 = tmux session -> cwd of the claude process
   readlink "/proc/$cpid/cwd" 2>/dev/null
 }
 
-# tmux_to_base: <prefix>_slug -> <prefix>-slug (first "_" becomes "-"), or "" when not ours.
-# Mirrors session-doctor.sh; a local copy, because each script here is standalone.
-tmux_to_base() {
-  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
-    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
-  else
-    echo ""
-  fi
-}
-
 # worktree_of <tmux-session>: best guess at the worktree on disk when no live process is found.
 # A branch match (session/<base>) wins over a dirname match: a name collision leaves a stale dir
 # beside the real -$$ one, and trusting the dirname would audit the wrong, possibly clean, one.

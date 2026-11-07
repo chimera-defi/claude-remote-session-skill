@@ -4,17 +4,6 @@
 # workspace (default when $CRSS_WORKSPACE/<name> exists) = repo sessions; sessions = utility sessions.
 set -e
 _crss_codex_args_from_env=${CRSS_CODEX_ARGS+yes}
-# Autonomous actuation goes through the single admission authority; no provider/model fallback.
-_crss_admit() {
-  local helper_dir helper
-  helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -f "$helper_dir/autonomous-admission.sh" ]; then
-    helper="$helper_dir/autonomous-admission.sh"
-  else
-    helper="$(command -v autonomous-admission 2>/dev/null)" || return 2
-  fi
-  bash "$helper" "$@"
-}
 
 # Host overlay config: see crss-lib.sh.
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"

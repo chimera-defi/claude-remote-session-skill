@@ -74,17 +74,6 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
   PROTECT='.'
 }
 
-# _is_protected <text> — match CRSS_PROTECT_NAMES against the text and its hyphen/underscore forms,
-# so one term protects tmux, unit and title names alike.
-_is_protected() {
-  local t="$1"
-  local v
-  for v in "$t" "${t//_/-}" "${t//-/_}"; do
-    grep -qiE "$PROTECT" <<<"$v" && return 0
-  done
-  return 1
-}
-
 # Session-name prefix: see crss-lib.sh.
 _crss_prefix_init
 
@@ -295,18 +284,6 @@ _registry_delete_one() {
   esac
 }
 
-# Prefix mapping. Only the configured/recognised prefixes ($_crss_prefix_re —
-# CRSS_SESSION_PREFIX + CRSS_LEGACY_PREFIXES) are ours; anything else (e.g.
-# codexhost_) is NOT ours and must be left alone. PROTECT (line ~22) stays
-# in sync with session-alias.sh.
-tmux_to_base() {
-  if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
-    echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
-  else
-    echo ""
-  fi
-}
-
 start_script_field() {
   local sc="$1" name="$2" line value
   [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || return 1
@@ -375,16 +352,6 @@ svc_to_tmux() {
   else
     echo "$1"
   fi
-}
-
-# _find_helper <basename> — prefer a co-located <basename>.sh (repo layout), else PATH (deployed flat copies).
-# Returns 1 on a miss; callers must fail SAFE (refuse), never skip what the helper was gating.
-_find_helper() {
-  local base="$1" here
-  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-  if [ -f "$here/${base}.sh" ]; then printf '%s\n' "$here/${base}.sh"; return 0; fi
-  if command -v "$base" >/dev/null 2>&1; then command -v "$base"; return 0; fi
-  return 1
 }
 
 # _record_reap_event <session> <forced> [clean] — best-effort telemetry; never changes reap's exit status.
@@ -876,13 +843,6 @@ _tsv_git_status() {
 }
 
 # ── history helpers ────────────────────────────────────────────────────────
-
-# _encode_cwd <path> -> the ~/.claude/projects/<encoded> dir name. Pure string transform; '.' -> '-' must run before '/' -> '-'.
-_encode_cwd() {
-  local p="$1"
-  p="${p//./-}"
-  printf '%s\n' "${p//\//-}"
-}
 
 # _history_matches <query> <wt_base> <proj_base> — print matched worktree paths, one per line (they may not exist on disk).
 # Query: a folder name, a path (only its basename is used), or a repo-name substring. Candidates come from live dirs under

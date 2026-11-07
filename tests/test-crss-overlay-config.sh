@@ -39,15 +39,21 @@ LOADER_SOURCE_LINES=(
   '. "$_crss_lib" || { echo "${0##*/}: missing $_crss_lib; install crss-lib.sh next to this script" >&2; exit 2; }'
   '_crss_load_config'
 )
-# has_loader_window FILE: the 4 loader lines appear consecutively in FILE.
+# has_loader_window FILE: the 3 lookup lines (source crss-lib.sh) appear consecutively in FILE.
+# Sourcing is a separate concern from config loading: session-resume.sh sources the lib before its
+# admission gate and calls _crss_load_config after it, so the call is checked on its own below.
 has_loader_window() {
   local n
   n="$(grep -n -F -x -- "${LOADER_SOURCE_LINES[0]}" "$1" | head -1 | cut -d: -f1)"
   [ -n "$n" ] || return 1
-  [ "$(sed -n "${n},$((n+3))p" "$1")" = "$(printf '%s\n' "${LOADER_SOURCE_LINES[@]}")" ]
+  [ "$(sed -n "${n},$((n+2))p" "$1")" = "$(printf '%s\n' "${LOADER_SOURCE_LINES[@]:0:3}")" ]
 }
-for f in "${LOADER_FILES[@]}"; do
+# session-compact.sh sources the lib too (for its shared helpers) but does not load config.
+for f in "${LOADER_FILES[@]}" session-compact.sh; do
   ok "loader-sources-lib-$f" "$(has_loader_window "$REPO/scripts/$f" && echo yes || echo no)" yes
+done
+for f in "${LOADER_FILES[@]}"; do
+  ok "loader-calls-load-config-$f" "$(grep -qx '_crss_load_config' "$REPO/scripts/$f" && echo yes || echo no)" yes
   ok "no-loader-copy-$f" "$(grep -qE '_crss_load_config\(\) \{|CRSS-CONFIG-LOADER' "$REPO/scripts/$f" && echo yes || echo no)" no
 done
 for f in "${PREFIX_RE_FILES[@]}"; do
@@ -57,6 +63,10 @@ done
 ok "lib-defines-each-function-once" "$(grep -cE '^_crss_(load_config|valid_prefix_tok|prefix_init)\(\) \{' "$LIB")" 3
 other_defs="$(grep -lE '_crss_(load_config|prefix_init|valid_prefix_tok)\(\) \{' "$REPO"/scripts/*.sh | grep -v '/crss-lib\.sh$' || true)"
 ok "no-other-file-defines-lib-functions" "$other_defs" ""
+# Shared helpers (admission, lookup, tmux naming, cwd encoding, protection) live once, in the lib.
+ok "lib-defines-shared-helpers-once" "$(grep -cE '^(_crss_admit|_find_helper|tmux_to_base|_encode_cwd|_is_protected)\(\) \{' "$LIB")" 5
+shared_defs="$(grep -lE '^(_crss_admit|_find_helper|tmux_to_base|_encode_cwd|_is_protected|protected)\(\) \{' "$REPO"/scripts/*.sh | grep -v '/crss-lib\.sh$' || true)"
+ok "no-other-file-defines-shared-helpers" "$shared_defs" ""
 
 # ── 2. Loader behavior — source the lib into a fresh bash process per scenario, then call it
 
@@ -137,6 +147,24 @@ out="$(CRSS_SESSION_PREFIX=px CRSS_LEGACY_PREFIXES='oldhost|.*' bash -c "set -uo
 has "invalid-legacy-element-drops-whole-list" "$out" "RE=px"
 has "invalid-legacy-element-not-oldhost" "$(grep -qF 'RE=px|oldhost' <<<"$out" && echo yes || echo no)" "no"
 has "invalid-legacy-element-warns" "$out" "CRSS_LEGACY_PREFIXES 'oldhost|.*' has an invalid element"
+
+# ── 3b. Shared helpers: behavior against the lib ─────────────────────────────
+has "protected-match" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES=claude-remote; _is_protected cs_claude_remote; echo RC=\$?")" "RC=0"
+has "protected-no-match" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES=claude-remote; _is_protected cs_other; echo RC=\$?")" "RC=1"
+has "protected-bad-regex-fails-closed" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES='bad('; _is_protected anything; echo RC=\$?")" "RC=0"
+has "protected-leading-dash" "$(bash -c "source '$LIB'; CRSS_PROTECT_NAMES='-x'; _is_protected 'a-x'; echo RC=\$?")" "RC=0"
+
+# _find_helper and _crss_admit look beside the CALLING script (BASH_SOURCE[1]), not the lib.
+FH="$(mktemp -d)"
+cat > "$FH/caller.sh" <<EOF
+#!/usr/bin/env bash
+. '$LIB'
+_find_helper zzhelper
+EOF
+: > "$FH/zzhelper.sh"
+out="$(bash "$FH/caller.sh" 2>&1)"
+ok "find-helper-beside-caller" "$out" "$FH/zzhelper.sh"
+rm -rf "$FH"
 
 # ── 4. Installed layout: a script without crss-lib.sh beside it exits 2; with it, it runs
 E2E="$(mktemp -d)"
