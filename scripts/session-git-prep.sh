@@ -77,16 +77,6 @@ mkdir -p "$LOCK_DIR" 2>/dev/null || true
 FLAT_KEY="$(printf '%s' "$REPO" | tr '/ ' '__')"
 LOCK_KEY="${FLAT_KEY}_$(printf '%s' "$REPO" | cksum | cut -d' ' -f1)"
 LOCK="$LOCK_DIR/${LOCK_KEY}.owner"
-# LEGACY_LOCK is the pre-checksum key format. Scripts here are deployed as
-# flat copies to ~/.local/bin (see SKILL.md), not versioned atomically, and
-# session-git-prep only re-runs for a given session on its NEXT spawn/restart
-# — so a session that claimed the canonical tree under the OLD key format
-# keeps its lock recorded there indefinitely while it stays up. Looking up
-# only the new key during the rollout window would read that live owner as
-# free and let a second session claim the same tree concurrently (found in
-# review, chatgpt-codex-connector, PR #43) — so busy-detection must still
-# check the legacy path too, even though new claims only ever write the new one.
-LEGACY_LOCK="$LOCK_DIR/${FLAT_KEY}.owner"
 BUSY=""
 check_lock() {  # $1 = lock file -> 0 (busy, live owner) or 1 (free; removes a stale lock)
   local f="$1" owner
@@ -98,7 +88,7 @@ check_lock() {  # $1 = lock file -> 0 (busy, live owner) or 1 (free; removes a s
   rm -f "$f" 2>/dev/null || true   # stale lock from a dead session
   return 1
 }
-if check_lock "$LOCK" || check_lock "$LEGACY_LOCK"; then
+if check_lock "$LOCK"; then
   BUSY=1
 fi
 
