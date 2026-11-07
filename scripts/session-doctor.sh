@@ -1,135 +1,61 @@
 #!/usr/bin/env bash
 # session-doctor.sh — audit and clean up crss remote-control sessions across
-# the layers they live in: tmux windows, systemd --user units, the Anthropic
-# session registry (GET /v1/sessions), and per-session git worktrees
-# (~/.claude/worktrees/, created by session-git-prep.sh for dirty/busy repos).
-# Local reaping alone does not relieve session-count pressure, because the
-# registry accumulates disconnected and zombie ("connected" but process-gone)
-# entries independently, and worktrees accumulate independently of both.
+# tmux windows, systemd --user units, the Anthropic session registry
+# (GET /v1/sessions), and per-session git worktrees (~/.claude/worktrees/).
+# Reaping locally does not relieve registry pressure: the registry and the
+# worktrees each accumulate disconnected/zombie entries independently.
 #
-# Usage:
-#   session-doctor.sh                      # report (read-only) — default
-#   session-doctor.sh reap-local           # remove DEAD local sessions (proc gone / orphaned unit+script)
-#   MIN-AGE GATE: reap, reap-local (dead tmux AND orphan units: a dead tmux server leaves young units that session-resume needs) and reap-merged
-#                                           # refuse any session younger than CRSS_REAP_MIN_AGE_H hours (default 24, 0
-#                                           # disables; age = first spawn in session-starts.log via session-registry
-#                                           # --first-seen). Override: `reap <name> --allow-young` or the env var.
-#                                           # --force does NOT bypass it. See _reap_age_gate; tests/test-reap-min-age.sh.
-#   session-doctor.sh reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run] [--outcome ok|failed|escalated|abandoned] [--outcome-note <s>]
-#                                           # one-shot teardown of a named ALIVE session (tmux+unit);
-#                                           # refuses on unlanded work unless --force; also deletes
-#                                           # that session's registry entry (by title == base name)
-#                                           # unless --keep-registry — fails soft if the registry is
-#                                           # unreachable, never changes reap's own exit status; also
-#                                           # removes the session's ~/.claude/worktrees/<base> git
-#                                           # worktree (branch kept) unless --keep-worktree — see
-#                                           # _reap_remove_worktree's own header comment for the
-#                                           # guards (dirty refusal, in-use-by-another-unit, caller's
-#                                           # own cwd, primary checkout) that make this safe.
-#                                           # --dry-run runs the same refusal checks, then prints
-#                                           # what would be torn down and changes nothing
-#   session-doctor.sh reap-merged [--apply] [--idle-min N] [--outcome ok]
-#                                           # DRY-RUN by default: one candidate/skipped line per live session.
-#                                           # A candidate has a MERGED PR whose head == the worktree's HEAD
-#                                           # (gh merge record, never patch-ids), no open PR, an idle pane
-#                                           # >= N min (default 120) with no busy marker, typed input, or
-#                                           # operator block (pane-blocked via session-handoff _is_blocked), and
-#                                           # a passing `reap <name> --dry-run` audit. --apply runs only that
-#                                           # plain `reap` (never --force, never deletes a branch). Rules
-#                                           # live in _reap_merged_check; tests/test-reap-merged.sh pins them.
-#   session-doctor.sh registry-stale [--days N]   # list registry sessions disconnected > N days (default 30)
-#   session-doctor.sh registry-prune [--days N] [--apply]
-#                                           # same candidate set as registry-stale; DRY-RUN by default
-#                                           # (prints deleted/skipped(reason)/failed(code) per row with
-#                                           # no mutation); --apply performs the DELETEs. Always skips
-#                                           # PROTECT-matching titles, any title matching a live tmux
-#                                           # session, and requires_action rows (rows stale >2xN days
-#                                           # are still skipped, just flagged for operator review).
-#                                           # Exits non-zero if any delete failed.
-#   session-doctor.sh worktree-stale       # list ~/.claude/worktrees/ dirs whose owning session is dead
-#   session-doctor.sh archive-ignored <worktree>
-#                                           # copy a worktree's non-regenerable gitignored files (results
-#                                           # under artifacts/ …) to ~/backups/reaped-worktree-ignored/,
-#                                           # verified; `git worktree remove` deletes them, status=clean
-#                                           # never shows them. Runs automatically inside `reap`.
-#   session-doctor.sh land-check           # per-worktree unlanded-vs-real-default-branch + real-dirty; report only
-#   session-doctor.sh idle-report [--days N | --minutes N] [--tsv]
-#                                           # list LIVE local sessions with no GENUINE user turn
-#                                           # in N days (default 2) or N minutes (--minutes;
-#                                           # mutually exclusive with --days); a /compact summary
-#                                           # entry itself does not count as a genuine turn; --tsv
-#                                           # emits one machine-readable row per session (10 tab-
-#                                           # separated columns, no header/summary) for actuator
-#                                           # scripts; report only
-#   session-doctor.sh history <foldername>        # NOW (live sessions) + PAST (transcript history) + status for a worktree; bare name, absolute path, or repo-name substring; report only
-#   session-doctor.sh auth-scan [--days N]  # scan transcripts under ~/.claude/projects touched in the last N days
-#                                           # (default 2) for CLI auth-failure turns ("Please run /login",
-#                                           # "OAuth session expired and could not be refreshed", ...) and
-#                                           # compare the newest one with the newest SUCCESSFUL assistant
-#                                           # turn. Exit 1 = an auth outage looks ONGOING (newest failure
-#                                           # is newer than the newest success); 0 = none or recovered.
-#                                           # Reads transcripts only — never ~/.claude/.credentials.json.
-#                                           # Also printed as one line by the default `report`. Report only.
-#   session-doctor.sh opus-subagents [--days N]  # sessions whose subagent transcripts ran on Opus (last N
-#                                           # days, default 2); summary line in `report`. Report only.
-#   session-doctor.sh suggest-feeders       # live claude TUIs that can feed promptSuggestionUnusedStreak
-#                                           # (~/.claude.json back-off counter) + its current value. Report only.
-#   session-doctor.sh auth-heal [--apply] [--days N]
-#                                           # Nudge idle Claude lanes whose last turn failed auth, only when
-#                                           # host login is valid; DRY-RUN by default, window default 2 days.
-#                                           # Once per failure; a repeat within 6h requires operator /login.
-#   session-doctor.sh overlay              # host-local overlay ($CRSS_HOME) health check:
-#                                           # dir/config.sh/rules/local.md present, config.sh
-#                                           # lines that won't be loaded (warn); never fails
-#                                           # hard on a broken overlay; also folded into the
-#                                           # default `report` output. Report only.
+# Subcommands (no argument = read-only report):
+#   reap-local                remove DEAD local sessions (proc gone, or orphaned unit+script)
+#   reap <name> [flags]       tear down one named ALIVE session (tmux, unit, registry entry,
+#                             worktree). Flags: --force --allow-young --keep-registry
+#                             --keep-worktree --dry-run --outcome --outcome-note
+#   reap-merged [--apply]     dry-run by default; candidate = merged PR for the worktree HEAD,
+#                             no open PR, idle pane. --apply runs only plain reap
+#   registry-stale [--days N] list registry sessions disconnected > N days (default 30)
+#   registry-prune [--days N] [--apply]   same set; dry-run by default
+#   worktree-stale            list worktrees whose owning session is dead (report only)
+#   archive-ignored <wt>      save a worktree's gitignored, non-regenerable files (runs inside reap)
+#   land-check                per-worktree unlanded-vs-default-branch and dirty status (report only)
+#   idle-report [--days N | --minutes N] [--tsv]   live sessions with no genuine user turn
+#   history <folder>          NOW + PAST transcript history and status for a worktree (report only)
+#   auth-scan [--days N]      auth-failure turns; exit 1 if an outage looks ongoing
+#   opus-subagents [--days N] sessions whose subagent transcripts ran on Opus (report only)
+#   suggest-feeders           live TUIs that feed promptSuggestionUnusedStreak (report only)
+#   auth-heal [--apply] [--days N]   nudge idle lanes whose last turn failed auth; dry-run by default
+#   overlay                   $CRSS_HOME health check; never fails hard (report only)
 #
 # Safety:
-#   * Protected names default to the skill's own name ("claude-remote"); a host
-#     running other always-on bridge sessions can add them (e.g.
-#     my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
-#     examples/crss-overlay/). Protected names are NEVER reaped.
-#   * A tmux/systemd entry is only reaped when its claude process is genuinely gone
-#     (reap-local) or the operator named it explicitly (reap).
-#   * `reap` refuses a session with unlanded/uncommitted work (via session-preserve.sh)
-#     unless --force; a missing tmux session or systemd unit never fails the rest of it.
-#   * registry-stale never deletes (it prints candidates + the exact curl to run by
-#     hand); registry-prune is the automated form of that same candidate set — DRY-RUN
-#     by default, mutates only with --apply, and never touches a PROTECTED title, a
-#     title matching a live tmux session, or a requires_action row.
-#   * reap's registry cleanup reuses registry-prune's same protect check and delete
-#     mechanism, targeted at exactly the one entry it just tore down; --keep-registry
-#     skips it. A registry lookup/delete failure there is soft — it never changes
-#     reap's own exit status.
-#   * `reap <name>` also removes that ONE session's own ~/.claude/worktrees/<base>
-#     worktree by default (--keep-worktree opts out) — never the branch. `git worktree
-#     remove` runs WITHOUT --force (a dirty worktree refuses and is left in place,
-#     reported, and never fails the rest of reap) except under reap's own --force,
-#     where --force is passed through. A worktree any OTHER systemd user unit
-#     references (WorkingDirectory or anywhere in ExecStart, drop-ins included) is
-#     never removed, nor is the caller's own cwd or a repo's primary checkout. See
-#     _reap_remove_worktree's header comment and
-#     tests/test-session-doctor-reap-worktree.sh.
-#   * Before removing a worktree, `reap` archives its non-regenerable GITIGNORED files
-#     (`git worktree remove` deletes them and neither _wt_dirty nor session-preserve counts
-#     them) to ~/backups/reaped-worktree-ignored/ and keeps the worktree if that fails or
-#     the payload is over the cap; --force does not skip it. worktree-stale flags such rows
-#     and chains `archive-ignored` ahead of their `remove:` line. See _wt_archive_ignored.
-#   * Worktree removal for everything ELSE (a dead session that was reap-local'd, not
-#     reap'd by name; a worktree left behind by a session reaped before this existed)
-#     is intentionally NOT automated. worktree-stale prints candidates, each one's
-#     dirty/landed status, and the exact commands to run by hand after review.
-#   * idle-report, land-check, and history are REPORT-ONLY: idle-report's rows are
-#     still-alive procs reap-local won't touch; land-check never mutates anything;
-#     history only reads transcripts, /proc, and git state. Feed any of them to a
-#     manual pass.
+#   * Protected names (CRSS_PROTECT_NAMES, default "claude-remote") are never reaped.
+#     An invalid regex there fails closed: every session is treated as protected.
+#   * A tmux/unit entry is reaped only when its claude process is gone (reap-local)
+#     or the operator named it (reap).
+#   * MIN-AGE GATE: reap, reap-local and reap-merged refuse sessions younger than
+#     CRSS_REAP_MIN_AGE_H hours (default 24, 0 disables); age = first spawn in
+#     session-starts.log. Dead tmux with young units is kept because session-resume
+#     needs those units. --force does NOT bypass it; --allow-young does. See
+#     _reap_age_gate; tests/test-reap-min-age.sh.
+#   * reap refuses unlanded or uncommitted work (session-preserve.sh) unless --force.
+#     A missing tmux session or unit never fails the rest of reap.
+#   * reap removes only that session's own worktree, never its branch. It runs
+#     `git worktree remove` without --force (dirty refuses) unless reap --force.
+#     Guards: another unit references it, it is the caller's cwd, or it is the
+#     primary checkout. See _reap_remove_worktree; tests/test-session-doctor-reap-worktree.sh.
+#   * Gitignored non-regenerable files are archived to ~/backups/reaped-worktree-ignored/
+#     before removal, because `git worktree remove` deletes them and status=clean hides
+#     them. If archiving fails, the worktree is kept. See _wt_archive_ignored.
+#   * Other worktree removal is not automated; worktree-stale prints candidates for review.
+#   * registry-prune never touches a PROTECT-matching title, a title matching a live
+#     tmux session, or a requires_action row (stale >2xN days rows are flagged only).
+#     It mutates only with --apply and exits non-zero if any delete failed. registry-stale
+#     never deletes. reap's registry cleanup reuses the same check and delete for one
+#     entry; a failure there is soft and never changes reap's exit status.
+#   * idle-report, land-check, history, auth-scan and suggest-feeders never mutate.
 set -uo pipefail
 
 # ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh for CRSS_* vars; an env var already set wins. A missing file is fine.
+# Marker block copied verbatim across scripts (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -155,13 +81,8 @@ _crss_load_config
 
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 BIN="$HOME/.local/bin"
-# Protected names (default: the skill's own name, "claude-remote") are NEVER
-# reaped. A host running other always-on bridge sessions can add them (e.g.
-# my-other-bridge) via CRSS_PROTECT_NAMES in $CRSS_HOME/config.sh (see
-# examples/crss-overlay/). An empty override would
-# make every `grep -qiE "$PROTECT"` below match EVERYTHING (an empty ERE
-# matches any line), which is the opposite of "protect nothing" — so an
-# empty CRSS_PROTECT_NAMES falls back to a pattern that matches nothing.
+# CRSS_PROTECT_NAMES (default: claude-remote) is never reaped. An empty value must fall back to a pattern that
+# matches nothing: an empty ERE matches every line, which would protect everything.
 : "${CRSS_PROTECT_NAMES:=claude-remote}"
 PROTECT="$CRSS_PROTECT_NAMES"
 [ -n "$PROTECT" ] || PROTECT='^$'
@@ -172,8 +93,8 @@ _crss_rc=0; grep -qiE -- "$PROTECT" </dev/null 2>/dev/null || _crss_rc=$?; [ "$_
   PROTECT='.'
 }
 
-# _is_protected <text> — CRSS_PROTECT_NAMES against tmux names (<prefix>_x), units and titles (<prefix>-x) alike: try the
-# text as-is, all-hyphen and all-underscore so a term in either form protects every form. Tests: tests/test-reap-min-age.sh.
+# _is_protected <text> — match CRSS_PROTECT_NAMES against the text and its hyphen/underscore forms,
+# so one term protects tmux, unit and title names alike.
 _is_protected() {
   local t="$1"
   local v
@@ -183,24 +104,12 @@ _is_protected() {
   return 1
 }
 
-# ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# Session-name prefix (the CRSS-PREFIX-RE block below is copied verbatim across scripts).
+# New sessions get CRSS_SESSION_PREFIX (default cs). CRSS_LEGACY_PREFIXES (|-separated) are
+# recognised when parsing a name, never used to generate one. Each element must match
+# ^[a-z][a-z0-9]{0,15}$, which also rules out ERE metacharacters. ANY invalid legacy element
+# drops the WHOLE legacy list: an empty alternation would match everything, the dangerous
+# direction in a reap path. Tests: tests/test-crss-overlay-config.sh.
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -231,10 +140,8 @@ fi
 # CRSS-PREFIX-RE-END
 
 MODE="${1:-report}"; shift || true
-# Per-mode default window: idle-report wants a short "today/yesterday" window (2d);
-# registry-stale keeps its 30d default. --days overrides either. --minutes (idle-
-# report only) is a finer-grained alternate threshold and is mutually exclusive
-# with --days — see the DAYS_SET/MINUTES_SET check below.
+# DAYS default: 2 for idle-report, auth-scan, auth-heal and opus-subagents; 30 otherwise.
+# --minutes (idle-report only) is mutually exclusive with --days (checked below).
 case "$MODE" in idle-report|auth-scan|auth-heal|opus-subagents) DAYS=2;; *) DAYS=30;; esac
 FORCE=no
 ALLOW_YOUNG=no
@@ -249,10 +156,7 @@ MINUTES=""
 IDLE_MIN=120
 DAYS_SET=no
 MINUTES_SET=no
-# Positional args past MODE (e.g. `reap <name>`) must survive this loop, not
-# just be discarded — collect anything that isn't a recognized flag into ARGS
-# and restore it as $1.. below. (No mode needed a bare positional until `reap`,
-# so this previously silently dropped one; caught while adding it.)
+# Positional args (e.g. the name in `reap <name>`) are collected into ARGS and restored below.
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -288,54 +192,37 @@ esac
 [ "${#REAP_MIN_AGE_H}" -le 9 ] && [ "$((10#$REAP_MIN_AGE_H))" -le 8760 ] || { echo "session-doctor: CRSS_REAP_MIN_AGE_H must be <= 8760 hours, got '$REAP_MIN_AGE_H'" >&2; exit 2; }
 REAP_MIN_AGE_H=$((10#$REAP_MIN_AGE_H))
 AY_FLAG=""; [ "$ALLOW_YOUNG" = yes ] && AY_FLAG=--allow-young   # forwarded to reap-merged's `reap` subprocesses
-# --dry-run is only accepted where it is honored: reap (preview) and the two
-# modes that are already dry by default. Anywhere else (e.g. archive-ignored,
-# which writes under ~/backups) it would be silently ignored, so refuse it.
+# --dry-run is refused where it would be silently ignored (e.g. archive-ignored writes under ~/backups).
 if [ "$DRY_RUN" = yes ]; then
   case "$MODE" in
     reap|reap-local|registry-prune|reap-merged) ;;
     *) echo "session-doctor: --dry-run is not supported for $MODE" >&2; exit 2;;
   esac
 fi
-# --dry-run means "change nothing"; --apply (registry-prune) and reap-local's
-# --force mean "change things". Together they are contradictory, so refuse
-# rather than guess which one the operator meant.
+# --dry-run conflicts with --apply and reap-local --force; refuse rather than guess the intent.
 if [ "$DRY_RUN" = yes ] && { [ "$APPLY" = yes ] || { [ "$MODE" = reap-local ] && [ "$FORCE" = yes ]; }; }; then
   echo "session-doctor: --dry-run cannot be combined with $([ "$APPLY" = yes ] && echo --apply || echo --force) for $MODE" >&2
   exit 2
 fi
-# --minutes and --days both select an idle-report threshold — giving both is
-# ambiguous (which one wins?), not additive, so reject it outright instead of
-# silently picking one.
+# --days and --minutes both pick the idle-report threshold; giving both is ambiguous, so reject it.
 if [ "$DAYS_SET" = yes ] && [ "$MINUTES_SET" = yes ]; then
   echo "session-doctor: --days and --minutes are mutually exclusive" >&2
   exit 2
 fi
-# DAYS is spliced verbatim into an embedded Python snippet below (registry-stale
-# and idle-report modes) as a bare identifier, e.g. `DAYS=$DAYS`. An unvalidated
-# non-numeric value (typo, empty string) is therefore live Python, not data — it
-# throws an uncaught NameError/SyntaxError there instead of a clean usage error.
-# Validate here so a bad --days fails fast with a readable message.
+# DAYS is spliced as a bare literal into the embedded Python (registry-stale, idle-report).
+# Validate it here, or a typo becomes a Python SyntaxError instead of a usage error.
 case "$DAYS" in
   ''|*[!0-9]*) echo "session-doctor: --days requires a non-negative integer, got '$DAYS'" >&2; exit 2 ;;
 esac
-# A digit-only value can still break the embedded-as-a-literal splice: Python 3
-# rejects a leading-zero integer literal (e.g. `08`) as a SyntaxError ("leading
-# zeros ... not permitted"), so `--days 08` would pass the digits-only check
-# above yet still crash inside the Python snippet. Canonicalize to base-10 (same
-# `10#` pattern session-alias.sh uses for the same class of problem) so the
-# spliced value is always a plain, leading-zero-free literal.
+# Canonicalize to base-10: Python rejects a leading-zero literal such as 08.
 DAYS=$((10#$DAYS))
-# --idle-min (reap-merged) is validated the same way; 0 is refused, since a zero idle floor would
-# let a session that is still mid-turn qualify.
+# A zero --idle-min would let a session that is still mid-turn qualify for reap-merged.
 case "$IDLE_MIN" in
   ''|*[!0-9]*) echo "session-doctor: --idle-min requires a positive integer, got '$IDLE_MIN'" >&2; exit 2 ;;
 esac
 IDLE_MIN=$((10#$IDLE_MIN))
 [ "$IDLE_MIN" -gt 0 ] || { echo "session-doctor: --idle-min must be > 0" >&2; exit 2; }
-# --minutes gets the identical validate-then-canonicalize treatment, but only
-# when actually given — an empty/unset MINUTES is the "not requested" sentinel
-# idle-report's dispatch below checks for (MINUTES_SET), not a value to validate.
+# --minutes is validated only when given; an unset MINUTES is the not-requested sentinel.
 if [ "$MINUTES_SET" = yes ]; then
   case "$MINUTES" in
     ''|*[!0-9]*) echo "session-doctor: --minutes requires a non-negative integer, got '$MINUTES'" >&2; exit 2 ;;
@@ -343,25 +230,9 @@ if [ "$MINUTES_SET" = yes ]; then
   MINUTES=$((10#$MINUTES))
 fi
 
-# registry_json — fetch EVERY page of GET /v1/sessions and return them merged
-# as {"data": [...]}. The registry paginates (confirmed against the live API: a
-# bare GET returns {data, first_id, has_more, last_id}; production page size
-# is 200; has_more flips false only once exhausted; after_id=<last_id> fetches
-# the next page with zero id overlap with the previous one). A single
-# unpaginated GET here used to silently truncate registry-stale,
-# registry-prune, report's registry summary, and reap's title lookup to the
-# first page — the bug that made `registry-prune --apply` need 6 repeated
-# passes to exhaust a real stale backlog (10/7/4/2/2/1 deletions).
-#
-# Walks pages via after_id until has_more is false, MAX_PAGES is hit (hard
-# cap so a malformed/adversarial has_more:true can't loop forever — each
-# individual GET still has curl's own -m 25 timeout), or a page's JSON fails
-# to parse. A bare JSON array (no has_more/last_id — the shape this
-# repo's non-pagination tests fix as a registry fixture) is treated as a
-# single complete page, same as today. A parse/fetch failure on page 1
-# fails the whole call (return 1, matching the pre-existing credentials-
-# missing failure path below); a failure on page 2+ stops pagination but
-# still returns everything fetched so far, rather than discarding it.
+# registry_json — fetch every page of GET /v1/sessions (cursor: after_id=<last_id>) and print {"data": [...]}.
+# A bare JSON array counts as one complete page. A page-1 failure returns 1; a later-page failure keeps
+# what was already fetched. MAX_PAGES bounds a malformed has_more:true; each GET has curl's -m 25 timeout.
 registry_json() {
   local tok org
   tok=$(python3 -c "import json;print(json.load(open('$HOME/.claude/.credentials.json'))['claudeAiOauth']['accessToken'])" 2>/dev/null) || return 1
@@ -417,15 +288,9 @@ print(json.dumps({'data': merged}))
   rm -rf "$tmpdir"
 }
 
-# _registry_candidates <DAYS> — reads registry JSON on stdin, prints one
-# candidate per line as id<TAB>age<TAB>session_status<TAB>title, oldest-first:
-# exactly registry-stale's long-standing selection (connection_status ==
-# disconnected AND age>DAYS), extracted here so registry-stale (display) and
-# registry-prune (deletion candidates) never drift on what counts as "stale".
-# Exits 1 with no output if the JSON can't be parsed (registry unavailable or
-# malformed) — callers print their own "(registry unavailable)"-style message
-# on failure rather than this function doing it, since registry-stale and
-# registry-prune word that differently.
+# _registry_candidates <DAYS> — registry JSON on stdin -> id<TAB>age<TAB>status<TAB>title, oldest first.
+# Shared by registry-stale and registry-prune so both apply one stale rule: disconnected AND age > DAYS.
+# Exits 1 on unparseable JSON; each caller words its own 'registry unavailable' message.
 _registry_candidates() {
   local days="$1"
   python3 -c "
@@ -448,16 +313,9 @@ for s in cand:
 "
 }
 
-# _title_protected <title> — PROTECT (defined above) is written for machine
-# names (tmux/systemd, always hyphen-separated, e.g. claude-remote-bridge);
-# registry titles can instead be human-typed with spaces (e.g. a
-# "My Direct Claude Remote" entry), which the literal PROTECT regex
-# would silently miss. Squeeze whitespace runs to '-' before matching so the
-# same PROTECT terms catch both forms, without widening PROTECT itself (it's
-# also used against tmux/systemd names elsewhere, where that broadening isn't
-# wanted).
-# Capture the squeezed title with its status checked (sentinel keeps the exact bytes), then
-# match: a failed producer is "not protected", as the old pipe under pipefail said.
+# _title_protected <title> — PROTECT is written for hyphenated machine names, but registry titles can
+# contain spaces. Squeeze whitespace to '-' before matching; PROTECT itself stays unwidened.
+# A failed producer counts as not protected. The trailing x sentinel keeps the exact bytes.
 _title_protected() {
   local t
   t="$(printf '%s' "$1" | tr -s '[:space:]' '-' && printf x)" || return 1
@@ -540,20 +398,16 @@ backend_of() {
 }
 
 live_tmux()  { tmux ls 2>/dev/null | cut -d: -f1; }
-# _tmux_live_has <name> — is <name> exactly one of the live tmux session names? The listing is
-# captured whole with its status checked, THEN matched (an early-exiting `grep -q` downstream of
-# the producer races SIGPIPE under pipefail, and `< <(live_tmux)` would drop the producer's
-# status). A failed or empty listing is "not live", as the old `live_tmux | grep -qx` said.
+# _tmux_live_has <name> — exact match against the live tmux session list. The listing is captured whole,
+# status checked first: a failed producer must read as not live, and SIGPIPE must not hide it.
 _tmux_live_has() {
   local o
   o="$(live_tmux && printf x)" || return 1
   o=${o%x}
   [ -n "$o" ] && grep -qx -- "$1" <<<"${o%$'\n'}"
 }
-# Liveness by the tmux PANE's foreground command, NOT by guessing the remote-control
-# name from the tmux session name. Claude sessions are alive with claude/node
-# foregrounds; Codex sessions are alive with codex/node. sleep is the shared
-# supervisor backoff (still alive); a bare shell means the supervisor loop exited.
+# Liveness is the tmux pane's foreground command, not a guessed remote-control name.
+# sleep = supervisor backoff (still alive); a bare shell means the supervisor loop exited.
 proc_alive() {  # $1 = tmux session name
   local cmd backend
   cmd="$(tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null)"
@@ -574,12 +428,8 @@ svc_to_tmux() {
   fi
 }
 
-# _find_helper <basename> — resolve a sibling script co-located first (repo/dev
-# layout: <basename>.sh next to this script), then on PATH (deployed layout:
-# flat copies in ~/.local/bin with the .sh dropped, see session-git-prep.sh's
-# header comment for why). Prints the path and returns 0, or prints nothing and
-# returns 1 — callers must fail SAFE on a miss (refuse, don't silently skip
-# whatever the helper was gating).
+# _find_helper <basename> — prefer a co-located <basename>.sh (repo layout), else PATH (deployed flat copies).
+# Returns 1 on a miss; callers must fail SAFE (refuse), never skip what the helper was gating.
 _find_helper() {
   local base="$1" here
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -588,34 +438,19 @@ _find_helper() {
   return 1
 }
 
-# _record_reap_event <session> <forced yes|no> [clean yes|no|unknown] — append a teardown event to the spawn
-# telemetry file (same path resolution as spawn events). Best-effort: never changes
-# reap's exit status or blocks teardown. Callers invoke it only after something was
-# actually torn down, so a no-op reap leaves no event.
+# _record_reap_event <session> <forced> [clean] — best-effort telemetry; never changes reap's exit status.
+# Called only after something was torn down, so a no-op reap leaves no event.
 _record_reap_event() {
   local rt
   rt="$(_find_helper record-spawn-telemetry)" || return 0
   timeout 5 bash "$rt" --reap "$1" "$2" "$OUTCOME" "$OUTCOME_NOTE" "${3:-unknown}" >/dev/null 2>&1 || true
 }
 
-# ── worktree-stale / land-check shared helpers ────────────────────────────────
-# Factored so both modes compute dirty/base/landed identically (item 5 reuses
-# item 4's fixes rather than re-deriving them).
+# Shared by worktree-stale and land-check so both compute dirty/base/landed identically.
 
-# _wt_dirty <worktree> -> "clean" | "DIRTY", ignoring the spawner's own
-# baseline (the .claude/skills symlink new-session.sh creates in every run
-# dir, plus .sessions-init-* sentinels) — mirrors session-git-prep.sh's own
-# dirty check (same ignore regex) so a fresh, otherwise-untouched worktree
-# doesn't look dirty just because the spawner touched it. Before this fix,
-# EVERY worktree was reported DIRTY unconditionally.
-#
-# "not-a-worktree" when git status fails AND there is no repo at all: no .git
-# entry in the folder and git finds none above it (a plain folder someone left
-# under the worktrees dir). Every other git status failure — a .git file whose
-# gitdir is gone (an orphan worktree that may still hold work), a repo git
-# refuses to open — stays DIRTY. Callers act only on "clean", so both are
-# fail-closed; the distinct label only keeps plain folders from reading as
-# dirty worktrees.
+# _wt_dirty <worktree> -> clean | DIRTY | not-a-worktree. Ignores the spawner's own scaffolding (the
+# .claude/skills symlink, .sessions-init-* sentinels), as session-git-prep.sh does. not-a-worktree is only
+# a plain folder with no repo above it; any other git failure stays DIRTY. Callers act only on clean.
 _wt_dirty() {
   local out
   if ! out="$(git -C "$1" status --porcelain 2>/dev/null)"; then
@@ -633,8 +468,7 @@ _wt_dirty() {
   fi
 }
 
-# _wt_mainrepo <worktree> -> absolute path to the worktree's main repo, from
-# its (possibly relative, on older git) --git-common-dir.
+# _wt_mainrepo <worktree> -> absolute path of the main repo, via --git-common-dir.
 _wt_mainrepo() {
   local common_dir
   common_dir="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || { echo ""; return; }
@@ -643,33 +477,10 @@ _wt_mainrepo() {
 }
 
 declare -A _DEFBR_CACHE
-# _default_branch <repo> -> the repo's REAL default branch name (no origin/
-# prefix). Every git call here is -C-scoped to the given repo, never to $PWD or
-# any other repo — a stale/decoy ref living in some OTHER repo on disk can
-# never leak into this answer (the observed failure mode this -C scoping
-# exists to prevent: a stale origin/main decoy in one repo made an unrelated
-# fleet look unlanded).
-#
-# Resolution order is LOCAL-FIRST, not gh-first: `git symbolic-ref
-# refs/remotes/origin/HEAD` (no network, set in most clones) is tried before
-# ever shelling out to `gh`. This is a deliberate perf tradeoff, not an
-# oversight — idle-report --tsv (this function's hottest caller, via
-# _wt_landed/_tsv_git_status) is about to run unattended on an hourly systemd
-# timer across every worktree's main repo; at up to N sequential 5s-timeout
-# `gh repo view` network round-trips per run, that no longer scales. The
-# accepted risk is a STALE local origin/HEAD (e.g. the upstream default
-# branch was renamed after this clone's last `git remote set-head`/fetch
-# --prune) silently disagreeing with GitHub's actual setting — narrow in
-# practice, and fails toward the conservative side in _wt_landed (a wrong
-# base ref tends to read as landed=no/unknown, i.e. "keep the worktree",
-# never a false "safe to delete"). `gh` remains the fallback when there's no
-# usable local origin/HEAD (repo has no remote, or a non-GitHub remote, or
-# `gh` itself is absent/unauthenticated): origin/HEAD -> gh repo view -> local
-# main -> local master -> current HEAD (same chain session-git-prep.sh uses
-# for the same problem). `gh` is only ever tried against a github.com origin
-# (never invoked for a local-path/other-host remote — keeps this fast and
-# hermetic in tests) and bounded with `timeout` so a hung/unreachable network
-# call can't stall a whole worktree scan.
+# _default_branch <repo> -> the real default branch name. Every git call is -C scoped, so a decoy ref in
+# another repo cannot leak in. Order is LOCAL-FIRST: origin/HEAD, then gh, then local main/master, then HEAD.
+# Local-first is deliberate: this runs per worktree on an hourly timer. The accepted risk is a stale local
+# origin/HEAD, which fails conservative (reads as unlanded). gh is tried only for a github.com origin, under timeout 5.
 _default_branch() {
   local repo="$1" def="" url slug
   if [ -n "${_DEFBR_CACHE[$repo]+x}" ]; then printf '%s\n' "${_DEFBR_CACHE[$repo]}"; return; fi
@@ -688,11 +499,7 @@ _default_branch() {
     if   git -C "$repo" show-ref --verify --quiet refs/heads/main;   then def=main
     elif git -C "$repo" show-ref --verify --quiet refs/heads/master; then def=master
     else
-      # NOT `$(cmd 2>/dev/null || echo HEAD)`: on an unborn-HEAD repo (no
-      # commits, no main/master) git can print "HEAD" to stdout AND still
-      # exit non-zero, so the `||` fallback would ALSO fire and the
-      # substitution would capture both — a literal "HEAD\nHEAD" (caught by
-      # hand-testing this edge case). Check emptiness instead of exit status.
+# Check emptiness, not exit status: on an unborn HEAD git can print HEAD and still exit non-zero.
       def="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)"
       [ -n "$def" ] || def="HEAD"
     fi
@@ -701,22 +508,19 @@ _default_branch() {
   printf '%s\n' "$def"
 }
 
-# _wt_content_landed <worktree> <base_ref>: true when every file the branch changed since the
-# merge-base has the same content (or is absent) at HEAD and at <base_ref>. This is how a
-# squash/rebase merge reads (patch-ids and ancestry both differ); a file main changed again
-# afterwards reads as not landed, which only ever costs a suggestion, never a wrong delete.
+# _wt_content_landed <worktree> <base_ref>: true when every file the branch changed since the merge-base has
+# the same content at HEAD and base_ref. Covers squash/rebase merges. A file main changed later reads as not
+# landed: that costs a suggestion, never a wrong delete.
 _wt_content_landed() {
   local wt="$1" base_ref="$2" mb f n=0 tmp
   mb="$(git -C "$wt" merge-base HEAD "$base_ref" 2>/dev/null)" || return 1
-  # NUL-delimited via a temp file so a failed diff is a "no" and odd filenames survive; an
-  # empty diff (nothing to compare) is a "no" too.
+# NUL-delimited via a temp file so odd filenames survive; a failed or empty diff is a no.
   tmp="$(mktemp)" || return 1
   if ! git -C "$wt" diff --name-only --no-renames -z "$mb" HEAD > "$tmp" 2>/dev/null; then rm -f "$tmp"; return 1; fi
   local lh lb
   while IFS= read -r -d '' f; do
     n=$((n+1))
-    # ls-tree carries mode + object id (rev-parse alone would miss an exec-bit change); literal
-    # pathspecs so a filename like ":(exclude)*" is not magic; a failed ls-tree is a "no".
+# ls-tree compares mode and object id (rev-parse would miss an exec-bit change); literal pathspecs.
     lh="$(git --literal-pathspecs -C "$wt" ls-tree HEAD -- "$f" 2>/dev/null)" || { rm -f "$tmp"; return 1; }
     lb="$(git --literal-pathspecs -C "$wt" ls-tree "$base_ref" -- "$f" 2>/dev/null)" || { rm -f "$tmp"; return 1; }
     [ "$lh" = "$lb" ] || { rm -f "$tmp"; return 1; }
@@ -725,14 +529,13 @@ _wt_content_landed() {
   [ "$n" -gt 0 ]
 }
 
-# _wt_pr_landed <worktree> <default-branch>: true when GitHub has a PR merged INTO the default branch whose head contains
-# the worktree HEAD (HEAD == head, or an ancestor of it), i.e. everything on the branch was in
-# the merged PR even if main later rewrote the files. Needs gh; any failure or no PR is a "no".
+# _wt_pr_landed <worktree> <default-branch>: true when a PR merged into the default branch has a head that
+# contains HEAD. Needs gh; any failure is a no.
 _wt_pr_landed() {
   local wt="$1" def="$2" br oid
   [ -n "$def" ] || return 1
   command -v gh >/dev/null 2>&1 || return 1
-  # Only a github.com origin is asked (same gate as _default_branch); CRSS_PR_LANDED_ANY_REMOTE=1 lifts it for hermetic tests.
+# Only a github.com origin is queried (same gate as _default_branch); CRSS_PR_LANDED_ANY_REMOTE=1 lifts it for tests.
   [ -n "${CRSS_PR_LANDED_ANY_REMOTE:-}" ] || case "$(git -C "$wt" remote get-url origin 2>/dev/null)" in *github.com*) ;; *) return 1 ;; esac
   br="$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null)" || return 1
   while IFS= read -r oid; do
@@ -743,12 +546,8 @@ _wt_pr_landed() {
   return 1
 }
 
-# _wt_landed <worktree> <mainrepo> -> "base=<branch> landed=yes|no|unknown".
-# landed=yes means HEAD is already an ancestor of the real default branch (safe
-# to forget about); unknown means neither origin/<default> nor a local
-# <default> branch exists in this repo to compare against. A branch whose changes are
-# all present in the base by content (squash-merged), or whose head is contained in a PR
-# GitHub shows merged into the default branch (_wt_pr_landed), also reads yes.
+# _wt_landed <worktree> <mainrepo> -> "base=<branch> landed=yes|no|unknown". yes = HEAD is an ancestor of the
+# default branch, or content-landed, or in a PR merged to it. unknown = nothing to compare against.
 _wt_landed() {
   local wt="$1" mainrepo="$2" def base_ref landed
   def="$(_default_branch "$mainrepo")"
@@ -772,30 +571,15 @@ _wt_landed() {
 }
 
 # ── gitignored-payload guard ────────────────────────────────────────────────
-# `git worktree remove` — with or without --force — silently deletes gitignored
-# files, and neither _wt_dirty (`git status` without --ignored) nor
-# session-preserve (`ls-files --exclude-standard`) counts them, so a worktree
-# whose results live under a gitignored dir (`artifacts/`) reads "clean" /
-# SAFE-TO-REAP and its data goes with it. A real loss: a
-# worktree, `status=clean ahead=0`, removed via worktree-stale's printed
-# `remove:` line, held never-committed results under artifacts/.
-# So `reap` archives that payload before removing (_wt_archive_ignored) and
-# worktree-stale flags it. tests/test-session-doctor-reap-worktree.sh pins this.
+# `git worktree remove` (even --force) silently deletes gitignored files, and _wt_dirty and session-preserve
+# never count them, so a clean-looking worktree once lost unsaved results under artifacts/. reap archives that
+# payload first. tests/test-session-doctor-reap-worktree.sh pins this.
 
-# Regenerable / spawn-scaffold paths, NOT counted as payload: a path component
-# match at any depth (same style as session-preserve's JUNK_RE), plus the
-# spawner's root-level .sessions-init-* sentinel. Mirrors the scaffolding
-# section of ~/.config/git/ignore. Deliberately has NO bare `artifacts` entry —
-# that is where results live; only its scaffolding children are listed. Adding
-# one would recreate the incident. A false positive here costs a small archive,
-# a false negative costs data, so keep it to paths that regenerate themselves.
+# Regenerable scaffolding, NOT payload: matched at any depth, plus root .sessions-init-*. No bare `artifacts`:
+# that is where results live. A false positive costs an archive; a false negative costs data.
 _WT_IGNORED_DENY_RE='(^|/)(node_modules|\.venv|venv|__pycache__|\.next|dist|build|target|coverage|\.cache|\.pytest_cache|\.mypy_cache|\.gstack|\.superpowers|\.claude/(skills|token-reduce-state|tmp-briefs|settings\.local\.json|CLAUDE\.md)|artifacts/token-reduction)(/|$)|(^|/)(artifacts/qmd-repo-[^/]*\.stamp|next-env\.d\.ts|[^/]*\.tsbuildinfo)$|^\.sessions-init-[^/]*$'
-# CRSS_JUNK_RE_EXTRA (default empty — today's behaviour is unchanged) appends
-# host-specific extra scaffolding patterns without touching the base list
-# above. session-preserve.sh's JUNK_RE takes the SAME env var, appended the
-# same way — but the two BASE lists are not identical (pre-existing drift,
-# see CLAUDE.md's "cruft pass" note); this only keeps the ADDITIVE suffix in
-# sync, it does not reconcile the bases.
+# CRSS_JUNK_RE_EXTRA appends host scaffolding patterns (same env var as session-preserve.sh's JUNK_RE).
+# The two base lists differ (pre-existing drift); only the additive suffix is kept in sync.
 if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
   # An invalid extra pattern would break the whole combined regex; drop it (built-in list still applies).
   _crss_rc=0; grep -qE -- "$CRSS_JUNK_RE_EXTRA" </dev/null 2>/dev/null || _crss_rc=$?
@@ -806,16 +590,10 @@ if [ -n "${CRSS_JUNK_RE_EXTRA:-}" ]; then
   fi
 fi
 
-# _wt_ignored_payload <worktree> <listfile> -> writes the worktree-relative
-# path of every gitignored regular file / symlink that is NOT deny-listed to
-# <listfile>, NUL-separated; sets _WTI_COUNT, _WTI_BYTES and _WTI_EXAMPLES (up
-# to 3 paths, shell-quoted, comma-separated). Returns 0 if the payload is
-# non-empty, 1 if it is empty, 2 if it could not be listed (git failed, or a
-# directory was unreadable) — callers must treat 2 as "unknown", never as
-# "empty". Sets globals rather than printing (see _tsv_git_status) — call it
-# directly, not through $(...). `--directory` is only a cheap first pass so an
-# ignored node_modules/ is never walked; any other collapsed directory is
-# expanded to files with find, so count/bytes/archive are all file-level.
+# _wt_ignored_payload <worktree> <listfile> — write NUL-separated, worktree-relative paths of gitignored files
+# not deny-listed. Sets _WTI_COUNT/_WTI_BYTES/_WTI_EXAMPLES. Returns 0 non-empty, 1 empty, 2 unknown (listing
+# failed): callers must treat 2 as unknown, never empty. Call it directly, not via $(...).
+# Collapsed directories are expanded with find so counts are file-level.
 _wt_ignored_payload() {
   local wt="$1" out="$2" raw="$2.raw" found="$2.find" ent rel n=0 bad=0
   _WTI_COUNT=0; _WTI_BYTES=0; _WTI_EXAMPLES=""
@@ -845,18 +623,10 @@ _wt_ignored_payload() {
   return 0
 }
 
-# _wt_archive_ignored <worktree> -> 0 if there was nothing to archive OR the
-# payload was archived and verified (prints one "archived N ignored file(s), X
-# MB → <dir>" line); 1 if it was NOT archived — payload over the cap
-# (SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES, default 2 GB) or any copy /
-# verify failure — with the reason in _WTI_ERR. A failed attempt removes its
-# own partial archive. The caller must keep the worktree on 1. Archive:
-# ~/backups/reaped-worktree-ignored/<worktree-name>-<UTC stamp>/{MANIFEST,worktree/<relpath>},
-# mode 0700 (ignored dirs often hold .env files); MANIFEST is
-# sha256<TAB>bytes<TAB>archive-path, and every file is re-hashed from the COPY
-# and compared with the source's hash before this returns 0. Never prints file
-# contents, only paths and sizes. Used by `reap` (via _reap_remove_worktree)
-# and by `session-doctor archive-ignored <worktree>`.
+# _wt_archive_ignored <worktree> — copy the gitignored payload to ~/backups/reaped-worktree-ignored/<name>-<stamp>/
+# (mode 0700: ignored dirs often hold .env files) and re-hash every copy against its source. Returns 1 (reason
+# in _WTI_ERR) when over SESSION_DOCTOR_IGNORED_ARCHIVE_MAX_BYTES (default 2 GB) or on any copy/verify failure;
+# the caller then keeps the worktree. Prints paths and sizes only, never contents.
 _reap_archive_prepare() {
   local base="$1" root dest
   _REAP_ARCHIVE_ERR=""
@@ -921,9 +691,7 @@ _reap_archive_unit_files() {
   else
     echo "  WARNING: unit/start-script archive failed for '$base' ($_REAP_ARCHIVE_ERR); leaving originals in place" >&2
   fi
-  # A leftover one-shot resume pin (session-resume) would otherwise be consumed
-  # by a later session that reuses this name. A pin is a uuid, not state worth
-  # archiving.
+# Drop the one-shot resume pin too, or a later session reusing this name would consume it.
   rm -f -- "$HOME/.sessions/resume/${base}.uuid" "$HOME/.sessions/resume/${base}.codex-thread" "$HOME/.sessions/resume/${base}".codex-thread.stale.*
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 }
@@ -1007,17 +775,10 @@ PY
   return 0
 }
 
-# ── reap worktree-removal helpers ───────────────────────────────────────────
-# Factored out of `reap` so each guard is independently unit-testable (see
-# tests/test-session-doctor-reap-worktree.sh), the same way _registry_delete_one
-# is tested directly rather than only through the full `reap` dispatch (which
-# would otherwise require going through session-preserve's own safety gate
-# just to exercise a worktree-removal edge case).
+# ── reap worktree-removal helpers: each guard is unit-tested directly (tests/test-session-doctor-reap-worktree.sh).
 
-# _is_caller_cwd <worktree> -> true if the CALLING process's own cwd is that
-# worktree or somewhere under it. Removing the worktree a `reap` invocation is
-# itself running from would pull the rug out from under the rest of the
-# script (and anything else still running there).
+# _is_caller_cwd <worktree> -> true if the calling process's cwd is that worktree or under it.
+# Removing it would pull the rug out from under the rest of reap.
 _is_caller_cwd() {
   local wt="$1" wt_real pwd_real
   wt_real="$(cd "$wt" 2>/dev/null && pwd -P)" || return 1
@@ -1028,24 +789,10 @@ _is_caller_cwd() {
   esac
 }
 
-# _wt_used_by_other_unit <worktree> <own_service> -> prints the blocking
-# unit's filename and returns 0 if any systemd --user unit OTHER than
-# <own_service> references <worktree>'s path — as WorkingDirectory, or
-# anywhere in ExecStart (a flag value like --state-dir=<path>, not just a
-# literal `ExecStart=<path>/...`) — including a drop-in override under
-# <unit>.service.d/*.conf. Real case this guards against: a live session's
-# worktree can go on being another unit's WorkingDirectory/--state-dir long
-# after the SESSION that first created it is reaped (e.g. a
-# long-lived unit whose WorkingDirectory/--state-dir is that worktree). A plain substring match on the whole unit file is deliberately
-# used instead of parsing specific directive names — these generated unit
-# files only ever contain [Unit]/[Service]/[Install] directives, so a path
-# appearing anywhere in one is already a reference worth refusing over.
-# Checks both the given path and its resolved realpath (a unit may reference
-# either form), and for each of those also the systemd %h-relative form —
-# %h expands to $HOME, and generated unit files may spell a home-relative
-# path as %h/... instead of the literal $HOME/... (e.g. a
-# <unit>.service.d/<drop-in>.conf using %h/.claude/worktrees/<name>/...). Returns 1 (nothing printed) if no other
-# unit references it in any of these forms.
+# _wt_used_by_other_unit <worktree> <own_service> -> prints the blocking unit and returns 0 if another systemd
+# --user unit references the worktree (WorkingDirectory, ExecStart, or a drop-in), literally or %h-relative.
+# A plain substring match is deliberate: generated units hold only [Unit]/[Service]/[Install] directives.
+# Real case: a long-lived unit can keep a worktree as its WorkingDirectory after the session is reaped.
 _wt_ref_in_file() {
   local f="$1" wt="$2" wt_real="$3" cand
   for cand in "$wt" "$wt_real"; do
@@ -1079,18 +826,9 @@ _wt_used_by_other_unit() {
   return 1
 }
 
-# _wt_resolve_for_base <base> -> absolute path of the ~/.claude/worktrees/
-# dir owned by session <base>, or empty (return 1) if none. Prefers a BRANCH
-# match (session/<base>) over a bare directory-name match — the same
-# resolution order session-preserve.sh's worktree_of() and worktree-stale
-# already use, and for the same reason (see their own comments, duplicated
-# here rather than sourced, matching how every script in this repo is a
-# standalone deployable file): session-git-prep.sh suffixes the worktree
-# DIRECTORY with -$$ on a path collision while leaving the branch
-# (session/<base>) unsuffixed, so a plain "$HOME/.claude/worktrees/$base"
-# path join silently misses the real, suffixed worktree on a collision and
-# would leave it behind forever (reap runs unattended on a schedule, with no
-# other path back to it).
+# _wt_resolve_for_base <base> -> path of the worktree owned by session <base>, or return 1.
+# A branch match (session/<base>) wins over a directory-name match: session-git-prep.sh suffixes the directory
+# with -$$ on a collision but leaves the branch unsuffixed, so a plain path join would orphan the worktree.
 _wt_resolve_for_base() {
   local base="$1" dir="$HOME/.claude/worktrees" wt branch fallback=""
   [ -d "$dir" ] || return 1
@@ -1105,38 +843,16 @@ _wt_resolve_for_base() {
   return 1
 }
 
-# _reap_remove_worktree <base> <force:yes|no> — the worktree-removal step of
-# `reap`, called as `_reap_remove_worktree "$base" "$FORCE"` unless
-# --keep-worktree was given. Resolves the session's worktree via
-# _wt_resolve_for_base (branch-first, so a PID-suffixed collision directory
-# is still found — see its own comment). Finds the owning main repo via
-# `git -C <wt> rev-parse --git-common-dir` (_wt_mainrepo, same helper
-# worktree-stale/land-check use), then removes ONLY the worktree
-# registration + directory — the branch (session/<base>, or whatever it was
-# switched to) is NEVER deleted here.
-#
-# `git worktree remove` runs WITHOUT --force by default, so IT decides
-# dirtiness (untracked/modified files) the same way it always has — reap does
-# not re-derive that check. A refusal is reported and the worktree is left in
-# place; it never fails the rest of reap (always returns 0). --force is
-# passed through to `git worktree remove` ONLY when reap's own --force was
-# given (force already means "skip the safety net"; leaving a known-dirty
-# worktree half torn-down behind a force-reaped session would be a worse,
-# more confusing outcome than force-removing it too).
-#
-# Guards, checked before ever calling `git worktree remove`, each one a
-# refusal (worktree kept, nothing removed):
-#  - no worktree found at that path at all -> "(ok)", not an error
-#  - the resolved path IS the repo's primary checkout (defensive — should
-#    never happen since this only ever looks under ~/.claude/worktrees, but
-#    never risk running `worktree remove` against a non-worktree checkout)
-#  - the CALLER's own cwd is that worktree (see _is_caller_cwd)
-#  - any OTHER systemd user unit references it (see _wt_used_by_other_unit)
-#  - its non-regenerable gitignored files could not be archived first, or are
-#    over the archive cap (see _wt_archive_ignored)
-#
-# `git worktree prune` runs on the main repo afterward regardless of outcome
-# (bookkeeping only — never removes a directory still present on disk).
+# _reap_remove_worktree <base> <force:yes|no> — the removal step of reap (skipped by --keep-worktree). Resolves the session's
+# worktree (branch-first, see _wt_resolve_for_base) and its main repo, then removes only the registration and directory.
+# The branch is never deleted. `git worktree remove` runs without --force, so git decides dirtiness; a refusal is reported
+# and never fails reap. --force is forwarded only when reap itself got --force.
+# Refusals (worktree kept), each checked before `git worktree remove`:
+#   - the path is the primary checkout (defensive: this only looks under ~/.claude/worktrees)
+#   - the caller's own cwd is that worktree (_is_caller_cwd)
+#   - another systemd user unit references it (_wt_used_by_other_unit)
+#   - its gitignored payload could not be archived, or is over the cap (_wt_archive_ignored)
+# `git worktree prune` runs afterward regardless, as bookkeeping only.
 _reap_remove_worktree() {
   local base="$1" force="$2" wt mainrepo wt_real mainrepo_real own_unit blocking
   wt="$(_wt_resolve_for_base "$base")"
@@ -1164,11 +880,8 @@ _reap_remove_worktree() {
     echo "  worktree: kept (in use by unit $blocking): $wt"
     return 0
   fi
-  # Last guard, checked after every refusal above so nothing is archived for a
-  # worktree that was never going to be removed: `git worktree remove` deletes
-  # gitignored files and nothing above counts them — archive the non-regenerable
-  # ones first (see _wt_archive_ignored), and keep the worktree if that fails
-  # or the payload is over the cap. reap's --force does NOT skip this.
+# Last guard, checked after every refusal above so nothing is archived for a worktree that would not be removed.
+# `git worktree remove` deletes gitignored files, so archive the non-regenerable ones first. --force does NOT skip this.
   if ! _wt_archive_ignored "$wt"; then
     echo "  worktree: kept (gitignored files not archived: $_WTI_ERR): $wt"
     return 0
@@ -1186,23 +899,9 @@ _reap_remove_worktree() {
 }
 
 declare -A _TSV_STATUS_CACHE
-# _tsv_git_status <cwd> -> sets globals _TSV_LANDED/_TSV_DIRTY for idle-report
-# --tsv columns 9/10 (landed: yes|no|unknown|no-worktree; dirty:
-# clean|DIRTY|unknown). Reuses _wt_dirty/_wt_landed/_wt_mainrepo exactly as
-# worktree-stale/land-check do — no reimplementation. "no-worktree"/"unknown"
-# when cwd no longer exists on disk or git doesn't recognize it as a working
-# tree at all (transcripts commonly outlive worktrees — see _history_footer
-# below for the same problem).
-#
-# Cached per-cwd (mirrors the _DEFBR_CACHE idiom above _default_branch) so a
-# cwd that repeats across multiple idle rows doesn't re-shell git for each
-# one. Deliberately sets globals instead of printing a value for the caller
-# to capture via `$(...)`: command substitution forks a subshell, and an
-# associative-array write made inside that subshell is discarded the instant
-# it exits — a `status="$(_tsv_git_status "$cwd")"` call site would silently
-# repopulate an empty cache on every single row and never actually cache
-# anything. Callers MUST invoke this directly (no `$(...)` wrapper) for the
-# cache to have any effect.
+# _tsv_git_status <cwd> -> sets _TSV_LANDED/_TSV_DIRTY for idle-report --tsv columns 9/10 (landed: yes|no|unknown|no-worktree;
+# dirty: clean|DIRTY|unknown). Reuses _wt_dirty/_wt_landed/_wt_mainrepo. Transcripts outlive worktrees, so a gone cwd is no-worktree.
+# Caches per cwd. It sets globals instead of echoing: a $(...) subshell would discard the cache write on every row, so call it directly.
 _tsv_git_status() {
   local cwd="$1" mainrepo landedinfo
   if [ -n "${_TSV_STATUS_CACHE[$cwd]+x}" ]; then
@@ -1214,9 +913,7 @@ _tsv_git_status() {
     _TSV_LANDED="no-worktree"; _TSV_DIRTY="unknown"
   else
     _TSV_DIRTY="$(_wt_dirty "$cwd")"
-    # Defensive: git already found a repo to get here, so _wt_dirty should
-    # never answer not-a-worktree; if it does, report unknown to keep the TSV
-    # vocabulary that session-compact.sh validates.
+# Defensive: git found a repo here, so _wt_dirty should not answer not-a-worktree; map it to unknown anyway (session-compact.sh validates this vocabulary).
     [ "$_TSV_DIRTY" = not-a-worktree ] && _TSV_DIRTY=unknown
     mainrepo="$(_wt_mainrepo "$cwd")"
     if [ -n "$mainrepo" ]; then
@@ -1231,55 +928,20 @@ _tsv_git_status() {
 
 # ── history helpers ────────────────────────────────────────────────────────
 
-# _encode_cwd <path> -> the ~/.claude/projects/<encoded> transcript-dir name
-# for that cwd. Pure string transform (does NOT require the path to exist):
-# '.' -> '-' FIRST, then '/' -> '-' (this order is load-bearing and already
-# verified empirically for idle-report above — this is the same algorithm,
-# just factored out so `history` can reuse it instead of re-deriving it).
+# _encode_cwd <path> -> the ~/.claude/projects/<encoded> dir name. Pure string transform; '.' -> '-' must run before '/' -> '-'.
 _encode_cwd() {
   local p="$1"
   p="${p//./-}"
   printf '%s\n' "${p//\//-}"
 }
 
-# _history_matches <query> <wt_base> <proj_base> -> one matched worktree
-# absolute path per line (may not exist on disk — transcripts outlive
-# worktrees, see _history_report/_history_footer). <query> may be a bare
-# folder name, an absolute path to the worktree (only its basename is used,
-# so `.../worktrees/<name>` and `.../worktrees/<name>/` both work), or a
-# repo-name substring.
-#
-# Candidate folder names come from TWO sources, unioned: (a) directories
-# currently under <wt_base>, and (b) names recovered from every
-# <proj_base>/<encoded> transcript dir by stripping the deterministic
-# "<encode(wt_base)>-" prefix (safe: we only strip a known-constant prefix,
-# we never try to invert the lossy '.'/'/' -> '-' collapse for the remainder)
-# — so a substring/repo-name query still finds worktrees that were already
-# removed from disk, not just live ones.
-#
-# Exact match (query's basename equals a candidate name exactly) wins outright;
-# otherwise every candidate whose name CONTAINS the query substring is
-# returned. Prints nothing and returns 1 when there is no match at all.
+# _history_matches <query> <wt_base> <proj_base> — print matched worktree paths, one per line (they may not exist on disk).
+# Query: a folder name, a path (only its basename is used), or a repo-name substring. Candidates come from live dirs under
+# <wt_base> AND names recovered from <proj_base> transcript dirs, so removed worktrees still match. Exact match wins; else substring. Returns 1 if none.
 _history_matches() {
   local query="$1" wt_base="$2" proj_base="$3" qname d dn n prefix found=0 trimmed
-  # A query that LOOKS like a path (contains a slash, or is exactly "." or
-  # "..") and resolves to a real, existing directory is authoritative: use it
-  # exactly as given (resolved to an absolute path) and skip name-based
-  # matching entirely. Without this short-circuit, an absolute path whose
-  # basename happens to be a substring of some unrelated worktree name (e.g.
-  # a main-repo checkout that lives OUTSIDE ~/.claude/worktrees/, whose
-  # basename is also a substring of a stale worktree dir carrying a legacy
-  # prefix (CRSS_LEGACY_PREFIXES), e.g. "oldhost-<same-name>-<date>") gets
-  # silently hijacked by the substring fallback below instead of matching the
-  # literal folder the caller named.
-  # CONFIRMED: `history /home/youruser/workspace/claude-remote-session-skill`
-  # (a real, existing directory, NOT under wt_base) matched a long-deleted
-  # `<legacy>-<folder>-<date>` worktree instead —
-  # the basename-based substring search never even looked at whether the
-  # literal path existed. A query that does NOT resolve to a real directory
-  # (folder already deleted from disk, or a bare name/substring with no
-  # slash) still falls through to the name-based search below exactly as
-  # before, so PAST-only lookups by name are unaffected.
+# A query that looks like a path and resolves to a real directory is authoritative. Skipping name matching matters: a basename
+# substring once hijacked a real checkout outside wt_base onto a stale legacy-prefixed worktree. Unresolved queries fall through to name matching.
   case "$query" in
     */*|.|..)
       trimmed="${query%/}"
@@ -1329,27 +991,9 @@ _history_matches() {
   [ "$found" -eq 1 ]
 }
 
-# _history_report <worktree> <proj_base> — prints the NOW (live sessions with
-# this exact cwd) and PAST (transcript history for this cwd) sections for one
-# worktree. Report-only: reads /proc and transcript files, never sends keys,
-# never kills, never writes anything.
-#
-# NOW is derived exactly the way idle-report (above) already does it — same
-# `pgrep -af 'claude.*--remote-control'` + basename filter (also matches the
-# tmux launcher and the bash supervisor loop, so keep only claude|node), same
-# `readlink /proc/<pid>/cwd`, same svc_to_tmux name mapping — just filtered
-# down to processes whose cwd is exactly this worktree, instead of every live
-# session. A vanished pid mid-scan (empty readlink) is skipped, same as
-# idle-report.
-#
-# PAST reads every <uuid>.jsonl in the transcript dir for this cwd. A process
-# command line carries no session uuid, so a live pid can't be mapped to a
-# specific transcript file directly; when a live session exists for this cwd
-# we assume it is the writer of whichever transcript file here has the latest
-# type:user timestamp (normally exactly one file is being actively written per
-# cwd) and fold that file into NOW instead of also listing it under PAST — so
-# the two sections cross-reference rather than double-count. This is a
-# heuristic, not a guarantee; it is called out in the printed output.
+# _history_report <worktree> <proj_base> — report-only: NOW (live processes whose cwd is exactly this worktree, found the same way
+# as idle-report) and PAST (transcript history for this cwd). A pid carries no session uuid, so the transcript with the latest
+# user timestamp is folded into NOW as the likely writer. That is a heuristic, and the output says so.
 _history_report() {
   local wt="$1" proj_base="$2" encoded tdir now_rows
   encoded="$(_encode_cwd "$wt")"
@@ -1469,12 +1113,7 @@ print('  --- %d past session(s), %d live session(s) ---' % (len(past), len(now_r
 PYEOF
 }
 
-# _history_footer <worktree> — branch/landed/dirty + recent commits, reusing
-# _wt_dirty/_wt_landed/_wt_mainrepo/_default_branch exactly as worktree-stale
-# and land-check already do (no reimplementation). Handles a worktree that no
-# longer exists on disk (transcripts outlive worktrees — the common case for a
-# genuinely PAST session) by saying so instead of running git against a
-# missing directory.
+# _history_footer <worktree> — branch, dirty, landed and recent commits. A worktree gone from disk is reported, not probed.
 _history_footer() {
   local wt="$1" branch dirty mainrepo landedinfo logout
   echo ""
@@ -1498,15 +1137,8 @@ _history_footer() {
   fi
 }
 
-# _crss_overlay_report — read-only health check for the host-local overlay
-# ($CRSS_HOME, see examples/crss-overlay/README.md). Reports: dir exists;
-# config.sh present; any config.sh line that LOOKS like an assignment but
-# won't be loaded (doesn't match ^CRSS_[A-Z0-9_]+=, see _crss_load_config
-# above) as a warning; the always-on rules pointer
-# ($CRSS_CLAUDE_HOME/rules/crss-host.md) present and containing an @import of
-# local.md; local.md present. Must NEVER fail hard on a broken/missing
-# overlay — every check below is a plain conditional, no asserts, and the
-# function always returns 0.
+# _crss_overlay_report — read-only overlay health check. Never fails hard: every check is a plain conditional and the
+# function always returns 0. Warns about config.sh lines that look like assignments but are not loaded.
 _crss_overlay_report() {
   local home cfg rules localmd line
   home="$CRSS_HOME"
@@ -1541,11 +1173,8 @@ _crss_overlay_report() {
 # _rm_strip_ansi — drop CSI escape sequences from stdin.
 _rm_strip_ansi() { sed -E $'s/\x1b\\[[0-9;?]*[a-zA-Z]//g'; }
 
-# _rm_handoff_blocked <plain-capture> — 0 blocked, 1 clear, 2 classifier unavailable.
-# Reuses session-handoff.sh _is_blocked (tail line starting BLOCKED:, or the last
-# assistant line ending in ?, with ※/Tip: chrome skipped). A subprocess, not a
-# source: these scripts deploy standalone, and sourcing handoff would redefine
-# tmux_to_base. Unavailable fails closed — reaping a lane that might be waiting
+# _rm_handoff_blocked <plain-capture> — 0 blocked, 1 clear, 2 unavailable. Runs session-handoff's _is_blocked in a
+# subprocess (sourcing it would redefine tmux_to_base). Unavailable fails closed: reaping a lane that may be waiting
 # on the operator is the unsafe direction.
 _rm_handoff_blocked() {
   local helper rc
@@ -1560,18 +1189,15 @@ _rm_handoff_blocked() {
   return "$rc"
 }
 
-# _rm_pane_state <tmux-session> -> sets RM_PANE=busy|blocked|typed|ok and RM_PANE_WHY.
-# Reads the pane with capture-pane -e so dim (ESC[2m) autosuggest ghost text after the prompt can
-# be told from real typed input. "busy" = a spinner/interrupt hint or a background agent/task/shell
-# counter in the last lines of the TUI; fails closed (busy) if the pane cannot be read.
-# "blocked" = idle but waiting on the operator (session-handoff _is_blocked); not ok to reap.
+# _rm_pane_state <tmux-session> -> RM_PANE=busy|blocked|typed|ok. capture-pane -e tells dim autosuggest ghost text from
+# typed input. busy = spinner, interrupt hint or background-task counter; an unreadable pane is busy (fail closed).
+# blocked = waiting on the operator; never reaped.
 _rm_pane_state() {
   local raw plain tail_ line after
   RM_PANE=ok; RM_PANE_WHY=""
   raw="$(tmux capture-pane -p -e -t "$1" 2>/dev/null)" || { RM_PANE=busy; RM_PANE_WHY="pane unreadable"; return; }
   plain="$(printf '%s\n' "$raw" | _rm_strip_ansi)"
-  # The footer's "← N agents" is a constant navigation hint on every idle pane (live-calibrated), so
-  # drop it; a running background shell/task/monitor shows as its own "N shell(s)"-style counter.
+# The footer's "← N agents" is constant on idle panes, so it is stripped before matching.
   tail_="$(printf '%s\n' "$plain" | tail -n 8 | sed -E 's/← *[0-9]+ agents?//g')"
   busy_re='esc to interrupt|ctrl\+c to interrupt|[0-9]+ (local )?(agents?|background|bg|shells?|tasks?|monitors?)\b|running in the background|Running…'
   if grep -qiE "$busy_re" <<<"$tail_"; then
@@ -1587,7 +1213,7 @@ _rm_pane_state() {
   line="$(printf '%s\n' "$raw" | grep -E '❯|›' | tail -n 1)"
   if [ -n "$line" ]; then
     case "$line" in *❯*) after="${line#*❯}" ;; *) after="${line#*›}" ;; esac
-    # mark dim-start with \001, strip every other escape, then trim whitespace incl. NBSP
+    # Mark dim (ghost) text with \001, strip other escapes, then trim whitespace including NBSP.
     after="$(printf '%s' "$after" | sed -E $'s/\x1b\\[2m/\x01/g' | _rm_strip_ansi | sed -E $'s/^([[:space:]]|\xc2\xa0)+//; s/([[:space:]]|\xc2\xa0)+$//')"
     if [ -n "$after" ] && [ "${after:0:1}" != $'\x01' ]; then
       RM_PANE=typed; RM_PANE_WHY="unsent text at the prompt"
@@ -1595,9 +1221,8 @@ _rm_pane_state() {
   fi
 }
 
-# _rm_idle_minutes <tmux-session> <cwd> -> prints whole minutes since the NEWEST of the session's
-# transcript mtime and tmux window activity; returns 1 (prints nothing) if either signal is
-# unavailable, so a session is never judged idle on one signal alone.
+# _rm_idle_minutes <tmux-session> <cwd> -> whole idle minutes from the NEWER of transcript mtime and tmux window activity.
+# Returns 1 if either signal is missing: a session is never judged idle on one signal alone.
 _rm_idle_minutes() {
   local pdir f t_tr t_win now newest
   pdir="$HOME/.claude/projects/${2//[\/.]/-}"
@@ -1610,17 +1235,14 @@ _rm_idle_minutes() {
   echo $(( (now - newest) / 60 ))
 }
 
-# _rm_gh_prs <wt> <state> <branch> -> JSON [{number,headRefOid}] from gh, run inside the worktree
-# (so the repo is inferred); non-zero if gh failed or timed out.
+# _rm_gh_prs <wt> <state> <branch> -> JSON from gh, run inside the worktree so the repo is inferred.
 _rm_gh_prs() {
   (cd "$1" && timeout 30 gh pr list --state "$2" --head "$3" --json number,headRefOid --limit 30 2>/dev/null)
 }
 
-# _reap_age_gate <tmux-session> — minimum-age gate for every auto/explicit reap of a LIVE session. Returns 0 if
-# the reap may proceed, 1 (message in REAP_AGE_MSG) if the session is younger than CRSS_REAP_MIN_AGE_H hours or its
-# age is unknown. Age = first-ever spawn time, read through `session-registry --first-seen` (same session-starts.log
-# source as `session-registry --older-than`). Bypass: CRSS_REAP_MIN_AGE_H=0 or --allow-young; --force deliberately
-# does NOT bypass (it is about unlanded work, a different concern). Tests: tests/test-reap-min-age.sh.
+# _reap_age_gate <tmux-session> — min-age gate for every reap of a LIVE session. Returns 1 (reason in REAP_AGE_MSG) when the
+# session is younger than CRSS_REAP_MIN_AGE_H or its age is unknown; bypass with --allow-young or CRSS_REAP_MIN_AGE_H=0.
+# Age is first spawn via session-registry --first-seen. --force deliberately does NOT bypass (it covers unlanded work).
 REAP_AGE_MSG=""
 _reap_age_gate() {
   local name="$1" sr start age_s min_s
@@ -1640,10 +1262,8 @@ _reap_age_gate() {
   return 0
 }
 
-# _reap_merged_check <tmux-session> — sets RM_VERDICT=candidate|skipped and RM_REASON. Checks run
-# cheapest/safest first; every unknown (gh failure, missing signal) is a skip, never a candidate.
-# The final gate is `reap <name> --dry-run` (session-preserve audit) run as a subprocess because
-# reap's dispatch calls exit.
+# _reap_merged_check <tmux-session> -> RM_VERDICT=candidate|skipped plus RM_REASON. Cheapest checks first; any unknown is a
+# skip, never a candidate. The last gate runs `reap --dry-run` as a subprocess because reap's dispatch calls exit.
 _reap_merged_check() {
   local name="$1" base cwd wt br def head mj oj pr idle me out rc
   RM_VERDICT=skipped; RM_REASON=""
@@ -1713,9 +1333,8 @@ def auth_failure(d):
 PY
 }
 
-# Only the newest top-level UUID transcript for this pane cwd is eligible. User/assistant
-# turns and system api_error are meaningful; skip system informational/progress records,
-# file-history-snapshot, summary, queue-operation and all other non-turn metadata.
+# Only the newest UUID transcript for this cwd counts. User/assistant turns and system api_error records are meaningful;
+# other metadata records are skipped.
 _auth_heal_failure() {
   python3 -I -c "$(_auth_python_common)
 "'
@@ -1806,15 +1425,12 @@ _auth_heal() {
   return "$rc"
 }
 
-# _auth_scan <proj_base> <days> — report-only scan of transcript JSONL for CLI auth-failure turns. A dead
-# OAuth refresh token is silent on an idle fleet (no turns, no logs) until someone prompts, so this is the
-# cheap tripwire: it reads transcripts only (never the credentials file) and prints counts, first/last failure
-# and the last successful assistant turn. rc 1 = failure newer than every success (ongoing), else 0.
+# _auth_scan <proj_base> <days> — report-only scan of transcripts for CLI auth-failure turns. Reads transcripts only,
+# never the credentials file. rc 1 = the newest failure is newer than every success (outage ongoing); else 0.
 _auth_scan() {
   local proj_base="$1" days="$2"
   [ -d "$proj_base" ] || { echo "  (no transcript dir: $proj_base)"; return 0; }
-  # Trailing slash follows a symlinked projects dir (agent-memory layout); -type f skips symlinked FILES so a
-  # planted link can never make this open the credentials file.
+  # The trailing slash follows a symlinked projects dir; -type f keeps a planted symlinked file from being opened.
   find "${proj_base%/}/" -type f -name '*.jsonl' -mtime "-$days" -print0 2>/dev/null | python3 -I -c "$(_auth_python_common)
 "'
 days = int(sys.argv[1])
@@ -1857,16 +1473,11 @@ sys.exit(1 if ongoing else 0)
   return "$rc"
 }
 
-# _opus_subagent_scan <proj_base> <days> — report-only: list parent sessions whose subagent transcripts
-# (<proj>/<session>/subagents/agent-*.jsonl) ran on an Opus model. The rule is builder/Sonnet subagents
-# (CLAUDE.md "Subagent models"); an Agent call with no subagent_type/model inherits the parent's Opus.
-# Same safety conventions as _auth_scan (symlinked dir followed, symlinked files never opened, event-time
-# window). Parent transcripts on Opus are expected and not scanned. rc 0, or >1 on an internal error.
-# suggest-feeders: which live claude TUIs can write the host-wide promptSuggestionUnusedStreak (the 20-unused
-# back-off counter in ~/.claude.json). Only the interactive REPL counts (CLI 2.1.308 onSubmit path): --print,
-# stream-json/--sdk-url children and the `claude remote-control` server never do. A TUI is quiet when its env or
-# its --settings file sets CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION to 0/false; anything else is a feeder.
-# PROC_ROOT (default /proc) is overridable for tests. Report only.
+# _opus_subagent_scan <proj_base> <days> — report-only: parent sessions whose subagent transcripts ran on Opus.
+# The rule is builder/Sonnet subagents (CLAUDE.md "Subagent models"); a call with no subagent_type inherits Opus.
+# suggest-feeders — live interactive claude TUIs that can feed promptSuggestionUnusedStreak (the ~/.claude.json back-off counter).
+# --print, stream-json/--sdk-url children and `claude remote-control` never count. A TUI is quiet when
+# CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION is 0/false (env or --settings). PROC_ROOT (default /proc) is overridable for tests.
 _suggest_feeders() {
   python3 - "${PROC_ROOT:-/proc}" "$HOME/.claude.json" <<'PY'
 import sys, os, json
@@ -2034,7 +1645,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       if [ "$FORCE" = yes ]; then
         { [ -n "$UD" ] && [ -f "$UD/$2" ]; } && acted=yes
         { [ -n "$BIN" ] && [ -n "$3" ] && [ -f "$BIN/$3" ]; } && acted=yes
-        # Archive unit + start script before any rm (as `reap` does); if the archive fails, delete nothing.
+        # Archive unit and start script before any rm; if the archive fails, delete nothing.
         if ! _reap_archive_home_paths "${2%.service}" ".config/systemd/user/$2" ".local/bin/$3"; then
           echo "  WARNING: unit/start-script archive failed for '$2' ($_REAP_ARCHIVE_ERR); leaving originals in place" >&2
           return
@@ -2060,13 +1671,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       do_reap "$s" "${base}.service" "${base}-start.sh"
       reaped=$((reaped+1))
     done
-    # 2. orphaned systemd units (no live tmux for them). These units are
-    # Type=oneshot/RemainAfterExit=yes (see new-session.sh) — once ExecStart
-    # finishes, systemd holds them "active (exited)" indefinitely regardless
-    # of what later happens to the tmux session they spawned, so an is-active
-    # check here would almost never be false and would skip real orphans
-    # (the exact case this loop exists to reap). Same liveness definition as
-    # `report`'s ORPHAN listing above: no live tmux match.
+    # 2. orphaned units. They are Type=oneshot/RemainAfterExit=yes, so `is-active` is almost always true and cannot test
+    # liveness. The test is no live tmux match, the same as report's ORPHAN listing.
     for u in $(ls "$UD" 2>/dev/null | grep -E "^(${_crss_prefix_re})-.*\.service\$"); do
       _is_protected "$u" && continue
       base="${u%.service}"; tm="$(svc_to_tmux "$base")"
@@ -2102,20 +1708,13 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
 
   registry-prune)
     # Automated form of registry-stale's candidate set (see _registry_candidates
-    # above — reused, not re-derived): registry sessions disconnected > ${DAYS}d.
-    # Default is a dry run (no mutation, "would-delete" preview); --apply performs
-    # the DELETEs, via the same _registry_delete_one helper `reap`'s registry
-    # cleanup uses. This is the standard/automatable replacement for the
-    # hand-run curl registry-stale prints — see its header comment above.
+    # Dry run by default. --apply deletes via _registry_delete_one, the same helper reap's registry cleanup uses.
     echo "=== registry-prune: sessions disconnected > ${DAYS}d ($([ "$APPLY" = yes ] && echo APPLY || echo DRY-RUN)) ==="
     if ! cand_out=$(registry_json | _registry_candidates "$DAYS"); then
       echo "  (registry unavailable)"
       exit 1
     fi
-    # Live tmux session names, converted to the hyphenated base form registry
-    # titles use (tmux_to_base — the same conversion `report`/`reap-local` use
-    # above), so "any entry whose name matches a live tmux session" compares
-    # like-for-like instead of a fresh ad hoc string comparison.
+    # Live tmux names in the hyphenated base form that registry titles use, so the live-tmux check compares like with like.
     live_bases=""
     for s in $(live_tmux); do
       b="$(tmux_to_base "$s")"
@@ -2132,10 +1731,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         echo "  skipped(live-tmux)  $id  $title"
         n_skip=$((n_skip+1)); continue
       fi
-      # requires_action is ALWAYS skipped here (never auto-deleted — it may
-      # need a human decision) regardless of age; a row stale beyond 2xDAYS
-      # just gets a louder, distinct message so it surfaces for review instead
-      # of blending into the ordinary skip line.
+      # requires_action is always skipped (it may need a human decision); past 2xDAYS it is flagged louder for review.
       if [ "$status" = "requires_action" ]; then
         if [ "$age" -gt $((2*DAYS)) ]; then
           echo "  skipped(requires_action, age=${age}d > $((2*DAYS))d — needs operator review)  $id  $title"
@@ -2165,11 +1761,8 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
       [ -d "$wt" ] || continue
       wt="${wt%/}"
       branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-      # Prefer the session name embedded in the branch (session/<remote>) over the
-      # worktree DIRECTORY name: session-git-prep suffixes the directory with -$$ on
-      # a path collision while leaving the branch (and so the real owning tmux
-      # session) unsuffixed. Deriving liveness from the directory name in that case
-      # would misread a LIVE session's worktree as dead and offer to force-remove it.
+      # Prefer the branch's session name (session/<remote>) over the directory name: session-git-prep suffixes a colliding
+      # directory with -$$ but not the branch, and liveness from the directory would misread a live worktree as dead.
       case "$branch" in
         session/*) owned=yes; remote="${branch#session/}" ;;
         *)         owned=no;  remote="$(basename "$wt")" ;;
@@ -2181,9 +1774,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         continue
       fi
       dirty="$(_wt_dirty "$wt")"
-      # A plain folder (no git repo at all) has nothing to remove with git:
-      # list it so it is visible, but outside the candidate count and with no
-      # command.
+      # A plain folder has no git repo: list it, but never offer a command for it.
       if [ "$dirty" = not-a-worktree ]; then
         printf '  %-60s status=not-a-worktree\n' "$wt"
         printf '    NOTE: plain folder, not a git work tree — never offered for removal; inspect it by hand\n'
@@ -2191,51 +1782,30 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
         continue
       fi
       cand=$((cand+1))
-      # Resolve the main repo this worktree belongs to, so the removal command
-      # below is copy-pasteable without the reviewer having to hunt for the
-      # repo, and so landed-ness can be checked against its REAL default
-      # branch (not an assumed "main") — see _default_branch/_wt_landed above.
+      # Resolve the main repo so the printed command is copy-pasteable and landed-ness uses its real default branch.
       mainrepo="$(_wt_mainrepo "$wt")"
       landedinfo="base=? landed=unknown"
       [ -n "$mainrepo" ] && landedinfo="$(_wt_landed "$wt" "$mainrepo")"
       printf '  %-60s branch=%-30s status=%-6s %s\n' "$wt" "$branch" "$dirty" "$landedinfo"
-      # Same guard `reap` applies (_reap_remove_worktree): a worktree any OTHER
-      # systemd --user unit still references is never offered for removal — the
-      # printed `remove:` line is what gets pasted. The dead session's own unit
-      # (${remote}.service, derived exactly as reap derives own_unit from <base>)
-      # doesn't count: it goes away with the session.
+      # Same guard as reap (_reap_remove_worktree): a worktree another unit still references is never offered.
+      # The dead session's own unit does not count.
       if blocking="$(_wt_used_by_other_unit "$wt" "${remote}.service")"; then
         printf '    KEEP: in use by unit %s — do not remove\n' "$blocking"
         kept=$((kept+1))
       elif [ -n "$mainrepo" ]; then
-        # %q shell-quotes each value so the printed command is safe to copy-paste
-        # even if a path or branch name contains whitespace or shell metacharacters.
+        # %q shell-quotes each value so a printed command is safe to paste.
         q_main="$(printf '%q' "$mainrepo")"; q_wt="$(printf '%q' "$wt")"
-        # `--force` is what makes git discard modified/untracked files, so a DIRTY
-        # row gets plain `worktree remove` (git itself refuses while such files
-        # exist, so pasting it can't discard uncommitted changes — git-IGNORED
-        # files are still deleted, as the old --force line also did, which is why
-        # the NOTE says `status --ignored`) and no `branch -D`. Clean rows
-        # keep `--force`: _wt_dirty deliberately ignores the spawner's untracked
-        # .claude/* + .sessions-init-* baseline, which git still counts as
-        # untracked and plain remove would refuse over. Positive match on
-        # clean, so any status other than clean never earns --force.
+        # DIRTY rows get plain `worktree remove`: git refuses while tracked or untracked changes exist. Clean rows keep
+        # --force because _wt_dirty ignores the spawner's own .claude/* and .sessions-init-* baseline, which plain remove
+        # would refuse over. Only a clean status earns --force.
         rmforce=""; [ "$dirty" = clean ] && rmforce=" --force"
-        # Gitignored payload (see _wt_ignored_payload): `git worktree remove`
-        # deletes it and status=clean never shows it. When there is some, the
-        # archive step is chained AHEAD of the printed remove command (so pasting
-        # just the `remove:` line — how the loss above happened —
-        # archives first, and a failed/over-cap archive stops the removal) and a
-        # NOTE says why. No payload -> arch_pre stays empty, output unchanged.
+        # Gitignored payload: `worktree remove` deletes it unseen, so the archive step is chained AHEAD of the printed remove line.
         arch_pre=""
         _wt_ignored_payload "$wt" "$wti_list"; prc=$?
         [ "$prc" -ne 1 ] && arch_pre="session-doctor archive-ignored $q_wt && "
         if [ "$owned" = yes ]; then
-          # `branch -D` only for a known-landed branch (landed=yes; unknown counts
-          # as not known). The session/* ref is what keeps a dead session's commits
-          # reachable once the worktree is gone — `reap` never deletes it either.
-          # A squash-merged branch reads landed=yes via the content fallback, or via
-          # a merged PR containing HEAD (_wt_pr_landed): a suggestion, never a wrong delete.
+          # Force-delete the branch only when known landed (unknown counts as not). The session/* ref keeps a dead session's
+          # commits reachable. A squash-merged branch reads landed=yes via content or a merged PR: a suggestion, never a wrong delete.
           if [ "${landedinfo#*landed=}" = yes ] && [ "$dirty" = clean ]; then
             q_branch="$(printf '%q' "$branch")"
             printf '    remove: %sgit -C %s worktree remove --force %s && git -C %s branch -D %s\n' "$arch_pre" "$q_main" "$q_wt" "$q_main" "$q_branch"
@@ -2246,10 +1816,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
             fi
           fi
         else
-          # Current branch isn't the session-owned session/<remote> name (the
-          # session switched branches) — only suggest removing the worktree
-          # itself; force-deleting an arbitrary, possibly-unmerged branch here
-          # would risk destroying work unrelated to session cleanup.
+          # The session switched branches: remove only the worktree; deleting an unrelated branch could destroy work.
           printf '    remove: %sgit -C %s worktree remove%s %s\n' "$arch_pre" "$q_main" "$rmforce" "$q_wt"
           printf '    NOTE: current branch %s is not a session/* name — leaving branch cleanup for manual review\n' "$branch"
         fi
@@ -2270,33 +1837,10 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     echo "  --- $cand candidate(s)$keepnote. VERIFY dirty/unpushed work is not needed before removing. ---"
     ;;
   idle-report)
-    # Report-only (mirrors registry-stale): LIVE local claude sessions with no
-    # GENUINE user turn in the last N days (default 2 = today/yesterday) or N
-    # minutes (--minutes; mutually exclusive with --days — enforced in the
-    # flag-parsing block above). NEVER kills. Every row is a still-ALIVE proc,
-    # so reap-local deliberately won't touch it — feed dead ones to reap-local,
-    # reap an idle-but-alive one by hand.
-    #
-    # "Genuine" turn: ordinary tool-result turns (also type:"user" in Claude
-    # Code transcripts) DO count as activity — a session looping on its own
-    # counts as active and stays off this list, intentionally (documented in
-    # docs/idle-report.md). The one type:"user" entry that does NOT count is a
-    # /compact summary itself (isCompactSummary:true): if that counted, a
-    # freshly-compacted session would look freshly active, drift back into the
-    # idle window roughly one compaction cycle later, and get compacted again
-    # forever. So idle here is measured from the last type:"user" entry that is
-    # NOT a compact summary. Protected names are flagged and must never be
-    # reaped.
-    #
-    # --tsv emits one machine-readable row per still-idle session — 10 tab-
-    # separated columns (tmux_session, remote_name, pid, cwd, idle_minutes,
-    # last_genuine_user_ts, protected, compacted_since_last_turn, landed,
-    # dirty), no header, no summary/footer lines — for an actuator script to
-    # consume with `while IFS=$'\t' read -r ...`. Columns 9/10 (landed/dirty)
-    # reuse _wt_landed/_wt_dirty exactly as worktree-stale/land-check do (via
-    # _tsv_git_status above); a cwd that's gone from disk or was never a git
-    # working tree reports no-worktree/unknown there instead of failing the row
-    # (transcripts commonly outlive worktrees).
+    # Report-only (mirrors registry-stale): live sessions with no genuine user turn in the last N days (default 2) or N minutes.
+    # Never kills; every row is still alive, so feed dead ones to reap-local. Protected names are flagged, never to be reaped.
+    # A tool-result turn counts as activity. A /compact summary entry does not, or a compacted session would be re-compacted forever.
+    # --tsv: one row per session, 10 tab-separated columns, no header or footer. Columns 9/10 reuse _tsv_git_status.
     if [ "$TSV" != yes ]; then
       if [ "$MINUTES_SET" = yes ]; then
         if [ "$MINUTES" -gt 0 ] 2>/dev/null; then
@@ -2315,10 +1859,7 @@ print('  session_status:', dict(Counter(s.get('session_status') for s in arr)))
     PY_TSV=False; [ "$TSV" = yes ] && PY_TSV=True
     PY_MINUTES=None; [ "$MINUTES_SET" = yes ] && PY_MINUTES="$MINUTES"
     {
-      # Enumerate LIVE claude --remote-control procs. pgrep -f also matches the
-      # tmux launcher and the bash supervisor loop (both carry the string in
-      # their args), so keep only rows whose executable basename is the claude
-      # binary itself.
+      # pgrep -f also matches the tmux launcher and the supervisor loop, so keep only the claude or node executable.
       pgrep -af 'claude.*--remote-control' | while read -r pid cmd; do
         case "$(basename "$(printf '%s' "$cmd" | awk '{print $1}')")" in claude|node) ;; *) continue;; esac
         rc="$(printf '%s' "$cmd" | grep -oE -- '--remote-control[ =][^ ]+' | head -1 | sed -E 's/^--remote-control[ =]//')"
@@ -2521,9 +2062,8 @@ else:
     ;;
 
   reap-merged)
-    # Automatic cleanup of finished sessions (cf. the desktop app archiving a session once its PR
-    # merges). DRY-RUN unless --apply; --apply only runs the plain `reap` below, which re-audits.
-    # Rules: _reap_merged_check above; tests/test-reap-merged.sh.
+    # Auto-cleanup of finished sessions (the desktop app archives a session once its PR merges).
+    # DRY-RUN unless --apply; --apply runs only the plain `reap` below, which re-audits. Rules: _reap_merged_check.
     [ "$APPLY" = yes ] && echo "=== reap-merged: APPLY (idle >= ${IDLE_MIN}m) ===" || echo "=== reap-merged: DRY-RUN, nothing changed (idle >= ${IDLE_MIN}m) ==="
     rm_cands=0; rm_fail=0
     while IFS= read -r rm_s; do
@@ -2537,7 +2077,7 @@ else:
         printf 'candidate  %s  %s\n' "$rm_s" "$RM_REASON"; continue
       fi
       if rm_out="$(bash "${BASH_SOURCE[0]}" reap "$rm_s" $AY_FLAG --outcome "${OUTCOME:-ok}" --outcome-note "$RM_REASON" 2>&1)"; then
-        # reap soft-fails its worktree step (kept, never an error); surface that instead of hiding it
+        # reap soft-fails its worktree step (kept, not an error); surface that.
         printf 'reaped     %s  %s%s\n' "$rm_s" "$RM_REASON" "$(grep -iE -m1 'worktree.*(kept|refus)|kept' <<<"$rm_out" | sed -E 's/^ +/ -- /')"
       else
         rm_fail=$((rm_fail+1)); printf 'failed     %s  reap exited non-zero (%s)\n' "$rm_s" "$RM_REASON"
@@ -2548,10 +2088,7 @@ else:
     ;;
 
   reap)
-    # One-shot clean teardown of a named ALIVE session — the missing live
-    # counterpart to reap-local (which only handles sessions whose claude proc
-    # is already gone). Idempotent: a missing tmux session or a missing/never-
-    # installed systemd unit does not fail the rest of the teardown.
+    # One-shot teardown of a named ALIVE session (the live counterpart to reap-local). A missing tmux session or unit does not fail it.
     NAME="${1:?usage: session-doctor.sh reap <tmux-session> [--force]}"
     _is_protected "$NAME" && { echo "session-doctor: refusing to reap PROTECTED session '$NAME'" >&2; exit 2; }
     # Min-age gate (before any audit or mutation, also under --dry-run). --force does not bypass.
@@ -2559,11 +2096,8 @@ else:
       echo "session-doctor: REFUSING to reap '$NAME' — $REAP_AGE_MSG" >&2
       exit 1
     fi
-    # Safety gate: refuse a session with unlanded/uncommitted work unless
-    # --force. Reuses session-preserve.sh's own audit (exit 0 = safe to reap)
-    # rather than re-deriving dirty/unpushed/reachability logic here. If the
-    # helper can't be found at all, fail SAFE (refuse) rather than silently
-    # skip the check.
+    # Safety gate: refuse unlanded or uncommitted work unless --force, reusing session-preserve.sh's audit (exit 0 = safe).
+    # If that helper cannot be found, fail SAFE.
     if [ "$FORCE" != yes ]; then
       SP="$(_find_helper session-preserve)" || {
         echo "session-doctor: REFUSING to reap '$NAME' — could not locate session-preserve to check for unlanded work (looked next to this script and on PATH). Re-run with --force to skip the safety check." >&2
@@ -2582,9 +2116,7 @@ else:
       echo "session-doctor: refusing to reap '$NAME' — unsafe derived session base '$base'" >&2
       exit 2
     fi
-    # --dry-run: every refusal above has already run (so a refused reap still
-    # previews as refused), now report what the real reap would touch and stop
-    # before the first mutation. No registry call: the preview stays offline.
+    # --dry-run runs every refusal above, then previews the teardown and stops before the first mutation. No registry call.
     if [ "$DRY_RUN" = yes ]; then
       echo "(DRY-RUN — nothing changed; re-run without --dry-run to reap)"
       if tmux has-session -t "=$NAME" 2>/dev/null; then
@@ -2624,14 +2156,8 @@ else:
     fi
     echo "reaped '$NAME'"
     [ "$torn" = yes ] && _record_reap_event "${base:-$NAME}" "$FORCE" "$([ "$FORCE" = yes ] && echo unknown || echo yes)"
-    # Registry cleanup: this session's registry entry (matched by title ==
-    # base name — the hyphenated form (configured prefix or a
-    # CRSS_LEGACY_PREFIXES entry) the registry uses for a remote-control
-    # session's title, confirmed against a live pull) is deleted too, unless
-    # --keep-registry. Fails soft: an
-    # unreachable or unparsable registry only prints a note here and never
-    # changes reap's own exit status — the teardown above already succeeded,
-    # and that's what reap promises regardless of registry hygiene.
+    # Registry cleanup: delete this session's entry (matched by title == base name) unless --keep-registry.
+    # Fails soft: an unreachable registry prints a note and never changes reap's exit status.
     if [ "$KEEP_REGISTRY" != yes ] && [ -n "$base" ]; then
       if reg_json=$(registry_json); then
         match_id=$(printf '%s' "$reg_json" | python3 -c "
@@ -2655,25 +2181,15 @@ for s in arr:
         echo "  registry: unreachable — leaving any registry entry for '$base' in place (reap still counts as done)" >&2
       fi
     fi
-    # Worktree cleanup: the session's own ~/.claude/worktrees/<base> git
-    # worktree (created by session-git-prep.sh for a dirty/busy repo) is
-    # removed too, unless --keep-worktree — see _reap_remove_worktree's own
-    # header comment for the full guard list (dirty refusal, in-use-by-
-    # another-unit, caller's own cwd, primary checkout). Never fails the rest
-    # of reap; the branch is never deleted.
+    # Worktree cleanup: remove this session's ~/.claude/worktrees/<base> unless --keep-worktree (guards in _reap_remove_worktree).
     if [ "$KEEP_WORKTREE" != yes ] && [ -n "$base" ]; then
       _reap_remove_worktree "$base" "$FORCE"
     fi
     ;;
 
   archive-ignored)
-    # Explicit form of the archive step `reap` runs before removing a worktree
-    # (_wt_archive_ignored): copies the worktree's non-regenerable gitignored
-    # files to ~/backups/reaped-worktree-ignored/ and verifies the copy. Never
-    # touches the worktree. This is the command worktree-stale chains ahead of
-    # each `remove:` line whose worktree has such files. Exit 0 = archived or
-    # nothing to archive; 1 = NOT archived (over the cap / copy failed) — the
-    # `&&` in that chained line then keeps the worktree.
+    # Explicit form of the archive step `reap` runs before removing a worktree (_wt_archive_ignored). Never touches the worktree.
+    # Exit 0 = archived or nothing to archive; 1 = not archived, so the `&&` in a worktree-stale remove line keeps the worktree.
     AWT="${1:?usage: session-doctor.sh archive-ignored <worktree>}"
     if [ ! -d "$AWT" ] || [ "$(git -C "$AWT" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$AWT" && pwd -P)" ]; then
       echo "session-doctor: '$AWT' is not the top of a git worktree" >&2
@@ -2687,12 +2203,7 @@ for s in arr:
     ;;
 
   land-check)
-    # Per session-worktree, report-only: unlanded-vs-correct-base + real-dirty,
-    # reusing worktree-stale's two fixes (baseline-aware dirty, real default
-    # branch). Unlike worktree-stale (removal candidates for DEAD worktrees
-    # only), this audits EVERY worktree regardless of whether its owning
-    # session is still live — a "will I lose this?" check, not a cleanup list.
-    # No mutation.
+    # Report-only: audits EVERY worktree, live owner or not. A "will I lose this?" check, not a cleanup list (see worktree-stale).
     echo "=== ~/.claude/worktrees/ land-check: unlanded-vs-correct-base + real-dirty (report-only) ==="
     WT_BASE="$HOME/.claude/worktrees"
     n=0
@@ -2711,16 +2222,8 @@ for s in arr:
     ;;
 
   history)
-    # Report-only: "what happened here before me, and who else is working here
-    # right now?" for a worktree folder. <foldername> may be a bare name, an
-    # absolute path, or a repo-name substring (see _history_matches). Every
-    # match is printed: NOW (live sessions, via _history_report — same
-    # pgrep/readlink/svc_to_tmux mechanism idle-report uses), PAST (transcript
-    # history, also via _history_report), then a worktree-status footer (via
-    # _history_footer, reusing _wt_dirty/_wt_landed — no reimplementation).
-    # WT_BASE/PROJ_BASE come from $HOME exactly like every other mode here, so
-    # the existing HOME-override convention (see idle-report/worktree-stale/
-    # land-check tests) is all that's needed to sandbox this in tests too.
+    # Report-only: for each match, NOW (live sessions), PAST (transcript history) and a worktree-status footer.
+    # WT_BASE and PROJ_BASE come from $HOME like every other mode, so tests can sandbox it with HOME.
     NAME="${1:?usage: session-doctor.sh history <foldername|path|repo-substring>}"
     WT_BASE="$HOME/.claude/worktrees"
     PROJ_BASE="$HOME/.claude/projects"
