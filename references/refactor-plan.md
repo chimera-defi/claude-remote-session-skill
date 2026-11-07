@@ -37,10 +37,12 @@ The rest of the size comes from four places:
 ## Rules for every PR
 
 - **No behavior change** unless the PR title says so. Each PR states which proof it uses:
-  1. **Comment-only.** `shfmt -mn` output matches `origin/main` for every changed `.sh`
-     (`shfmt -mn` strips comments and keeps heredoc bodies), `ast.dump` matches for every
-     `.py`, and the help text of the scripts that print their header comment matches. A
-     checker that does all three goes in `tests/` with PR 1 (see PR order).
+  1. **Comment-only.** Line 1 (the shebang) matches `origin/main` for every changed file.
+     The `shfmt --to-json` syntax tree, with comments and source positions removed, matches
+     for every `.sh`; heredoc bodies stay in the tree. `shfmt -mn` is not enough, because it
+     rewrites code: `$(( $a * 2 ))` becomes `$((a*2))`. `ast.dump` matches for every `.py`.
+     The help text of the scripts that print their header comment matches. A checker that
+     does all of this goes in `tests/` with PR 1 (see PR order).
   2. **Code move**, such as the shared lib or turning a dispatch arm into a function. Run the
      full suite. Then run the read-only live commands from the `origin/main` copy and the
      branch copy back to back and diff them: `session-doctor report`, `fleet-status --all`,
