@@ -1,36 +1,11 @@
 #!/usr/bin/env bash
-# session-handoff.sh — mechanics for handing a task to a live Claude session.
-# The JUDGMENT (which session, how to phrase the task) stays with the caller /
-# the `/handoff` skill; this codifies the deterministic parts:
-#
-#   session-handoff targets                     # live sessions + health + model
-#   session-handoff check <tmux-session>        # one session's health (exit 0 = ready)
-#   session-handoff ready <tmux-session>        # positive injection-safety check (exit 0 = safe)
-#   session-handoff send  <tmux-session> <msg>  # relay a message + verify it landed
-#   session-handoff send  <tmux-session> --file <path>
-#
-# `send` pastes the message (bracketed paste, so a multi-line prompt does not
-# submit line-by-line), presses Enter, and VERIFIES the session actually started
-# working — retrying Enter if the input stayed buffered — instead of trusting
-# that the keys were sent. It prints one of: landed | unverified.
-#
-# `ready` is a separate, POSITIVE predicate: not-busy is not the same as
-# safe-to-inject. If a human (or another agent) left an unsubmitted draft
-# sitting in the pane's input box, the pane shows no spinner — but pasting
-# into it would concatenate onto their draft and Enter would submit the
-# corrupted merge. `ready` also refuses when the pane is on an interactive
-# menu widget (arrow-key only; plain text sent into it is silently dropped —
-# see references/troubleshooting.md "Detecting a stuck-on-a-menu session") or
-# has no visible prompt at all. That menu check also covers
-# Claude Code's first-launch folder-trust dialog (see _is_on_menu's comment),
-# and `check`/`send` now refuse on it too via `_state_of`'s `menu` state —
-# `send` still does not consult the FULL `ready` predicate before its first
-# paste (a bare unsubmitted draft is not yet checked there), see
-# `_is_safe_to_inject`'s comment for what's left.
-# A lane that stopped for the operator (a tail line starting `BLOCKED:`, or a
-# last assistant line ending in `?`) is `_state_of` `blocked`: `targets` shows
-# it and `check` exits 1. `send` is allowed — the launcher answers it. `ready`
-# stays injection-safety only and still reports SAFE for that idle pane.
+# session-handoff.sh — hand a task to a live Claude or Codex tmux session.
+#   targets                              live sessions with state and model
+#   check <tmux-session>                 one session's state (exit 0 = ready)
+#   ready <tmux-session>                 injection-safety check (exit 0 = SAFE)
+#   send  <tmux-session> (<msg>|--file <path>)   paste, Enter, verify it landed
+# `send` prints landed (exit 0) or UNVERIFIED (exit 1; check the session).
+# Ready is not idle: `ready` also refuses a pane with a draft in its input box.
 set -uo pipefail
 
 # Autonomous actuation uses the single Agent Host authority; diagnostics/manual
@@ -47,10 +22,8 @@ _crss_admit() {
 }
 
 # ── Host-local overlay config ────────────────────────────────────────────────
-# See examples/crss-overlay/README.md. Parses (never sources) $CRSS_HOME/config.sh
-# for CRSS_* vars; an env var already set wins over the file; a missing/unreadable
-# file is fine (generic defaults below apply). Copied verbatim in every script
-# that reads overlay config — see tests/test-crss-overlay-config.sh.
+# Parses (never sources) $CRSS_HOME/config.sh; env vars win. Copied verbatim
+# in every script that reads it (tests/test-crss-overlay-config.sh).
 # CRSS-CONFIG-LOADER-START
 _crss_load_config() {
   local _crss_home _crss_cfg _crss_line _crss_key _crss_val
@@ -75,23 +48,10 @@ _crss_load_config
 # CRSS-CONFIG-LOADER-END
 
 # ── Session-name prefix recognition ─────────────────────────────────────────
-# CRSS_SESSION_PREFIX is what NEW sessions get (generic default: "cs", short
-# for "claude session" — lowercase, short, memorable, and distinct from any
-# prefix a given host used before). CRSS_LEGACY_PREFIXES is a `|`-separated
-# list of EXTRA prefixes still RECOGNISED when parsing an existing name but
-# NEVER used to generate one (a host migrating off an old prefix sets
-# CRSS_SESSION_PREFIX=<new> and CRSS_LEGACY_PREFIXES=<old>, e.g. oldhost — see
-# examples/crss-overlay/). Both feed one
-# validated alternation, _crss_prefix_re, that every parse/generate site below
-# uses instead of a hardcoded prefix. Each element must match
-# ^[a-z][a-z0-9]{0,15}$ — that charset can't contain ERE metacharacters, so
-# validating IS escaping here. An invalid CRSS_SESSION_PREFIX falls back to
-# the generic default; ANY invalid element in CRSS_LEGACY_PREFIXES drops the
-# WHOLE legacy list (not just that element) rather than guessing which of
-# several bad values was meant — never to an empty pattern, which would make
-# the alternation match everything (the dangerous direction in a reap path).
-# Copied verbatim in every script that needs it — see
-# tests/test-crss-overlay-config.sh.
+# Builds _crss_prefix_re from CRSS_SESSION_PREFIX (default cs) plus any valid
+# CRSS_LEGACY_PREFIXES. An invalid element drops ALL legacy prefixes, never
+# yields an empty pattern (that would match everything in a reap path).
+# Copied verbatim in every script that needs it (tests/test-crss-overlay-config.sh).
 # CRSS-PREFIX-RE-START
 _crss_valid_prefix_tok() { [[ "$1" =~ ^[a-z][a-z0-9]{0,15}$ ]]; }
 if [ -z "${CRSS_SESSION_PREFIX+x}" ]; then
@@ -123,17 +83,9 @@ fi
 
 # ── pure classifiers (source-guarded below so tests can exercise them) ────────
 
-# _is_working — does the captured pane show Claude or Codex actively generating?
-# "esc to interrupt" is present throughout generation and is the robust anchor.
-# Claude's retry line ("· next try in 5s · attempt 2 · esc to interrupt") has
-# no parentheses, so don't require them. Claude's spinner words vary wildly
-# across releases (Crafting/Herding/Simmering/…), so rather than enumerate
-# them, also match the generic shape: a spinner GLYPH followed by a word ending
-# in "…" (e.g. "✽ Crafting…"). That matters for a collapsed multi-line paste
-# that doesn't echo into the transcript. Codex's "• Working (0s • esc to
-# interrupt)" is caught by the anchor. Codex's "•" bullet is deliberately NOT
-# in the glyph class: every Codex reply starts with "•", so a completed reply
-# beginning "Working…" must stay inert transcript text.
+# _is_working — is Claude or Codex generating? Anchor on "esc to interrupt",
+# plus a spinner glyph followed by a word ending in "…" (spinner words vary by
+# release). Codex's "•" bullet is not a spinner glyph: replies start with it.
 _is_working() {
   grep -qE 'esc to interrupt|(✻|✽|✶|✳|✢|✷|✦|✧|⋆|∗|·)[[:space:]]*[[:alpha:]][[:alpha:]]*…' <<<"$1"
 }
@@ -148,64 +100,27 @@ _is_codex_selection_widget() {
   '
 }
 
-# _is_on_menu — is the pane sitting on an interactive AskUserQuestion-style
-# widget (numbered options + checkboxes, arrow-key navigation)? Free text sent
-# into it is not a valid input and is silently dropped — see references/troubleshooting.md
-# "Detecting a stuck-on-a-menu session". Prefer the distinctive hint strings
-# over trying to parse the numbered option list / checkbox glyphs, which are
-# too generic to grep for reliably on their own.
-#
-# Also matches Claude Code's first-launch workspace-trust dialog ("Yes, I
-# trust this folder / No, exit · Enter to confirm · Esc to cancel") — same
-# hazard class as the menu widgets above (blind Enter answers it instead of
-# being dropped), and worse: it can pick the DEFAULT option, which is not
-# necessarily "trust". Confirmed live (a dropped-first-send
-# incident, `new-session my-project --task-file` on its very first
-# launch in that worktree): the kickoff paste's Enter landed on this dialog
-# and selected "No, exit", so Claude exited immediately and the supervisor
-# loop went into a 300s restart backoff — reported UNVERIFIED, which was
-# technically true but hid the real cause. The existing "Esc to cancel"
-# alternative below already happens to match this dialog's text, but
-# "trust this folder" / "Enter to confirm" are added explicitly so detection
-# does not depend on that being incidental — see the CLI help text (`claude
-# --help`, -p/--print note) confirming this dialog is a real, versioned
-# feature of Claude Code, not a one-off rendering.
+# _is_on_menu — is the pane on an interactive widget (arrow-key menu, or the
+# first-launch folder-trust dialog)? Text sent there is dropped or answers the
+# default choice. Incident: a kickoff paste sent into the trust dialog had its
+# Enter select the default "No, exit", so Claude exited (reported as UNVERIFIED).
 _is_on_menu() {
   _is_codex_selection_widget "$1" && return 0
   grep -qE '↑/↓ to navigate|Enter to select|Esc to cancel|☐ Next direction|✔ Submit|trust this folder|Trust this folder|Folder access|Enter to confirm|enter continue|enter/esc confirm|Would you like to run the following command|Press enter to confirm|Back to Agent Command Center' <<<"$1"
 }
 
-# _frag — a distinctive single-line fragment of a (possibly multi-line) message,
-# used to locate the message in a capture. First non-blank line, capped.
+# _frag — a distinctive single-line fragment of a message, to find it in a capture.
 _frag() { printf '%s' "$1" | sed -n '/[^[:space:]]/{p;q}' | cut -c1-48; }
 
-# _input_region / _transcript_region — split a capture at the LAST prompt line
-# (the `❯` input box, or Codex's `›`). Content on/after it is the pending
-# input; content before it is the conversation transcript.
-#
-# Alternation (`❯|›`), NOT a bracket class (`[❯›]`): a `[...]` class is byte-
-# oriented under mawk or any awk/grep in a non-UTF-8 locale (see
-# _input_box_empty's border-line comment for the same class of bug) and a
-# multi-byte UTF-8 char inside `[...]` there decomposes into its individual
-# bytes as separate class members, not one atomic character. `❯`/`›` share a
-# lead byte (E2) with nearly every other symbol the Claude/Codex TUIs print
-# (✢✻✽⏵…), so `[❯›]` under LC_ALL=C/POSIX false-matched on ANY line
-# containing any of those — e.g. the "⏵⏵ bypass permissions on" status line —
-# collapsing _input_region to the tail of the buffer and misreading every
-# ready pane as draft-in-input-box. Alternation compares each branch as a
-# whole literal byte string instead, which is locale-independent. Confirmed
-# reproducing under LC_ALL=C; regression from the Codex-prompt support added
-# here — see tests/test-session-handoff-ready.sh.
+# _input_region / _transcript_region — split a capture at the last prompt line
+# (`❯`, or Codex's `›`): below it is the pending input, above it the transcript.
+# Use alternation `❯|›`, not `[❯›]`: under a C locale a bracket class splits
+# these multi-byte glyphs into bytes and false-matches other TUI symbols.
 _input_region()      { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=(last?last:NR+1);i<=NR;i++)print a[i]}'; }
 _transcript_region() { printf '%s\n' "$2" | awk '/❯|›/{last=NR} {a[NR]=$0} END{for(i=1;i<(last?last:1);i++)print a[i]}'; }
 
-# _on_input_line — is the fragment still sitting in the input box (typed but not
-# submitted)? Then another Enter is needed.
-#
-# Both predicates (and _is_collapsed_paste_in_input) capture the region with its status checked,
-# THEN match, instead of `region | grep -q` (SIGPIPE race under pipefail) or `grep -q < <(region)`
-# (drops the producer's status). A failed region is "no" — never an input/submission inference —
-# exactly what the old pipe said. A sentinel keeps the exact bytes; zero bytes never match.
+# _on_input_line — is the fragment still in the input box (typed, not submitted)?
+# Capture first, then match: a pipe into grep -q can SIGPIPE under pipefail.
 _on_input_line() {
   local r
   r="$(_input_region "$1" "$2" && printf x)" || return 1
@@ -221,18 +136,9 @@ _in_transcript() {
 }
 
 # _is_collapsed_paste_in_input — is the input box showing Claude Code's
-# collapsed-multiline-paste placeholder ("[Pasted text #1 +17 lines]",
-# "paste again to expand" beneath it) instead of the literal pasted text?
-# Claude Code collapses large/multi-line pastes to this placeholder rather
-# than echoing the content verbatim — exactly the shape a multi-line
-# --task-file kickoff takes — so _frag's literal-substring match against the
-# real message can never find it there. Without this, a landed-but-still-
-# buffered large paste reads (wrongly) as "gone from the input line", and
-# _verdict falls straight through "buffered" to "unverified" instead of
-# pressing Enter again. Confirmed live (a session spawned with
-# `new-session my-project --task-file`): send reported UNVERIFIED
-# while the pane showed exactly "❯ [Pasted text #1 +17 lines]" — a single
-# manual Enter submitted it, proving it was still just buffered.
+# "[Pasted text #1 +17 lines]" placeholder instead of the pasted text? The
+# fragment match cannot see the placeholder, so without this a buffered
+# multi-line paste reads as lost.
 _is_collapsed_paste_in_input() {
   local r
   r="$(_input_region "" "$1" && printf x)" || return 1
@@ -240,107 +146,36 @@ _is_collapsed_paste_in_input() {
   [ -n "$r" ] && grep -qE '\[Pasted text #[0-9]+ \+[0-9]+ lines?\]' <<<"${r%$'\n'}"
 }
 
-# _has_prompt — is there a real ❯/› input line visible anywhere in the capture?
-# Absent during startup (still in the supervisor loop / model not yet in a TUI
-# frame) or if the capture is empty/garbled.
-# Alternation, not a bracket class — see _input_region's comment above for why
-# `[❯›]` false-matches under a POSIX/C locale.
+# _has_prompt — is a ❯/› input line visible? Absent during startup.
 _has_prompt() { grep -qE '❯|›' <<<"$1"; }
 
-# _strip_ansi — drop ANSI CSI sequences (ESC '[' params letter), e.g. color /
-# bold / dim SGR codes from `tmux capture-pane -e`. Used to make the busy /
-# menu / prompt checks immune to styling, since those grep for literal
-# substrings that must survive regardless of which colors wrap them.
+# _strip_ansi — drop ANSI CSI sequences (color/dim codes from capture-pane -e).
 _strip_ansi() {
   local esc; esc=$'\x1b'
   printf '%s' "$1" | sed -E "s/${esc}\\[[0-9;]*[A-Za-z]//g"
 }
 
-# _is_dim_span — is $1 (raw, ANSI-preserving) ENTIRELY a "dim" (SGR 2) styled
-# run, optionally reset with ESC[0m at the end? This is how Claude Code's TUI
-# renders its auto-suggested "next action" ghost text in an otherwise-empty
-# input box — it is NOT a user draft (confirmed empirically:
-# `tmux capture-pane -p -e` on live sessions shows `ESC[2m<suggestion>ESC[0m`
-# after the ❯ marker on idle panes, vs. no such wrapping when real text is
-# there). The terminal's cursor cell can split the run — if the cursor sits on
-# the first character of the ghost text, that one glyph renders reverse-video
-# (`ESC[7m`) and the rest resumes dim (`ESC[0;2m…`) — so both the plain-dim and
-# cursor-split shapes are matched. A real user draft is rendered without the
-# dim attribute, so it will not match this and correctly falls through to
-# "not a dim span" -> treated as a genuine draft.
-#
-# The opener is matched EXACTLY as `2m` or `0;2m` (not `[0-9;]*2m`) on
-# purpose: a wildcard there would also match 256-color codes that merely
-# happen to end in digit 2 (e.g. `38;5;12m`, `38;5;22m` — ordinary colors, not
-# the dim attribute), which would misclassify real colored draft text as safe.
-#
-# The load-bearing assumption here — that a genuine user-typed draft renders
-# WITHOUT the dim attribute — was VERIFIED empirically against a
-# disposable probe session (CC v2.1.206), not assumed.
-# A real unsubmitted draft captures as `ESC[39m❯ <NBSP>this is a real
-# unsubmitted draft` — no `ESC[2m` anywhere — while that same pane's organic
-# ghost text captures as `ESC[39m❯ <NBSP>ESC[2mmark the rest complete tooESC[0m`.
-# All six probed cases classified correctly, including the adversarial ones:
-#   - single-char draft (`x`)                     -> draft  (short drafts not missed)
-#   - draft containing the literal text `[2m`     -> draft  (matches the real ESC
-#                                                    byte, not the substring)
-#   - draft typed over existing ghost text        -> draft  (typing REPLACES the
-#                                                    placeholder; they never coexist)
-#   - box cleared with C-u, ghost text resurfaces -> safe
-# Re-verify if Claude Code's TUI changes how it styles placeholder text; that is
-# the one upstream change that would silently invert this predicate.
+# _is_dim_span — is $1 entirely a dim (SGR 2) run? That is Claude Code's
+# ghost-text suggestion in an empty input box, not a user draft. A real draft
+# has no dim attribute. Re-verify if the TUI changes how it styles placeholders.
 _is_dim_span() {
   local s="$1" esc nbsp; esc=$'\x1b'; nbsp=$'\xc2\xa0'
   grep -Eq \
     "^[[:space:]${nbsp}]*((${esc}\\[0;2m)|(${esc}\\[2m)|(${esc}\\[7m.${esc}\\[0;2m))[^${esc}]*${esc}\\[0m[[:space:]${nbsp}]*\$" <<<"$s"
 }
 
-# _input_box_empty — reuses _input_region, whose output always starts AT the
-# pane's last ❯ line. Take just that line and check whether anything other
-# than the ❯ glyph and surrounding whitespace remains — and if there IS
-# visible text, whether it's entirely a dim ghost suggestion (_is_dim_span)
-# rather than a real unsubmitted draft. Accepts either a plain capture (no
-# escapes — dim detection is then simply unavailable, so any leftover text
-# reads as a draft) or an ANSI-preserving one (`capture-pane -e`), which is
-# what `ready` passes so dim ghost text can be told apart from a real draft.
-# (Caller must confirm _has_prompt first; with no ❯ at all this reports
-# "empty" vacuously, which is the wrong signal to act on — that case should be
-# diagnosed as no-prompt instead.)
-#
-# tmux pads the cell right after the `❯` glyph with U+00A0 (NO-BREAK SPACE,
-# not a plain 0x20 space) rather than an ordinary space — confirmed against
-# live captures. POSIX `[[:space:]]` does NOT match NBSP (by design, in any
-# locale), so the trim below strips it explicitly alongside real whitespace;
-# without this, every pane — including genuinely empty ones — reads as
-# "1 leftover byte" and gets misclassified as a draft.
+# _input_box_empty — is the input box empty, or holding only ghost text? Needs
+# an ANSI-preserving capture to tell ghost text from a draft. Caller must
+# confirm _has_prompt first. tmux pads after ❯ with U+00A0 (NBSP), which
+# POSIX [[:space:]] misses, so the trim strips it explicitly.
 _input_box_empty() {
   local cap="$1" region stripped nbound box rest visible nbsp
   nbsp=$'\xc2\xa0'
   region="$(_input_region "" "$cap")"
   stripped="$(_strip_ansi "$region")"
-  # The input BOX is bounded above by the ❯ line and below by the next
-  # border/separator line (a row that is ENTIRELY '─' once ANSI styling is
-  # stripped) — NOT "everything to end of buffer", which is _input_region's
-  # broader definition (it also sweeps in the border line itself plus the
-  # status line(s) below the box, e.g. "[Sonnet 5] session-name"; treating
-  # those as draft content would make every pane look non-empty and break
-  # the SAFE case entirely). Find that boundary first.
-  #
-  # This is a plain bash loop with LITERAL (non-regex) substring stripping,
-  # not an awk/grep `/^─+$/`-style quantified regex: '─' is a multi-byte
-  # UTF-8 character, and a quantified regex over it only matches when the
-  # tool is both running in a UTF-8 locale AND is itself multibyte-aware
-  # (GNU grep/gawk are, but only under a UTF-8 locale; mawk — Debian/
-  # Ubuntu's default `awk` — never is, in any locale). Under mawk, or any
-  # awk/grep in a non-UTF-8 locale (e.g. LC_ALL=C/POSIX, common in minimal
-  # containers and CI), that regex silently never matches the border line,
-  # nbound falls through to "whole buffer", and the status/permission-mode
-  # lines below the box get read as draft text — every idle pane then
-  # misclassifies as draft-in-input-box, and `ready` never reports safe.
-  # Literal substring removal (bash `${var//X/}`) is a byte-for-byte search
-  # with no quantifier or char-class involved, so it is correct regardless
-  # of locale or awk/grep build. Confirmed reproducing against mawk in a
-  # POSIX/C locale, which is what surfaced this.
+  # The box ends at the next all-'─' border line (not the end of the buffer,
+  # which would sweep in the status line). Use literal substring stripping,
+  # not a regex over '─': mawk and non-UTF-8 locales never match it.
   local nbound_n=0 nbound_ln
   nbound=0
   while IFS= read -r nbound_ln; do
@@ -359,21 +194,8 @@ _input_box_empty() {
   [ "$nbound" -gt 0 ] || nbound="$nbound_n"
   [ -n "$nbound" ] && [ "$nbound" -gt 0 ] || nbound=1
   box="$(printf '%s\n' "$region" | head -n "$nbound")"
-  # A genuinely multi-line unsubmitted draft can have a BLANK first line
-  # (e.g. shift+enter pressed before typing, or a paste that starts with a
-  # blank line) with real text on line 2+. Checking only the first line (an
-  # earlier cut of this function, via `head -1`) silently read that as an
-  # empty box -> SAFE — the dangerous direction, confirmed by direct
-  # reproduction against this function. Strip the ❯/› prefix off line 1 only
-  # (line 2+ carries no such prefix) and look at the WHOLE box, not just its
-  # first line.
-  #
-  # Strip through the FIRST literal prompt glyph on line 1 only. A greedy
-  # `.*(❯|›)` strips through the last glyph, hiding drafts like `❯ explain ›`.
-  # The old `[^❯›]*[❯›]` form is also unsafe: in a byte-oriented locale its
-  # bracket classes can consume part of a glyph and leave invalid UTF-8.
-  # index/substr/length use consistent units (bytes or characters) in both
-  # gawk and mawk, so matching whole literals works regardless of locale.
+  # Check the WHOLE box: a draft can start with a blank line. Strip only the
+  # first prompt glyph on line 1 (a greedy strip would hide `❯ explain ›`).
   rest="$(printf '%s\n' "$box" | awk '
     NR == 1 {
       p = index($0, "❯"); glyph = "❯"
@@ -385,11 +207,7 @@ _input_box_empty() {
   ')"
   visible="$(_strip_ansi "$rest" | tr -d '\n' | sed -e "s/^[[:space:]${nbsp}]*//" -e "s/[[:space:]${nbsp}]*\$//")"
   [ -z "$visible" ] && return 0
-  # Claude Code's dim "suggested next action" ghost text is always exactly
-  # one line in practice (confirmed empirically — see _is_dim_span's
-  # comment); a box spanning more than one line is therefore never ghost
-  # text, so treat it as a real draft directly rather than feeding
-  # multi-line content to a regex anchored for a single span.
+  # Ghost text is one line; a multi-line box is always a real draft.
   if [ "$(printf '%s\n' "$box" | wc -l)" -le 1 ]; then
     _is_dim_span "$rest"
   else
@@ -397,33 +215,14 @@ _input_box_empty() {
   fi
 }
 
-# _safety_reason — classify a captured pane's injection-safety in one word.
-# Expects an ANSI-preserving capture (`tmux capture-pane -p -e`) so the
-# draft-vs-ghost-text distinction in _input_box_empty is available; a plain
-# (`-p`) capture still works for busy/menu/no-prompt, and degrades safely on
-# the draft check (no dim info -> any leftover input-line text reads as a
-# real draft).
-#   busy                : Claude is actively generating (spinner / esc to interrupt)
-#   menu                : an interactive AskUserQuestion-style widget is up —
-#                          plain text sent into it is silently dropped
-#   no-prompt           : no ❯ input line visible (still starting up, or an
-#                          unrecognized layout)
-#   draft-in-input-box  : a real ❯ prompt, but unsubmitted text is sitting on
-#                          it — pasting now would concatenate onto someone's draft
-#   safe                : none of the above — a message can be sent (the input
-#                          box is either truly empty or only has Claude Code's
-#                          own dim "suggested next action" ghost text, which a
-#                          paste cleanly overwrites)
-# A `blocked` lane (tail `BLOCKED:` line, or a last assistant line ending in
-# `?`) is intentionally still `safe` here when the prompt is idle. That stall
-# is `_state_of`'s job (`check` / `targets`); it is not an injection hazard,
-# so `ready` keeps reporting SAFE and `send` can answer the lane.
-# Order matters: busy and menu are checked before the prompt/draft checks
-# because both can coexist with leftover text on the input line (e.g. a menu
-# widget ignores stray keystrokes rather than clearing them), and busy/menu
-# are the more actionable diagnoses in that case. The busy/menu/prompt checks
-# run on an ANSI-STRIPPED copy so their literal-substring greps aren't broken
-# by color codes landing mid-phrase; only the draft check needs the raw form.
+# _safety_reason — one word on whether a message can be pasted now. Order
+# matters: busy and menu come first, since leftover text can coexist with them.
+#   busy                : generating (spinner / esc to interrupt)
+#   menu                : an interactive widget is up (input would be dropped)
+#   no-prompt           : no ❯ input line visible
+#   draft-in-input-box  : unsubmitted text on the prompt; pasting would merge into it
+#   safe                : none of the above (empty box or Claude's ghost text)
+# A `blocked` lane is still `safe` here; that stall is `_state_of`'s job.
 _safety_reason() {
   local raw="$1" stripped; stripped="$(_strip_ansi "$raw")"
   _is_working "$stripped" && { echo busy; return; }
@@ -433,28 +232,12 @@ _safety_reason() {
   echo safe
 }
 
-# _is_safe_to_inject — the POSITIVE readiness predicate: exit 0 only when a
-# message can be pasted + Enter-submitted without corrupting someone's draft,
-# vanishing into a menu widget, or racing active generation. The absence of
-# "busy" is NOT sufficient — see the top-of-file note. `send` does not gate on
-# the full predicate (draft-in-input-box is still not checked before the
-# INITIAL paste — only during the dropped-paste recovery path, see `send`'s
-# comment). `_state_of` DOES now short-circuit the menu/trust-dialog case
-# specifically (see _is_on_menu's comment): `menu` is its own
-# state with its own refusing arm in `send`'s `case "$st"`, no longer folded
-# into `ready`. A pane with an unsubmitted DRAFT sitting on the prompt is
-# still classified `ready` by `_state_of` (it has no visibility into input-
-# box contents) and falls straight through to the paste with zero warning —
-# that's the one gap `_is_safe_to_inject` would still need to close if `send`
-# adopted it fully.
+# _is_safe_to_inject — the positive predicate behind `ready`. `send` does not
+# gate on it before the first paste, so a bare draft still gets pasted into.
 _is_safe_to_inject() { [ "$(_safety_reason "$1")" = safe ]; }
 
-# _verdict — combine the signals for one capture.
-#   buffered   : still on the input line (literally, or as Claude Code's
-#                collapsed-multiline-paste placeholder — see
-#                _is_collapsed_paste_in_input) -> press Enter again
-#   landed     : echoed into the transcript OR the session is now working
-#   unverified : sent, but no confirmation (report honestly; caller re-checks)
+# _verdict — buffered (still on the input line: press Enter again) |
+# landed (in the transcript, or working) | unverified (no confirmation).
 _verdict() {
   local frag="$1" cap="$2"
   if _on_input_line "$frag" "$cap" || _is_collapsed_paste_in_input "$cap"; then echo buffered; return; fi
@@ -464,11 +247,8 @@ _verdict() {
 
 # ── live helpers ──────────────────────────────────────────────────────────────
 
-# tmux session name -> remote-control name (recognised prefixes,
-# $_crss_prefix_re, are ours). Mirrors session-doctor.sh's / session-preserve.sh's
-# tmux_to_base exactly — same name on purpose so a fix to one copy greps up
-# the others (scripts deploy standalone to ~/.local/bin, so it stays a local
-# copy, not sourced).
+# tmux_to_base — tmux session name to remote-control name. Keep identical to
+# session-doctor.sh's and session-preserve.sh's copies (scripts deploy standalone).
 tmux_to_base() {
   if [[ "$1" =~ ^(${_crss_prefix_re})_(.*)$ ]]; then
     echo "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
@@ -504,18 +284,14 @@ _capture()  { tmux capture-pane -p -t "$1" 2>/dev/null; }
 # from Claude Code's dim "suggested next action" ghost text (see _is_dim_span).
 _capture_ansi() { tmux capture-pane -p -e -t "$1" 2>/dev/null; }
 
-# _paste_and_wait <session> <frag> <msg> — bracket-paste <msg> then run the
-# Enter-retry loop, echoing the resulting verdict (buffered|landed|
-# unverified). Factored out of the `send` dispatch so the dropped-paste
-# recovery path below (see its comment) can reuse the
-# EXACT same paste+verify mechanics for its one retry, rather than a second
-# hand-copy of this loop silently drifting from it over time.
+# _paste_and_wait <session> <frag> <msg> — bracketed paste, then Enter with
+# retries; echoes the verdict. Shared with send's one dropped-paste retry.
 _paste_and_wait() {
   local s="$1" frag="$2" msg="$3" verdict=unverified _try _j
   if [ "${CRSS_AUTONOMOUS:-0}" = 1 ]; then
     _crss_admit wake "${CRSS_ADMISSION_SUBJECT:-$s}" --packet-chars "${#msg}" >&2 || { echo admission-denied; return 2; }
   fi
-  # Bracketed paste so a multi-line prompt lands as one input, not N submits.
+  # Bracketed paste keeps a multi-line prompt as one input.
   printf '%s' "$msg" | tmux load-buffer -b handoff -
   tmux paste-buffer -t "$s" -b handoff -p -d
   for _try in 1 2 3; do
@@ -526,13 +302,12 @@ _paste_and_wait() {
       sleep 0.5
     done
     [ "$verdict" = landed ] && break
-    [ "$verdict" = buffered ] || break     # unverified: one Enter should have done it; stop resending
+    [ "$verdict" = buffered ] || break     # unverified: stop resending
   done
   echo "$verdict"
 }
 
-# _model_of — best-effort resolved model for a session (from its start script,
-# else the most recent session-starts.log line).
+# _model_of — resolved model, from the start script or the session-starts log.
 _model_of() {
   local rem sc; rem="$(tmux_to_base "$1")"; [ -n "$rem" ] || { echo "?"; return; }
   sc="$HOME/.local/bin/${rem}-start.sh"
@@ -552,9 +327,7 @@ _backend_of() {
   [ -n "$backend" ] && echo "$backend" || echo claude
 }
 
-# _codex_live <session> — true iff a process named `codex` is a live
-# foreground, non-stopped descendant of the pane's pid (wrapper-bash Codex
-# start scripts).
+# _codex_live <session> — a foreground, non-stopped `codex` under the pane's pid.
 _codex_live() {
   local root ptty kids k c comm st pg tpg ctty queue="" n=0
   read -r root ptty <<< "$(tmux display-message -p -t "$1" '#{pane_pid} #{pane_tty}' 2>/dev/null)"
@@ -567,9 +340,7 @@ _codex_live() {
     kids="$(pgrep -P "$k" 2>/dev/null | tr '\n' ' ')"
     for c in $kids; do
       comm="$(ps -o comm= -p "$c" 2>/dev/null)"
-      # Must be the pane tty's FOREGROUND process group and not stopped: a
-      # backgrounded/stopped codex under a bare shell prompt is not a TUI
-      # we can type into.
+      # Must be the tty's foreground group and not stopped (else not a TUI).
       if [ "$comm" = codex ]; then
         read -r st pg tpg ctty <<< "$(ps -o stat=,pgid=,tpgid=,tty= -p "$c" 2>/dev/null)"
         case "$st" in [Tt]*) : ;; *) [ "$ctty" = "$ptty" ] && [ -n "$pg" ] && [ "$pg" = "$tpg" ] && return 0 ;; esac
@@ -580,10 +351,7 @@ _codex_live() {
   return 1
 }
 
-# _blocked_line_text — assistant-line text: drop leading whitespace, one
-# leading Claude bullet (⏺ or ●), and surrounding whitespace (including the
-# NBSP tmux uses as cell padding). Locale-safe: literal prefix strips, no
-# non-ASCII bracket class.
+# _blocked_line_text — strip whitespace, NBSP padding and one leading ⏺/● bullet.
 _blocked_line_text() {
   local s="$1" nbsp=$'\xc2\xa0'
   s="${s//$nbsp/ }"
@@ -597,17 +365,8 @@ _blocked_line_text() {
   printf '%s' "$s"
 }
 
-# _is_blocked — the pane is idle but waiting on the operator.
-# Checked only once menu and busy have already been ruled out.
-#   * Tail marker: among the last 12 non-blank lines above the input footer
-#     (the box border sitting on top of the ❯/› prompt, the prompt, and
-#     everything under it), a line whose text starts with `BLOCKED:`.
-#   * Trailing question: the last assistant text line before that prompt box
-#     ends with `?`. A Claude Code tip (text, after _blocked_line_text, starting
-#     with `※` or `Tip:`) is chrome: it is not that line, and it does not clear
-#     an earlier question.
-# A `BLOCKED:` quoted further up than that tail stays ready. A mid-sentence
-# mention inside the tail stays ready too — the marker has to start the line.
+# _is_blocked — idle and waiting on the operator: a `BLOCKED:` line in the last
+# 12 transcript lines, or the last assistant line ends with `?`. Tips (※/Tip:) are skipped.
 _is_blocked() {
   local cap="$1" region line text last="" flat n start i
   local -a body=()
@@ -633,7 +392,6 @@ _is_blocked() {
   for ((i = start; i < n; i++)); do
     text="$(_blocked_line_text "${body[$i]}")"
     [ -n "$text" ] || continue
-    # Tip chrome must not become `last` for the trailing-question rule.
     case "$text" in
       "※"*|Tip:*) continue ;;
     esac
@@ -648,38 +406,22 @@ _is_blocked() {
   return 1
 }
 
-# _state_of — dead | starting | busy | menu | blocked | ready, from pane
-# command + capture. `menu` (see _is_on_menu's comment for the
-# incident) covers both the AskUserQuestion-style widgets and the folder-
-# trust dialog — checked before busy/blocked/ready so `check` (which gates
-# new-session.sh's kickoff send on `state = ready`) refuses to call a pane
-# "ready" while it is sitting on either, instead of the previous busy-vs-not
-# split that had no way to represent "up, but not safe to type into" at all.
-# `blocked` (see _is_blocked) is a stall, not a hazard: `check` exits 1 and
-# `targets` shows it, but `send` is allowed so the launcher can answer.
+# _state_of — the pane's state, one of:
+#   dead      no claude/codex process in the pane
+#   starting  bare shell, or the supervisor's sleep between restarts (no claude to type into)
+#   menu      on an interactive widget or the folder-trust dialog (send refuses)
+#   busy      generating; send queues behind it
+#   blocked   idle, waiting on the operator; check exits 1, send still answers it
+#   ready     idle at the prompt
 _state_of() {
   local s="$1" cmd cap backend; cmd="$(_pane_cmd "$s")"; backend="$(_backend_of "$s")"
   case "$cmd" in
     ""|-) echo dead; return;;
     claude|node) : ;;
     codex) [ "$backend" = codex ] || { echo dead; return; } ;;
-    # `sleep` is the supervisor loop's between-restarts backoff (300s on a
-    # quick exit, 10s otherwise — see new-session.sh's generated start
-    # script), NOT claude "busy working" — there is no claude process in the
-    # pane at all. This used to report `busy`, and `send`'s busy arm only
-    # NOTES and proceeds to paste (the "queues behind current work"
-    # contract) — which pastes straight into a bare shell mid-`sleep`, where
-    # the text sits buffered for whatever next reads that pty's stdin (the
-    # next `claude` invocation once the loop restarts it, or the shell
-    # itself). Confirmed live: a kickoff prompt containing
-    # backticks and $(...) was pasted into exactly this state and was headed
-    # for execution as shell input — caught and killed in time. Treat it
-    # like `starting`: no claude process to send into yet, refuse.
-    # Exception: an older Codex start script leaves a wrapper `bash` as the
-    # pane's foreground command with the live `codex` as its child. That is
-    # a ready-capable codex pane, not a bare shell, so fall through to the
-    # capture-based checks. Anything else (bare bash, bash with no codex
-    # descendant, any non-codex backend) stays `starting` and is refused.
+    # `sleep` is the supervisor's restart backoff, not busy: a paste there lands
+    # in a bare shell. Refuse it as `starting`. A wrapper bash with a live codex
+    # child is a ready-capable Codex pane, so it falls through to the checks.
     sleep|bash|zsh|sh)
       if [ "$cmd" != sleep ] && [ "$backend" = codex ] && _codex_live "$s"; then
         :
@@ -689,13 +431,9 @@ _state_of() {
     *) echo dead; return;;
   esac
   cap="$(_capture "$s")"
-  # Footer only: `send` hard-refuses on `menu`, so matching the whole screen
-  # would refuse any session whose transcript merely quotes "Esc to cancel" /
-  # "Enter to confirm" (e.g. one discussing this very bug). A live menu or
-  # trust dialog always puts its hint line in the last few non-blank lines.
+  # Match the footer only (last 4 non-blank lines): a transcript that quotes a menu hint must not refuse.
   if _is_on_menu "$(printf '%s\n' "$cap" | grep -v '^[[:space:]]*$' | tail -n 4)"; then echo menu; return; fi
   if _is_working "$cap"; then echo busy; return; fi
-  # After menu, and only when not busy: a stall on a question or BLOCKED: line.
   if _is_blocked "$cap"; then echo blocked; return; fi
   echo ready
 }
@@ -739,87 +477,34 @@ case "$MODE" in
     tmux has-session -t "$S" 2>/dev/null || { echo "send: '$S' — no such tmux session" >&2; exit 2; }
     if [ "${1:-}" = "--file" ]; then
       FILE="${2:?--file needs a path}"
-      # A missing/unreadable path must be reported as such, not silently
-      # swallowed into an empty MSG — that used to surface as the unrelated
-      # "message is empty or whitespace-only" refusal below, hiding the real
-      # cause (cat's own stderr line is easy to miss/strip by a caller).
+      # Report an unreadable --file as such, not as an empty message.
       MSG="$(cat "$FILE")" || { echo "send: could not read --file path: $FILE" >&2; exit 2; }
     else
       MSG="${1:?message required}"
     fi
     st="$(_state_of "$S")"
     case "$st" in
-      # Both messages below name the ACTUAL pane_current_command (not just
-      # the coarse dead/starting label) so "claude not running in pane
-      # (<cmd>)" is always present verbatim — the exact signal to grep for
-      # (this refusal is what stops a paste from landing on a
-      # bare supervisor shell instead of Claude Code — see `sleep`'s comment
-      # in _state_of).
+      # The messages name the actual pane command, so "claude not running in pane (<cmd>)" stays greppable.
       dead)     echo "send: claude not running in pane ($(_pane_cmd "$S")) — '$S' looks dead — refusing to send" >&2; exit 2;;
       starting) echo "send: claude not running in pane ($(_pane_cmd "$S")) — '$S' is still starting (or between supervisor restarts) — refusing to send (retry after it reaches the prompt)" >&2; exit 2;;
-      # Unlike `busy` (below), a menu/dialog widget is a HARD refusal, not a
-      # queue-behind-it note: plain text sent into it is either dropped
-      # (an AskUserQuestion widget) or answers it with whatever Enter
-      # submits, which is not necessarily the safe/intended choice (a real
-      # incident: a kickoff paste's Enter answered a first-launch folder-
-      # trust dialog with its default "No, exit" and killed the session — see
-      # _is_on_menu's comment). Answer it by hand first.
+      # A menu is a hard refusal (unlike busy): Enter could pick an unsafe default.
       menu)     echo "send: '$S' is on a menu/dialog widget (e.g. a first-launch folder-trust prompt) — refusing to send; Enter could submit an unintended choice. Answer it by hand (on the folder-trust dialog the highlighted default is 'No, exit' — pick 'Yes, I trust this folder'; new spawns pre-seed it via session-trust-seed)" >&2; exit 2;;
       busy)     echo "send: note — '$S' is busy (working); message will queue behind current work" >&2;;
-      # Not a refusal. The lane is idle and waiting on the operator; the
-      # launcher sends the answer. Unknown states already fall through (there
-      # is no catch-all refuse). This arm keeps a later catch-all from
-      # refusing `blocked`, and notes why the paste is happening.
+      # Not a refusal: the launcher is sending the answer to a blocked lane.
       blocked)  echo "send: note — '$S' is blocked (waiting on a question or a BLOCKED: line); sending the answer" >&2;;
     esac
     frag="$(_frag "$MSG")"
-    # A whitespace-only MSG yields an empty frag, and grep -qF "" matches every
-    # line unconditionally — _on_input_line would then always report "still
-    # buffered" regardless of what's on screen, so _verdict could never reach
-    # "landed" even though Enter worked fine. Refuse rather than loop to a
-    # false "unverified".
+    # An empty fragment would match every line, so refuse it up front.
     [ -n "$frag" ] || { echo "send: message is empty or whitespace-only — refusing to send" >&2; exit 2; }
     verdict="$(_paste_and_wait "$S" "$frag" "$MSG")"
     [ "$verdict" != admission-denied ] || { echo "send: autonomous admission denied" >&2; exit 2; }
-    # ── dropped-first-paste recovery (a real dropped-first-send
-    # incident) ────────────────────────────────────────
-    # On a freshly booted Claude Code, `check` (and new-session.sh's ready
-    # poll) can observe the ❯ prompt render and call the session "ready"
-    # before the TUI's own bracketed-paste handling has finished wiring
-    # itself up — the paste above then lands on a not-quite-live input
-    # handler and is silently dropped: the input box stays empty and the
-    # text never reaches the transcript. The Enter-retry loop inside
-    # _paste_and_wait cannot tell this apart from "nothing was sent yet" by
-    # design (it only re-presses Enter while the fragment is still BUFFERED
-    # on the input line — see _verdict), so it correctly gives up as
-    # `unverified` rather than guessing. Here we have one more signal it
-    # doesn't: _safety_reason. If the pane reads `safe` — truly idle, not
-    # busy, not a menu, no draft sitting on the prompt — AND the fragment is
-    # nowhere on screen (neither transcript nor input line), there is
-    # nothing to duplicate: the paste evidently never arrived, so it's safe
-    # to try exactly once more. Any other reading (busy/menu/draft, or the
-    # fragment IS somewhere) means either it landed via a path _verdict
-    # missed, or a real draft/other work is present — re-pasting into either
-    # would risk a double-send or corrupting someone's draft, so this path
-    # only ever fires when the retry loop already said "unverified" AND a
-    # fresh, independent read of the pane confirms "nothing here to lose".
-    #
-    # This cannot tell a genuine drop apart from a TUI that accepted the
-    # paste but stalled its own repaint before showing any trace of it — from
-    # a pane-capture vantage point the two are identical, and a stalled
-    # accept would then be double-delivered. That's a real, documented
-    # residual risk (see tests/test-session-handoff-tui.sh silent-accept case),
-    # not a case this fix claims to solve — but the alternative, observed
-    # 8/8 on first sends, is losing the message outright every time.
+    # Dropped-first-paste recovery: a fresh Claude TUI can swallow the first
+    # paste. Retry once, but only if the pane is safe and the fragment is
+    # nowhere on screen (so nothing is duplicated). Residual risk: a TUI that
+    # accepted the paste silently could get it twice (tests/test-session-handoff-tui.sh).
     if [ "$verdict" != landed ]; then
       cap_now="$(_capture_ansi "$S")"
-      # Re-check the pane's foreground process fresh, not the `st` read at
-      # the top of this dispatch — claude can exit BETWEEN the initial paste
-      # attempt and this decision (it's a live TUI, not a fixed target), and
-      # pasting into whatever took its place (the supervisor's `sleep`
-      # backoff, or a crash-to-shell) is exactly the hazard the `dead`/
-      # `starting` refusals above exist to prevent. Same reasoning as those,
-      # applied at the point of the SECOND paste rather than only the first.
+      # Re-check the foreground process now: claude may have exited since the first paste.
       if [ "$(_safety_reason "$cap_now")" = safe ] \
          && ! _in_transcript "$frag" "$cap_now" \
          && ! _on_input_line "$frag" "$cap_now"; then
