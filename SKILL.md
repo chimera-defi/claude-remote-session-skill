@@ -61,7 +61,7 @@ session-doctor reap <name> [--force] [--allow-young] [--keep-registry] [--keep-w
 session-doctor land-check             # report-only: per-worktree real-dirty + unlanded
 session-resume <name> [--dry-run] [--uuid <id>] [--model <m>]
                                        # bring a DEAD session back on its own unit + transcript
-session-restart <name> [--dry-run] [--if-outdated] [--nudge] [--wait-idle]
+session-restart <name> [--dry-run] [--wait-idle] [--nudge]
                                        # move a LIVE idle session onto the installed CLI, same transcript
 ```
 

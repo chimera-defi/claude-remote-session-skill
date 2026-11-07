@@ -34,7 +34,7 @@ LOADER_FILES=(new-session.sh session-doctor.sh session-alias.sh fleet-status.sh 
 # telemetry-report.sh and record-spawn-telemetry.sh have the config loader
 # but never parse/generate a session name themselves (fleet-status delegates
 # to session-doctor), so they don't need this block.
-PREFIX_RE_FILES=(new-session.sh session-doctor.sh session-alias.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh session-restart.sh)
+PREFIX_RE_FILES=(new-session.sh session-doctor.sh session-alias.sh session-preserve.sh session-handoff.sh session-registry.sh session-resume.sh)
 
 extract_block() {  # $1 = script path, $2 = START marker, $3 = END marker -> block (markers inclusive) on stdout
   sed -n "/# $2/,/# $3/p" "$1"

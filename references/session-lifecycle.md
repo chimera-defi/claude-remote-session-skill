@@ -92,26 +92,22 @@ different CLI binary, and has no unit, so it stalls on approval prompts; a bare
 ## Moving live sessions onto a new CLI: `scripts/session-restart.sh`
 
 Installing a new `claude` does not touch running sessions; each keeps the old binary until it
-restarts. `session-restart <name>` restarts one live session at an idle point and keeps its
-conversation. It writes the running sessionId to the start script's resume pin, sends `/exit`,
-and lets the supervisor loop relaunch `--resume <uuid>`. It then checks that the new process has
-the expected version, the same sessionId and the same `--remote-control` name. It refuses a
-busy session, a protected name (`CRSS_PROTECT_NAMES`) and a start script whose loop has no pin.
-It never fires the "Exit and stop tasks" dialog's exit: it cancels it (exit 4, session
-unchanged). The busy rules and exit codes are in the script header.
+restarts. `session-restart <name>` restarts one idle session and keeps its conversation: it writes
+the running sessionId to the start script's resume pin, sends `/exit`, lets the supervisor loop
+relaunch `--resume <uuid>`, then checks the new process's version, sessionId and
+`--remote-control` name. It refuses busy and protected (`CRSS_PROTECT_NAMES`) sessions, and it
+cancels the "Exit and stop tasks" dialog instead of confirming it. Busy rules and exit codes: the
+script header.
 
-Fleet update, after `claude update` (or a new `/usr/bin/claude`):
+Fleet update, after `claude update`:
 
-1. `session-restart <name> --dry-run` on a few sessions: each prints `DRY-RUN` or the reason
-   it would refuse.
-2. Run one background job per session. Each waits for 3 idle polls (60s apart), restarts, then
-   nudges the session that wakeups and crons armed in the old process are gone:
-   `session-restart <name> --if-outdated --wait-idle --nudge > <log> 2>&1 &`.
-3. Read the last line of each log: `OK`, `UP-TO-DATE`, `SKIPPED(scheduled-tasks)` (the session has
-   in-session scheduled tasks: rerun once they are done, or leave it), `REFUSED(...)` or
-   `FAIL(...)` (exit 3: inspect that session).
-
-A resumed run keeps the pin file until it exits after 30s or more; the loop then removes it.
+1. Find outdated sessions: `jq -r '.version' ~/.claude/sessions/<pid>.json` against
+   `claude --version`. `session-restart <name> --dry-run` shows what would happen.
+2. One background job per session: `session-restart <name> --wait-idle --nudge > <log> 2>&1 &`.
+   It waits for 3 idle polls 60s apart, restarts, and tells the session that wakeups and crons
+   from the old process are gone.
+3. Read each log's last line. `OK` is done. `SKIPPED(scheduled-tasks)` and `REFUSED(...)` mean
+   nothing changed. `FAIL(...)` (exit 3) means `/exit` was sent: inspect that session.
 
 ## Recommended cadence
 
