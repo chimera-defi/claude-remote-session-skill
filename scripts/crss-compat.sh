@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Old crss command names, kept only for callers outside this repo (bus router, spawn_orchestrator,
-# bus-request-watchdog, env-refresh). Installed as symlinks named new-session, session-send,
+# Old crss command names, kept only for callers outside this repo (the bus router and its
+# spawn_orchestrator). Installed as symlinks named new-session, session-send,
 # session-handoff, session-doctor and session-preserve; each translates the argv those callers use.
 # Everything else should call crss directly.
 set -euo pipefail
@@ -79,22 +79,6 @@ case $(basename "$0") in
     case ${1:-} in
       reap) [ -n "${2:-}" ] || die "usage: session-doctor reap SESSION"; n=$(base "$2"); shift 2; exec "$CRSS" reap "$n" "$@" ;;
       idle-report | land-check) exit 0 ;; # no idle scan any more: the bus reaper then finds no candidates
-      opus-subagents) # env-refresh's weekly usage line
-        python3 - "${3:-2}" <<'P'
-import glob, json, os, sys, time
-def opus(line):
-    try: return "opus" in str(json.loads(line)["message"]["model"]).lower()
-    except (ValueError, KeyError, TypeError): return False
-days = float(sys.argv[1]); cut = time.time() - days * 86400; hits = set(); n = 0
-for f in glob.glob(os.path.expanduser("~/.claude/projects/*/*/subagents/*.jsonl")):
-    if os.path.getmtime(f) < cut: continue
-    with open(f, errors="replace") as fh:
-        if any('"assistant"' in l and opus(l) for l in fh):
-            n += 1; hits.add(f.split("/")[-3])
-print("  Opus subagents: %d across %d session(s) in the last %g day(s)" % (n, len(hits), days) if n
-      else "  no Opus subagent transcripts in the last %g day(s)" % days)
-P
-        ;;
       *) die "${1:-} is retired; use crss ls, crss reap or crss restart" ;;
     esac ;;
   session-preserve) echo "session-preserve is retired: crss reap keeps any worktree with unpushed or uncommitted work"; exit 1 ;;
