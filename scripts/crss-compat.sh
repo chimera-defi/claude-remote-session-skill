@@ -70,7 +70,7 @@ case $(basename "$0") in
     case $(status "$(base "$2")") in
       idle) echo "ready: $2 SAFE"; exit 0 ;;
       '') die "no such session: $2" ;;
-      busy) r=busy ;;
+      busy | shell) r=busy ;;
       waiting) r=menu ;;
       *) r=no-prompt ;;
     esac

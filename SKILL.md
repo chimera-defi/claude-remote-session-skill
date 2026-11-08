@@ -19,7 +19,7 @@ does not.
 ```bash
 crss spawn NAME DIR [--model M] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [--json]                 # name, status (idle|busy|waiting|down|?), version, conversation id, folder;
+crss ls [--json]                 # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder;
                                  # also lists ah_* sessions started by other tools: send reaches them, restart and reap don't
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't

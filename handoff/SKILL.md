@@ -38,7 +38,7 @@ doing the target's project work yourself: the launcher stays bounded (route, rel
        to a fresh `crss spawn`.
 2. **Check it can take a message.** `crss ls` status:
    - `idle`: ready.
-   - `busy`: the message queues behind the current work.
+   - `busy`, or `shell` (a shell command is running): the message queues behind the current work.
    - `waiting`: a dialog is open. `crss send` refuses, because Enter would answer the dialog.
      Look at the pane first.
    - `down` or `?`: not running, or claude is still starting. `crss send` refuses.
