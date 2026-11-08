@@ -1,21 +1,21 @@
-Create a persistent Claude remote session using the gstack-session-spawn skill.
+Create a persistent Claude remote session with `crss` (the gstack-session-spawn skill).
 
-If the user provided a project name or folder, use that. Otherwise ask: "Which project/folder should the session run in?"
+If the user named a project or folder, use it. Otherwise ask which folder the session should run in.
 
-Follow the full recipe in `~/.claude/skills/gstack-session-spawn/SKILL.md` (or this repo's `SKILL.md`):
-
-1. Set FOLDERNAME to the project name (the folder name exactly as it appears in `$CRSS_WORKSPACE` or `$CRSS_SESSIONS_DIR` — default `~/workspace` / `~/.sessions`).
-2. Run the `new-session` script for the whole recipe in one Bash call:
+1. Pick a NAME: lowercase letters, digits and dashes, short enough to read on a phone.
+2. If the user also gave the session a task, write it to a file as a brief: a checkable finish
+   line, a stop rule, and the anti-patterns that apply (`handoff/references/massaging.md`).
+3. Spawn in one Bash call. Add `--worktree` when the folder is a shared git repo the session will
+   commit in:
    ```bash
-   new-session "$FOLDERNAME"              # auto-detects workspace/ vs .sessions/
-   # add --tier light|standard|heavy --tier-reason "<why>" to right-size model/effort (a tier is never Opus: heavy = Sonnet owner + Opus advisor; for an Opus orchestrator omit --tier; check the printed `resolved:` line)
+   crss spawn NAME DIR --model sonnet [--worktree] [--brief FILE]
+   # orchestrator: --model claude-opus-5-5 -- --effort medium; sweeps: --model haiku
    ```
-   If `~/.local/bin/new-session` is missing, install it from `scripts/new-session.sh` (copy to `~/.local/bin/new-session`, `chmod +x`; also copy `scripts/crss-lib.sh` to `~/.local/bin/crss-lib.sh`, or the script exits 2) and re-run the command above — do not hand-roll the start script/systemd unit inline; the script already handles aliasing (`session-alias`), git-aware run-dir resolution (`session-git-prep`), sentinel-file/backoff logic, and the first-party `ANTHROPIC_BASE_URL` settings override. Only if the repo itself is unavailable, fall back to the one-off manual recipe in `references/fallback-recipe.md` (paste its whole block in a single Bash call) — that file documents what the reduced last resort drops vs. the installed script.
-   If the user also gave the session something to do, pass it in the same call with `--task "..."` (or `--task-file <path>`) rather than typing it into the pane afterwards — `--task` waits for the session to be ready and verifies the message landed. Shape the task per `handoff/references/massaging.md`: a checkable finish line, a stop rule, concrete anti-patterns.
-3. The script prints the resolved `REMOTE_NAME` (`<prefix>-<alias>-<MMDD-HHMM>`) and enables + starts the systemd unit.
+   If `crss` is not on `PATH`, install it from this repo: `install -m 755 scripts/crss.sh ~/.local/bin/crss`.
+   Do not hand-roll a tmux session or a systemd unit.
 
-You're done when `systemctl --user is-active "$REMOTE_NAME.service"` prints `active` and, if you passed `--task`, the script printed `Task sent to … and verified landed.` On exit 3 with `the task was NOT delivered: task send UNVERIFIED` (common on first send), capture the pane (`tmux capture-pane -p -t <prefix>_<alias>-<MMDD-HHMM>`) and resend with `session-send` if the task isn't there. If either check fails, say so — don't report success.
+You are done when `crss ls` shows NAME as `idle` or `busy` with a version and a session id. If it
+shows `down` or `?` (no live claude) after a minute, look at the pane (`tmux capture-pane -p -t =ah_NAME:`)
+and say what failed. Don't report success.
 
-After success, tell the user the remote-control name to connect with (`<prefix>-<alias>-<MMDD-HHMM>`, printed by the script) and that it appears in Claude Code app → Remote sessions.
-
-Do NOT commit the generated scripts anywhere — per `SKILL.md`, they are local-only (`~/.local/bin/`, `~/.config/systemd/user/`), not repo artifacts.
+Then tell the user to connect from Claude Code → Remote sessions → `ah-NAME`.
