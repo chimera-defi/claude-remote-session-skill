@@ -19,8 +19,8 @@ project guardrail index, delegate routing); otherwise use the generic defaults h
    works unattended for a long stretch; a checkable "done" stops it quitting early or wandering.
    - activity: "survey the tranche candidates" -> goal: "a ranked go/no-go shortlist of $25k
      tranche-1 candidates, in `memory/tranche1-survey.md`"
-   - activity: "fix the compaction bug" -> goal: "`session-compact` no longer re-compacts an
-     idle low-context session; PR merged with `shell-tests` green; redeployed to `~/.local/bin`"
+   - activity: "fix the restart bug" -> goal: "`crss restart --all` skips a session with
+     scheduled tasks; PR merged with `shell-tests` green; redeployed to `~/.local/bin`"
 
 2. **Why, context and method.** One clause of *why* the goal matters, then leave the method to the
    target. Steps are optional and belong only where the order is a real constraint (a deploy
@@ -54,7 +54,8 @@ project guardrail index, delegate routing); otherwise use the generic defaults h
    > "When a step doesn't need me, keep going and put status in the same message as your next
    > action. Stop and ask only if you can't continue without a decision from me, or before
    > anything destructive: deleting data, force-pushing, or changing anything outside this repo.
-   > Anything genuinely my call goes to me via `session-send <parent-session> --file <f>`, a
+   > Anything genuinely my call goes to me via `crss send <parent-session> --file <f>`
+   > (or the host's channel when the parent is not a crss session), a
    > numbered list with your recommended option. Decide defaults yourself when there's a normal
    > recommended answer; report them afterwards."
 
@@ -139,7 +140,7 @@ Deliverable: memory/tranche1-survey.md + a one-paragraph summary to me. Mark any
 Guardrail: read-only. No deletes or deploys. Writes need WRITE_APPROVED_HUMAN=1 in this session.
 Scope: this repo only; don't touch other project sessions.
 Stop rule: keep going; stop and ask only if <source> is unreachable. My-call items go to me via
-       `session-send <parent> --file <f>`.
+       `crss send <parent> --file <f>`.
 ```
 
 ## Self-check before you send
@@ -150,5 +151,5 @@ no preferred outcome as target, no answer menu, no research method steps, questi
 research/decision briefs carry the closeout;
 stale-able facts marked "verify"; deliverable has an exact destination; peers' guardrails
 restated; scope has concrete anti-patterns; stop rule names the real channel; eval campaigns name
-the protocol and `scripts/eval-hillclimb-decision.py`; long runs ask for TASKS.md; no
+the protocol and its decision rules; long runs ask for TASKS.md; no
 "think carefully" filler.

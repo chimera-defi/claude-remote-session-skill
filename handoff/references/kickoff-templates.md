@@ -13,7 +13,9 @@ otherwise use the generic defaults shown.
   instruction; don't skip it under space pressure.
 - `{finish_line}`: the checkable state that means done.
 - `{escalation_channel}`: where operator-owned questions go; from `$CRSS_HOME/local.md`, else
-  "the session that spawned you, via `session-send`".
+  "the session that spawned you, via `crss send <launcher> --file F`" when the launcher is a crss
+  session (a desktop or bus launcher is not reachable that way: name its channel from
+  `$CRSS_HOME/local.md`).
 - `{project_guardrails}`: how the project's guardrails reach the target. They live in the
   project's own `CLAUDE.md`/`AGENTS.md`, never in the `$CRSS_HOME` overlay.
   - Claude child with workdir inside the repo: the file auto-loads, so don't paste it; name the
@@ -27,7 +29,7 @@ otherwise use the generic defaults shown.
   [`eval-hillclimb-protocol.md`](eval-hillclimb-protocol.md) and fill only budgets, split names,
   noise/min-effect/parity values and the final-holdout owner.
 
-## (a) Opus orchestrator child session (`new-session`, long-running, can compact)
+## (a) Opus orchestrator child session (`crss spawn`, long-running, can compact)
 
 ```
 You are {role}. {why}
@@ -119,7 +121,7 @@ what you'd change, if anything, and why. Lead with the verdict; supporting detai
 If the review surfaces something operator-owned, say so in the verdict rather than deciding it
 silently.
 
-## (d) One-shot handoff into an existing session (`session-handoff send`)
+## (d) One-shot handoff into an existing session (`crss send NAME --file F`)
 
 Compact version of the seven parts in [`massaging.md`](massaging.md).
 
@@ -162,7 +164,7 @@ Splits: SEARCH/TRAIN={name}; GATE/VALIDATION={name, aggregate scores only}; FINA
 Budgets: campaign={tokens/calls}; per round={tokens/calls}; novelty reserve={default 20% unless changed}.
 Preflight: prove grader stability, plumbing, noise, headroom; if baseline quality is saturated (~95%+), pivot to cost/latency-at-parity.
 Round rule: one attributable normal change; novelty rounds may be non-local but still get only cheap smoke before larger spend.
-Decision gate: run scripts/eval-hillclimb-decision.py on explicit metrics/budgets; KEEP/REVERT/REFLECT/STOP_BUDGET/COST_PIVOT is binding unless you report why the inputs are invalid.
+Decision gate: apply the protocol's decision rules to explicit metrics/budgets; KEEP/REVERT/REFLECT/STOP_BUDGET/COST_PIVOT is binding unless you report why the inputs are invalid.
 Leakage: inspect TRAIN failures only; never paste validation/holdout examples or answers into prompts, harnesses, or reports.
 Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeatedly poll or nudge without state change.
 ```
@@ -172,7 +174,7 @@ Quota: on 429/quota, bounded exponential backoff, then stand down; do not repeat
 - [ ] `{goal}` is a checkable finish line, not an activity.
 - [ ] `{why}` is a real reason, not provenance ("X asked for this").
 - [ ] `{escalation_channel}` is a concrete command the operator sees (e.g.
-      `session-send <parent> --file <f>`), not "the operator".
+      `crss send <parent> --file <f>`, or the host bus command), not "the operator".
 - [ ] `{project_guardrails}` is set the right way for the target (name the section for a Claude
       child inside the repo; paste or give a path otherwise), or its absence is a deliberate call.
 - [ ] Research/decision brief: goal + why + context + limits + deliverable only. No preferred
