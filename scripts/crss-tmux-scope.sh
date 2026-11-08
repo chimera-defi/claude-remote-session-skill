@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
 # crss-tmux-scope [status|adopt|migrate-scripts] [--apply]
 #
 # Keeps tmux servers out of session units' cgroups. Every crss unit is
@@ -23,6 +27,9 @@
 # crss-spawn-workspace) are reported but left alone unless --include-owned.
 # Exit: 0 ok/nothing trapped; 1 something still trapped or a step failed; 2 usage.
 set -uo pipefail
+EOF
+}
+# crss-tmux-scope — see usage() below.
 
 CMD="${1:-status}"; [ $# -gt 0 ] && shift
 APPLY=0; INCLUDE_OWNED=0
@@ -30,7 +37,7 @@ for a in "$@"; do
   case "$a" in
     --apply) APPLY=1 ;;
     --include-owned) INCLUDE_OWNED=1 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) echo "crss-tmux-scope: unknown arg $a" >&2; exit 2 ;;
   esac
 done

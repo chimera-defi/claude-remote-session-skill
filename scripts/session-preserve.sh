@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# session-preserve — see usage() below.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
 # session-preserve — verify a session's work is durable BEFORE reaping it.
 #
 # Usage:
@@ -25,7 +30,8 @@
 # worktree can be found either is it genuinely safe — reported under a
 # distinct string ("no rundir and no worktree found") so that case can never
 # be mistaken for an audited, actually-clean worktree.
-set -uo pipefail
+EOF
+}
 
 # Host overlay config: see crss-lib.sh.
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
@@ -61,7 +67,7 @@ while [ $# -gt 0 ]; do
     --rescue) MODE_RESCUE=yes; shift ;;
     --wip)    MODE_WIP=yes; shift ;;
     --all)    ALL=yes; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done

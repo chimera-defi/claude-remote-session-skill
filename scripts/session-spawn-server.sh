@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
-# session-spawn-server — let the phone START new sessions on this host, with no agent in the loop.
-#
-# Wraps Claude Code's native Remote Control server mode (`claude remote-control --spawn ...`,
-# CLI >= 2.1.30x; check `claude remote-control --help`) in the same envelope new-session uses:
-# a tmux session running a restart loop, a generated start script and a systemd user unit. The
-# server shows up as an environment in the Claude app / claude.ai/code; "new session" there starts
-# a fresh session in <dir> on this host (in its own git worktree with --spawn worktree).
-#
-#   session-spawn-server install <dir> [--name N] [--spawn worktree|same-dir] [--capacity N]
-#                                      [--model M] [--permission-mode M] [--dry-run]
-#   session-spawn-server status
-#   session-spawn-server uninstall <name>
+# session-spawn-server — see usage() below.
 #
 # Why (references/phone-spawn.md): remote-control takes no --settings/--model, so the base URL and
 # model go in as env. A proxy ANTHROPIC_BASE_URL silently stops registration.
@@ -20,6 +9,23 @@
 # No pre-created session in a git dir: it would sit in a canonical checkout.
 # Tests: tests/test-session-spawn-server.sh.
 set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+session-spawn-server — let the phone START new sessions on this host, with no agent in the loop.
+
+Wraps Claude Code's native Remote Control server mode (`claude remote-control --spawn ...`,
+CLI >= 2.1.30x; check `claude remote-control --help`) in the same envelope new-session uses:
+a tmux session running a restart loop, a generated start script and a systemd user unit. The
+server shows up as an environment in the Claude app / claude.ai/code; "new session" there starts
+a fresh session in <dir> on this host (in its own git worktree with --spawn worktree).
+
+  session-spawn-server install <dir> [--name N] [--spawn worktree|same-dir] [--capacity N]
+                                     [--model M] [--permission-mode M] [--dry-run]
+  session-spawn-server status
+  session-spawn-server uninstall <name>
+EOF
+}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # Host overlay config: see crss-lib.sh.
@@ -39,7 +45,6 @@ fi
 : "${CRSS_TMUX:=$(command -v tmux 2>/dev/null || echo tmux)}"
 PFX=crss-spawn
 
-usage() { sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 die() { echo "session-spawn-server: $1" >&2; exit "${2:-1}"; }
 
 cmd_install() {
