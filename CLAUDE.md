@@ -97,7 +97,7 @@ For work spanning many files or sessions (doc audit, fleet-wide check, multi-scr
 migration), give each independent slice its own delegate: implementation slices go to Codex
 gpt-6.1-terra low first (`references/orchestration-flow.md`); read-only slices to Haiku; a Claude
 builder is `subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model costs more
-(and, before CLI 2.1.300, silently lost `advisor`). `session-doctor opus-subagents [--days N]` counts
+(and, before CLI 2.1.300, silently lost `advisor`). `usage-audit --opus-subagents [--days N]` counts
 subagent transcripts that ran on Opus, in one summary line.
 
 **Check each subagent's evidence before accepting its report.** "Fixed" or "no issues" is a
@@ -147,5 +147,5 @@ operator.
 
 - Start a fresh session or hand off at a task boundary; don't carry one session past about 2h of work.
 - Keep the always-on prefix small: unused MCP tools and skills are denied or set name-only, not just left idle.
-- Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`session-doctor opus-subagents` lists violations).
+- Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`usage-audit --opus-subagents` counts violations).
 - Re-run the audit for free: `usage-audit --days 7` (lives in the host module).
