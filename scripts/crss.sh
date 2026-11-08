@@ -34,7 +34,8 @@ names() {
 # claude pid: the descendant of the pane process that has a session record
 cpid() {
   local pp c g
-  pp=$(tm display-message -p -t "ah_$1" '#{pane_pid}' 2>/dev/null) || return 0
+  pp=$(tm display-message -p -t "=ah_$1:" '#{pane_pid}' 2>/dev/null) || return 0
+  [ -n "$pp" ] || return 0
   for c in $(pgrep -P "$pp" || true) $(for g in $(pgrep -P "$pp" || true); do pgrep -P "$g" || true; done); do
     if [ -f "$HOME/.claude/sessions/$c.json" ]; then echo "$c"; return 0; fi
   done
@@ -49,9 +50,9 @@ sync_sid() {
 }
 paste_to() { # NAME FILE
   tm load-buffer -b "crss-$$" "$2"
-  tm paste-buffer -p -d -b "crss-$$" -t "ah_$1"
+  tm paste-buffer -p -d -b "crss-$$" -t "=ah_$1:"
   sleep 0.3
-  tm send-keys -t "ah_$1" Enter
+  tm send-keys -t "=ah_$1:" Enter
 }
 
 cmd_spawn() {
@@ -73,6 +74,7 @@ cmd_spawn() {
   if [ -n "$wt" ]; then
     local base=HEAD
     git -C "$dir" rev-parse -q --verify origin/main >/dev/null && base=origin/main
+    git -C "$dir" rev-parse -q --verify "session/$n" >/dev/null && die "branch session/$n exists (kept by an earlier reap); pick another name"
     mkdir -p "$HOME/.claude/worktrees"
     git -C "$dir" worktree add -q "$HOME/.claude/worktrees/$n" -b "session/$n" "$base"
     dir=$HOME/.claude/worktrees/$n; wt=$dir
@@ -127,6 +129,7 @@ P
 # runs inside the pane
 cmd_loop() {
   local n=$1 t0 a rc
+  set -m # claude gets its own foreground process group, so the pane reports "claude", not "bash"
   while [ -f "$(envf "$n")" ]; do
     load "$n"; t0=$SECONDS
     if [ ${#CMD[@]} -gt 0 ]; then
@@ -137,6 +140,7 @@ cmd_loop() {
       # resume once the conversation has a transcript; until then start it under SID, with the brief
       if compgen -G "$HOME/.claude/projects/*/$SID.jsonl" >/dev/null; then
         a+=(--resume "$SID")
+        if [ -n "$BRIEF" ]; then sed -i '/^BRIEF=/d' "$(envf "$n")"; fi # brief is sent once
       else
         a+=(--session-id "$SID")
         if [ -n "$BRIEF" ]; then a+=("$(cat "$BRIEF")"); fi
@@ -152,8 +156,9 @@ cmd_loop() {
 cmd_up() {
   local n cmd
   for n in $(names "$@"); do
+    ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
-    if tm has-session -t "ah_$n" 2>/dev/null; then sync_sid "$n"; continue; fi
+    if tm has-session -t "=ah_$n" 2>/dev/null; then sync_sid "$n"; continue; fi
     cmd="env CRSS_STATE=$(printf %q "$CRSS_STATE") $(printf %q "$SELF") _loop $n"
     if [ -z "${CRSS_NO_SYSTEMD:-}" ] && command -v systemd-run >/dev/null && [ -S "/run/user/$(id -u)/bus" ]; then
       # own scope: stopping a unit must not kill the shared tmux server
@@ -168,8 +173,9 @@ cmd_up() {
 cmd_ls() {
   local n st v rows=
   for n in $(names); do
+    ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
-    if tm has-session -t "ah_$n" 2>/dev/null; then
+    if tm has-session -t "=ah_$n" 2>/dev/null; then
       st=$(field "$n" status); v=$(field "$n" version)
       sync_sid "$n"
     else st=down v=; fi
@@ -195,10 +201,12 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
     esac
   done
   [ -z "$f" ] || [ -r "$f" ] || { echo "crss: cannot read $f" >&2; return 2; }
-  tm has-session -t "ah_$n" 2>/dev/null || { echo "crss: $n is down (crss up $n)" >&2; return 2; }
+  tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: $n is down (crss up $n)" >&2; return 2; }
   tmp=$(mktemp); trap 'rm -f "$tmp"' RETURN
   if [ -n "$f" ]; then cat "$f" >"$tmp"; else printf '%s' "$*" >"$tmp"; fi
   before=$(field "$n" status)
+  # no record means claude is starting or backing off: the text would sit in the terminal for the next launch
+  [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
   paste_to "$n" "$tmp"
@@ -212,8 +220,9 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
 
 restart1() { # NAME WAIT
   local n=$1 old p f
-  tm has-session -t "ah_$n" 2>/dev/null || { cmd_up "$n"; return; }
+  tm has-session -t "=ah_$n" 2>/dev/null || { cmd_up "$n"; return; }
   sync_sid "$n"
+  [ -n "$(field "$n" status)" ] || { echo "$n: skipped, no live claude"; return 0; }
   [ "$(field "$n" status)" = waiting ] && { echo "$n: skipped, waiting on a dialog"; return 0; }
   if [ "$(field "$n" status)" = busy ]; then
     [ -z "$2" ] && { echo "$n: skipped, busy"; return 0; }
@@ -223,8 +232,8 @@ restart1() { # NAME WAIT
   old=$(cpid "$n"); f=$(mktemp); printf /exit >"$f"
   paste_to "$n" "$f"; rm -f "$f"
   sleep 5
-  if tm capture-pane -p -t "ah_$n" | grep -q 'Exit and stop tasks'; then
-    tm send-keys -t "ah_$n" Escape; echo "$n: skipped: has scheduled tasks"; return 0
+  if [[ $(tm capture-pane -p -t "=ah_$n:") == *'Exit and stop tasks'* ]]; then
+    tm send-keys -t "=ah_$n:" Escape; echo "$n: skipped: has scheduled tasks"; return 0
   fi
   for _ in $(seq 60); do
     p=$(cpid "$n")
@@ -249,7 +258,7 @@ cmd_reap() {
   load "$n"
   if [ "$(field "$n" status)" = busy ] && [ "$force" != --force ]; then die "$n is busy (use --force)"; fi
   rm -f "$(envf "$n")"
-  tm kill-session -t "ah_$n" 2>/dev/null || true
+  tm kill-session -t "=ah_$n" 2>/dev/null || true
   echo "$n: reaped"
   [ -n "$WT" ] && [ -d "$WT" ] || return 0
   if [ -n "$(git -C "$WT" status --porcelain)" ]; then echo "kept $WT: uncommitted or untracked files"; return 0; fi
