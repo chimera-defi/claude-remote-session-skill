@@ -17,7 +17,7 @@ crss ls [--json]                  NAME STATUS VERSION SID DIR
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
 crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same session id
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
-State in $CRSS_STATE/NAME.env; tmux session is ah_NAME. Config: $CRSS_CONFIG (default
+State in $CRSS_STATE/NAME.env; tmux session ah_NAME, phone name ah-NAME. Config: $CRSS_CONFIG (default
 ~/.config/crss/crss.env) may set CRSS_STATE, CRSS_DEFAULT_ARGS. CRSS_NO_SYSTEMD=1 skips systemd-run.
 H
 }
@@ -64,7 +64,7 @@ cmd_spawn() {
     case $1 in
       --model) model=$2; shift 2 ;;
       --worktree) wt=1; shift ;;
-      --brief) brief=$(readlink -f "$2"); shift 2 ;;
+      --brief) brief=$2; [ -r "$brief" ] || die "cannot read $brief"; shift 2 ;;
       --) shift; extra=("$@"); break ;;
       *) die "unknown option: $1" ;;
     esac
@@ -85,6 +85,7 @@ cmd_spawn() {
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
   mkdir -p "$CRSS_STATE"
+  if [ -n "$brief" ]; then cp "$brief" "$CRSS_STATE/$n.brief"; brief=$CRSS_STATE/$n.brief; fi
   {
     echo "DIR=$(printf %q "$dir")"
     [ -n "$wt" ] && echo "WT=$(printf %q "$wt")"
@@ -136,11 +137,11 @@ cmd_loop() {
       rc=0; "${CMD[@]}" || rc=$?
     else
       trust "$DIR" || echo "crss: could not pre-trust $DIR; answer the trust dialog"
-      a=("${ARGS[@]}" --remote-control "$n" -n "$n")
+      a=("${ARGS[@]}" --remote-control "ah-$n" -n "ah-$n")
       # resume once the conversation has a transcript; until then start it under SID, with the brief
       if compgen -G "$HOME/.claude/projects/*/$SID.jsonl" >/dev/null; then
         a+=(--resume "$SID")
-        if [ -n "$BRIEF" ]; then sed -i '/^BRIEF=/d' "$(envf "$n")"; fi # brief is sent once
+        if [ -n "$BRIEF" ]; then sed -i '/^BRIEF=/d' "$(envf "$n")"; rm -f "$BRIEF"; fi # brief is sent once
       else
         a+=(--session-id "$SID")
         if [ -n "$BRIEF" ]; then a+=("$(cat "$BRIEF")"); fi
@@ -257,7 +258,7 @@ cmd_reap() {
   local n=${1:-} force=${2:-} gd ig a sz
   load "$n"
   if [ "$(field "$n" status)" = busy ] && [ "$force" != --force ]; then die "$n is busy (use --force)"; fi
-  rm -f "$(envf "$n")"
+  rm -f "$(envf "$n")" "$CRSS_STATE/$n.brief"
   tm kill-session -t "=ah_$n" 2>/dev/null || true
   echo "$n: reaped"
   [ -n "$WT" ] && [ -d "$WT" ] || return 0
