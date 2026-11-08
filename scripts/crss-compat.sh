@@ -8,7 +8,7 @@ CRSS=${CRSS_BIN:-$(dirname "$(readlink -f "$0")")/crss}
 [ -x "$CRSS" ] || CRSS=$CRSS.sh
 die() { echo "$(basename "$0"): $*" >&2; exit 2; }
 base() { local n=${1#ah_}; echo "${n#ah-}"; } # tmux ah_NAME or phone ah-NAME -> NAME
-status() { "$CRSS" ls --json | jq -r --arg n "$1" '.[] | select(.name == $n) | .status'; }
+ls_field() { "$CRSS" ls --json | jq -r --arg n "$1" --arg f "$2" '.[] | select(.name == $n) | .[$f]'; } # NAME status|dir
 
 new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--task-type T] [--task-file F] [--dry-run]
   local dry='' folder='' type=auto alias='' tier='' brief='' launcher='' dir name n0 k=1 taken m wt=() b=()
@@ -55,7 +55,7 @@ new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--tas
   fi
   if [ -n "$brief" ]; then b=(--brief "$brief"); fi
   "$CRSS" spawn "$name" "$dir" "${wt[@]}" "${b[@]}" -- "${m[@]}" >/dev/null # spawn keeps its own copy of the brief
-  dir=$("$CRSS" ls --json | jq -r --arg n "$name" '.[] | select(.name == $n) | .dir')
+  dir=$(ls_field "$name" dir)
   mkdir -p "$HOME/.sessions"; echo "[$(date -u +%FT%TZ)] session=ah_$name rundir=$dir" >>"$HOME/.sessions/session-starts.log"
   echo "SESSION=ah_$name"; echo "RUNDIR=$dir"
 }
@@ -67,7 +67,7 @@ case $(basename "$0") in
     n=$(base "$1"); shift; exec "$CRSS" send "$n" "$@" ;;
   session-handoff) # bus consumer: exit 0 = safe to paste, else "reason=..."
     [ "${1:-}" = ready ] && [ -n "${2:-}" ] || die "only 'session-handoff ready SESSION' is kept; use crss send"
-    case $(status "$(base "$2")") in
+    case $(ls_field "$(base "$2")" status) in
       idle) echo "ready: $2 SAFE"; exit 0 ;;
       '') die "no such session: $2" ;;
       busy | shell) r=busy ;;
