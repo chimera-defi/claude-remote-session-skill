@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# crss-tmux-scope — see usage() below.
 set -uo pipefail
 
 usage() {
@@ -26,10 +27,8 @@ usage() {
 # Sockets owned on purpose by their unit (ExecStop=... kill-server, e.g.
 # crss-spawn-workspace) are reported but left alone unless --include-owned.
 # Exit: 0 ok/nothing trapped; 1 something still trapped or a step failed; 2 usage.
-set -uo pipefail
 EOF
 }
-# crss-tmux-scope — see usage() below.
 
 CMD="${1:-status}"; [ $# -gt 0 ] && shift
 APPLY=0; INCLUDE_OWNED=0
