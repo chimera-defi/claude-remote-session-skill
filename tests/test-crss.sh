@@ -60,11 +60,16 @@ idle a1
 out=$("$C" restart a1)
 check "restart: same sessionId, new pid" bash -c "[ \"\$(ls '$HOME/.claude/sessions')\" != '$P0' ] && [ \"\$(jq -r .sessionId '$HOME'/.claude/sessions/*.json)\" = '$S0' ] && [[ '$out' == *'sessionId=$S0'* ]]"
 
-# 2. killed tmux session comes back on the same session id with --resume
-tmux -L "$SOCK" kill-session -t ah_a1
+check "loop: pane reports the claude process, not bash" [ "$(tmux -L "$SOCK" display -p -t =ah_a1: '#{pane_current_command}')" != bash ]
+
+# 2. killed tmux session comes back on the same session id with --resume; a1-x shares the prefix
+"$C" spawn a1-x "$T/work" >/dev/null; idle a1-x
+tmux -L "$SOCK" kill-session -t =ah_a1
+"$C" send a1 hi 2>/dev/null; check "send: down session refused with 2" [ $? = 2 ]
+check "tmux targets are exact: a1-x untouched" bash -c "! grep -qx '\"hi\"' '$FAKE_LOG'"
 "$C" up >/dev/null
 check "up: back up on same sid" idle a1
-check "up: relaunched with --resume" bash -c "tail -1 '$FAKE_LOG.args' | grep -q '\"--resume\", \"$S0\"'"
+check "up: relaunched with --resume" grep -qF "\"--resume\", \"$S0\"" <(tail -1 "$FAKE_LOG.args")
 check "up: sid unchanged" [ "$(sid a1)" = "$S0" ]
 
 # 3. reap
@@ -84,5 +89,5 @@ git -C "$(wt r3)" push -q origin session/r3
 echo 'art/' >>"$T/repo/.git/info/exclude"; mkdir "$(wt r3)/art"; echo result >"$(wt r3)/art/x"
 "$C" reap r3 >/dev/null
 check "reap pushed: worktree removed, branch kept" bash -c "[ ! -d '$(wt r3)' ] && git -C '$T/repo' rev-parse -q --verify session/r3 >/dev/null"
-check "reap: ignored files archived first" bash -c "tar -tzf '$HOME'/backups/reaped-worktree-ignored/r3-*.tgz | grep -qx art/x"
+check "reap: ignored files archived first" grep -qx art/x <(tar -tzf "$HOME"/backups/reaped-worktree-ignored/r3-*.tgz)
 exit $F
