@@ -42,6 +42,36 @@ report, benchmark or new repository that other people will read.
 - When every config passes, you are measuring the ceiling, not the models. Add a harder rung,
   frozen before any model call, until the strongest configs fail.
 
+## Edge-search campaigns: check before the freeze
+
+From a 2026-11 run of search campaigns, where a corrupt dataset faked wins and a mismatched
+population faked losses. A campaign that searches for an effect against a baseline records,
+in its frozen design, how it checked each item:
+
+1. **The population matches the baseline.** Draw candidates from the population the baseline
+   is built from. If they can't match, report the population's own gap to the baseline
+   first, and quote every effect against the baseline, never against the population.
+2. **One series per identity.** Test for identifiers that carry two interleaved series (for
+   example, repeated reversals of very large moves). Drop affected entities entirely: masking
+   their values turns artifact gains into artifact losses. Check vendor field formats on real
+   rows.
+3. **Data hygiene in both directions.** Screen stale runs and bad values up and down, set floors
+   from the data rather than a token epsilon, and classify terminal events (a benign exit is
+   not a failure). Measure any coverage floor on the exact frozen dataset, after every
+   exclusion, before freezing it.
+4. **Multiple-testing hurdles use distinct candidates.** Cluster near-duplicates (for example,
+   correlation ≥ 0.95) before estimating trial variance; near-identical arms shrink the hurdle
+   to almost nothing.
+5. **A no-search control.** Any search reports a seed-only control on the same folds, and says
+   in advance what a control win means.
+6. **Pinned files stay pinned.** Before editing a shared file, grep receipts and tests for its
+   path; if a hash pins it, put the fix in your own code with a test.
+7. **Scope the verdict.** Name the population, window, data and candidate family. "These arms
+   lost on this data" is a verdict; "no effect exists" is not. A fix made after results is a
+   labelled sensitivity, never the headline.
+8. **Quote instructions from the source.** A design that relies on the operator's words quotes
+   them whole, from the message or the written record; a relay or trimmed quote does not bind.
+
 ## Presentation
 
 - Start an Artifact from `quickstart`, and use the account's design system rather than
