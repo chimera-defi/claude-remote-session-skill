@@ -222,11 +222,11 @@ the other common cause.
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` to its settings layer, so unattended sessions generated
   no suggestions and never touched the counter (verified then: that layer overrode the `"1"` in
   `~/.claude/settings.json`; a probe with it showed no dim suggestion, the control showed `run it`).
-  `crss` has no such layer. To keep unattended sessions out of the counter, put
-  `export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=0` in `~/.config/crss/crss.env` (the loop's `claude`
-  inherits it; unverified for this key, so check a restarted session's pane for a dim suggestion)
-  or pass a `--settings` file carrying it via `CRSS_DEFAULT_ARGS`. Running sessions keep generating
-  until `crss restart`. To watch suggestions in a crss session on purpose, leave it unset.
+  `crss` has no such layer. To keep unattended sessions out of the counter, pass the same kind of
+  `--settings` file (its `env` sets `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` to `"0"`) through
+  `CRSS_DEFAULT_ARGS` in `crss.env`; that is the verified route. An `export` of the variable in
+  `crss.env` should also reach the loop's `claude` but is unverified for this key: check a restarted
+  session's pane for a dim suggestion. Running sessions keep generating until `crss restart`. To watch suggestions in a crss session on purpose, leave it unset.
 - `--exclude-dynamic-system-prompt-sections` only moves cwd/env/memory-path/git into the
   first user message. Back-off remains possible even if a fresh TUI renders a suggestion.
 - **Cost:** each suggestion is one extra model request per turn; turning it off for unattended crss sessions (above) saves that call.
