@@ -4,7 +4,7 @@ If the user named a project or folder, use it. Otherwise ask which folder the se
 
 1. Pick a NAME: lowercase letters, digits and dashes, short enough to read on a phone.
 2. If the user also gave the session a task, write it to a file as a brief: a checkable finish
-   line, a stop rule, and the anti-patterns that apply (`handoff/references/massaging.md`).
+   line, a stop rule, and the anti-patterns that apply (`handoff/SKILL.md`).
 3. Spawn in one Bash call. Add `--worktree` when the folder is a shared git repo the session will
    commit in:
    ```bash

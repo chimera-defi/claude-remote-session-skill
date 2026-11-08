@@ -1,123 +1,97 @@
 # claude-remote-session-skill — agent instructions
 
-This repo is the session tool, `crss` (`scripts/crss.sh`; the old names `new-session`,
+This repo is the session tool `crss` (`scripts/crss.sh`; the old names `new-session`,
 `session-send`, `session-handoff`, `session-doctor` and `session-preserve` are symlinks to
-`scripts/crss-compat.sh`), that **every live session on this host runs from `~/.local/bin`**. A bad change here breaks the whole fleet, not just
-this repo. Skill docs: `SKILL.md` (spawn/operate sessions), `handoff/` (route work to
-another session), `references/` (runbooks), `agents/` (subagent definitions).
+`scripts/crss-compat.sh`). **Every live session on this host runs it from `~/.local/bin`**, so a bad
+change breaks the whole fleet. Skill docs: `SKILL.md`, `handoff/`, `references/`, `agents/`.
 
 ## What "done" means for a change here
 
-A change is done when **all** of these are true — not before:
+All of these, not before:
 
-1. Full suite passes locally (same as CI's `shell-tests`):
+1. The full suite passes locally (same as CI's `shell-tests`):
    ```bash
    for t in tests/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
    shellcheck -S warning scripts/*.sh tests/*.sh
    ```
-   `tests/test-no-host-leaks.sh` is in that loop — this is a public repo, so it fails the
-   build on an absolute home path, a real email, or a github.com URL naming another owner.
-   That generic check is what CI runs. On a host with an overlay, also run it with the
-   host-specific denylist (your own project/handle vocabulary — never checked into this
-   repo) for a stricter local pass:
+   `tests/test-no-host-leaks.sh` is in that loop. This is a public repo, so it fails the build on an
+   absolute home path, a real email, or a github.com URL naming another owner. On a host with an
+   overlay also run it with your private denylist (never checked in):
    ```bash
    CRSS_LEAK_DENYLIST="${CRSS_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/crss}/leak-denylist.txt" bash tests/test-no-host-leaks.sh
    ```
-2. It's on a branch cut from **`origin/main`** (not local `main` — see anti-patterns), in a
-   PR, `shell-tests` is green, and it's merged. Never push to `main`; merge once `shell-tests` is green and a non-Claude family (gpt-6.1-sol) has reviewed; Grok never reviews (operator 2026-11-01; it may do small mechanical work only), so with Codex out the PR waits with the review marked UNVERIFIED; Fable alone does not count, and Fable reads are paused 2026-10-28 by the operator. Name the model in the PR body.
-3. Every changed deployable is redeployed and verified (see "Deploying" below). A fix that
-   is merged but not redeployed is inert for the fleet.
-4. You've told the operator what landed, what was redeployed, and anything left undone.
+2. It is on a branch cut from **`origin/main`** (not local `main`), in a PR with `shell-tests`
+   green, reviewed by a non-Claude family (gpt-6.1-sol; name the model in the PR body), and merged
+   with `gh pr merge --merge`, keeping the branch. No squash: branches should merge in. Never push to
+   `main`. Grok never reviews (operator 2026-11-01); Fable reads are paused (2026-10-28) and Fable
+   alone doesn't count. With Codex out the PR waits, review marked UNVERIFIED.
+3. Every changed deployable is redeployed and verified (see "Deploying"). Merged but not redeployed
+   is inert for the fleet.
+4. You've told the operator what landed, what was redeployed, and what is left undone.
 
-If the task is smaller than a code change (an audit, a report), its own brief defines done;
-if it doesn't, write the finish line down yourself before starting.
+A smaller task (an audit, a report) is defined by its own brief; if it has none, write the finish
+line down first.
 
-## When to keep going vs. stop and ask
+## Keep going vs. stop and ask
 
-Keep going when a step doesn't need the operator; put status notes in the same message as
-your next action. Default to acting on the recommended answer and reporting after. Stop and ask **only** when:
-- you can't continue without a decision that is genuinely the operator's (conflicting
-  requirements, a trade-off the brief doesn't settle), or
-- the next step is destructive or outward-facing: deleting branches/files you didn't
-  create, force-pushing, resetting a shared checkout, or changing anything outside this repo
-  other than the documented redeploy targets. Reaps go through `crss reap` (it keeps
-  any worktree with uncommitted or unpushed work and archives ignored files) and don't need asking.
-
-A test failing for a reason you can explain is not a reason to stop — fix it; one you
-*can't* explain is.
+Keep going when a step doesn't need the operator; put status in the same message as the next
+action, and act on the recommended answer. Stop and ask only when a decision is genuinely the
+operator's, or the next step is destructive or outward-facing: deleting branches or files you didn't
+create, force-pushing, resetting a shared checkout, or changing anything outside this repo except the
+documented redeploy targets. Reaps go through `crss reap` and need no asking. A test failing for a
+reason you can explain is not a reason to stop; one you can't explain is.
 
 ## Anti-patterns this repo has already paid for
 
-Each of these has happened here. Don't repeat them.
+- **Branching from or committing to local `main`** in the canonical checkout (the target of the
+  `~/.claude/skills/<skill>` symlink; its path is in `$CRSS_HOME/local.md`). Other agents leave
+  work there. Cut from `origin/main`, and check `gh pr list` and `git branch -r` for collisions.
+- **`cp`/`install` over `~/.local/bin/<x>` without diffing first.** Deployed copies drift both ways;
+  a blind overwrite once reverted a deployed-only patch (`advisor` fell out of `BUILDER_TOOLS`).
+- **`git log @{u}..` to decide whether work is pushed.** No upstream prints nothing. Use
+  `git log HEAD --not --remotes` and check `git remote`.
+- **`git cherry` / patch-id to decide a branch is landed.** Squash merges (old history is squashed)
+  change patch-ids. Verify by content diff against `origin/main` or the PR's merge record.
+- **Deleting a `session/*` or research branch.** The ref keeps a reaped session's commits reachable.
+- **Accepting a tool's "safe" or "nothing to preserve" verdict.** Enumerate on-disk state yourself
+  (`git status`, untracked files, worktree list) before any reap.
+- **Treating green fixture tests as proof a sensor or actuator tool works.** Run tools that read or
+  act on live sessions against a live session before automating them.
+- **Writing config keys or CLI flags from memory or another agent's summary, or trusting an
+  unverified "that's fabricated".** Check the installed CLI (`--help`, settings schema) in both
+  directions before documenting a knob.
+- **Restating a script's rules in prose.** It drifts. Point at the script and the test that pins it.
+- **Trusting `status=clean` before removing a worktree.** A clean worktree can hold gitignored
+  results, and `git worktree remove` deletes them. `crss reap` archives them first.
+- **Bare `git stash`.** The stack is shared across all worktrees and sessions. Use a WIP commit.
+- **Removing a session's worktree without retiring the session.** `crss-up.timer` restarts it into
+  the missing directory. Use `crss reap`.
 
-- **Branching from or committing to local `main`** in the canonical checkout (the target of
-  the `~/.claude/skills/<skill>` symlink — see your host's `$CRSS_HOME/local.md` for its
-  path). Other agents leave in-flight work there; it has diverged from `origin/main` before.
-  Cut branches from `origin/main`, and check `gh pr list` + `git branch -r` for active work
-  you'd collide with.
-- **`cp`/`install` over `~/.local/bin/<x>` without diffing first.** Deployed copies drift in
-  *both* directions; a blind overwrite silently reverted a deployed-only hand-patch (that's
-  how `advisor` fell out of `BUILDER_TOOLS`).
-- **`git log @{u}..` to decide whether work is pushed.** With no upstream it prints nothing,
-  so unpushed work reads as clean (once reported many local-only commits as "0 unpushed").
-  Use `git log HEAD --not --remotes` and check `git remote` separately.
-- **`git cherry` / patch-id to decide a branch is landed.** Squash merges change patch-ids.
-  Verify by content diff against `origin/main` or by the PR's merge record before deleting.
-- **Deleting a `session/*` or research branch** to "clean up". The branch ref is what keeps
-  a reaped session's commits reachable; deleting it is the dangerous step, not the reap.
-- **Accepting a tool's "safe"/"nothing to preserve" verdict without looking.**
-  The old `session-preserve` once called an orphan worktree holding hundreds of unsaved lines safe.
-  Before any reap, enumerate on-disk state yourself (`git status`, untracked files, worktree
-  list).
-- **Treating green fixture tests as proof a sensor/actuator tool works.** 619 passing
-  assertions once hid a self-observation feedback loop. Run tools that read or act on live
-  sessions against a live session before automating them.
-- **Writing config keys or CLI flags from memory or from another agent's summary — and
-  trusting an unverified "that's fabricated" the same way.** A guide agent once claimed
-  `autoCompactEnabled`/`autoCompactWindow` aren't `settings.json` keys; this doc repeated it
-  unchecked, and the installed CLI showed both ARE real settings-schema fields (evidence:
-  `references/troubleshooting.md`'s compaction section). Check the installed CLI yourself
-  before documenting a knob, in either direction: "it doesn't exist" needs the same
-  verification as "it does".
-- **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
-  Point at the script and the test that pins it.
-- **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
-  can hold gitignored results, and `git worktree remove` deletes them (a research
-  worktree's `artifacts/` was lost this way). `crss reap` archives them first;
-  a hand-run `git worktree remove` does not.
-- **Bare `git stash` / `git stash pop`.** The stash stack is shared across every worktree
-  and session. Use a WIP commit instead.
-- **Removing a session's worktree without retiring the session.** The old per-session systemd
-  units restarted into the missing directory; `crss-up.timer` does the same from the env file.
-  Use `crss reap`.
+## Large audits and migrations
 
-## Large audits and migrations: subagents, then verify
+Give each independent slice its own delegate: implementation to Codex gpt-6.1-terra low first
+(`references/orchestration-flow.md`), read-only slices to Haiku, a Claude builder as
+`subagent_type: builder` or `model: "sonnet"` (an Opus-inheriting one costs more).
+`usage-audit --opus-subagents [--days N]` counts Opus subagent transcripts.
 
-For work spanning many files or sessions (doc audit, fleet-wide check, multi-script
-migration), give each independent slice its own delegate: implementation slices go to Codex
-gpt-6.1-terra low first (`references/orchestration-flow.md`); read-only slices to Haiku; a Claude
-builder is `subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model costs more
-(and, before CLI 2.1.300, silently lost `advisor`). `usage-audit --opus-subagents [--days N]` counts
-subagent transcripts that ran on Opus, in one summary line.
+**Check each subagent's evidence before accepting its report.** "Fixed" is a claim: re-run the
+command it cites, open the file:line, or diff the change. Consolidate verified results in one table.
 
-**Check each subagent's evidence before accepting its report.** "Fixed" or "no issues" is a
-claim: re-run the command it cites, open the file:line it names, or diff the change. No
-evidence means unverified. Consolidate verified results in one table at the end.
+**Second opinions:** an Opus orchestrator uses its native `advisor` for routine forks
+(`references/spawn-guide.md`). The independent read at risky forks and before declaring done is one
+gpt-6.1-sol call on a frozen packet, never a Sonnet builder and never Grok; otherwise mark it
+UNVERIFIED. This is not the second-family merge review in "done".
 
-**Second opinions (decided 2026-10-15):** an Opus orchestrator uses its native `advisor` for routine forks; independent review is a one-shot Fable on a frozen packet at risky forks and before declaring done, never a Sonnet builder. Policy and probe evidence: `references/spawn-guide.md` (Advisor). This is a Claude read, not the second-family review on line 28. Fable reads are paused (operator 2026-10-28): until lifted, the independent read is one gpt-6.1-sol call on the same frozen packet (never Grok); otherwise mark it UNVERIFIED.
+## Long runs
 
-## Long runs: keep a task file
-
-If the work will outlive one context window (multi-PR, multi-hour, likely to be compacted),
-keep a checklist file — `TASKS.md` in your scratchpad or worktree, not committed unless the
-operator asks — with the finish line at the top and one line per step. Update it as you go;
-after a compaction, re-read it before acting (the summary alone loses detail).
+Work that will outlive one context window needs a `TASKS.md` in your scratchpad or worktree (not
+committed unless asked): finish line on top, one line per step. Re-read it after a compaction.
 
 ## Before asking for review
 
-Review your own diff first (`git diff origin/main...`) and list only merge-blocking problems:
-for each, the file and line, why it's wrong, and how to show it fails. Fix those before
-opening the PR; put anything you deliberately left unfixed in the PR body.
+Review your own diff (`git diff origin/main...`) and list only merge-blocking problems: file and
+line, why it's wrong, how to show it fails. Fix them before the PR; put anything left unfixed in the
+PR body.
 
 ## Deploying
 
@@ -131,21 +105,17 @@ After merge, for each changed deployable:
 | `agents/<name>.md` | `~/.claude/agents/<name>.md` | `diff` first, then `install -m 644` |
 | `SKILL.md`, `handoff/`, `references/`, `.claude/commands/create-session.md` | symlinked from the canonical checkout | canonical checkout must be on `origin/main` |
 
-Five old helpers stay deployed in `~/.local/bin` although they are no longer in this repo:
-`session-git-prep`, `session-trust-seed`, `crss-tmux-scope`, `codex-resume-pin` and `crss-lib.sh`.
-The protected sessions' start scripts call them; git history has their source. Don't remove them
-until those sessions run on `crss`.
+Five old helpers stay deployed in `~/.local/bin` though no longer in this repo: `session-git-prep`,
+`session-trust-seed`, `crss-tmux-scope`, `codex-resume-pin` and `crss-lib.sh`. The protected
+sessions' start scripts call them; git history has their source. Don't remove them until those
+sessions run on `crss`.
 
-If a diff shows the deployed copy has changes the repo lacks, stop — land that deployed-only
-patch in the repo first; don't overwrite it.
+If a diff shows the deployed copy has changes the repo lacks, stop and land that patch in the repo
+first. The skill docs are live only once the canonical checkout reflects `origin/main`; if it has
+diverged or carries someone else's uncommitted work, don't reset it, report it.
 
-The skill docs are only live once the **canonical checkout** reflects `origin/main`. If it
-has diverged or carries someone else's uncommitted work, don't reset it — report it to the
-operator.
+## Usage habits
 
-## Usage habits (7-day audit 2026-10-28; 59% of cost was calls after hour 2)
-
-- Start a fresh session or hand off at a task boundary; don't carry one session past about 2h of work.
-- Keep the always-on prefix small: unused MCP tools and skills are denied or set name-only, not just left idle.
-- Bulk reads, sweeps and builds go to a Haiku subagent or Codex; Opus plans and verifies (`usage-audit --opus-subagents` counts violations).
-- Re-run the audit for free: `usage-audit --days 7` (lives in the host module).
+Start a fresh session or hand off at a task boundary; don't carry one past about 2h. Keep the
+always-on prefix small (deny or name-only unused MCP tools and skills). Bulk reads, sweeps and builds
+go to Haiku or Codex. `usage-audit --days 7` re-runs the audit.
