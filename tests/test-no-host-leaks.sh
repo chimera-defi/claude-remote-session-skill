@@ -5,7 +5,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 hits=0; files=()
-while IFS= read -r f; do [ -f "$f" ] && [ "$f" != tests/test-no-host-leaks.sh ] && files+=("$f"); done < <(git ls-files)
+while IFS= read -r -d '' f; do [ -f "$f" ] && [ "$f" != tests/test-no-host-leaks.sh ] && files+=("$f"); done < <(git ls-files -z)
 
 scan() {  # REGEX REASON [SAFE-ERE matched against "line:match"] [skip-globs]; I=i ignores case
   local f g l out skip gs
@@ -42,7 +42,7 @@ if [ -n "${CRSS_LEAK_DENYLIST:-}" ]; then
   else
     while IFS= read -r l || [ -n "$l" ]; do
       t=${l%%$'\t'*}; g=; [[ $l == *$'\t'* ]] && g=${l#*$'\t'}
-      t=${t%%#*}; t=${t%"${t##*[![:space:]]}"}; [ -n "$t" ] && scan "$t" "denylist term: $t" '' "$g"
+      t=${t%%#*}; t=${t%"${t##*[![:space:]]}"}; t=${t#"${t%%[![:space:]]*}"}; [ -n "$t" ] && scan "$t" "denylist term: $t" '' "$g"
     done <"$CRSS_LEAK_DENYLIST"
   fi
 fi
