@@ -275,11 +275,12 @@ outcomes (files, units, exit codes, output lines), not on internal function retu
 - Drop comments that restate the code. Drop history (dates, PR numbers, "used to"); it
   belongs in `git log`.
 - A file header is the purpose plus one line per subcommand.
-- Scripts that print their header as help (`sed -n '2,Np' "$0"`) move to a `usage()` with a
-  heredoc, so a comment edit can never change `--help`. Affected: `crss-tmux-scope`,
+- Scripts that printed their header as help (`sed -n '2,Np' "$0"`) now print it from a
+  `usage()` heredoc, so a comment edit can never change `--help`: `crss-tmux-scope`,
   `session-preserve`, `session-registry`, `session-spawn-server`, `session-resume` and
-  `codex-resume-pin`. This is a separate PR, and it changes only how the help text is
-  stored, not the text itself.
+  `codex-resume-pin`. The text stayed the same except for two cut-offs that were fixed:
+  `crss-tmux-scope` printed its `set -uo pipefail` line, and `session-registry` stopped at
+  "not a fresh".
 - Docs that point at a comment, such as `handoff/SKILL.md` → `_state_of`'s state list or
   `references/session-lifecycle.md` → the `session-doctor` header, must keep that comment
   or move the fact into the doc in the same PR.

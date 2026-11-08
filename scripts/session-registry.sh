@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# session-registry — see usage() below.
+# Age = the EARLIEST log line for the session name, not the latest restart. tmux's
+# #{session_created} resets on each systemd restart and under-reports age (the dangerous
+# direction for reap). It is a fallback only for live sessions with no log entry.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
 # session-registry — query live-session age. Read-only; no new state file.
 #
 # Usage:
@@ -10,11 +18,9 @@
 # `event=starting`/`event=started` line to ~/.sessions/session-starts.log via
 # log_start() (see scripts/new-session.sh) on every invocation, including
 # respawns of an already-running session ("already-running" event). This
-# script is a pure read-only query layer over that existing log, not a fresh
-# Age = the EARLIEST log line for the session name, not the latest restart. tmux's
-# #{session_created} resets on each systemd restart and under-reports age (the dangerous
-# direction for reap). It is a fallback only for live sessions with no log entry.
-set -uo pipefail
+# script is a pure read-only query layer over that existing log, not a fresh cache.
+EOF
+}
 
 # Host overlay config: see crss-lib.sh.
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
@@ -49,7 +55,7 @@ while [ $# -gt 0 ]; do
       FIRST_SEEN_NAME="${2:-}"; shift 2 || shift
       [ -n "$FIRST_SEEN_NAME" ] || { echo "session-registry: --first-seen wants a session name" >&2; exit 2; }
       ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) echo "session-registry: unknown arg '$1'" >&2; exit 2 ;;
   esac
 done
