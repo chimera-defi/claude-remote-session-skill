@@ -40,10 +40,12 @@ crss reap NAME [--force]
   (2): no such session, down or starting, or a dialog is open (`waiting`).
 - **restart** moves sessions onto the installed `claude` and keeps the conversation. It skips busy
   sessions unless `--wait-idle`, and skips one with in-session scheduled tasks (exiting would stop
-  them). After a batch, tell each session its wakeups and crons died with the old process.
+  them). After a batch, tell each session its wakeups and crons died with the old process. Run
+  `crss restart --all --wait-idle` after `claude update`; an install alone doesn't touch running
+  sessions. `/clear` and in-TUI `/resume` change the conversation id; `crss ls` and `crss up` follow it.
 - **reap** refuses a busy session unless `--force`, removes the worktree only when nothing is
   uncommitted or unpushed (ignored files are archived to `~/backups/reaped-worktree-ignored/`
-  first), and never deletes a branch.
+  first; over 2 GB of them keeps the worktree), and never deletes a branch.
 
 ## Handing work to another session
 
