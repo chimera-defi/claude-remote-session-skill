@@ -11,6 +11,7 @@ scan() {  # REGEX REASON [SAFE-ERE matched against "line:match"] [skip-globs]
   local f g l out skip gs
   for f in "${files[@]}"; do
     skip=0; IFS=, read -ra gs <<<"${4:-}"
+    # shellcheck disable=SC2053  # glob match is the point
     for g in "${gs[@]}"; do [[ $f == $g ]] && skip=1; done
     [ $skip = 1 ] && continue
     out=$(grep -noE -- "$1" "$f" | grep -vE -- "${3:-^\$}")
