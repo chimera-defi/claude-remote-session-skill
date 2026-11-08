@@ -11,7 +11,7 @@ base() { local n=${1#ah_}; echo "${n#ah-}"; } # tmux ah_NAME or phone ah-NAME ->
 status() { "$CRSS" ls --json | jq -r --arg n "$1" '.[] | select(.name == $n) | .status'; }
 
 new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--task-type T] [--task-file F] [--dry-run]
-  local dry='' folder='' type=auto alias='' tier='' brief='' launcher='' t='' dir name m wt=() b=()
+  local dry='' folder='' type=auto alias='' tier='' brief='' launcher='' dir name n0 k=1 taken m wt=() b=()
   while [ $# -gt 0 ]; do
     case $1 in
       --dry-run) dry=1; shift ;;
@@ -32,7 +32,11 @@ new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--tas
     auto) if [ -d "$ws" ]; then dir=$ws; else dir=$ss; fi ;;
     *) die "type must be workspace, sessions or auto" ;;
   esac
-  name=${alias:-$folder}; name=${name,,}; name=${name//[^a-z0-9-]/-}-$(date +%m%d-%H%M)
+  name=${alias:-$folder}; name=${name,,}; name=${name//[^a-z0-9-]/-}-$(date +%m%d-%H%M); n0=$name
+  taken=$'\n'$("$CRSS" ls --json | jq -r '.[].name')$'\n' # add -2, -3 if live, down or kept as a branch
+  while [[ $taken == *$'\n'$name$'\n'* ]] || git -C "$dir" rev-parse -q --verify "session/$name" >/dev/null 2>&1; do
+    k=$((k + 1)); name=$n0-$k
+  done
   if [ -n "$dry" ]; then echo "SESSION=ah_$name"; return; fi
   if [ "$dir" = "$ss" ]; then mkdir -p "$dir"; else [ -d "$dir" ] || die "no such folder: $dir"; fi
   case $tier in
@@ -45,12 +49,12 @@ new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--tas
     m=(--model "$CLAUDE_SESSION_MODEL"); [[ $CLAUDE_SESSION_MODEL == *opus* ]] && m+=(--effort medium)
   fi
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 && wt=(--worktree)
-  if [ -n "$brief" ] && [ -n "$launcher" ]; then # the session reports back to whoever spawned it
-    t=$(mktemp); { printf 'Launcher: %s. Send questions and your final report with: session-send %s --file F\n\n' "$launcher" "$launcher"; cat "$brief"; } >"$t"; brief=$t
+  # a launcher that is a session gets reports back; any other (bus watchdog, desktop) says how in the brief
+  if [ -n "$brief" ] && [ -n "$launcher" ] && [[ $taken == *$'\n'$(base "$launcher")$'\n'* ]]; then
+    t=$(mktemp); trap 'rm -f "$t"' EXIT; { printf 'Launcher: %s. Send questions and your final report with: session-send %s --file F\n\n' "$launcher" "$launcher"; cat "$brief"; } >"$t"; brief=$t
   fi
   if [ -n "$brief" ]; then b=(--brief "$brief"); fi
   "$CRSS" spawn "$name" "$dir" "${wt[@]}" "${b[@]}" -- "${m[@]}" >/dev/null # spawn keeps its own copy of the brief
-  if [ -n "$t" ]; then rm -f "$t"; fi
   dir=$("$CRSS" ls --json | jq -r --arg n "$name" '.[] | select(.name == $n) | .dir')
   mkdir -p "$HOME/.sessions"; echo "[$(date -u +%FT%TZ)] session=ah_$name rundir=$dir" >>"$HOME/.sessions/session-starts.log"
   echo "SESSION=ah_$name"; echo "RUNDIR=$dir"
