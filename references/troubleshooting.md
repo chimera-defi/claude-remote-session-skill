@@ -35,8 +35,9 @@ For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and
 Settings `autoCompactEnabled` and `autoCompactWindow`, flag `--autocompact`, in-session
 `/autocompact`. If the host's `~/.claude/settings.json` `env` sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`,
 the flag and `--settings` forms are ignored; only the same variable exported in the launch
-environment wins. For crss sessions export it in `~/.config/crss/crss.env`; it applies after
-`crss restart`. `effectiveWindow` is the window minus 20000;
+environment wins. For crss sessions export it in `~/.config/crss/crss.env`. A pane's loop sources that
+file once, so `crss restart` doesn't apply a change: end the tmux session `ah_NAME`, then run
+`crss up NAME` (the conversation resumes). `effectiveWindow` is the window minus 20000;
 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=P` moves the trigger to `min(floor(effectiveWindow*P/100), effectiveWindow-13000)`
 tokens. Check any figure with
 `claude -p ok -d config,settings,compact --debug-file F`, then `grep effectiveWindow F`.
@@ -69,7 +70,10 @@ one `--settings` flag: a later one replaces an earlier one. Check the live proce
 (`ps`). Lane-wide `permissions.deny` entries go in that same file.
 
 A session started from the phone is not a crss session (no tmux, env file or restart loop). For
-anything long-lived, run `crss spawn` from it. To start sessions from the phone, run one
+anything long-lived, run `crss spawn` from it. Its model is the account default unless the server's environment
+sets `ANTHROPIC_MODEL`; there is no per-spawn choice. Permissions follow the server's
+`--permission-mode`. It is a different trust case from an unattended lane, so choose
+`bypassPermissions` only on purpose. To start sessions from the phone, run one
 `claude remote-control --name N --spawn worktree --capacity 4` per directory under a unit that
 survives logout; check `claude remote-control --help` for current flags. `--spawn worktree` leaves
 CLI-made worktrees behind: check each for unlanded work (`git status`, `git log HEAD --not --remotes`)
@@ -86,7 +90,8 @@ app, `crss reap` doesn't touch it.
   reset it to 0 after a backup.
 - To keep unattended sessions out of the counter, pass a `--settings` file whose `env` sets
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION` to `"0"` through `CRSS_DEFAULT_ARGS`. Don't add
-  `--prompt-suggestions` (print mode only). Takes effect on `crss restart`.
+  `--prompt-suggestions` (print mode only). `CRSS_DEFAULT_ARGS` is copied into a session's `ARGS=` at
+  spawn: for an existing session edit `ARGS=` in `NAME.env` under `CRSS_STATE`, then `crss restart NAME`.
 
 ## Dead login
 

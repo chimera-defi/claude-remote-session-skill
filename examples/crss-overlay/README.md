@@ -7,7 +7,8 @@ channel, project index, delegate routing) lives outside the repo in `CRSS_HOME`,
 - `local.md`: prose for a human or agent to read before spawning or writing a kickoff. No script
   reads it; an always-on rules pointer loads it.
 - `crss.env`: settings `crss` sources (`CRSS_STATE`, `CRSS_DEFAULT_ARGS`, exported environment such
-  as the auto-compact window). See `SKILL.md` "Setup".
+  as the auto-compact window). Read from `CRSS_CONFIG` (default `~/.config/crss/crss.env`), not
+  `CRSS_HOME`. See `SKILL.md` "Setup".
 - `leak-denylist.txt`: optional host-private terms that must never reach this public repo, one ERE
   per line (`#` comments and blanks ignored; add a TAB and comma-separated path globs to exempt
   paths). Only `tests/test-no-host-leaks.sh` reads it, via
