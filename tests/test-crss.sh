@@ -90,4 +90,28 @@ echo 'art/' >>"$T/repo/.git/info/exclude"; mkdir "$(wt r3)/art"; echo result >"$
 "$C" reap r3 >/dev/null
 check "reap pushed: worktree removed, branch kept" bash -c "[ ! -d '$(wt r3)' ] && git -C '$T/repo' rev-parse -q --verify session/r3 >/dev/null"
 check "reap: ignored files archived first" grep -qx art/x <(tar -tzf "$HOME"/backups/reaped-worktree-ignored/r3-*.tgz)
+
+# 4. old command names, as the bus router and spawn_orchestrator call them
+mkdir -p "$T/bin" "$T/ws/proj"
+for x in new-session session-send session-handoff session-doctor; do ln -s "$ROOT/scripts/crss-compat.sh" "$T/bin/$x"; done
+export CRSS_BIN=$C CRSS_WORKSPACE=$T/ws
+out=$("$T/bin/new-session" --dry-run proj workspace --alias My_Lane)
+check "new-session --dry-run: tmux name with -MMDD-HHMM" grep -qE '^SESSION=ah_my-lane-[0-9]{4}-[0-9]{4}$' <<<"$out"
+printf 'go\n' >"$T/brief"
+out=$("$T/bin/new-session" proj workspace --alias lane --tier light --task-file "$T/brief" --launcher ah_a1); rm "$T/brief"
+S=$(sed -n 's/^SESSION=//p' <<<"$out")
+check "new-session: starts log names session and rundir" grep -qF "session=$S rundir=$T/ws/proj" "$HOME/.sessions/session-starts.log"
+check "new-session: haiku, brief with launcher line" wait_for 10 "grep -qE '\"haiku\".*Launcher: ah_a1[.]' '$FAKE_LOG.args'"
+idle "${S#ah_}"
+out=$("$T/bin/session-handoff" ready "$S"); check "session-handoff ready: idle is SAFE" [ "$out" = "ready: $S SAFE" ]
+out=$("$T/bin/session-send" "$S" hello); check "session-send: tmux name accepted, delivered" [ "$out" = delivered ]
+out=$("$T/bin/session-handoff" ready "$S"); check "session-handoff ready: busy gives reason=busy" grep -q 'reason=busy' <<<"$out"
+d=${S##*lane-}; out=$("$T/bin/new-session" --dry-run proj workspace --alias lane)
+check "new-session: a taken name gets -2" bash -c "[ '$out' = 'SESSION=ah_lane-$d-2' ] || [ '$d' != \"\$(date +%m%d-%H%M)\" ]"
+tmux -L "$SOCK" new-session -d -s ah_ext -x 80 -y 20 "$T/claude --session-id 00000000-0000-4000-8000-000000000000"
+check "ls: a session started by another tool is listed" wait_for 10 '[ "$(st ext)" = idle ]'
+out=$("$T/bin/session-send" ah_ext hi-ext); check "session-send: reaches a session with no env file" [ "$out" = delivered ]
+"$C" restart ext >/dev/null 2>&1; check "restart: refuses a session with no env file" [ $? != 0 ]
+idle "${S#ah_}"; "$T/bin/session-doctor" reap "$S" >/dev/null
+check "session-doctor reap: session gone" [ ! -e "$CRSS_STATE/${S#ah_}.env" ]
 exit $F

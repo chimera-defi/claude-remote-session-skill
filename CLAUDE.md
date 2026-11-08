@@ -1,8 +1,8 @@
 # claude-remote-session-skill — agent instructions
 
-This repo is the session tooling (`new-session`, `session-send`, `session-handoff`,
-`session-doctor`, `session-preserve`, `session-compact`, …) that **every live session on
-this host runs from `~/.local/bin`**. A bad change here breaks the whole fleet, not just
+This repo is the session tool, `crss` (`scripts/crss.sh`; the old names `new-session`,
+`session-send`, `session-handoff`, `session-doctor` and `session-preserve` are symlinks to
+`scripts/crss-compat.sh`), that **every live session on this host runs from `~/.local/bin`**. A bad change here breaks the whole fleet, not just
 this repo. Skill docs: `SKILL.md` (spawn/operate sessions), `handoff/` (route work to
 another session), `references/` (runbooks), `agents/` (subagent definitions).
 
@@ -13,8 +13,7 @@ A change is done when **all** of these are true — not before:
 1. Full suite passes locally (same as CI's `shell-tests`):
    ```bash
    for t in tests/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
-   for t in tests/test-*.py; do python3 "$t" || echo "FAILED: $t"; done
-   shellcheck -S warning -e SC2010 scripts/*.sh tests/*.sh
+   shellcheck -S warning scripts/*.sh tests/*.sh
    ```
    `tests/test-no-host-leaks.sh` is in that loop — this is a public repo, so it fails the
    build on an absolute home path, a real email, or a github.com URL naming another owner.
@@ -41,8 +40,8 @@ your next action. Default to acting on the recommended answer and reporting afte
   requirements, a trade-off the brief doesn't settle), or
 - the next step is destructive or outward-facing: deleting branches/files you didn't
   create, force-pushing, resetting a shared checkout, or changing anything outside this repo
-  other than the documented redeploy targets. Reaps and registry prunes go through
-  `session-doctor` (dry-run, archive) and don't need asking.
+  other than the documented redeploy targets. Reaps go through `crss reap` (it keeps
+  any worktree with uncommitted or unpushed work and archives ignored files) and don't need asking.
 
 A test failing for a reason you can explain is not a reason to stop — fix it; one you
 *can't* explain is.
@@ -67,7 +66,7 @@ Each of these has happened here. Don't repeat them.
 - **Deleting a `session/*` or research branch** to "clean up". The branch ref is what keeps
   a reaped session's commits reachable; deleting it is the dangerous step, not the reap.
 - **Accepting a tool's "safe"/"nothing to preserve" verdict without looking.**
-  `session-preserve` once called an orphan worktree holding hundreds of unsaved lines safe.
+  The old `session-preserve` once called an orphan worktree holding hundreds of unsaved lines safe.
   Before any reap, enumerate on-disk state yourself (`git status`, untracked files, worktree
   list).
 - **Treating green fixture tests as proof a sensor/actuator tool works.** 619 passing
@@ -84,12 +83,13 @@ Each of these has happened here. Don't repeat them.
   Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
 - **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
   can hold gitignored results, and `git worktree remove` deletes them (a research
-  worktree's `artifacts/` was lost this way). `reap` now archives them first
-  (`_wt_archive_ignored`); a hand-run `git worktree remove` does not.
+  worktree's `artifacts/` was lost this way). `crss reap` archives them first;
+  a hand-run `git worktree remove` does not.
 - **Bare `git stash` / `git stash pop`.** The stash stack is shared across every worktree
   and session. Use a WIP commit instead.
-- **`git worktree remove` without disabling the session's systemd unit** — leaves an orphan
-  unit restarting into a missing directory.
+- **Removing a session's worktree without retiring the session.** The old per-session systemd
+  units restarted into the missing directory; `crss-up.timer` does the same from the env file.
+  Use `crss reap`.
 
 ## Large audits and migrations: subagents, then verify
 
@@ -97,8 +97,8 @@ For work spanning many files or sessions (doc audit, fleet-wide check, multi-scr
 migration), give each independent slice its own delegate: implementation slices go to Codex
 gpt-6.1-terra low first (`references/orchestration-flow.md`); read-only slices to Haiku; a Claude
 builder is `subagent_type: builder` or `model: "sonnet"` — one inheriting an Opus 5.x model costs more
-(and, before CLI 2.1.300, silently lost `advisor`). `session-doctor opus-subagents [--days N]` lists
-sessions whose subagent transcripts ran on Opus (one summary line is also in `report`).
+(and, before CLI 2.1.300, silently lost `advisor`). `session-doctor opus-subagents [--days N]` counts
+subagent transcripts that ran on Opus, in one summary line.
 
 **Check each subagent's evidence before accepting its report.** "Fixed" or "no issues" is a
 claim: re-run the command it cites, open the file:line it names, or diff the change. No
@@ -125,10 +125,16 @@ After merge, for each changed deployable:
 
 | Repo source | Deployed to | How |
 |---|---|---|
-| `scripts/crss-lib.sh` | `~/.local/bin/crss-lib.sh` | `diff` first, then `install -m 644`, **before** any script that sources it |
-| `scripts/<x>.sh`, `scripts/<x>.py` (not `crss-lib.sh`) | `~/.local/bin/<x>` | `diff` first, then `install -m 755`; a script that sources `crss-lib.sh` exits 2 if it is missing or out of date |
+| `scripts/crss.sh` | `~/.local/bin/crss` | `diff` first, then `install -m 755` |
+| `scripts/crss-compat.sh` | `~/.local/bin/crss-compat`, plus symlinks `new-session`, `session-send`, `session-handoff`, `session-doctor`, `session-preserve` → `crss-compat` | `diff` first, then `install -m 755` |
+| `systemd/crss-up.{service,timer}` | `~/.config/systemd/user/` | `diff` first, `install -m 644`, `systemctl --user daemon-reload` |
 | `agents/<name>.md` | `~/.claude/agents/<name>.md` | `diff` first, then `install -m 644` |
 | `SKILL.md`, `handoff/`, `references/`, `.claude/commands/create-session.md` | symlinked from the canonical checkout | canonical checkout must be on `origin/main` |
+
+Five old helpers stay deployed in `~/.local/bin` although they are no longer in this repo:
+`session-git-prep`, `session-trust-seed`, `crss-tmux-scope`, `codex-resume-pin` and `crss-lib.sh`.
+The protected sessions' start scripts call them; git history has their source. Don't remove them
+until those sessions run on `crss`.
 
 If a diff shows the deployed copy has changes the repo lacks, stop — land that deployed-only
 patch in the repo first; don't overwrite it.
