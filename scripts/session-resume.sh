@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# session-resume <session> [--uuid <transcript-uuid>] [--model <alias-or-id>] [--dry-run]
-#
 # Resumes a dead Claude session on its own systemd unit, by explicit transcript uuid. The supported
 # replacement for hand-relaunching `claude --resume` in a pane, which can drop
 # --dangerously-skip-permissions and leave the unit failed and disabled.
@@ -15,6 +13,14 @@
 # Exit: 0 resumed and verified (or dry-run); 1 refused before the unit start; 2 usage; 3 started but
 # verification failed (something IS running; inspect it before retrying).
 set -uo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+session-resume <session> [--uuid <transcript-uuid>] [--model <alias-or-id>] [--dry-run]
+
+EOF
+  exit 2
+}
 
 # Shared helpers: see crss-lib.sh.
 _crss_lib="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/crss-lib.sh"
@@ -43,7 +49,6 @@ _crss_load_config
 # Session-name prefix: see crss-lib.sh.
 _crss_prefix_init
 
-usage() { sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 CLAUDE_HOME="${CRSS_CLAUDE_HOME:-$HOME/.claude}"
 UNIT_DIR="${CRSS_UNIT_DIR:-$HOME/.config/systemd/user}"
