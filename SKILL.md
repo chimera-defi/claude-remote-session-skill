@@ -19,7 +19,8 @@ does not.
 ```bash
 crss spawn NAME DIR [--model M] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [--json]                 # name, status (idle|busy|waiting|down|?), version, conversation id, folder
+crss ls [--json]                 # name, status (idle|busy|waiting|down|?), version, conversation id, folder;
+                                 # also lists ah_* sessions started by other tools: send reaches them, restart and reap don't
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
@@ -65,8 +66,8 @@ Before relaying a big task, check how big the target already is. If it is bloate
 
 ## Old command names
 
-`new-session`, `session-send`, `session-handoff ready`, `session-doctor reap|opus-subagents` and
-`session-preserve` still work, as symlinks to `crss-compat`. They exist only for callers outside this
+`new-session`, `session-send`, `session-handoff ready` and `session-doctor reap|opus-subagents` are
+kept as symlinks to `crss-compat` (`session-preserve` only says it is retired). They exist only for callers outside this
 repo: the bus router, `spawn_orchestrator.sh`, `bus-request-watchdog` and `env-refresh`. They accept
 tmux (`ah_NAME`) or phone (`ah-NAME`) names. Don't use them in new work.
 

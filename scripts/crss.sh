@@ -13,7 +13,7 @@ usage() {
   cat <<'H'
 crss spawn NAME DIR [--model M] [--worktree] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
-crss ls [--json]                  NAME STATUS VERSION SID DIR
+crss ls [--json]                  NAME STATUS VERSION SID DIR (also ah_* sessions started by other tools)
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
 crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same session id
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
@@ -31,12 +31,12 @@ names() {
   local f; for f in "$CRSS_STATE"/*.env; do [ -e "$f" ] && basename "$f" .env; done; return 0
 }
 
-# claude pid: the descendant of the pane process that has a session record
+# claude pid: the pane process or a descendant that has a session record
 cpid() {
   local pp c g
   pp=$(tm display-message -p -t "=ah_$1:" '#{pane_pid}' 2>/dev/null) || return 0
   [ -n "$pp" ] || return 0
-  for c in $(pgrep -P "$pp" || true) $(for g in $(pgrep -P "$pp" || true); do pgrep -P "$g" || true; done); do
+  for c in "$pp" $(pgrep -P "$pp" || true) $(for g in $(pgrep -P "$pp" || true); do pgrep -P "$g" || true; done); do
     if [ -f "$HOME/.claude/sessions/$c.json" ]; then echo "$c"; return 0; fi
   done
   return 0
@@ -172,7 +172,7 @@ cmd_up() {
 }
 
 cmd_ls() {
-  local n st v rows=
+  local n st v x rows=
   for n in $(names); do
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
@@ -181,6 +181,11 @@ cmd_ls() {
       sync_sid "$n"
     else st=down v=; fi
     rows+="$n	${st:-?}	${v:--}	$SID	$DIR"$'\n'
+  done
+  for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
+    [ -e "$(envf "$n")" ] && continue
+    st=$(field "$n" status); v=$(field "$n" version); x=$(field "$n" sessionId)
+    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')"$'\n'
   done
   if [ "${1:-}" = --json ]; then
     printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4]})'
@@ -191,7 +196,7 @@ cmd_ls() {
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   local n=${1:-} f='' before tmp
-  [ -f "$(envf "$n")" ] || { echo "crss: no such session: $n" >&2; return 2; }
+  [ -f "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: no such session: $n" >&2; return 2; }
   shift
   while [ $# -gt 0 ]; do
     case $1 in
