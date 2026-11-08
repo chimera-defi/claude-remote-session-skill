@@ -1,0 +1,10 @@
+# Runs at boot only with lingering on: loginctl enable-linger "$USER"
+[Unit]
+Description=crss: bring sessions back at boot and every 5 minutes
+
+[Timer]
+OnActiveSec=30s
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
