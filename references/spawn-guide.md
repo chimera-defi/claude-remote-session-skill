@@ -51,7 +51,7 @@ how to write the first prompt.
   resident or polling session.
 - **Order:** cheap strong reviewer, different-family check, expensive reviewer last. A merge or
   operator-facing review needs two model families. Single-family review counts only when Claude is
-  quota-out; with Codex out the PR waits with the review marked UNVERIFIED. Name the model in the PR body.
+  quota-out; with Codex out (2026-11-06) an independent Claude review stands in (2026-11-07). Name the model in the PR body.
 
 ## Writing the kickoff
 

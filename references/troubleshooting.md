@@ -15,7 +15,8 @@ For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and
 
 - **Compact:** `crss send NAME "/compact"` only when the status is `idle` (a busy session queues it
   mid-workflow). Judge completion by the transcript's `type:"system"` entry with
-  `subtype:"compact_boundary"`, not by pane text.
+  `subtype:"compact_boundary"`, not by pane text. Transcript bytes are not tokens; never quote them
+  as a saving.
 - **Not under about 60 minutes idle.** The prompt cache has a 1-hour sliding TTL; inside it a
   resume reads the cache at about 0.1x, so compacting then is the most expensive moment. Compact
   lazily, when someone is about to message a stale session.
@@ -35,7 +36,9 @@ Settings `autoCompactEnabled` and `autoCompactWindow`, flag `--autocompact`, in-
 `/autocompact`. If the host's `~/.claude/settings.json` `env` sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`,
 the flag and `--settings` forms are ignored; only the same variable exported in the launch
 environment wins. For crss sessions export it in `~/.config/crss/crss.env`; it applies after
-`crss restart`. `effectiveWindow` is the window minus 20000. Check any figure with
+`crss restart`. `effectiveWindow` is the window minus 20000;
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=P` moves the trigger to `min(floor(effectiveWindow*P/100), effectiveWindow-13000)`
+tokens. Check any figure with
 `claude -p ok -d config,settings,compact --debug-file F`, then `grep effectiveWindow F`.
 
 ## Hook wedge
@@ -68,7 +71,10 @@ one `--settings` flag: a later one replaces an earlier one. Check the live proce
 A session started from the phone is not a crss session (no tmux, env file or restart loop). For
 anything long-lived, run `crss spawn` from it. To start sessions from the phone, run one
 `claude remote-control --name N --spawn worktree --capacity 4` per directory under a unit that
-survives logout; check `claude remote-control --help` for current flags.
+survives logout; check `claude remote-control --help` for current flags. `--spawn worktree` leaves
+CLI-made worktrees behind: check each for unlanded work (`git status`, `git log HEAD --not --remotes`)
+before removing it. A crashed session can leave a stale entry in the app's list; remove it in the
+app, `crss reap` doesn't touch it.
 
 ## Prompt suggestions missing in the app
 
@@ -91,4 +97,5 @@ authenticate: OAuth session expired and could not be refreshed` and `Login expir
 never read the credentials file. `crss ls` looks healthy in this state. Fix: the operator runs
 `/login` once in any `claude` pane; then `crss send NAME "login restored; continue"` to each stalled
 lane. A spend-limit stop (`You've hit your monthly spend limit`) is different and recovers when the
-limit is raised.
+limit is raised. On that or a Claude 429, stop and send the exact error; spawn no fallback Claude model,
+since all of them drain the same cap. If another provider runs out, a Sonnet builder is a fine fallback.
