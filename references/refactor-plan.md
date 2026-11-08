@@ -204,10 +204,9 @@ size problem is comments, copies and inline code, not the number of files.
   sessions; the newest is from 2026-08-17. The test that pinned the shim now pins the new
   behavior, and it fails against the old script.
 
-**Remove after the `session-handoff` trim lands** (it conflicts with that PR's comment edits):
-- **`_is_safe_to_inject`.** It is a one-line wrapper over `_safety_reason` with no caller.
-  `docs/session-compaction.md` uses its name three times for what `ready` checks; point
-  those lines at `_safety_reason`.
+**Removed after the `session-handoff` trim landed:**
+- **`_is_safe_to_inject`.** It was a one-line wrapper over `_safety_reason` with no caller.
+  The three lines in `docs/session-compaction.md` that named it now name `_safety_reason`.
 
 **No dead subcommands or flags.** Each one has a live caller:
 - the systemd units: `registry-stale`, `reap-local --force`, `auth-heal --apply`, and
