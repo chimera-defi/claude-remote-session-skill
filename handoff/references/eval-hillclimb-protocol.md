@@ -56,42 +56,37 @@ final-holdout rules. Do not let normal gates consume the novelty reserve.
 - Do not repeatedly poll, nudge, or re-evaluate when no state changed. On 429 or quota
   responses, use bounded exponential backoff, then stand down.
 
-## Machine gate
+## Decision gate
 
-Use `scripts/eval-hillclimb-decision.py` as the stdlib decision gate for candidate
-accept/revert/reflect/stop/pivot decisions. It reads JSON from stdin or a file and emits:
-`KEEP`, `REVERT`, `REFLECT`, `STOP_BUDGET`, or `COST_PIVOT`.
+Decide each candidate round with these rules, applied in order. They are deterministic, so
+apply them to the numbers rather than to a feeling about the result. (A stdlib script,
+`scripts/eval-hillclimb-decision.py`, and its test implemented them until the 2026 crss rewrite
+removed them from this repo; they remain in git history before that commit.) The outcomes are
+`KEEP`, `REVERT`, `REFLECT`, `STOP_BUDGET` and `COST_PIVOT`.
 
-Minimal shape:
+Inputs: `mode` (`quality` or `cost`), `round_type` (`normal` or `novelty`), baseline and candidate
+`quality` (candidate `train_quality` and `validation_quality`), `cost`, `latency`; `noise.quality`;
+`min_effect` (`quality`, `cost_fraction` and `latency_fraction`, both default 0.05);
+`parity_tolerance.quality`; `stalls`; and the budget: campaign and round call and token limits
+with the amounts used, `novelty_fraction` (default 0.20) and novelty calls and tokens used.
 
-```json
-{
-  "mode": "quality",
-  "round_type": "normal",
-  "baseline": {"quality": 0.80, "cost": 100, "latency": 10},
-  "candidate": {"train_quality": 0.84, "validation_quality": 0.835, "cost": 105, "latency": 10.5},
-  "noise": {"quality": 0.01},
-  "min_effect": {"quality": 0.02, "cost_fraction": 0.05, "latency_fraction": 0.05},
-  "parity_tolerance": {"quality": 0.005},
-  "stalls": 0,
-  "budget": {
-    "campaign_calls_used": 20,
-    "campaign_call_limit": 100,
-    "round_calls_used": 1,
-    "round_call_limit": 10,
-    "novelty_fraction": 0.20,
-    "novelty_calls_used": 3,
-    "campaign_tokens_used": 20000,
-    "campaign_token_limit": 100000,
-    "round_tokens_used": 1000,
-    "round_token_limit": 10000,
-    "novelty_tokens_used": 3000
-  }
-}
-```
+1. **STOP_BUDGET** if any campaign or round call or token limit is reached (a limit of 0 means
+   unset).
+2. **COST_PIVOT** if `mode` is `quality` and baseline quality is at or above the saturation
+   threshold (default 0.95): refuse the quality hillclimb and optimise cost or latency at parity.
+3. **REFLECT** on a novelty-budget breach. A novelty round with no novelty reserve left is
+   refused; a normal round that would eat into the novelty reserve (remaining total budget is no
+   more than the remaining reserve) is refused too.
+4. In `cost` mode: **KEEP** if validation quality loss is within the parity tolerance and cost or
+   latency improved by at least its minimum fraction; **REVERT** if the loss exceeds the
+   tolerance; otherwise **REFLECT** after 2 stalls, else **REVERT** (flat).
+5. In `quality` mode, with `threshold = max(noise, min_effect)` on quality: **REVERT** if the
+   validation delta is below `-threshold`; if the train delta reaches the threshold but the
+   validation delta does not, **REFLECT** after 2 stalls, else **REVERT** (train-only gain);
+   **KEEP** if the validation delta reaches the threshold; otherwise **REFLECT** after 2 stalls,
+   else **REVERT** (below noise).
 
-Generic by design: it does not grade outputs, inspect examples, call models, or know any
-domain evaluator. Pinned by `tests/test-eval-hillclimb-decision.py`.
+The gate does not grade outputs, inspect examples, call models, or know any domain evaluator.
 
 ## Grounding
 

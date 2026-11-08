@@ -2,7 +2,7 @@
 
 A campaign or lane owner keeps one `CAMPAIGN_CHECKPOINT.md` (≤60 lines) in its campaign
 folder. Together with git and receipts, it is the state of record. The transcript is not.
-A fresh owner, or the same owner after compaction or `session-resume`, reads it first and
+A fresh owner, or the same owner after compaction or `crss restart`/`crss up`, reads it first and
 runs `next_action`.
 
 Update it at each checkpoint:

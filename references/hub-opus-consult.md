@@ -1,7 +1,9 @@
 # Hub Opus Consult
 
-`CLAUDE_SESSION_PROFILE=hub` is a long-lived Sonnet owner/hub profile. It keeps the full
-tool set, including native `advisor`, and adds a short system contract telling the hub when
+A hub is a long-lived Sonnet owner session that coordinates other lanes:
+`crss spawn NAME DIR --model sonnet -- --advisor claude-opus-5-5`. It keeps the full tool set,
+including native `advisor`. Put this consult contract in its `--brief` (the old `hub` profile
+appended it to the system prompt; crss has no profiles, so the brief carries it) so it knows when
 to ask Opus for a one-shot second opinion.
 
 ## When to Consult
@@ -52,10 +54,11 @@ Question for Opus:
 
 ## Cost Rationale
 
-Sonnet is the resident hub because it keeps the native `advisor`, has the full owner-class
-tool surface, and costs less for long-running coordination. Opus is reserved for bounded
-consults where its judgment is most useful. Builders stay Codex-first (`new-session
---backend codex` or `codex exec`), then Sonnet fallback when Codex cannot handle the work.
+Sonnet is the resident hub because it keeps the native `advisor`, has the full tool surface, and
+costs less for long-running coordination. Opus is reserved for bounded consults where its
+judgment is most useful. Builders stay Codex-first (`codex exec`,
+[orchestration-flow.md](orchestration-flow.md)), then Sonnet fallback when Codex cannot handle
+the work.
 
 ## Cross-check ordering
 
