@@ -1,142 +1,74 @@
-# Session lifecycle, reaping & expiry
+# Session lifecycle: start, restart, reap
 
-Remote-control sessions live in **four independent layers**; cleaning one does not clean the
-others (the #1 cause of "I reaped everything but the count is still high").
+A crss session has three pieces, and `crss` manages all of them:
 
-| Layer | Where | Lives until | Cleaned by |
-|-------|-------|-------------|------------|
-| **tmux window** | `tmux ls` on the host | host reboot or `tmux kill-session` | `session-doctor reap-local` |
-| **systemd --user unit** | `~/.config/systemd/user/<prefix>-*.service` | `systemctl --user disable` + `rm` | `session-doctor reap-local` |
-| **registry entry** | `GET /v1/sessions` (org-wide, all devices) | explicit `DELETE` (never expires) | `session-doctor registry-prune --apply` (or `reap <name>`, which prunes its own entry) |
-| **git worktree** | `~/.claude/worktrees/<remote_name>` (only for dirty/busy repos, see `session-git-prep`) | `git worktree remove` (never expires) | `session-doctor reap <name>` (prunes its own worktree; branch kept), or `worktree-stale` for one left by an already-reaped session |
+| Piece | Where | Cleaned by |
+|---|---|---|
+| env file | `~/.local/state/crss/NAME.env` (folder, launch arguments, conversation id) | `crss reap` |
+| tmux session | `ah_NAME` on the host | `crss reap` (it kills it) |
+| git worktree | `~/.claude/worktrees/NAME`, branch `session/NAME`, only for `--worktree` spawns | `crss reap`, when clean |
 
-`<prefix>` is `CRSS_SESSION_PREFIX` (default `cs`); old prefixes go in `CRSS_LEGACY_PREFIXES`
-and `session-doctor` matches both (`examples/crss-overlay/config.sh.example`).
+There are no per-session systemd units. `crss-up.timer` (every 5 minutes) and `crss-up.service`
+(at boot) run `crss up`, which restarts any session that has an env file but no tmux session.
+That is why `tmux kill-session` does not retire a session: the env file brings it back.
 
-The registry is org-wide and effectively permanent. It accumulates **disconnected** entries
-and **zombies** (`connection_status: connected` but the process died without a clean
-disconnect, common after reboots/OOM kills). Reaping local tmux/systemd does not touch it, so
-registry hygiene is a separate, deliberate step. `reap-local` (the DEAD-process sweep) also
-leaves worktrees + branches behind; `reap <name>` (named, ALIVE-session teardown) removes that
-session's own worktree by default. Guards (never a dirty one, never one another unit uses,
-never the caller's cwd, never a primary checkout, never the branch): `_reap_remove_worktree`
-in `scripts/session-doctor.sh`, `tests/test-session-doctor-reap-worktree.sh`.
+Claude's own registry of Remote Control sessions (org-wide, all devices) is separate and not
+managed by crss. A crashed or rebooted session can leave a disconnected or zombie entry there;
+removing one is a manual step in the Claude app or API, not part of `reap`.
 
-## The tool: `scripts/session-doctor.sh`
+## Reap
 
-```
-session-doctor.sh                       # read-only 3-layer audit (default)
-session-doctor.sh reap-local            # DRY-RUN: list dead local tmux + orphan units
-session-doctor.sh reap-local --force    # actually reap them
-session-doctor.sh reap <name> [--force] [--allow-young] [--keep-registry] [--keep-worktree] [--dry-run]
-                                         # teardown (tmux + unit) + registry entry + worktree; reap, reap-local
-                                         # and reap-merged refuse sessions younger than CRSS_REAP_MIN_AGE_H
-                                         # (default 24h): see _reap_age_gate, tests/test-reap-min-age.sh
-session-doctor.sh registry-stale --days 30   # list registry entries disconnected > N days
-session-doctor.sh registry-prune --days 30   # DRY-RUN: same candidates, would-delete/skip/report
-session-doctor.sh registry-prune --apply     # actually delete the non-protected candidates
-session-doctor.sh worktree-stale             # list worktrees whose owning session is dead
-session-doctor.sh archive-ignored <worktree> # verified copy of its gitignored results -> ~/backups/reaped-worktree-ignored/
-session-doctor.sh idle-report           # LIVE local sessions idle (no type:user msg) >=2d, report only
-session-doctor.sh idle-report --days 7  # widen the idle window; --days 0 = no threshold
-```
+`crss reap NAME [--force]` is the only teardown. Its safety rules are the code in `cmd_reap`
+(`scripts/crss.sh`), pinned by `tests/test-crss.sh`; `SKILL.md` lists what it refuses and keeps.
+The lessons behind them:
 
-Safety guarantees:
-- Never touches protected plumbing: built-in `claude-remote*` plus `CRSS_PROTECT_NAMES`.
-- Only reaps local items whose `claude` process is genuinely gone; `reap-local` is dry-run
-  unless `--force`, so a control session inside a supervisor restart window isn't reaped.
-- **`registry-stale` never deletes**: it prints candidates and the exact `curl -X DELETE ...`.
-  `registry-prune` is the automated form (dry-run default, `--apply` mutates); it always skips
-  PROTECT-matching titles, a title matching a live tmux session, and `requires_action` rows
-  (header comment in `scripts/session-doctor.sh`). `reap <name>` prunes its own registry entry
-  unless `--keep-registry`.
-- **`reap <name>` removes that session's own worktree** unless `--keep-worktree`, archives its
-  unit/start artifacts first, and never deletes the branch. See the `reap` case,
-  `_reap_archive_unit_files`, `_reap_remove_worktree`, `_wt_archive_ignored`; pinned by
-  `tests/test-session-doctor.sh` and `tests/test-session-doctor-reap-worktree.sh`.
-- **Other worktree removal is never automated**: a dead session's worktree may hold unpushed
-  work. `worktree-stale` prints each candidate's dirty/unpushed status and the exact
-  `git worktree remove`; rules (`worktree-stale)` case, pinned by `tests/test-session-doctor.sh`):
-  `git branch -D` is appended only for `landed=yes` (else a `NOTE:` says keep the ref); a
-  worktree another unit runs from gets `KEEP:` and no command; `status=DIRTY` gets removal
-  without `--force`/`branch -D` plus a `NOTE:`; a worktree with non-regenerable gitignored
-  files gets a `NOTE:` and `session-doctor archive-ignored <worktree> &&` chained ahead of
-  `remove:`; a plain folder with no git repo is listed as `status=not-a-worktree`, outside the
-  candidate count, with no command.
-- **`idle-report` is report-only** ([`docs/idle-report.md`](../docs/idle-report.md)): rows are
-  alive, so `reap-local` won't touch them; you reap by hand.
+- Before any reap, look at on-disk state yourself (`git status`, untracked files, `git worktree
+  list`); a tool's "nothing to preserve" verdict once measured the wrong thing.
+- Never judge pushed work with `git log @{u}..`: with no upstream it prints nothing. Use
+  `git log HEAD --not --remotes` and check `git remote`; with no remote the branch refs are the
+  only copy.
+- Keep `session/*` and research branches. Deleting the ref is what orphans commits; reaping the
+  session or its worktree does not.
+- A hand-run `git worktree remove` deletes gitignored results (a research `artifacts/` folder was
+  lost this way). `crss reap` archives them to `~/backups/reaped-worktree-ignored/` first.
+- A worktree reap keeps (does not remove) when it has uncommitted files, commits on no remote, or
+  more than 2 GB of ignored files. Leftover worktrees from sessions reaped before this are cleaned
+  by hand, after checking each one's work is merged, pushed or unneeded.
+- A respawn after a bloated or wedged session starts from a fresh worktree. Put the prior branch,
+  transcript path and in-progress work in the kickoff so nothing is re-derived.
 
-## Bringing a dead session back: `scripts/session-resume.sh`
+## Restart and resume
 
-The inverse of `reap`. `session-resume <name> --dry-run` prints the unit, start script, launch
-line, run directory, the transcript uuid it would resume, and every reason it would refuse.
-Pass `--uuid`: without it the tool auto-picks only when exactly one transcript exists in that
-cwd, else refuses and lists them (the newest isn't necessarily the real conversation). Without
-`--dry-run` it:
+`crss restart NAME... | --all [--wait-idle]` sends `/exit`; the loop in the pane relaunches
+`claude --resume <conversation id>`, so the conversation survives and the process moves onto the
+installed binary. `crss ls` shows each session's version. Installing a new `claude` does not touch
+running sessions.
 
-1. writes a one-shot resume pin;
-2. runs `systemctl --user reset-failed`, `enable` and `start` on the unit;
-3. checks the relaunched process has the same binary and flags plus `--resume <uuid>` and that
-   Claude's registry shows that sessionId (no entry = WARN, exit 3, not success). The pin is
-   kept until claude has run 30s+ (or that confirmation), so a uuid claude rejects is retried,
-   never downgraded to `--continue`.
+After a fleet restart:
 
-Start scripts predating the pin loop are patched once (backup in `~/backups/session-resume/`).
-Codex-backend units are refused: session-resume does not handle Codex units. The Codex start loop itself resumes an explicitly pinned thread (see `scripts/codex-resume-pin.sh` and `tests/test-codex-resume-pin.sh`).
+1. Read the output line per session: `skipped, busy` (rerun with `--wait-idle`), `skipped, waiting
+   on a dialog`, `skipped: has scheduled tasks` (exiting would stop them), or `restart not
+   confirmed`.
+2. Tell each restarted session that its wakeups and crons died with the old process.
 
-Why a tool: a hand-relaunched session lacks `--dangerously-skip-permissions`, may run a
-different CLI binary, and has no unit, so it stalls on approval prompts; a bare
-`systemctl start` of an externally-killed session started a *fresh* conversation because the
-`--continue` sentinel was only written when claude exited on its own.
+A session that is down (`crss ls` shows `down`) comes back with `crss up NAME`, which resumes the
+same conversation id. `/clear` and in-TUI `/resume` change the id; `crss ls` and `crss up` follow
+the live record and update the env file.
 
-## Moving live sessions onto a new CLI: `scripts/session-restart.sh`
+Why not relaunch by hand: a hand-launched session lacks the launch arguments (such as
+`--dangerously-skip-permissions`), may run a different binary, and has no loop, so it stalls on
+approval prompts. A bare restart of an externally killed session also used to start a fresh
+conversation instead of resuming.
 
-Installing a new `claude` does not touch running sessions; each keeps the old binary until it
-restarts. `session-restart <name>` restarts one idle session and keeps its conversation: it writes
-the running sessionId to the start script's resume pin, sends `/exit`, lets the supervisor loop
-relaunch `--resume <uuid>`, then checks the new process's version, sessionId and
-`--remote-control` name. It refuses busy and protected (`CRSS_PROTECT_NAMES`) sessions, and it
-cancels the "Exit and stop tasks" dialog instead of confirming it. Busy rules and exit codes: the
-script header.
+## Cadence
 
-Fleet update, after `claude update`:
+1. Weekly: `crss ls`; reap what is finished. Reap a finished session when its report lands.
+2. After a host reboot: the timer restarts what should run. Check `crss ls` for `down`, and expect
+   stale Remote Control registry entries for the sessions that died.
+3. After `claude update`: `crss restart --all --wait-idle`.
 
-1. Find outdated sessions: `jq -r '.version' ~/.claude/sessions/<pid>.json` against
-   `claude --version`. `session-restart <name> --dry-run` shows what would happen.
-2. One background job per session: `session-restart <name> --wait-idle --nudge > <log> 2>&1 &`.
-   It waits for 3 idle polls 60s apart, restarts, and tells the session that wakeups and crons
-   from the old process are gone.
-3. Read each log's last line. `OK` is done. `SKIPPED(scheduled-tasks)` and `REFUSED(...)` mean
-   nothing changed. `FAIL(...)` (exit 3) means `/exit` was sent: inspect that session.
+## A new session never appears on the phone
 
-## Recommended cadence
-
-1. **Weekly:** `session-doctor.sh report`; if orphan units or dead tmux pile up,
-   `reap-local --force`.
-2. **Weekly (idle sweep):** `session-doctor.sh idle-report` (LIVE sessions untouched >=2
-   days). Dead ones go to `reap-local`; idle-but-alive ones by name:
-   `session-doctor reap <name>` (tmux + unit + registry + worktree, after the session-preserve
-   check; `--force` skips it). `[P]` rows are protected, never reap.
-3. **Monthly:** `registry-prune --days 30` (dry-run), skim, then `--days 30 --apply`.
-   `registry-stale` spot-checks the same set.
-4. **Monthly:** `worktree-stale`; confirm each candidate's work is merged/pushed or
-   unneeded, then run the printed command. For LEFTOVER worktrees only (from `reap-local`, or
-   reaped before `reap <name>` removed worktrees), not a fresh `reap <name>`.
-5. **After a host reboot:** expect zombies. Respawn what you still want; the old registry
-   entries become deletable.
-
-## Why sessions stop registering
-
-If a **new** session never appears on the phone: the remote-control bridge only enables when
-`ANTHROPIC_BASE_URL` is absent or its host is `api.anthropic.com`; a proxy base URL (e.g. a
-local `127.0.0.1` proxy) silently disables registration. The launcher forces a first-party URL
-via `--settings .../rc-firstparty.settings.json`. If a session is live in `tmux` but
-absent/disconnected in `session-doctor report`'s registry section, check its `claude` process
-carries that `--settings` flag. Builder, copywriter and autonomous lanes carry the derived
-`rc-firstparty-no-superpowers.settings.json` instead (same content plus the Superpowers plugin off,
-rebuilt from `rc-firstparty` on every start); a launch must carry exactly one `--settings` flag
-because repeated flags replace each other. Claude lanes also union `permissions.deny` with
-`CRSS_LANE_DENY` (default `mcp__gbrain,mcp__plugin_token-reduce_token-reduce-mcp,SendFeedback,ReportFindings`, which drops the gbrain MCP
-server, the token-reduce plugin MCP (0 MCP calls in 30 days vs 288 token-reduce CLI calls), SendFeedback and ReportFindings from the tool list). Superpowers-on lanes then launch on
-the derived `rc-firstparty-lane.settings.json`; `CRSS_LANE_DENY=` (empty) opts out and those lanes
-keep plain `rc-firstparty.settings.json` with no derive.
+The Remote Control bridge only enables when `ANTHROPIC_BASE_URL` is absent or its host is
+`api.anthropic.com`; a proxy base URL (for example a local `127.0.0.1` proxy) silently disables
+registration. See [troubleshooting](troubleshooting.md#a-new-session-never-appears-on-the-phone).

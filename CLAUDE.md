@@ -80,7 +80,7 @@ Each of these has happened here. Don't repeat them.
   before documenting a knob, in either direction: "it doesn't exist" needs the same
   verification as "it does".
 - **Restating a script's rules in prose.** Docs that restate detection logic drift from it.
-  Point at the script and the test that pins it (as `SKILL.md` does for alias validation).
+  Point at the script and the test that pins it.
 - **Trusting `status=clean` / SAFE-TO-REAP before removing a worktree.** A clean worktree
   can hold gitignored results, and `git worktree remove` deletes them (a research
   worktree's `artifacts/` was lost this way). `crss reap` archives them first;
