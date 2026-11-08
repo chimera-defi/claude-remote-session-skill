@@ -54,7 +54,7 @@ private `dispatchbench` (formerly `model-routing-bench`). IDs/flags are bench-ti
   haiku-medium missed 1/60 and 2/15 L7: Codex-out failed-check/costly-miss fallback is high.
   Codex configs spend $0 Claude/pass; $0.0179 for sol61-medium was Codex list price
   misfiled as Claude spend. sol61-medium missed 2/60; untrusted for builds.
-- One lane (2026-10-22, website copy + this tool; host-module `slice-usage`, one CLI cost
+- One lane (2026-10-22, website copy + this tool; one CLI cost
   probe/model, ±30%): Haiku research + two luna high builds $0.03 vs ~$1.55 for those
   tokens on Opus. Opus orchestrator: $7.45, 10M cache-read tokens, 79 calls; three Fable
   reviews: $6.05, ~3x Opus/token. Remaining savings: fewer orchestrator turns, one tight
@@ -100,9 +100,9 @@ Claude-out permits single-family review with `models_ran`.
 ## Self-improving routing
 
 - Log each delegated task: job type, model, effort, backend, wall s, $, pass/fail, rework, escalation hops. Nothing logs this automatically any more; keep it in the lane's `TASKS.md` or report (`models_ran`).
-- Measure with the host's `slice-usage <session.jsonl> --codex <exec.jsonl>` if the host has it
-  (`$CRSS_HOME/local.md`): main/subagent/`codex exec --json` tokens and Claude wall-clock span.
-  Codex logs lack timestamps/model; price with bench rates or CLI cost readout.
+- Measure a session with the host's `usage-audit --session <id>` if the host has it
+  (`$CRSS_HOME/local.md`): tokens per model, main vs subagent. `codex exec --json` logs
+  lack timestamps/model; price them with bench rates or the CLI cost readout.
 - Codex $ is a list-price proxy; report it with `models_ran`.
 - Revisit routing when a job type's pass rate drops, costs drift >2x, or a new model/CLI lands; rerun the bench first.
 - Record routing decisions with the date.
