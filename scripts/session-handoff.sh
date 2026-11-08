@@ -162,6 +162,7 @@ _input_box_empty() {
 #   draft-in-input-box  : unsubmitted text on the prompt; pasting would merge into it
 #   safe                : none of the above (empty box or Claude's ghost text)
 # A `blocked` lane is still `safe` here; that stall is `_state_of`'s job.
+# `send` does not check this before its first paste, so a bare draft still gets pasted into.
 _safety_reason() {
   local raw="$1" stripped; stripped="$(_strip_ansi "$raw")"
   _is_working "$stripped" && { echo busy; return; }
@@ -170,10 +171,6 @@ _safety_reason() {
   _input_box_empty "$raw" || { echo draft-in-input-box; return; }
   echo safe
 }
-
-# _is_safe_to_inject — the positive predicate behind `ready`. `send` does not
-# gate on it before the first paste, so a bare draft still gets pasted into.
-_is_safe_to_inject() { [ "$(_safety_reason "$1")" = safe ]; }
 
 # _verdict — buffered (still on the input line: press Enter again) |
 # landed (in the transcript, or working) | unverified (no confirmation).
