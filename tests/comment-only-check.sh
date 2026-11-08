@@ -7,7 +7,7 @@
 #        removed. Heredoc bodies stay in the tree. (`shfmt -mn` is not enough: it rewrites
 #        code, e.g. `$(( $a * 2 ))` to `$((a*2))`, which differ when a='1+1'.)
 #   .py: `ast.dump` must match.
-# Then the help text of the scripts that print their own header comment must match.
+# Then the help output of the scripts listed in help_of must match.
 # Exit 0 = comment-only; 1 = code or help changed (diff printed).
 set -uo pipefail
 base="${1:?usage: comment-only-check.sh <base-ref> [file...]}"; shift
@@ -39,7 +39,7 @@ done
 
 git archive "$base" scripts | tar -x -C "$tmp"
 mkdir -p "$tmp/home"
-help_of() { # <tree>: help output of every script whose help is read from its own source
+help_of() { # <tree>: help output of the scripts whose help once came from their header
   local d="$1" c argv
   for c in "crss-tmux-scope.sh status -h" "session-preserve.sh -h" "session-registry.sh -h" \
            "session-resume.sh --help" "codex-resume-pin.sh --bogus" \
