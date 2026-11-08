@@ -49,7 +49,6 @@ _crss_load_config
 # Session-name prefix: see crss-lib.sh.
 _crss_prefix_init
 
-
 CLAUDE_HOME="${CRSS_CLAUDE_HOME:-$HOME/.claude}"
 UNIT_DIR="${CRSS_UNIT_DIR:-$HOME/.config/systemd/user}"
 SESSIONS_DIR="${CRSS_SESSIONS_DIR:-$HOME/.sessions}"

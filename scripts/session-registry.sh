@@ -18,7 +18,7 @@ usage() {
 # `event=starting`/`event=started` line to ~/.sessions/session-starts.log via
 # log_start() (see scripts/new-session.sh) on every invocation, including
 # respawns of an already-running session ("already-running" event). This
-# script is a pure read-only query layer over that existing log, not a fresh
+# script is a pure read-only query layer over that existing log, not a fresh cache.
 EOF
 }
 
