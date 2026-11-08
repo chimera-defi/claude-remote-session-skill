@@ -1,0 +1,9 @@
+[Unit]
+Description=crss: bring sessions back at boot and every 5 minutes
+
+[Timer]
+OnActiveSec=30s
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

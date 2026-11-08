@@ -1,0 +1,8 @@
+[Unit]
+Description=crss: start every session that has a state file and no tmux session
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/crss up
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:%h/.bun/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=TMUX_TMPDIR=/tmp
