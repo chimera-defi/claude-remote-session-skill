@@ -66,9 +66,9 @@ Before relaying a big task, check how big the target already is. If it is bloate
 
 ## Old command names
 
-`new-session`, `session-send`, `session-handoff ready` and `session-doctor reap|opus-subagents` are
+`new-session`, `session-send`, `session-handoff ready` and `session-doctor reap` are
 kept as symlinks to `crss-compat` (`session-preserve` only says it is retired). They exist only for callers outside this
-repo: the bus router, `spawn_orchestrator.sh`, `bus-request-watchdog` and `env-refresh`. They accept
+repo: the bus router and its `spawn_orchestrator.sh`. They accept
 tmux (`ah_NAME`) or phone (`ah-NAME`) names. Don't use them in new work.
 
 ## What not to do
