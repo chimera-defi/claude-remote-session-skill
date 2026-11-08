@@ -35,7 +35,7 @@ while True:
             open(os.environ["FAKE_LOG"], "a").write(json.dumps(msg) + "\n")
             os.makedirs(os.environ["HOME"] + "/.claude/projects/p", exist_ok=True)
             open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps(msg) + "\n")
-            w("busy"); threading.Timer(2, w, ["idle"]).start()
+            w("shell" if msg == "run-shell" else "busy"); threading.Timer(2, w, ["idle"]).start()
         else: buf, d = buf + ("\n" if d[0] == "\r" else d[0]), d[1:]
 PY
 chmod +x "$T/claude"
@@ -55,6 +55,8 @@ out=$("$C" send a1 --file "$T/msg")
 check "send: receipt delivered" [ "$out" = delivered ]
 "$C" send nosuch hi 2>/dev/null; check "send: unknown session refused with 2" [ $? = 2 ]
 check "send: 3 lines arrive as one message" wait_for 5 '[ "$(tail -1 "$FAKE_LOG")" = "\"l1\\nl2\\nl3\"" ]'
+idle a1; out=$("$C" send a1 run-shell); check "send: shell status counts as delivered" [ "$out" = delivered ]
+out=$("$C" send a1 behind); check "send: queued behind a shell command" [ "$out" = "queued (session shell)" ]
 S0=$(sid a1); P0=$(ls "$HOME/.claude/sessions")
 idle a1
 out=$("$C" restart a1)

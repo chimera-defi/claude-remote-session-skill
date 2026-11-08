@@ -43,6 +43,7 @@ cpid() {
 }
 rec() { local p; p=$(cpid "$1"); if [ -n "$p" ]; then cat "$HOME/.claude/sessions/$p.json" 2>/dev/null || true; fi; }
 field() { rec "$1" | jq -r ".$2 // empty" 2>/dev/null || true; }
+working() { case $(field "$1" status) in busy | shell) return 0 ;; esac; return 1; } # shell: a shell command is running
 # /clear and in-TUI /resume change the session id; follow the live record
 sync_sid() {
   local s; load "$1"; s=$(field "$1" sessionId)
@@ -216,9 +217,9 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
   paste_to "$n" "$tmp"
-  if [ "$before" = busy ]; then echo "queued (session busy)"; return 0; fi
+  case $before in busy | shell) echo "queued (session $before)"; return 0 ;; esac
   for _ in $(seq 40); do
-    if [ "$(field "$n" status)" = busy ]; then echo delivered; return 0; fi
+    if working "$n"; then echo delivered; return 0; fi
     sleep 0.25
   done
   echo "UNVERIFIED: status stayed idle"; return 1
@@ -230,10 +231,10 @@ restart1() { # NAME WAIT
   sync_sid "$n"
   [ -n "$(field "$n" status)" ] || { echo "$n: skipped, no live claude"; return 0; }
   [ "$(field "$n" status)" = waiting ] && { echo "$n: skipped, waiting on a dialog"; return 0; }
-  if [ "$(field "$n" status)" = busy ]; then
+  if working "$n"; then
     [ -z "$2" ] && { echo "$n: skipped, busy"; return 0; }
-    for _ in $(seq 240); do [ "$(field "$n" status)" = busy ] || break; sleep 15; done
-    [ "$(field "$n" status)" = busy ] && { echo "$n: skipped, still busy after 1h"; return 0; }
+    for _ in $(seq 240); do working "$n" || break; sleep 15; done
+    working "$n" && { echo "$n: skipped, still busy after 1h"; return 0; }
   fi
   old=$(cpid "$n"); f=$(mktemp); printf /exit >"$f"
   paste_to "$n" "$f"; rm -f "$f"
@@ -262,7 +263,7 @@ cmd_restart() {
 cmd_reap() {
   local n=${1:-} force=${2:-} gd ig a sz
   load "$n"
-  if [ "$(field "$n" status)" = busy ] && [ "$force" != --force ]; then die "$n is busy (use --force)"; fi
+  if working "$n" && [ "$force" != --force ]; then die "$n is busy (use --force)"; fi
   rm -f "$(envf "$n")" "$CRSS_STATE/$n.brief"
   tm kill-session -t "=ah_$n" 2>/dev/null || true
   echo "$n: reaped"
