@@ -94,10 +94,11 @@ input box the pane shows no spinner, so a naive caller pastes onto the draft and
 corrupted text. During the probe, ghost text appeared that neither `Ctrl+U` nor `Escape`
 cleared.
 
-`session-handoff.sh` therefore has a positive predicate, `_is_safe_to_inject` (CLI:
-`ready <session>`), requiring: not working, at a real `❯` prompt, input box free of a real
-draft, not on an interactive menu (the `↑/↓ to navigate` widget). It reports a named reason
-(`busy` / `draft-in-input-box` / `menu` / `no-prompt`) so a caller can tell "retry later"
+`session-handoff.sh` therefore has a positive check, `_safety_reason` (CLI:
+`ready <session>`). It returns `safe` only when the pane is not working, is at a real `❯`
+prompt, has no real draft in the input box, and is not on an interactive menu (the `↑/↓ to
+navigate` widget). Otherwise it reports a named reason
+(`busy` / `menu` / `no-prompt` / `draft-in-input-box`, checked in that order) so a caller can tell "retry later"
 from "needs a human".
 
 **Check dimness, not emptiness.** The first cut required an empty box and reported 0 of 29
@@ -127,13 +128,13 @@ Census (only captures panes; safe on live sessions):
 |---|---|
 | >=1 genuine `type:user` turn | a never-touched session has nothing to compact |
 | idle within the configured window | see the cache section |
-| `_is_safe_to_inject` | never paste onto a draft or into a menu |
+| `_safety_reason` is `safe` | never paste onto a draft or into a menu |
 | not already compacted this idle window | `compact_boundary` after the last genuine turn |
 | not (`landed=yes` **and** clean worktree) | finished + delivered: nothing will resume it |
 | not protected (`claude-remote` built-in, plus `CRSS_PROTECT_NAMES`) | conservative default |
 
 The protection list guards against deletion and fits injection risk poorly; it is a
-conservative default only. `_is_safe_to_inject` is the real guard.
+conservative default only. `_safety_reason` is the real guard.
 
 ## Two tiers
 
