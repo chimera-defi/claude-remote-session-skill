@@ -33,10 +33,11 @@ names() {
 
 # claude pid: the pane process or a descendant that has a session record
 cpid() {
-  local pp c g
+  local pp c g kids
   pp=$(tm display-message -p -t "=ah_$1:" '#{pane_pid}' 2>/dev/null) || return 0
   [ -n "$pp" ] || return 0
-  for c in "$pp" $(pgrep -P "$pp" || true) $(for g in $(pgrep -P "$pp" || true); do pgrep -P "$g" || true; done); do
+  kids=$(pgrep -P "$pp" || true)
+  for c in "$pp" $kids $(for g in $kids; do pgrep -P "$g" || true; done); do
     if [ -f "$HOME/.claude/sessions/$c.json" ]; then echo "$c"; return 0; fi
   done
   return 0
@@ -57,7 +58,7 @@ paste_to() { # NAME FILE
 }
 
 cmd_spawn() {
-  local n=${1:-} dir=${2:-} model='' wt='' brief='' extra=() args=() da sid
+  local n=${1:-} dir=${2:-} model='' wt='' brief='' extra=() args=() sid
   [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
   [ -d "$dir" ] || die "no such dir: $dir"
   shift 2
@@ -80,8 +81,7 @@ cmd_spawn() {
     git -C "$dir" worktree add -q "$HOME/.claude/worktrees/$n" -b "session/$n" "$base"
     dir=$HOME/.claude/worktrees/$n; wt=$dir
   fi
-  read -ra da <<<"${CRSS_DEFAULT_ARGS:-}"
-  args=("${da[@]}")
+  read -ra args <<<"${CRSS_DEFAULT_ARGS:-}"
   [ -n "$model" ] && args+=(--model "$model")
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
@@ -156,18 +156,17 @@ cmd_loop() {
 }
 
 cmd_up() {
-  local n cmd
+  local n cmd scope=()
+  # own scope: stopping a unit must not kill the shared tmux server
+  if [ -z "${CRSS_NO_SYSTEMD:-}" ] && command -v systemd-run >/dev/null && [ -S "/run/user/$(id -u)/bus" ]; then
+    scope=(systemd-run --user --scope --quiet --collect --)
+  fi
   for n in $(names "$@"); do
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
     if tm has-session -t "=ah_$n" 2>/dev/null; then sync_sid "$n"; continue; fi
     cmd="env CRSS_STATE=$(printf %q "$CRSS_STATE") $(printf %q "$SELF") _loop $n"
-    if [ -z "${CRSS_NO_SYSTEMD:-}" ] && command -v systemd-run >/dev/null && [ -S "/run/user/$(id -u)/bus" ]; then
-      # own scope: stopping a unit must not kill the shared tmux server
-      systemd-run --user --scope --quiet --collect -- $CRSS_TMUX new-session -d -s "ah_$n" -x 220 -y 50 -c "$DIR" "$cmd"
-    else
-      tm new-session -d -s "ah_$n" -x 220 -y 50 -c "$DIR" "$cmd"
-    fi
+    "${scope[@]}" $CRSS_TMUX new-session -d -s "ah_$n" -x 220 -y 50 -c "$DIR" "$cmd"
     echo "$n: started"
   done
 }
