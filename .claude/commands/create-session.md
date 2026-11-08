@@ -14,7 +14,7 @@ If the user named a project or folder, use it. Otherwise ask which folder the se
    If `crss` is not on `PATH`, install it from this repo: `install -m 755 scripts/crss.sh ~/.local/bin/crss`.
    Do not hand-roll a tmux session or a systemd unit.
 
-You are done when `crss ls` shows NAME as `idle` or `busy` with a version and a session id. If it
+You are done when `crss ls` shows NAME as `idle`, `busy` or `shell` with a version and a session id. If it
 shows `down` or `?` (no live claude) after a minute, look at the pane (`tmux capture-pane -p -t =ah_NAME:`)
 and say what failed. Don't report success.
 
