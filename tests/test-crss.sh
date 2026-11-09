@@ -55,6 +55,8 @@ out=$("$C" send a1 --file "$T/msg")
 check "send: receipt delivered" [ "$out" = delivered ]
 "$C" send nosuch hi 2>/dev/null; check "send: unknown session refused with 2" [ $? = 2 ]
 check "send: 3 lines arrive as one message" wait_for 5 '[ "$(tail -1 "$FAKE_LOG")" = "\"l1\\nl2\\nl3\"" ]'
+idle a1; out=$("$C" send a1 --task-file bogus after-task-file); check "send: --task-file receipt delivered" [ "$out" = delivered ]
+check "send: --task-file and its value are dropped like --expect-identity" wait_for 5 '[ "$(tail -1 "$FAKE_LOG")" = "\"after-task-file\"" ]'
 idle a1; out=$("$C" send a1 run-shell); check "send: shell status counts as delivered" [ "$out" = delivered ]
 out=$("$C" send a1 behind); check "send: queued behind a shell command" [ "$out" = "queued (session shell)" ]
 S0=$(sid a1); P0=$(ls "$HOME/.claude/sessions")
