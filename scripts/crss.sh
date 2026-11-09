@@ -202,7 +202,6 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
     case $1 in
       --file) f=$2; shift 2 ;;
       --expect-identity) shift 2 ;; # legacy callers
-      --task-file) shift 2 ;;
       *) break ;;
     esac
   done
