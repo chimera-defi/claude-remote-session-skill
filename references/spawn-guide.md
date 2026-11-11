@@ -42,8 +42,8 @@ how to write the first prompt.
   sees the whole transcript.
 - **Independent read** at risky or destructive forks, ambiguous designs, and before declaring a
   multi-step task done: a one-shot reviewer on a frozen packet, never a Sonnet builder checking
-  itself. Fable (`agents/reviewer.md`) is paused (operator 2026-10-28); until lifted use one
-  gpt-6.1-sol call on the same packet.
+  itself. Use Fable (`agents/reviewer.md`, lifted 2026-11-10; log each use in
+  the host's fable ledger) or one gpt-6.1-sol call on the same packet.
 - **Hub consult.** A Sonnet or Haiku hub asks for an Opus one-shot only at real forks (destructive
   action, ambiguous design, before declaring done): write a frozen packet (for example
   `.claude/hub-opus-frozen-packet.md`), spawn a subagent with `model: "opus"`, give it the packet
