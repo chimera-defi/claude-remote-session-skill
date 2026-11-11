@@ -23,8 +23,8 @@ All of these, not before:
 2. It is on a branch cut from **`origin/main`** (not local `main`), in a PR with `shell-tests`
    green, reviewed by a non-Claude family (gpt-6.1-sol; name the model in the PR body), and merged
    with `gh pr merge --merge`, keeping the branch. No squash: branches should merge in. Never push to
-   `main`. Grok never reviews (operator 2026-11-01); Fable (lifted 2026-11-10) is a Claude
-   family, so alone it doesn't count. With Codex out (2026-11-06) an independent Claude review stands in (2026-11-07).
+   `main`. Grok never reviews (operator 2026-11-01); Fable (lifted 2026-11-10) is a Claude-family
+   model, so alone it doesn't count. With Codex out (2026-11-06) an independent Claude review stands in (2026-11-07).
 3. Every changed deployable is redeployed and verified (see "Deploying"). Merged but not redeployed
    is inert for the fleet.
 4. You've told the operator what landed, what was redeployed, and what is left undone.
