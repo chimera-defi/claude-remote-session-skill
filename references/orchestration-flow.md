@@ -15,7 +15,7 @@ overlay and the operator's global instructions.
 | First-pass review | Haiku low, read-only, advisory | `subagent_type: haiku-reviewer` |
 | Research and workers | gpt-6.1-sol low (medium for large or ambiguous work) | `codex exec` or the host relay |
 | Mechanical | Haiku | greps, inventories, log triage, doc moves |
-| Independent read | gpt-6.1-sol on a frozen packet (Fable reads are paused) | one call, packet not transcript |
+| Independent read | gpt-6.1-sol or Fable (lifted 2026-11-10) on a frozen packet | one call, packet not transcript |
 
 Never:
 

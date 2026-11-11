@@ -49,7 +49,7 @@ every claim. A decision only {escalation_channel} can make goes in the report, n
 
 ## (c) Independent reviewer (one-shot on a frozen packet)
 
-Use one gpt-6.1-sol call while Fable is paused; `agents/reviewer.md` is the Fable form. Give the
+Use one gpt-6.1-sol call or Fable (`agents/reviewer.md`, lifted 2026-11-10). Give the
 diff or decision, not your conclusion.
 
 ```
