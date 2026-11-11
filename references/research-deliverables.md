@@ -92,6 +92,7 @@ in its frozen design, how it checked each item:
 
 1. `advisor` at the approach fork and before done.
 2. Haiku low: a mechanical number check against the data files.
-3. Fable: one review of a frozen packet (data summary + report), not the transcript.
+3. Independent read of a frozen packet (data summary + report), not the transcript: Fable is
+   paused (operator 2026-10-28), so use one gpt-6.1-sol call instead (`references/spawn-guide.md`).
 4. A deslop pass on all prose.
 5. Re-run the audit check. Done means it passes on the final data.
