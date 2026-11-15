@@ -46,20 +46,21 @@ cpid() {
   return 0
 }
 rec() { local p; p=$(cpid "$1"); if [ -n "$p" ]; then cat "$HOME/.claude/sessions/$p.json" 2>/dev/null || true; fi; }
-field() { rec "$1" | jq -r ".$2 // empty" 2>/dev/null || true; }
+jf() { jq -r ".$2 // empty" <<<"$1" 2>/dev/null || true; } # RECORD-JSON KEY
+field() { jf "$(rec "$1")" "$2"; }
 working() { case $(field "$1" status) in busy | shell) return 0 ;; esac; return 1; } # shell: a shell command is running
 # /clear and in-TUI /resume change the session id; follow the live record
-sync_sid() {
-  local s; load "$1"; s=$(field "$1" sessionId)
+sync_sid() { # NAME [live session id, when the caller already has it]
+  local s; load "$1"; s=${2-$(field "$1" sessionId)}
   if [ -n "$s" ] && [ "$s" != "$SID" ]; then sed -i "s|^SID=.*|SID=$s|" "$(envf "$1")"; SID=$s; fi
 }
 # session title: latest custom title, else latest AI title in the transcript tail, else the spawn title
-title_of() { # NAME, with or without an env file
+title_of() { # NAME [session id]; with or without an env file
   local SID='' TITLE='' f='' t=''
-  if [ -f "$(envf "$1")" ]; then load "$1"; else SID=$(field "$1" sessionId); fi
+  if [ -f "$(envf "$1")" ]; then load "$1"; else SID=${2-$(field "$1" sessionId)}; fi
   [ -z "$SID" ] || f=$(compgen -G "$HOME/.claude/projects/*/$SID.jsonl" | head -1 || true)
   [ -z "$f" ] || t=$(tail -n 400 "$f" | { grep -E '^\{"type":"(custom|ai)-title"' || true; } |
-    jq -rs '(map(.customTitle // empty) | last) // (map(.aiTitle // empty) | last) // empty' 2>/dev/null || true)
+    jq -rRn '[inputs | fromjson?] | (map(.customTitle // empty) | last) // (map(.aiTitle // empty) | last) // empty' 2>/dev/null || true)
   t=${t:-$TITLE}; echo "${t//[$'\t\n']/ }"
 }
 paste_to() { # NAME FILE
@@ -75,6 +76,7 @@ cmd_spawn() {
   [ -d "$dir" ] || die "no such dir: $dir"
   shift 2
   while [ $# -gt 0 ]; do
+    case $1 in --model | --effort | --title | --brief) [ $# -ge 2 ] || die "$1 needs a value" ;; esac
     case $1 in
       --model) model=$2; shift 2 ;;
       --effort) effort=$2; shift 2 ;;
@@ -87,6 +89,7 @@ cmd_spawn() {
   done
   [ -e "$(envf "$n")" ] && die "$n already exists"
   case $nm in auto | plain) ;; *) die "CRSS_NAMES must be auto or plain, not '$nm'" ;; esac
+  [[ $title != -* ]] || die "--title cannot start with '-'" # claude would read it as an option
   if [ -n "$title" ]; then nm=auto; fi
   dir=$(cd "$dir" && pwd -P)
   if [ -n "$wt" ]; then
@@ -201,24 +204,26 @@ cmd_up() {
 }
 
 cmd_ls() {
-  local n st v x t json='' filt=() rows='' a b c d e f
-  for a in "$@"; do if [ "$a" = --json ]; then json=1; else filt+=("$a"); fi; done
+  local n r st v x json='' filt=() rows='' a b c d e f
+  for a in "$@"; do
+    case $a in --json) json=1 ;; -*) die "ls: unknown option: $a" ;; *) filt+=("$a") ;; esac
+  done
   want() { [ ${#filt[@]} -eq 0 ] || [[ " ${filt[*]} " == *" $1 "* ]]; }
   for n in $(names); do
     want "$n" || continue
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
     if tm has-session -t "=ah_$n" 2>/dev/null; then
-      st=$(field "$n" status); v=$(field "$n" version)
-      sync_sid "$n"
+      r=$(rec "$n"); st=$(jf "$r" status); v=$(jf "$r" version) # one record lookup per row: it walks the process tree
+      sync_sid "$n" "$(jf "$r" sessionId)"
     else st=down v=; fi
     rows+="$n	${st:-?}	${v:--}	$SID	$DIR	$(title_of "$n")"$'\n'
   done
   for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
     [ -e "$(envf "$n")" ] && continue
     want "$n" || continue
-    st=$(field "$n" status); v=$(field "$n" version); x=$(field "$n" sessionId); t=$(title_of "$n")
-    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	$t"$'\n'
+    r=$(rec "$n"); st=$(jf "$r" status); v=$(jf "$r" version); x=$(jf "$r" sessionId)
+    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	$(title_of "$n" "$x")"$'\n'
   done
   if [ -n "$json" ]; then
     printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], title:(.[5] // "")})'
@@ -237,8 +242,8 @@ cmd_peek() { # exit 2 when there is no such session
 cmd_wait() {
   local ns=() to=1800 t0=$SECONDS n st rc=0 left
   declare -A idl=() last=()
-  while [ $# -gt 0 ]; do case $1 in --timeout) to=$2; shift 2 ;; *) ns+=("$1"); shift ;; esac; done
-  [ ${#ns[@]} -gt 0 ] || die "usage: crss wait NAME... [--timeout S]"
+  while [ $# -gt 0 ]; do case $1 in --timeout) to=${2:-}; shift; [ $# -eq 0 ] || shift ;; *) ns+=("$1"); shift ;; esac; done
+  if [ ${#ns[@]} -eq 0 ] || ! [[ $to =~ ^[0-9]+$ ]]; then echo "crss: usage: crss wait NAME... [--timeout SECONDS]" >&2; return 2; fi
   sent() { ! grep -qs '^BRIEF=' "$(envf "$1")" || compgen -G "$HOME/.claude/projects/*/$(field "$1" sessionId).jsonl" >/dev/null; }
   while :; do
     left=0
