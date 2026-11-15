@@ -1,6 +1,6 @@
 # Troubleshooting
 
-For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and match the shape:
+For a silent session run `crss ls NAME`, then `crss peek NAME` and match the shape:
 
 | Pane or status | Shape | Section |
 |---|---|---|
@@ -17,6 +17,9 @@ For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and
   mid-workflow). Judge completion by the transcript's `type:"system"` entry with
   `subtype:"compact_boundary"`, not by pane text. Transcript bytes are not tokens; never quote them
   as a saving.
+- **Check size before routing.** A `/clear to save NNNk tokens` hint with six figures in the pane means
+  bloated. Don't send a one-shot into a bloated, stale session (the next message pays full price to
+  reload the prefix): extract the facts, recycle it, and hand a compact brief to a fresh spawn.
 - **Not under about 60 minutes idle.** The prompt cache has a 1-hour sliding TTL; inside it a
   resume reads the cache at about 0.1x, so compacting then is the most expensive moment. Compact
   lazily, when someone is about to message a stale session.
@@ -25,9 +28,14 @@ For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and
   in-progress work in the brief. A `--worktree` name stays taken while its `session/NAME` branch exists.
 - **Before reaping a session in a plain folder** (reap only guards worktrees), check `git status`,
   `git log HEAD --not --remotes`, `git remote` and untracked files yourself. Never judge pushed work
-  with `git log @{u}..`.
+  with `git log @{u}..`: with no upstream it prints nothing.
+- **Worktrees:** never `git worktree remove` a session worktree (it deletes ignored files) or
+  `tmux kill-session` a session you mean to retire (the timer restarts it, into a missing directory if
+  the worktree is gone). Use `crss reap`, which archives ignored files first. Never delete `session/*`
+  branches; they keep a reaped session's commits reachable.
 - **Don't paste onto a draft.** An idle prompt can hold an unsent draft or dim autosuggest text;
-  `tmux capture-pane -p -e` shows dim as `ESC[2m` (placeholder, safe) versus real text.
+  `tmux capture-pane -p -e -t =ah_NAME:` shows dim as `ESC[2m` (placeholder, safe) versus real text;
+  `crss peek` prints plain text, so it can't tell them apart.
   `crss send` checks status only, not the input box.
 
 ### Auto-compact
@@ -53,9 +61,9 @@ those two events must fail open (`[ -x script ] && script || exit 0`).
 ## Stuck on a menu
 
 `crss send` refuses a `waiting` session because pasted text plus Enter would answer the dialog.
-Recover without a reap: `tmux send-keys -t =ah_NAME: Down` and re-capture to prove the widget is
-live; move to the wanted option (`Enter` toggles a checkbox, it does not submit); `Right` to
-Submit, then `Enter` ("1. Submit answers"). Re-capture after each key.
+Recover without a reap: `tmux send-keys -t =ah_NAME: Down` and `crss peek NAME` to prove the widget is
+live (peek cannot send keys, so tmux stays here); move to the wanted option (`Enter` toggles a checkbox, it does not submit); `Right` to
+Submit, then `Enter` ("1. Submit answers"). Peek again after each key.
 
 The workspace-trust dialog is also `waiting`, and its default is "No, exit" (CLI 2.1.285). crss
 pre-accepts trust before each launch (`trust` in `scripts/crss.sh`, pinned by `tests/test-crss.sh`)
@@ -69,7 +77,9 @@ base URL silently disables it. Launch with a small `--settings` file setting
 one `--settings` flag: a later one replaces an earlier one. Check the live process carries it
 (`ps`). Lane-wide `permissions.deny` entries go in that same file.
 
-A session started from the phone is not a crss session (no tmux, env file or restart loop). For
+In the app, a crss session is listed by the title in `crss ls`, or `ah-NAME` when spawned with
+`CRSS_NAMES=plain` or before titles. A session started from the phone is not a crss session (no
+tmux, env file or restart loop). For
 anything long-lived, run `crss spawn` from it. Its model is the account default unless the server's environment
 sets `ANTHROPIC_MODEL`; there is no per-spawn choice. Permissions follow the server's
 `--permission-mode`. It is a different trust case from an unattended lane, so choose
@@ -83,7 +93,7 @@ app, `crss reap` doesn't touch it.
 ## Prompt suggestions missing in the app
 
 - The suggestion is a model call that stays silent when the next step is not obvious; check the TUI
-  line first (`tmux capture-pane -e`, dim `ESC[2m` on the `❯` line).
+  line first (`tmux capture-pane -p -e -t =ah_NAME:`, dim `ESC[2m` on the `❯` line; `crss peek` strips escapes).
 - **Back-off:** after 20 unused suggestions in one interactive process the CLI writes
   `promptSuggestionUnusedStreak: 20` to `~/.claude.json` and stops suggesting, host-wide. Unattended
   `--remote-control` sessions feed it. Check `jq .promptSuggestionUnusedStreak ~/.claude.json`;
@@ -99,8 +109,8 @@ Sessions share `~/.claude/.credentials.json`. When the refresh token dies, every
 after the access token expires, and idle sessions log nothing. Exact errors: `Failed to
 authenticate: OAuth session expired and could not be refreshed` and `Login expired · Please run
 /login`. Detect by grepping recent transcripts (`~/.claude/projects/*/*.jsonl`) for those strings;
-never read the credentials file. `crss ls` looks healthy in this state. Fix: the operator runs
+never read the credentials file. `crss ls` looks healthy in this state. Fix: the account owner runs
 `/login` once in any `claude` pane; then `crss send NAME "login restored; continue"` to each stalled
 lane. A spend-limit stop (`You've hit your monthly spend limit`) is different and recovers when the
-limit is raised. On that or a Claude 429, stop and send the exact error; spawn no fallback Claude model,
-since all of them drain the same cap. If another provider runs out, a Sonnet builder is a fine fallback.
+limit is raised. On that or a Claude 429, stop and report the exact error; spawn no fallback Claude model,
+since all of them drain the same cap.

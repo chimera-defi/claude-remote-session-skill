@@ -7,11 +7,12 @@ description: "Use to start, message, list, restart or retire long-lived Claude s
 
 One script, `crss`, runs every long-lived session. Each is a tmux session `ah_NAME` running
 `claude --remote-control` in a restart loop; it shows in the Claude app under Remote sessions
-with the descriptive title Claude gives it, and comes back after a crash or reboot.
+and comes back after a crash or reboot.
 
 State is one file per session, `~/.local/state/crss/NAME.env` (folder, launch arguments,
-conversation id). No registry, no per-session units: `crss-up.timer` (every 5 minutes) and
-`crss-up.service` (at boot) start any session whose file exists and whose tmux session doesn't.
+conversation id). No registry, no per-session units: `crss-up.timer` runs
+`crss up` at boot and every 5 minutes; it starts any session whose file exists and whose tmux
+session doesn't.
 
 ## Commands
 
@@ -19,34 +20,39 @@ conversation id). No registry, no per-session units: `crss-up.timer` (every 5 mi
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
 crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title
-crss peek NAME [LINES]           # status line + last LINES (30) non-blank pane lines
+crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
 crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
 ```
 
-**Names:** by default Claude titles each session itself, and the app shows that title (kept across
-restarts). `--title T` sets the first one; `CRSS_NAMES=plain` at spawn names it `ah-NAME` instead;
-sessions spawned before this keep `ah-NAME`. Rename a live one: `crss send NAME "/rename New title"`.
-`crss SUB --help` prints usage.
+**Names:** NAME is for `crss` and tmux (`ah_NAME`). In the app, a session is listed by its
+title. By default Claude titles each session itself (`crss ls` shows the title in its last
+column), and the title survives `crss restart`. `--title T` sets the first title; `CRSS_NAMES=plain` (config file or environment, read
+at spawn) names it `ah-NAME` instead. Sessions spawned before this keep `ah-NAME`. Rename a live
+one: `crss send NAME "/rename New title"`. On an `ah-NAME` session the rename lasts until its next
+restart; to keep it, add the line `NAMES=auto` to its state file first (a loop started by an older
+`crss` reads that line only after its tmux session is recreated). `crss SUB --help` prints usage.
 
 Use `crss wait` and `crss peek` instead of a sleep loop or a raw `tmux capture-pane`. Idle means the
-turn ended, not that the task is done: read the report or the result before you rely on it.
+turn ended (and, for a session spawned with `--brief`, that the brief was sent), not that the task
+is done: read the report or the result before you rely on it.
 
 `crss ls` also lists `ah_*` sessions started by other tools: `send` reaches them, `restart` and
 `reap` don't.
 
 - **spawn:** NAME is lowercase letters, digits and dashes. `--worktree` makes
-  `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main`; use it for any session
-  that commits in a shared repo. `--brief` is the first prompt: a finish line, a stop rule and the
+  `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main` (from `HEAD` when the repo
+  has no `origin/main`); use it for any session that commits in a shared repo. `--brief` is the first prompt: a finish line, a stop rule and the
   anti-patterns that apply, not steps (`handoff/SKILL.md`). Launch arguments start from
-  `CRSS_DEFAULT_ARGS` in `~/.config/crss/crss.env`; add `--effort`, `--advisor`,
-  `--disallowedTools` after `--`. Models: `--model claude-opus-5-5 -- --effort medium` for
-  orchestrators, `sonnet` for builders, `haiku` for sweeps (`references/spawn-guide.md`).
+  `CRSS_DEFAULT_ARGS` in `~/.config/crss/crss.env`; `--model` and `--effort` are spawn flags, other
+  claude flags (`--advisor`, `--disallowedTools`) go after `--`, for example
+  `--model sonnet --effort low -- --advisor claude-opus-5-5` (choosing a model:
+  `references/spawn-guide.md`; env knobs: `examples/crss-overlay/README.md#env-knobs`).
 - **send** pastes the text as one message and presses Enter; status comes from Claude's session
-  record. `delivered` (exit 0): idle went to busy. `queued` (0): it was busy. `UNVERIFIED` (1):
-  nothing changed; read the pane (`tmux capture-pane -p -t =ah_NAME:`) before resending. Refused
+  record. `delivered` (exit 0): idle went to busy or shell. `queued` (0): it was busy or running a shell
+  command. `UNVERIFIED` (1): nothing changed; `crss peek NAME` before resending. Refused
   (2): no such session, down or starting, or a dialog is open (`waiting`).
 - **restart** moves sessions onto the installed `claude` and keeps the conversation. It skips busy
   sessions unless `--wait-idle`, and skips one with in-session scheduled tasks (exiting would stop
@@ -60,23 +66,24 @@ turn ended, not that the task is done: read the report or the result before you 
 ## Handing work to another session
 
 If a live session owns the area (`crss ls`), `crss send` it the brief; otherwise `crss spawn` with
-`--brief`. Check the result yourself: a report is a claim, not proof. Check the target's size first
-and `/compact` or respawn if bloated. Routing judgment: the `handoff` skill.
+`--brief`. Check the result yourself: a report is a claim, not proof. Check the target's size before
+you send ([troubleshooting](references/troubleshooting.md#compact-or-recycle)). Routing judgment: the
+`handoff` skill.
 
 ## Old command names
 
-`new-session`, `session-send`, `session-handoff ready` and `session-doctor reap` are symlinks to
-`crss-compat` for callers outside this repo (the bus router). They accept `ah_NAME` or `ah-NAME`.
-Don't use them in new work.
+`new-session`, `session-send`, `session-handoff ready`, `session-doctor reap` and `session-preserve`
+(retired: it only prints a notice) are symlinks to `crss-compat` for outside callers. They accept
+`ah_NAME` or `ah-NAME`. Don't use them in new work.
 
 ## What not to do
 
-- Don't hand-roll tmux sessions or systemd units for agents; only `crss spawn` is seen by `ls`,
-  `up` and `reap`.
+- Don't hand-roll tmux sessions or systemd units for agents; only `crss spawn` writes the state
+  file that `up`, `restart` and `reap` need.
 - Don't `tmux kill-session` a session you mean to retire: its state file brings it back within 5
   minutes. Use `crss reap`.
-- Don't delete `session/*` branches, and don't run `git worktree remove` on a session worktree
-  (it deletes ignored files).
+- Don't delete `session/*` branches or run `git worktree remove` on a session worktree
+  ([why](references/troubleshooting.md#compact-or-recycle)).
 
 ## Setup
 
@@ -95,6 +102,6 @@ CRSS_DEFAULT_ARGS="--dangerously-skip-permissions --exclude-dynamic-system-promp
 export CLAUDE_CODE_AUTO_COMPACT_WINDOW=234000
 ```
 
-Between Claude sessions, the SendMessage tool with `to: "uds:<socket>"` delivers directly (the
-socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
+Between Claude sessions on one machine, the SendMessage tool with `to: "uds:<socket>"` delivers
+directly (the socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
 crss once a script can send to it, it shows on the phone, and it survives a reboot.

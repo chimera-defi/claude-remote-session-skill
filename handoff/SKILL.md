@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: "Use when a launcher/session-launcher session has a raw or terse human task that belongs in some OTHER Claude session rather than done here, or when the operator types /handoff. Triggers: \"hand this to <session>\", \"relay this task to X\", \"new <repo> session\" followed by a paragraph of intent, routing a request to a live or freshly-spawned target session."
+description: "Use when a launcher/session-launcher session has a raw or terse human task that belongs in some OTHER Claude session rather than done here, or when the user types /handoff. Triggers: \"hand this to <session>\", \"relay this task to X\", \"new <repo> session\" followed by a paragraph of intent, routing a request to a live or freshly-spawned target session."
 triggers:
   - "hand this to"
   - "relay this task to"
@@ -17,18 +17,17 @@ bounded: route, relay, monitor; never do the target's project work.
 ## Workflow
 
 1. **Target.** `crss ls`. Route to the existing owner of the area, or `crss spawn` a new one (model
-   choice: `references/spawn-guide.md`). Check size and staleness, not just topic: a `/clear to save
-   NNNk tokens` hint in `tmux capture-pane -p -t =ah_NAME:` with six figures means bloated. Don't
-   send a one-shot into a bloated, stale session (the next message pays full price to reload the
-   prefix); extract the facts, `crss reap` it, and hand the compact version to a fresh spawn.
+   choice: `../references/spawn-guide.md`). Check size and staleness, not just topic; don't route a
+   one-shot into a bloated session
+   ([troubleshooting](../references/troubleshooting.md#compact-or-recycle)).
 2. **Can it take a message?** `idle` yes. `busy` or `shell`: it queues. `waiting`: a dialog is open
    and `crss send` refuses; look at the pane. `down` or `?`: refused.
 3. **Massage** into the seven parts below. The parts are fixed; weighting and phrasing are
    judgment. Shapes: `references/kickoff-templates.md`. Read `$CRSS_HOME/local.md` first if it
    exists (this host's escalation channel and project index).
 4. **Relay and confirm.** Write the prompt to a file; `crss send NAME --file F` (or `crss spawn NAME
-   DIR --brief F`). `delivered` or `queued` (exit 0) landed. `UNVERIFIED` (1): capture the pane and
-   confirm it started working before claiming success. Refused (2): see step 2.
+   DIR --brief F`). `delivered` or `queued` (exit 0) landed. `UNVERIFIED` (1): `crss peek NAME` and
+   confirm it started working before claiming success. `crss wait NAME` blocks until it is idle again. Refused (2): see step 2.
 5. **Report** to the human: which session, one line on what you handed it, and which guardrails
    you preserved.
 6. **Follow up, don't restart.** Relay news mid-run with `crss send`; respawning throws work away.
@@ -48,8 +47,8 @@ bounded: route, relay, monitor; never do the target's project work.
    (read-only, execution gates). A relay never silently drops one; if unsure, include and flag it.
    For execution-capable work put this first.
 6. **Scope:** what not to touch, as concrete anti-patterns ("don't branch from local `main`").
-7. **Stop rule and channel:** keep going on steps that don't need a decision; stop and ask only
-   for an operator-owned decision or before something destructive; name a real command
+7. **Stop rule and channel:** when to keep going and when to stop (the version in
+   [kickoff-templates](references/kickoff-templates.md)); name a real command
    (`crss send <parent> --file F`), or the host's channel when the parent isn't a crss session.
 
 ## Rules

@@ -1,103 +1,89 @@
-# Orchestration flow: Opus orchestrates, Codex builds, Haiku checks
+# Delegating work
 
-Link this from non-trivial multi-file kickoff briefs. Host pins and quota policy live in the host
-overlay and the operator's global instructions.
+Patterns, roles and a brief template for splitting work across Claude sessions and subagents. Link
+this from non-trivial multi-file kickoff briefs.
+
+## Pick the smallest thing that works
+
+Start with what Claude Code does natively. Reach for `crss` only when the work must outlive one session.
+
+| Need | Use |
+|---|---|
+| A worker inside this session, with its own context, that returns a summary | **Subagents.** Parallel for independent work, chained when each step needs the last |
+| One script that fans out many subagents (fan-out then verify, iterate until passing, review then merge) | **Dynamic workflows** |
+| Independent tasks you check on later | **Agent view / background sessions** (`claude --bg`, research preview) |
+| A lead plus teammates sharing a task list and a mailbox | **Agent teams** (experimental). Teammates get no worktree isolation, so partition the files |
+| Sessions on one machine talking to each other | **Cross-session messaging** (ListAgents / SendMessage) |
+| Long-lived, named sessions that restart themselves, survive a reboot (timer), and are reachable from the phone | **crss sessions.** `crss send` reports delivered or queued; `crss reap` keeps unpushed work |
+
+## Patterns
+
+Multi-agent runs use roughly 15x the tokens of a chat (Anthropic's multi-agent research post). Use them
+when the work is parallel and valuable enough to pay for that.
+
+Each pattern: when to use it, its shape, what it costs.
+
+- **Orchestrator and workers.** *When:* a task splits into bounded pieces. *Shape:* one planner briefs,
+  verifies and decides; cheaper workers build. The planner does not hand-implement multi-file changes or
+  do large reads. *Cost:* one planner context plus a context per worker; the planner's attention is the
+  bottleneck.
+- **Pipeline.** *When:* each step needs the previous one's output. *Shape:* chained steps, each with its
+  own check, so a bad step stops the chain. *Cost:* no parallelism; latency adds up.
+- **Fan-out and verify (swarm).** *When:* many independent slices (audits, migrations, research).
+  *Shape:* parallel workers, one per slice, writing to files; then an independent verifier per result.
+  Never trust a worker's "done". About 3 concurrent subagents is a sane start; subagents can't nest.
+  *Cost:* the multi-agent token multiplier above, plus the verifiers.
+- **Hub with lane owners (coordinator, fleet).** *When:* several lanes of work run for hours or days.
+  *Shape:* a launcher session spawns long-lived owner sessions with `crss spawn`; each owns a lane and
+  reports back with `crss send`. Owners decide and land; the hub relays only real decisions. *Cost:*
+  every owner is a resident session, so reap finished ones.
+- **Review gate.** *When:* before anything merges or a person acts on it. *Shape:* the builder is never
+  the sole reviewer; an independent reviewer reads a frozen diff, not the transcript (rule:
+  [spawn-guide](spawn-guide.md#second-opinions)). *Cost:* one extra read per change; a cheap first pass
+  is advisory only.
 
 ## Roles
 
-| Job | Model | How |
-|---|---|---|
-| Orchestrator | Opus 5.5, effort medium (high only at risky forks) | `crss spawn NAME DIR --model claude-opus-5-5 -- --effort medium` |
-| Builder (default) | gpt-6.1-terra low, priority tier | `codex exec -m gpt-6.1-terra -c model_reasoning_effort=low -c service_tier=priority ... </dev/null` |
-| Repair | Haiku low, after a failed check only | `claude -p --model haiku --effort low --tools ""` |
-| Escalation | gpt-6-astra medium after a failed repair, or first when latency matters | `codex exec -m gpt-6-astra -c model_reasoning_effort=medium` |
-| Claude builder | Sonnet low, when Codex can't run the task | `subagent_type: builder` ([`agents/builder.md`](../agents/builder.md)) |
-| First-pass review | Haiku low, read-only, advisory | `subagent_type: haiku-reviewer` |
-| Research and workers | gpt-6.1-sol low (medium for large or ambiguous work) | `codex exec` or the host relay |
-| Mechanical | Haiku | greps, inventories, log triage, doc moves |
-| Independent read | gpt-6.1-sol or Fable (lifted 2026-11-10) on a frozen packet | one call, packet not transcript |
+| Role | Job |
+|---|---|
+| Planner / verifier | Strongest model. Plans, briefs, verifies claims, decides. Short, hard, bounded work |
+| Builder | Cheap model. Runs the task's own check (real tests, not just the examples in the spec) before reporting. On a failed check raise effort before changing model |
+| Read-only scanner | Smallest model. Searches, reads logs, summarizes; no edits (`agents/haiku-scanner.md`) |
+| Independent reviewer | A different model family when you have one. Gets a frozen packet, not the transcript |
 
-Never:
+Mechanical checks (greps, inventories, log triage) report; they make no judgement calls and edit no
+shared state. Which model fills each role is host policy: `$CRSS_HOME/staffing.md`.
 
-- Orchestrators hand-implement multi-file changes or do large reads.
-- Claude builders inherit Opus (use `subagent_type: builder` or `model: "sonnet"`).
-- Mechanical checks make judgement calls or edit shared state.
-- Reviewers review their own work, or say "looks fine" without a failing scenario.
-- Build with luna (any effort) or sol61 medium: luna low and medium barely reason and failed 40% of
-  the hard set; sol61 medium missed 2 of 60.
+## Brief template
 
-## Evidence behind the defaults
+A worker has no other context, so the brief carries it. Four parts:
 
-Private `dispatchbench` runs, 2026-10-22 to 2026-11-02. IDs and flags are bench-time; the host
-overlay may override.
+1. **Objective.** One sentence naming a checkable finish line, and what check to run.
+2. **Output format.** What to return and where (paths, PR base, "large output to files, summary back").
+3. **Tools and sources.** Which files, commands and sources to use.
+4. **Boundaries.** What not to touch, as concrete anti-patterns ("open the PR from `origin/main`, do not merge").
 
-- terra61-low fast matched sol61-high's pass rate at about a third of the cost and 2.5 to 3x faster
-  (commit f77c040). L7 hard problems p13 to p15 were not run on terra, so sol61-high stays the pick
-  for work the bench did not cover. Revisit if terra61-low's logged fail rate passes about 5%.
-- sol61-high and astra-medium never failed on any set (function 60/60, L7 15/15, hard 35/35,
-  agentic 12/12). sol61-xhigh equalled high at 1.5x the output tokens.
-- Tools-off Haiku: medium missed 1 of 60 and 2 of 15 L7; high passed every set, about 4x cheaper
-  than Sonnet medium. That is why Codex-out failed checks go to Haiku high.
-- A light check using only statement examples missed 3 of 35 bad answers; use real tests.
-- Haiku reviews flagged only spec-undefined inputs: advisory, not a merge gate. Review quality is
-  unmeasured.
-- Orchestrator effort: medium scored 8.3 vs high 8.0 on a blind check at about 60% of the cost.
-
-## Escalation ladder
-
-terra61-low, then a light check (tests or examples), then Haiku low repair on failure, then
-astra-medium, then a Sonnet builder. Hop on a failed check, or when the task needs judgement or
-architecture. Log each hop in the lane's `TASKS.md` or report (`models_ran`).
-
-To change the default builder, change `-m` and `model_reasoning_effort` in the `codex exec` line
-you give builders.
-
-### Quota ladder
-
-luna, sol and astra share one Codex quota, so hopping between Codex models never escapes a quota-out.
-Call a tool "out" only on the exact quota error text (a failed `codex exec`, or an API error in the
-Claude transcript) and quote it in the report. Nothing in crss detects this; the orchestrator walks it.
-
-- **Codex out:** one-shot builds go to Haiku low with the same check; a failed check or costly miss
-  goes to Haiku high. A whole lane becomes `crss spawn NAME DIR --model sonnet -- --effort low`.
-  Return to terra61-low when Codex resets.
-- **Claude out:** Codex only; terra61-low builds, gpt-6.1-sol reviews; the PR says "single-family
-  review (Claude quota-out)".
-- **Both out:** pause and report the exact error text.
-
-Review wants a second model family when available; Haiku alone is advisory.
-
-### Codex flags
-
-- Builder trims: `-c skills.include_instructions=false --disable multi_agent -c project_doc_max_bytes=0`
-  (input about 28k to 14.5k tokens). The host `AGENTS.md` in `$CODEX_HOME` can't be dropped by any flag.
-- Commits from a sandboxed builder in a linked worktree fail with `index.lock': Read-only file
-  system`, because `workspace-write` makes `.git` read-only. Add the gitdir and the common `objects`,
-  `refs` and `logs` directories from `git rev-parse --path-format=absolute --git-dir --git-common-dir`
-  as `--add-dir <DIR>`, one each, on `codex exec -s workspace-write -C "$dir"`. Adding `.git` itself
-  does not work.
-- Priority tier: default since 2026-10-30 in `~/.codex/config.toml` (`service_tier = "priority"`),
-  and passed as `-c service_tier=priority` so benches and other hosts keep it. It cut sol61-high's
-  median from 30 s to 19 s at about 2x list price. Claude fast mode stays off unless the operator
-  asks for a deadline push.
+Also restate any rule the brief depends on; a worker will not infer it. Shapes for each case:
+[kickoff-templates](../handoff/references/kickoff-templates.md).
 
 ## Steps
 
 1. **Finish line first.** One checkable "done" atop `TASKS.md` (scratchpad or worktree, untracked);
    re-read it after compaction.
-2. **Packet:** decided design, exact paths, constraints, tests, "open PR from `origin/main`, do not
-   merge", safety rules. A builder has no other context.
-3. **Fan out** independent slices only, about 3 concurrent subagents. Subagents can't nest.
-4. **Verify:** re-run cited commands or open file:line before relaying "done"; otherwise unverified.
-5. **Adversarial review:** Opus gets the diff, the claim and run instructions, not the transcript.
-   Findings are file:line, why wrong, a failing scenario. Max 3 rounds; re-review changes only.
-6. **Land:** CI green plus second-family review, merge, diff and redeploy deployed copies. Before
-   live infrastructure restarts, send the launcher a runbook and rollback.
-7. **Report:** what landed, what was redeployed, what is left, `models_ran`, numbered operator
-   decisions each with a recommended option.
+2. **Packet:** decided design, exact paths, constraints, tests, safety rules.
+3. **Fan out** independent slices only. Give each its own delegate; write results to files.
+4. **Verify:** a subagent report is a claim. Call a tool "out" (quota, blocked) only on its exact error
+   text, and quote it. Re-run the command it cites or open the file:line before
+   relaying "done"; otherwise label it unverified. Consolidate verified results in one table.
+5. **Adversarial review:** the reviewer gets the diff, the claim and run instructions, not the
+   transcript. Findings are file:line, why it is wrong, a failing scenario. Max 3 rounds; re-review
+   changes only.
+6. **Land:** CI green plus independent review, merge, then diff and redeploy deployed copies. Before
+   restarting live infrastructure, send the launcher a runbook and a rollback.
+7. **Report:** what landed, what was redeployed, what is left, which models ran, and numbered decisions
+   each with a recommended option.
 
-Builders draft briefs, dispositions and review packets from frozen packets; the orchestrator decides,
-verifies and posts. Ask the operator (with a recommendation) only for irreversible, outward-facing or
-conflicting-requirement decisions; otherwise decide and report. Measure a session with the host's
-`usage-audit` if it has one. Revisit routing when a job type's pass rate drops, costs drift over 2x,
-or a new model lands, and rerun the bench first.
+Ask the user, with a recommendation, only for irreversible, outward-facing or
+conflicting-requirement decisions; otherwise decide and report
+([kickoff-templates](../handoff/references/kickoff-templates.md)). Revisit your
+routing when a job type's pass rate drops, costs drift, or a new model lands.
