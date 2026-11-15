@@ -80,7 +80,7 @@ git clone -q "$T/rem.git" "$T/repo" 2>/dev/null
 git -C "$T/repo" checkout -q -b main && git -C "$T/repo" commit -q --allow-empty -m init && git -C "$T/repo" push -q origin main
 wt() { echo "$HOME/.claude/worktrees/$1"; }
 "$C" spawn r1 "$T/repo" --worktree >/dev/null; echo x >"$(wt r1)/untracked"
-check "spawn: trust written for the main repo root" wait_for 10 "jq -e '.projects[\"$T/repo\"].hasTrustDialogAccepted' '$HOME/.claude.json' >/dev/null"
+check "spawn: trust written for the main repo root" wait_for 10 "jq -e '.projects[\"$T/repo\"].hasTrustDialogAccepted' '$HOME/.claude.json' >/dev/null" >/dev/null
 "$C" reap r1 >/dev/null
 check "reap untracked: worktree kept, env gone" bash -c "[ -d '$(wt r1)' ] && [ ! -e '$CRSS_STATE/r1.env' ]"
 "$C" spawn r2 "$T/repo" --worktree >/dev/null; git -C "$(wt r2)" commit -q --allow-empty -m local
@@ -116,4 +116,37 @@ out=$("$T/bin/session-send" ah_ext hi-ext); check "session-send: reaches a sessi
 "$C" restart ext >/dev/null 2>&1; check "restart: refuses a session with no env file" [ $? != 0 ]
 idle "${S#ah_}"; "$T/bin/session-doctor" reap "$S" >/dev/null
 check "session-doctor reap: session gone" [ ! -e "$CRSS_STATE/${S#ah_}.env" ]
+# 5. naming: Claude titles by default, plain on request, --title only on the first launch; peek, wait, filters
+export CRSS_POLL=1
+sidf() { sed -n 's/^SID=//p' "$CRSS_STATE/$1.env"; }
+argv() { grep -F "$(sidf "$1")" "$FAKE_LOG.args" | tail -1; }
+tj() { "$C" ls --json | jq -r --arg n "$1" '.[]|select(.name==$n)|.title'; }
+"$C" spawn n1 "$T/work" >/dev/null; idle n1
+check "names auto: bare --remote-control then --session-id, no -n" jq -e 'index("--remote-control") as $i | .[$i+1]=="--session-id" and index("-n")==null' <<<"$(argv n1)" >/dev/null
+check "names auto: env file says so" grep -qx NAMES=auto "$CRSS_STATE/n1.env"
+CRSS_NAMES=plain "$C" spawn n2 "$T/work" >/dev/null; idle n2
+check "names plain: ah-N flags" jq -e 'index("--remote-control") as $i | .[$i+1]=="ah-n2" and .[$i+2]=="-n" and .[$i+3]=="ah-n2"' <<<"$(argv n2)" >/dev/null
+printf 'DIR=%q\nSID=%s\nARGS=()\nENVS=()\n' "$T/work" "$(cat /proc/sys/kernel/random/uuid)" >"$CRSS_STATE/n3.env"; "$C" up n3 >/dev/null; idle n3
+check "env file without NAMES: ah-N flags" jq -e 'index("--remote-control") as $i | .[$i+1]=="ah-n3" and .[$i+2]=="-n" and .[$i+3]=="ah-n3"' <<<"$(argv n3)" >/dev/null
+"$C" spawn n4 "$T/work" --title "Fix the thing" --effort high >/dev/null; idle n4
+check "--title: first launch names the session" jq -e 'index("--remote-control") as $i | .[$i+1]=="Fix the thing" and .[$i+2]=="-n" and .[$i+3]=="Fix the thing" and (index("--effort") as $e | .[$e+1]=="high")' <<<"$(argv n4)" >/dev/null
+"$C" send n4 hi >/dev/null; idle n4; "$C" restart n4 >/dev/null
+check "--title: resume uses the bare flag" jq -e 'index("--remote-control") as $i | .[$i+1]=="--resume" and index("-n")==null' <<<"$(argv n4)" >/dev/null
+check "ls title: falls back to the spawn title" [ "$(tj n4)" = "Fix the thing" ]
+S1=$(sidf n1); mkdir -p "$HOME/.claude/projects/p"
+echo '{"type":"ai-title","aiTitle":"Tmux session naming schemes","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: ai-title shows" [ "$(tj n1)" = "Tmux session naming schemes" ]
+echo '{"type":"custom-title","customTitle":"Fleet naming study","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: custom-title wins" [ "$(tj n1)" = "Fleet naming study" ]
+out=$("$C" ls n1); check "ls NAME: one row, title last" bash -c "[ \"\$(wc -l <<<'$out')\" = 1 ] && [[ '$out' == n1\ *'Fleet naming study' ]]"
+tmux -L "$SOCK" new-session -d -s ah_pk -x 80 -y 20 "echo peekmark-xyz; sleep 600"
+check "peek: header and pane text" wait_for 10 '[[ "$("$C" peek pk 5)" == "pk "*peekmark-xyz* ]]'
+"$C" peek nosuch 2>/dev/null; check "peek: unknown session refused with 2" [ $? = 2 ]
+out=$("$C" wait n1); check "wait: idle session returns 0" [ $? = 0 ] 
+check "wait: prints NAME STATUS" [ "$out" = "n1 idle" ]
+"$C" spawn w1 "$T/work" >/dev/null; "$C" wait w1 --timeout 30 >/dev/null
+check "wait: after spawn, not before the session record exists" bash -c "grep -lq '$(sidf w1)' '$HOME'/.claude/sessions/*.json"
+"$C" send w1 work >/dev/null; "$C" wait w1 --timeout 1 >/dev/null; check "wait: --timeout on a busy session exits 1" [ $? = 1 ]
+check "spawn --help: exit 0" "$C" spawn --help >/dev/null
+check "spawn --help: usage text" grep -q 'crss spawn NAME DIR' <<<"$("$C" spawn --help)" >/dev/null
 exit $F
