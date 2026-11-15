@@ -26,7 +26,7 @@ fakes=':sk-[A-Za-z-]*$|fake|example|placeholder|dummy|your|here|changeme|xxx|loc
 scan '\bsk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|0x[0-9a-fA-F]{40}([0-9a-fA-F]{24})?\b|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.|Bearer [A-Za-z0-9._-]{20,}' \
   'secret-shaped literal' "$fakes"
 I=i scan '(api[_-]?key|token|secret|password)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"'$<{ ][^"'"'"']{12,}' 'quoted credential assignment' "$fakes"
-scan '\bbus seq\b|\bseq #[0-9]{3,}\b|scope_claim|coordination_bus|[Oo]perator (directive|ruling)|OPERATOR RULING' 'bus or operator-ruling reference'
+scan '\b[Oo]perator:? 20[0-9]{2}-[0-9]{2}|[Oo]perator (ruling|directive)|OPERATOR RULING|\b(lifted|paused|banned) (by the operator )?20[0-9]{2}-[0-9]{2}' 'dated operator ruling (host policy belongs in the overlay)'
 # Fixtures stamp 0101-HHMM or use placeholders, so a month of 02-12 marks a real session name.
 scan '\b[A-Za-z]{2,12}[_-][a-z][a-z0-9-]*-(0[2-9]|1[0-2])[0-3][0-9]-[0-2][0-9][0-5][0-9]\b|-20[0-9]{2}(0[2-9]|1[0-2])[0-3][0-9]-[0-9]{4}\b' 'real-looking session name'
 host=$(hostname -s 2>/dev/null | tr 'A-Z' 'a-z')

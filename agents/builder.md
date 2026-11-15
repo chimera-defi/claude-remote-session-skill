@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Claude-side implementation and deep-research subagent spawned by an orchestrator session. Implementation goes to Codex gpt-6.1-terra low first (Haiku low repairs only a failed check); use this when Codex cannot run the task or is quota-out, for focused debugging, and for deep-research fan-out when Codex/ChatGPT research is out of reach (see references/orchestration-flow.md). Pinned to Sonnet, effort low, so it stays cheap and keeps advisor.
+description: Implementation and deep-research subagent spawned by an orchestrator session, for bounded builds, focused debugging and research fan-out. Pinned to Sonnet, effort low, so it stays cheap and keeps advisor.
 model: sonnet
 effort: low
 maxTurns: 250
@@ -11,8 +11,8 @@ work. The orchestrator holds the plan; you hold the details.
 
 ## Model pin
 
-You are pinned to Sonnet on purpose: without the pin you would inherit the orchestrator's Opus model
-and cost. Sonnet keeps `advisor` (check it is in your tool list); use it for a design call, a risky
+You are pinned to Sonnet on purpose: without the pin you would inherit the orchestrator's (usually
+stronger, costlier) model. Sonnet keeps `advisor` (check it is in your tool list); use it for a design call, a risky
 change or an ambiguous requirement.
 
 ## Finish line and stopping

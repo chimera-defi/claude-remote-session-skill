@@ -5,25 +5,27 @@ how to write the first prompt.
 
 ## Choosing the model
 
-`crss spawn` has no profiles: pick the model with `--model` and put the rest after `--`.
+`crss spawn` has no profiles: pick the model and effort with `--model` and `--effort`, and put other claude flags after `--`. A host keeps
+its standard arg sets in its overlay docs and passes them after `--`. Roles and which model suits
+each: [orchestration-flow](orchestration-flow.md#roles); which model fills them on this host:
+`$CRSS_HOME/staffing.md` if it has one.
 
-| Job | Launch |
+| Job | Example launch (model ids and the `--advisor` id are examples) |
 |---|---|
-| Orchestrator, risky or ambiguous design | `--model claude-opus-5-5 -- --effort medium` (high only at risky forks) |
+| Planner, risky or ambiguous design | `--model opus --effort medium` (high only at risky forks) |
 | Long-lived lane owner or hub | `--model sonnet -- --advisor claude-opus-5-5` |
-| Debugging or review in one repo; Claude fallback builder | `--model sonnet -- --effort low` |
-| Mechanical, doc-only, sweeps | `--model haiku -- --effort low` |
+| Debugging or review in one repo; fallback builder | `--model sonnet --effort low` |
+| Mechanical, doc-only, sweeps | `--model haiku --effort low` |
 
-- Implementation goes to Codex first ([orchestration-flow](orchestration-flow.md)), not a Claude session.
 - Aliases (CLI 2.1.308): `sonnet opus haiku fable best sonnet[1m] opus[1m] fable[1m] opusplan`.
   There is no `auto` router. `--fallback-model a,b` handles overload only.
-- Opus is for a short, hard, bounded task: reap when done (nothing enforces it). Unsure which model:
-  default to Sonnet; for a real fork ask your own advisor once.
-- Default launch arguments come from `CRSS_DEFAULT_ARGS` in `~/.config/crss/crss.env`. Auto-compact
-  window: [troubleshooting](troubleshooting.md#auto-compact).
-- Global skills load into every spawn. The Superpowers plugin injects its `using-superpowers` skill
-  (about 900 tokens per start); a lane that shouldn't carry it needs the plugin off in the settings
-  it launches with. Never pass `--settings` twice: a later flag replaces an earlier one.
+- The strongest model is for a short, hard, bounded task: reap when done (nothing enforces it). Unsure
+  which model: default to Sonnet; for a real fork ask your own advisor once.
+- Global skills and plugins load into every spawn, and some inject their own skill at start (the
+  Superpowers plugin's `using-superpowers`, about 900 tokens). A lane that shouldn't carry one needs
+  the plugin off in the settings it launches with; see "Lean loadouts" below.
+- Default launch arguments come from `CRSS_DEFAULT_ARGS` ([env knobs](../examples/crss-overlay/README.md#env-knobs)).
+  Auto-compact window: [troubleshooting](troubleshooting.md#auto-compact).
 - `-- --tools "Bash,Read,..."` is an exhaustive allowlist over built-ins, including deferred ones;
   a built-in left out is unreachable even through ToolSearch, MCP tools stay reachable. On a fresh
   Sonnet session it cut the prefix from 35.7k to 24.3k tokens (CLI 2.1.206).
@@ -34,29 +36,43 @@ how to write the first prompt.
 - Wide work (many independent slices, or a change needing adversarial review): plan first, then fan
   out parallel `builder` subagents. Narrow work stays in one Sonnet session.
 
+## Lean loadouts
+
+Verified on CLI 2.1.325. Skill bodies load only when a skill is invoked; the always-on cost is the
+skill listing, so trim the listing first for worker sessions.
+
+- `crss spawn NAME DIR -- --disable-slash-commands` starts a session with no skills listed at all.
+  Good for pure build or scan workers.
+- A settings file with `"skillOverrides": {"skill-name": "off"}` (other values: `"on"`, `"name-only"`,
+  `"user-invocable-only"`), passed as `-- --settings FILE`, hides those skills. Only one `--settings`
+  flag is honoured (the last wins), so if `CRSS_DEFAULT_ARGS` already carries `--settings`, the loadout
+  file must repeat what that file sets.
+- A deny rule `Skill(name)` in permissions does not remove the skill from the listing.
+- Args given at spawn are stored and re-passed on every restart.
+
 ## Second opinions
 
-- **Advisor.** Launch Sonnet and Haiku lanes with `-- --advisor claude-opus-5-5`; Opus and Fable
-  default to self-advice, and explicit ids work. It needs CLI 2.1.300 or later and an interactive
-  session (`claude -p` hides it). Call it before choosing an approach and before declaring done; it
-  sees the whole transcript.
+- **Advisor.** Launch Sonnet and Haiku lanes with `-- --advisor <model id>`; the strongest models default
+  to self-advice, and explicit ids work. It needs CLI 2.1.300 or later and an interactive session
+  (`claude -p` hides it). Call it before choosing an approach and before declaring done; it sees the
+  whole transcript. Use it for routine forks.
 - **Independent read** at risky or destructive forks, ambiguous designs, and before declaring a
-  multi-step task done: a one-shot reviewer on a frozen packet, never a Sonnet builder checking
-  itself. Use Fable (`agents/reviewer.md`, lifted 2026-11-10; log each use in
-  the host's fable ledger) or one gpt-6.1-sol call on the same packet.
-- **Hub consult.** A Sonnet or Haiku hub asks for an Opus one-shot only at real forks (destructive
-  action, ambiguous design, before declaring done): write a frozen packet (for example
-  `.claude/hub-opus-frozen-packet.md`), spawn a subagent with `model: "opus"`, give it the packet
-  and never the transcript. The hub owns the decision and records `models_ran`. Opus is never a
-  resident or polling session.
-- **Order:** cheap strong reviewer, different-family check, expensive reviewer last. A merge or
-  operator-facing review needs two model families. Single-family review counts only when Claude is
-  quota-out; with Codex out (2026-11-06) an independent Claude review stands in (2026-11-07). Name the model in the PR body.
+  multi-step task done: a one-shot reviewer on a frozen packet (state, options, recommendation, the
+  diff), never a builder checking itself (`agents/reviewer.md`).
+- **Hub consult.** A Sonnet or Haiku hub asks for a strongest-model one-shot only at real forks
+  (destructive action, ambiguous design, before declaring done): write a frozen packet, spawn a subagent
+  with `model: "opus"`, give it the packet and never the transcript. The hub owns the decision and
+  records which models ran. The strongest model is never a resident or polling session.
+- **Independent review rule (canonical).** A merge, or a review a person will act on, needs a reviewer
+  who is not the builder, preferably from a different model family. Name the reviewing model in the PR
+  body. When no second family is available, an independent subagent of the same family reading the
+  frozen diff stands in; say so in the PR body. A cheap first-pass reviewer (`agents/haiku-reviewer.md`)
+  is advisory, not a gate. Order: cheap first pass, different-family check, expensive reviewer last.
 
 ## Writing the kickoff
 
 A spawn has none of your context, so the brief carries it. Read `$CRSS_HOME/local.md` first if it
-exists (escalation channel, guardrails, delegate routing). Shapes:
+exists (escalation channel, guardrails). Shapes:
 [kickoff-templates](../handoff/references/kickoff-templates.md).
 
 - **Finish line.** "PR merged with `shell-tests` green and the script redeployed", not "look into
@@ -67,10 +83,9 @@ exists (escalation channel, guardrails, delegate routing). Shapes:
   the exact blocked command or decision to the launcher and print a final `BLOCKED:` line.
 - **Concrete anti-patterns:** "don't branch from local `main`", "no deploys without explicit human
   approval in this session". Specific mistakes beat "be careful".
-- **Builders:** Codex first per [orchestration-flow](orchestration-flow.md#escalation-ladder); record
-  the model that ran.
+- **Builders:** record the model that ran.
 - **Delegate** independent research, edits and verification by
-  [Roles](orchestration-flow.md#roles). Only the prompt crosses over: brief fully, have another
+  [role](orchestration-flow.md#roles). Only the prompt crosses over: brief fully, have another
   reader verify, write large output to files and return a summary and path.
 - **Long runs:** `TASKS.md` with the finish line on top, re-read after compaction.
 - Leave out "think carefully", "step by step", ALL-CAPS and "MUST": give a reason instead.
@@ -81,5 +96,6 @@ any decision, approval, merge or credential the lane needs, then read the rest.
 ## Naming
 
 NAME is lowercase letters, digits and dashes (`cmd_spawn` in `scripts/crss.sh` checks it). Nothing
-adds a date suffix, so pick a name that is unique and readable on a phone. `--worktree` branches are
-`session/NAME`, so a reused name is refused while the branch exists.
+adds a date suffix, so pick a name that is unique and short to type. The app lists the session by
+its title, not NAME ([names](../SKILL.md#commands)). `--worktree` branches are `session/NAME`, so a
+reused name is refused while the branch exists.
