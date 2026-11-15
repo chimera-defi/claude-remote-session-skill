@@ -29,8 +29,7 @@ crss reap NAME [--force]
 
 - **spawn:** NAME is lowercase letters, digits and dashes. `--worktree` makes
   `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main` (from `HEAD` when the repo
-  has no `origin/main`); use it for any session
-  that commits in a shared repo. `--brief` is the first prompt: a finish line, a stop rule and the
+  has no `origin/main`); use it for any session that commits in a shared repo. `--brief` is the first prompt: a finish line, a stop rule and the
   anti-patterns that apply, not steps (`handoff/SKILL.md`). Launch arguments start from
   `CRSS_DEFAULT_ARGS` in `~/.config/crss/crss.env`; add `--effort`, `--advisor`,
   `--disallowedTools` after `--`, for example `--model sonnet -- --effort low` (choosing a model:
@@ -51,8 +50,9 @@ crss reap NAME [--force]
 ## Handing work to another session
 
 If a live session owns the area (`crss ls`), `crss send` it the brief; otherwise `crss spawn` with
-`--brief`. Check the result yourself: a report is a claim, not proof. Check the target's size first
-([troubleshooting](references/troubleshooting.md#compact-or-recycle)). Routing judgment: the `handoff` skill.
+`--brief`. Check the result yourself: a report is a claim, not proof. Check the target's size before
+you send ([troubleshooting](references/troubleshooting.md#compact-or-recycle)). Routing judgment: the
+`handoff` skill.
 
 ## Old command names
 
@@ -86,6 +86,6 @@ CRSS_DEFAULT_ARGS="--dangerously-skip-permissions --exclude-dynamic-system-promp
 export CLAUDE_CODE_AUTO_COMPACT_WINDOW=234000
 ```
 
-Between Claude sessions on one machine, the SendMessage tool with `to: "uds:<socket>"` delivers directly (the
-socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
+Between Claude sessions on one machine, the SendMessage tool with `to: "uds:<socket>"` delivers
+directly (the socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
 crss once a script can send to it, it shows on the phone, and it survives a reboot.

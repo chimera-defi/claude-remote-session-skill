@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Old crss command names, kept only for callers outside this repo. Installed as symlinks named new-session, session-send,
-# session-handoff, session-doctor and session-preserve; each translates the argv those callers use.
+# Old crss command names, kept only for callers outside this repo. Installed as symlinks named
+# new-session, session-send, session-handoff, session-doctor and session-preserve; each translates
+# the argv those callers use.
 # Everything else should call crss directly.
 set -euo pipefail
 CRSS=${CRSS_BIN:-$(dirname "$(readlink -f "$0")")/crss}

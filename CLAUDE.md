@@ -3,7 +3,8 @@
 This repo is the session tool `crss` (`scripts/crss.sh`; the old names `new-session`,
 `session-send`, `session-handoff`, `session-doctor` and `session-preserve` are symlinks to
 `scripts/crss-compat.sh`). A deployed copy (for example in `~/.local/bin`) may be what every live
-session runs, so a bad change can break the whole fleet. Skill docs: `SKILL.md`, `handoff/`, `references/`, `agents/`.
+session runs, so a bad change can break the whole fleet. Skill docs: `SKILL.md`, `handoff/`,
+`references/`, `agents/`.
 
 ## What "done" means for a change here
 
@@ -45,11 +46,15 @@ reason you can explain is not a reason to stop; one you can't explain is.
 ## Anti-patterns this repo has already paid for
 
 - **Branching from or committing to local `main`** in the canonical checkout (the target of the
-  `~/.claude/skills/<skill>` symlink; its path is in your overlay's `local.md`, if you keep one). Other agents leave
-  work there. Cut from `origin/main`, and check `gh pr list` and `git branch -r` for collisions.
+  `~/.claude/skills/<skill>` symlink; its path is in your overlay's `local.md`, if you keep one).
+  Other agents leave work there. Cut from `origin/main`, and check `gh pr list` and `git branch -r` for collisions.
 - **`cp`/`install` over `~/.local/bin/<x>` without diffing first.** Deployed copies drift both ways.
-- **`git log @{u}..` to decide whether work is pushed, or deleting `session/*` branches, or removing
-  a session worktree by hand.** See [troubleshooting](references/troubleshooting.md#compact-or-recycle).
+- **`git log @{u}..` to decide whether work is pushed.** No upstream prints nothing. Use
+  `git log HEAD --not --remotes` and check `git remote`.
+- **Deleting a `session/*` branch, or removing a session's worktree by hand.** The branch keeps a
+  reaped session's commits reachable; `git worktree remove` deletes ignored results, and the timer
+  restarts the session into the missing folder. Use `crss reap`
+  ([details](references/troubleshooting.md#compact-or-recycle)).
 - **`git cherry` / patch-id to decide a branch is landed.** Squash merges
   change patch-ids. Verify by content diff against `origin/main` or the PR's merge record.
 - **Accepting a tool's "safe" or "nothing to preserve" verdict.** Enumerate on-disk state yourself

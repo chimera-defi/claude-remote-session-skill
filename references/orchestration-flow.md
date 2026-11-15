@@ -1,6 +1,7 @@
-# Delegating work: pick the smallest thing that works
+# Delegating work
 
-Link this from non-trivial multi-file kickoff briefs. Which model fills each role is host policy.
+Patterns, roles and a brief template for splitting work across Claude sessions and subagents. Link
+this from non-trivial multi-file kickoff briefs.
 
 ## Pick the smallest thing that works
 

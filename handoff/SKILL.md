@@ -17,7 +17,8 @@ bounded: route, relay, monitor; never do the target's project work.
 ## Workflow
 
 1. **Target.** `crss ls`. Route to the existing owner of the area, or `crss spawn` a new one (model
-   choice: `../references/spawn-guide.md`). Check size and staleness, not just topic; don't route a one-shot into a bloated session
+   choice: `../references/spawn-guide.md`). Check size and staleness, not just topic; don't route a
+   one-shot into a bloated session
    ([troubleshooting](../references/troubleshooting.md#compact-or-recycle)).
 2. **Can it take a message?** `idle` yes. `busy` or `shell`: it queues. `waiting`: a dialog is open
    and `crss send` refuses; look at the pane. `down` or `?`: refused.
