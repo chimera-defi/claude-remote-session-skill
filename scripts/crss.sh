@@ -15,7 +15,7 @@ crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief F
 crss up [NAME...]                 start sessions that have an env file but no tmux session
 crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools)
 crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
-crss wait NAME... [--timeout S]   until idle (brief sent), on a dialog or down; exit 0 all idle, 1 timeout, 2 else
+crss wait NAME... [--timeout S]   until each is idle (turn over, brief sent), on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
 crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same session id
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
@@ -57,8 +57,8 @@ sync_sid() {
 title_of() { # NAME, with or without an env file
   local SID='' TITLE='' f='' t=''
   if [ -f "$(envf "$1")" ]; then load "$1"; else SID=$(field "$1" sessionId); fi
-  f=$(compgen -G "$HOME/.claude/projects/*/$SID.jsonl" | head -1 || true)
-  [ -z "$f" ] || t=$(tail -n 400 "$f" | { grep -E '"type":"(custom|ai)-title"' || true; } |
+  [ -z "$SID" ] || f=$(compgen -G "$HOME/.claude/projects/*/$SID.jsonl" | head -1 || true)
+  [ -z "$f" ] || t=$(tail -n 400 "$f" | { grep -E '^\{"type":"(custom|ai)-title"' || true; } |
     jq -rs '(map(.customTitle // empty) | last) // (map(.aiTitle // empty) | last) // empty' 2>/dev/null || true)
   t=${t:-$TITLE}; echo "${t//[$'\t\n']/ }"
 }
@@ -159,10 +159,15 @@ cmd_loop() {
       trust "$DIR" || echo "crss: could not pre-trust $DIR; answer the trust dialog"
       first=1; if compgen -G "$HOME/.claude/projects/*/$SID.jsonl" >/dev/null; then first=''; fi
       a=("${ARGS[@]}")
-      if [ "$NAMES" != auto ]; then a+=(--remote-control "ah-$n" -n "ah-$n")
-      elif [ -n "$first" ] && [ -n "$TITLE" ]; then a+=(--remote-control "$TITLE" -n "$TITLE")
-      else a+=(--remote-control); fi # bare: Claude titles it; the flag takes an optional value, so
-      # --resume or --session-id must follow it directly
+      # NAMES=auto: a bare --remote-control lets Claude title the session (-n would stop that). The
+      # flag takes an optional value, so --resume or --session-id must follow it directly.
+      if [ "$NAMES" != auto ]; then
+        a+=(--remote-control "ah-$n" -n "ah-$n")
+      elif [ -n "$first" ] && [ -n "$TITLE" ]; then
+        a+=(--remote-control "$TITLE" -n "$TITLE")
+      else
+        a+=(--remote-control)
+      fi
       # resume once the conversation has a transcript; until then start it under SID, with the brief
       if [ -z "$first" ]; then
         a+=(--resume "$SID")
@@ -233,12 +238,14 @@ cmd_wait() {
   local ns=() to=1800 t0=$SECONDS n st rc=0 left
   declare -A idl=() last=()
   while [ $# -gt 0 ]; do case $1 in --timeout) to=$2; shift 2 ;; *) ns+=("$1"); shift ;; esac; done
+  [ ${#ns[@]} -gt 0 ] || die "usage: crss wait NAME... [--timeout S]"
+  sent() { ! grep -qs '^BRIEF=' "$(envf "$1")" || compgen -G "$HOME/.claude/projects/*/$(field "$1" sessionId).jsonl" >/dev/null; }
   while :; do
     left=0
     for n in "${ns[@]}"; do
       if ! tm has-session -t "=ah_$n" 2>/dev/null; then last[$n]=down; continue; fi
       st=$(field "$n" status); last[$n]=${st:-?}
-      if [ "$st" = idle ] && { ! grep -qs '^BRIEF=' "$(envf "$n")" || compgen -G "$HOME/.claude/projects/*/$(field "$n" sessionId).jsonl" >/dev/null; }; then idl[$n]=$((${idl[$n]:-0} + 1)); else idl[$n]=0; fi
+      if [ "$st" = idle ] && sent "$n"; then idl[$n]=$((${idl[$n]:-0} + 1)); else idl[$n]=0; fi
       if [ "$st" != waiting ] && [ "${idl[$n]}" -lt 2 ]; then left=1; fi
     done
     [ "$left" = 1 ] || break

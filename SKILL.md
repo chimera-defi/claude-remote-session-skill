@@ -20,7 +20,7 @@ crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief F
 crss send NAME "text"            # or: crss send NAME --file brief.md
 crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title
 crss peek NAME [LINES]           # status line + last LINES (30) non-blank pane lines
-crss wait NAME... [--timeout S]  # until idle (brief sent), on a dialog or down; exit 0 all idle, 1 timeout, 2 else
+crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
@@ -30,6 +30,9 @@ crss reap NAME [--force]
 restarts). `--title T` sets the first one; `CRSS_NAMES=plain` at spawn names it `ah-NAME` instead;
 sessions spawned before this keep `ah-NAME`. Rename a live one: `crss send NAME "/rename New title"`.
 `crss SUB --help` prints usage.
+
+Use `crss wait` and `crss peek` instead of a sleep loop or a raw `tmux capture-pane`. Idle means the
+turn ended, not that the task is done: read the report or the result before you rely on it.
 
 `crss ls` also lists `ah_*` sessions started by other tools: `send` reaches them, `restart` and
 `reap` don't.
