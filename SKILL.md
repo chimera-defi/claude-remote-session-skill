@@ -28,12 +28,13 @@ crss reap NAME [--force]
 `reap` don't.
 
 - **spawn:** NAME is lowercase letters, digits and dashes. `--worktree` makes
-  `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main`; use it for any session
+  `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main` (from `HEAD` when the repo
+  has no `origin/main`); use it for any session
   that commits in a shared repo. `--brief` is the first prompt: a finish line, a stop rule and the
   anti-patterns that apply, not steps (`handoff/SKILL.md`). Launch arguments start from
   `CRSS_DEFAULT_ARGS` in `~/.config/crss/crss.env`; add `--effort`, `--advisor`,
-  `--disallowedTools` after `--`. Models: `--model claude-opus-5-5 -- --effort medium` for
-  orchestrators, `sonnet` for builders, `haiku` for sweeps (`references/spawn-guide.md`).
+  `--disallowedTools` after `--`, for example `--model sonnet -- --effort low` (choosing a model:
+  `references/spawn-guide.md`; env knobs: `examples/crss-overlay/README.md`).
 - **send** pastes the text as one message and presses Enter; status comes from Claude's session
   record. `delivered` (exit 0): idle went to busy. `queued` (0): it was busy. `UNVERIFIED` (1):
   nothing changed; read the pane (`tmux capture-pane -p -t =ah_NAME:`) before resending. Refused
@@ -51,13 +52,13 @@ crss reap NAME [--force]
 
 If a live session owns the area (`crss ls`), `crss send` it the brief; otherwise `crss spawn` with
 `--brief`. Check the result yourself: a report is a claim, not proof. Check the target's size first
-and `/compact` or respawn if bloated. Routing judgment: the `handoff` skill.
+([troubleshooting](references/troubleshooting.md#compact-or-recycle)). Routing judgment: the `handoff` skill.
 
 ## Old command names
 
-`new-session`, `session-send`, `session-handoff ready` and `session-doctor reap` are symlinks to
-`crss-compat` for callers outside this repo (the bus router). They accept `ah_NAME` or `ah-NAME`.
-Don't use them in new work.
+`new-session`, `session-send`, `session-handoff ready`, `session-doctor reap` and `session-preserve`
+(retired: it only prints a notice) are symlinks to `crss-compat` for outside callers. They accept
+`ah_NAME` or `ah-NAME`. Don't use them in new work.
 
 ## What not to do
 
@@ -65,8 +66,8 @@ Don't use them in new work.
   `up` and `reap`.
 - Don't `tmux kill-session` a session you mean to retire: its state file brings it back within 5
   minutes. Use `crss reap`.
-- Don't delete `session/*` branches, and don't run `git worktree remove` on a session worktree
-  (it deletes ignored files).
+- Don't delete `session/*` branches or run `git worktree remove` on a session worktree
+  ([why](references/troubleshooting.md#compact-or-recycle)).
 
 ## Setup
 
@@ -85,6 +86,6 @@ CRSS_DEFAULT_ARGS="--dangerously-skip-permissions --exclude-dynamic-system-promp
 export CLAUDE_CODE_AUTO_COMPACT_WINDOW=234000
 ```
 
-Between Claude sessions, the SendMessage tool with `to: "uds:<socket>"` delivers directly (the
+Between Claude sessions on one machine, the SendMessage tool with `to: "uds:<socket>"` delivers directly (the
 socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
 crss once a script can send to it, it shows on the phone, and it survives a reboot.

@@ -5,7 +5,7 @@ Read `$CRSS_HOME/local.md` first if it exists.
 
 Slots: `{goal}` the outcome in one sentence; `{why}` one clause of real motivation;
 `{finish_line}` the checkable state that means done; `{escalation_channel}` a concrete command, such
-as `crss send <launcher> --file F` (a desktop or bus launcher is not reachable that way; name its
+as `crss send <launcher> --file F` (a launcher that is not a crss session is not reachable that way; name its
 channel from `$CRSS_HOME/local.md`); `{project_guardrails}` the project's own `CLAUDE.md` or
 `AGENTS.md` rules. For a Claude child whose workdir is inside the repo, name the section (it
 auto-loads); for anything else, paste the block or give a readable path.
@@ -18,14 +18,13 @@ GOAL: {goal}
 FINISH LINE: {finish_line}
 {project_guardrails}
 CONTEXT: {where things live, what's decided. Preferences labelled "preference, not a target".}
-ROLES: you orchestrate. Delegate independent slices by references/orchestration-flow.md (Codex
-terra low builds, Haiku low repairs a failed check; Claude fallback `subagent_type: builder`).
-Brief each subagent fully; nothing else crosses over. Subagents write large output to files and
+ROLES: you orchestrate. Delegate independent slices by the roles in references/orchestration-flow.md
+(builder, read-only scanner, independent reviewer). Brief each subagent fully; nothing else crosses over. Subagents write large output to files and
 return a summary plus path. Don't delegate a builder's own verification back to itself.
 TASKS.md: keep one untracked at your worktree root with the finish line on top; re-read after any
 compaction. If you write your own compaction summary keep: problems and fixes, options dropped and
 why, exact decisions, current state, what's open, hard-to-rebuild names and paths.
-ESCALATION: operator-owned items go to {escalation_channel} as a numbered list with a recommended
+ESCALATION: items that are the user's to decide go to {escalation_channel} as a numbered list with a recommended
 option. Decide ordinary defaults yourself and report them afterwards.
 STOP RULE: keep going on steps that need no outside decision, with status in the same message as
 your next action. Stop and ask only for a decision that is {escalation_channel}'s, or before
@@ -49,8 +48,9 @@ every claim. A decision only {escalation_channel} can make goes in the report, n
 
 ## (c) Independent reviewer (one-shot on a frozen packet)
 
-Use one gpt-6.1-sol call or Fable (`agents/reviewer.md`, lifted 2026-11-10). Give the
-diff or decision, not your conclusion.
+Use one call to an independent reviewer (`agents/reviewer.md`; rule in
+[`spawn-guide.md`](../../references/spawn-guide.md#second-opinions)). Give the diff or decision, not
+your conclusion.
 
 ```
 Review {diff / decision / transcript} for {the actual question}. Context: {why it matters,

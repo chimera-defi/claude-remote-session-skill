@@ -9,7 +9,7 @@ If the user named a project or folder, use it. Otherwise ask which folder the se
    commit in:
    ```bash
    crss spawn NAME DIR --model sonnet [--worktree] [--brief FILE]
-   # orchestrator: --model claude-opus-5-5 -- --effort medium; sweeps: --model haiku
+   # examples: planner: --model opus -- --effort medium; sweeps: --model haiku
    ```
    If `crss` is not on `PATH`, install it from this repo: `install -m 755 scripts/crss.sh ~/.local/bin/crss`.
    Do not hand-roll a tmux session or a systemd unit.
