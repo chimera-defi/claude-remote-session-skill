@@ -83,7 +83,7 @@ Also restate any rule the brief depends on; a worker will not infer it. Shapes f
 7. **Report:** what landed, what was redeployed, what is left, which models ran, and numbered decisions
    each with a recommended option.
 
-Ask the operator, with a recommendation, only for irreversible, outward-facing or
+Ask the user, with a recommendation, only for irreversible, outward-facing or
 conflicting-requirement decisions; otherwise decide and report
 ([kickoff-templates](../handoff/references/kickoff-templates.md)). Revisit your
 routing when a job type's pass rate drops, costs drift, or a new model lands.
