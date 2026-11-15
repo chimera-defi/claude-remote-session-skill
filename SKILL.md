@@ -31,7 +31,9 @@ crss reap NAME [--force]
 title. By default Claude titles each session itself (`crss ls` shows the title in its last
 column), and the title survives `crss restart`. `--title T` sets the first title; `CRSS_NAMES=plain` (config file or environment, read
 at spawn) names it `ah-NAME` instead. Sessions spawned before this keep `ah-NAME`. Rename a live
-one: `crss send NAME "/rename New title"`. `crss SUB --help` prints usage.
+one: `crss send NAME "/rename New title"`. On an `ah-NAME` session the rename lasts until its next
+restart; to keep it, add the line `NAMES=auto` to its state file first (a loop started by an older
+`crss` reads that line only after its tmux session is recreated). `crss SUB --help` prints usage.
 
 Use `crss wait` and `crss peek` instead of a sleep loop or a raw `tmux capture-pane`. Idle means the
 turn ended (and, for a session spawned with `--brief`, that the brief was sent), not that the task
