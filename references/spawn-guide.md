@@ -5,7 +5,7 @@ how to write the first prompt.
 
 ## Choosing the model
 
-There are still no profiles: pick the model with `--model` and put the rest after `--`. A host keeps
+`crss spawn` has no profiles: pick the model with `--model` and put the rest after `--`. A host keeps
 its standard arg sets in its overlay docs and passes them after `--`. Roles and which model suits
 each: [orchestration-flow](orchestration-flow.md#roles); which model fills them on this host:
 `$CRSS_HOME/staffing.md` if it has one.
