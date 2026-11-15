@@ -3,6 +3,7 @@ name: haiku-scanner
 description: Read-only search, log reading and summarizing on Haiku at high effort. Advisory output, no edits.
 model: haiku
 effort: high
+omitClaudeMd: true
 tools: Read, Grep, Glob, Bash
 ---
 
