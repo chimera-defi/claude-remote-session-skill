@@ -5,17 +5,17 @@ how to write the first prompt.
 
 ## Choosing the model
 
-`crss spawn` has no profiles: pick the model with `--model` and put the rest after `--`. A host keeps
+`crss spawn` has no profiles: pick the model and effort with `--model` and `--effort`, and put other claude flags after `--`. A host keeps
 its standard arg sets in its overlay docs and passes them after `--`. Roles and which model suits
 each: [orchestration-flow](orchestration-flow.md#roles); which model fills them on this host:
 `$CRSS_HOME/staffing.md` if it has one.
 
 | Job | Example launch (model ids and the `--advisor` id are examples) |
 |---|---|
-| Planner, risky or ambiguous design | `--model opus -- --effort medium` (high only at risky forks) |
+| Planner, risky or ambiguous design | `--model opus --effort medium` (high only at risky forks) |
 | Long-lived lane owner or hub | `--model sonnet -- --advisor claude-opus-5-5` |
-| Debugging or review in one repo; fallback builder | `--model sonnet -- --effort low` |
-| Mechanical, doc-only, sweeps | `--model haiku -- --effort low` |
+| Debugging or review in one repo; fallback builder | `--model sonnet --effort low` |
+| Mechanical, doc-only, sweeps | `--model haiku --effort low` |
 
 - Aliases (CLI 2.1.308): `sonnet opus haiku fable best sonnet[1m] opus[1m] fable[1m] opusplan`.
   There is no `auto` router. `--fallback-model a,b` handles overload only.
@@ -96,5 +96,6 @@ any decision, approval, merge or credential the lane needs, then read the rest.
 ## Naming
 
 NAME is lowercase letters, digits and dashes (`cmd_spawn` in `scripts/crss.sh` checks it). Nothing
-adds a date suffix, so pick a name that is unique and readable on a phone. `--worktree` branches are
-`session/NAME`, so a reused name is refused while the branch exists.
+adds a date suffix, so pick a name that is unique and short to type. The app lists the session by
+its title, not NAME ([names](../SKILL.md#commands)). `--worktree` branches are `session/NAME`, so a
+reused name is refused while the branch exists.
