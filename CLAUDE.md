@@ -51,8 +51,8 @@ reason you can explain is not a reason to stop; one you can't explain is.
 - **`cp`/`install` over `~/.local/bin/<x>` without diffing first.** Deployed copies drift both ways.
 - **`git log @{u}..` to decide whether work is pushed.** No upstream prints nothing. Use
   `git log HEAD --not --remotes` and check `git remote`.
-- **Deleting a `session/*` branch, or removing a session's worktree by hand.** The branch keeps a
-  reaped session's commits reachable; `git worktree remove` deletes ignored results, and the timer
+- **Deleting a `session/*` or research branch, or removing a session's worktree by hand.** The
+  branch keeps a reaped session's commits reachable; `git worktree remove` deletes ignored results, and the timer
   restarts the session into the missing folder. Use `crss reap`
   ([details](references/troubleshooting.md#compact-or-recycle)).
 - **`git cherry` / patch-id to decide a branch is landed.** Squash merges

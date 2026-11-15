@@ -16,8 +16,10 @@ If the user named a project or folder, use it. Otherwise ask which folder the se
    Do not hand-roll a tmux session or a systemd unit.
 
 You are done when `crss ls NAME` shows `idle`, `busy` or `shell` with a version and a session id
-(`crss wait NAME --timeout 60` waits for idle). If it shows `down` or `?` (no live claude) after a
-minute, run `crss peek NAME` and say what failed. Don't report success.
+(`crss wait NAME --timeout 60` waits for idle). If it still shows `?` (tmux up, no
+live claude) after a minute, run `crss peek NAME` and say what the pane shows. If it shows `down`
+(no tmux session, so nothing to peek), run `crss up NAME` and check again. Don't report success
+until the first check holds.
 
 Then tell the user to connect from Claude Code → Remote sessions. The session is listed under the
 title in `crss ls`, or `ah-NAME` when `CRSS_NAMES=plain`.

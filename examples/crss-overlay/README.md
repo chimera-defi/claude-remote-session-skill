@@ -30,15 +30,19 @@ Keep `crss-host.md` tiny since it loads into every session. Host facts never go 
 
 ## Env knobs
 
-The variables the scripts read. `crss` reads each from the environment or from `crss.env` (except
-`CRSS_CONFIG`, which must be in the environment); `crss-compat` reads only the environment.
+The variables the scripts read. `crss` takes each from `crss.env` or from the environment of the
+command you run (except `CRSS_CONFIG`, which must be in the environment). The restart loop runs
+inside the tmux pane and gets only `CRSS_STATE` and `CRSS_CONFIG` from the command that started it,
+so set `CRSS_CLAUDE`, `CRSS_BACKOFF` and `CRSS_PAUSE` in `crss.env`: exported in your shell they don't
+reach it. The loop sources `crss.env` once, so a change there applies when the tmux session is
+recreated (end `ah_NAME`, then `crss up NAME`). `crss-compat` reads only the environment.
 
 | Variable | Read by | Effect (default) |
 |---|---|---|
 | `CRSS_CONFIG` | `crss` | the env file sourced first (`~/.config/crss/crss.env`) |
 | `CRSS_STATE` | `crss` | folder for per-session state files (`${XDG_STATE_HOME:-~/.local/state}/crss`) |
 | `CRSS_DEFAULT_ARGS` | `crss spawn` | launch arguments every new session starts with; copied into the session's state file at spawn |
-| `CRSS_CLAUDE` | `crss` | the claude command (`claude`) |
+| `CRSS_CLAUDE` | restart loop | the claude command (`claude`) |
 | `CRSS_TMUX` | `crss` | the tmux command (`tmux`) |
 | `CRSS_NO_SYSTEMD` | `crss` | set to skip `systemd-run` scoping of new tmux sessions |
 | `CRSS_NAMES` | `crss spawn` | `auto` (default): Claude titles the session; `plain`: it is named `ah-NAME`. Any other value is an error; `--title` forces `auto`. `auto` is written to the state file as `NAMES=auto`; a state file without it (older sessions) keeps `ah-NAME` |
