@@ -93,7 +93,7 @@ echo 'art/' >>"$T/repo/.git/info/exclude"; mkdir "$(wt r3)/art"; echo result >"$
 check "reap pushed: worktree removed, branch kept" bash -c "[ ! -d '$(wt r3)' ] && git -C '$T/repo' rev-parse -q --verify session/r3 >/dev/null"
 check "reap: ignored files archived first" grep -qx art/x <(tar -tzf "$HOME"/backups/reaped-worktree-ignored/r3-*.tgz)
 
-# 4. old command names, as the bus router and spawn_orchestrator call them
+# 4. old command names, as outside callers use them
 mkdir -p "$T/bin" "$T/ws/proj"
 for x in new-session session-send session-handoff session-doctor; do ln -s "$ROOT/scripts/crss-compat.sh" "$T/bin/$x"; done
 export CRSS_BIN=$C CRSS_WORKSPACE=$T/ws
@@ -116,4 +116,53 @@ out=$("$T/bin/session-send" ah_ext hi-ext); check "session-send: reaches a sessi
 "$C" restart ext >/dev/null 2>&1; check "restart: refuses a session with no env file" [ $? != 0 ]
 idle "${S#ah_}"; "$T/bin/session-doctor" reap "$S" >/dev/null
 check "session-doctor reap: session gone" [ ! -e "$CRSS_STATE/${S#ah_}.env" ]
+# 5. naming: Claude titles by default, plain on request, --title only on the first launch; peek, wait, filters
+export CRSS_POLL=1
+sidf() { sed -n 's/^SID=//p' "$CRSS_STATE/$1.env"; }
+argv() { grep -F "$(sidf "$1")" "$FAKE_LOG.args" | tail -1; }
+argq() { jq -e "$2" <<<"$(argv "$1")" >/dev/null; } # NAME JQ-FILTER over the last argv claude got
+tj() { "$C" ls --json | jq -r --arg n "$1" '.[]|select(.name==$n)|.title'; }
+"$C" spawn n1 "$T/work" >/dev/null; idle n1
+check "names auto: bare --remote-control then --session-id, no -n" argq n1 'index("--remote-control") as $i | .[$i+1]=="--session-id" and index("-n")==null'
+check "names auto: env file says so" grep -qx NAMES=auto "$CRSS_STATE/n1.env"
+CRSS_NAMES=plain "$C" spawn n2 "$T/work" >/dev/null; idle n2
+check "names plain: ah-N flags" argq n2 'index("--remote-control") as $i | .[$i+1]=="ah-n2" and .[$i+2]=="-n" and .[$i+3]=="ah-n2"'
+printf 'DIR=%q\nSID=%s\nARGS=()\nENVS=()\n' "$T/work" "$(cat /proc/sys/kernel/random/uuid)" >"$CRSS_STATE/n3.env"; "$C" up n3 >/dev/null; idle n3
+check "env file without NAMES: ah-N flags" argq n3 'index("--remote-control") as $i | .[$i+1]=="ah-n3" and .[$i+2]=="-n" and .[$i+3]=="ah-n3"'
+"$C" spawn n4 "$T/work" --title "Fix the thing" --effort high >/dev/null; idle n4
+check "--title: first launch names the session" argq n4 'index("--remote-control") as $i | .[$i+1]=="Fix the thing" and .[$i+2]=="-n" and .[$i+3]=="Fix the thing" and (index("--effort") as $e | .[$e+1]=="high")'
+"$C" send n4 hi >/dev/null; idle n4; "$C" restart n4 >/dev/null
+check "--title: resume uses the bare flag" argq n4 'index("--remote-control") as $i | .[$i+1]=="--resume" and index("-n")==null'
+check "ls title: falls back to the spawn title" [ "$(tj n4)" = "Fix the thing" ]
+S1=$(sidf n1); mkdir -p "$HOME/.claude/projects/p"
+echo '{"type":"ai-title","aiTitle":"Tmux session naming schemes","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: ai-title shows" [ "$(tj n1)" = "Tmux session naming schemes" ]
+echo '{"type":"custom-title","customTitle":"Fleet naming study","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: custom-title wins" [ "$(tj n1)" = "Fleet naming study" ]
+out=$("$C" ls n1); check "ls NAME: one row, title last" bash -c "[ \"\$(wc -l <<<'$out')\" = 1 ] && [[ '$out' == n1\ *'Fleet naming study' ]]"
+tmux -L "$SOCK" new-session -d -s ah_pk -x 80 -y 20 "echo peekmark-xyz; sleep 600"
+check "peek: header and pane text" wait_for 10 '[[ "$("$C" peek pk 5)" == "pk "*peekmark-xyz* ]]'
+"$C" peek nosuch 2>/dev/null; check "peek: unknown session refused with 2" [ $? = 2 ]
+out=$("$C" wait n1); check "wait: idle session returns 0" [ $? = 0 ]
+check "wait: prints NAME STATUS" [ "$out" = "n1 idle" ]
+"$C" spawn w1 "$T/work" >/dev/null; "$C" wait w1 --timeout 30 >/dev/null
+check "wait: after spawn, not before the session record exists" bash -c "grep -lq '$(sidf w1)' '$HOME'/.claude/sessions/*.json"
+"$C" send w1 work >/dev/null; "$C" wait w1 --timeout 1 >/dev/null; check "wait: --timeout on a busy session exits 1" [ $? = 1 ]
+out=$("$C" spawn --help); check "spawn --help: exit 0, not a bad-name error" [ $? = 0 ]
+check "spawn --help: usage text" grep -q 'crss spawn NAME DIR' <<<"$out"
+"$C" wait >/dev/null 2>&1; check "wait: no names is a usage error" [ $? = 2 ]
+"$C" send w1 work >/dev/null; timeout 10 "$C" wait w1 --timeout 5m >/dev/null 2>&1
+check "wait: a non-numeric --timeout is a usage error, not an endless poll" [ $? = 2 ]
+echo brief >"$T/b"; "$C" spawn b1 "$T/work" --brief "$T/b" >/dev/null; idle b1
+"$C" wait b1 --timeout 3 >/dev/null; check "wait: idle before the brief landed is not done" [ $? = 1 ]
+echo '{}' >"$HOME/.claude/projects/p/$(sidf b1).jsonl"; "$C" wait b1 --timeout 10 >/dev/null
+check "wait: done once the brief has a transcript" [ $? = 0 ]
+out=$("$C" spawn n5 "$T/work" --title 2>&1); check "spawn: a flag without its value is named" grep -q 'needs a value' <<<"$out"
+out=$("$C" spawn n5 "$T/work" --title --x 2>&1); check "spawn: a title starting with - is refused" grep -q 'cannot start' <<<"$out"
+"$C" ls --jsno >/dev/null 2>&1; check "ls: unknown option is an error" [ $? = 1 ]
+echo '{"type":"ai-title","aiTit' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: a half-written last line does not lose the title" [ "$(tj n1)" = "Fleet naming study" ]
+printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
+echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
+check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]
 exit $F

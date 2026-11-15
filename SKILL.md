@@ -6,8 +6,8 @@ description: "Use to start, message, list, restart or retire long-lived Claude s
 # crss: long-lived Claude sessions
 
 One script, `crss`, runs every long-lived session. Each is a tmux session `ah_NAME` running
-`claude --remote-control ah-NAME` in a restart loop; it shows in the Claude app under Remote
-sessions as `ah-NAME` and comes back after a crash or reboot.
+`claude --remote-control` in a restart loop; it shows in the Claude app under Remote sessions
+with the descriptive title Claude gives it, and comes back after a crash or reboot.
 
 State is one file per session, `~/.local/state/crss/NAME.env` (folder, launch arguments,
 conversation id). No registry, no per-session units: `crss-up.timer` (every 5 minutes) and
@@ -16,13 +16,23 @@ conversation id). No registry, no per-session units: `crss-up.timer` (every 5 mi
 ## Commands
 
 ```bash
-crss spawn NAME DIR [--model M] [--worktree] [--brief FILE] [-- extra claude args]
+crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [--json]                 # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder
+crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title
+crss peek NAME [LINES]           # status line + last LINES (30) non-blank pane lines
+crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
 ```
+
+**Names:** by default Claude titles each session itself, and the app shows that title (kept across
+restarts). `--title T` sets the first one; `CRSS_NAMES=plain` at spawn names it `ah-NAME` instead;
+sessions spawned before this keep `ah-NAME`. Rename a live one: `crss send NAME "/rename New title"`.
+`crss SUB --help` prints usage.
+
+Use `crss wait` and `crss peek` instead of a sleep loop or a raw `tmux capture-pane`. Idle means the
+turn ended, not that the task is done: read the report or the result before you rely on it.
 
 `crss ls` also lists `ah_*` sessions started by other tools: `send` reaches them, `restart` and
 `reap` don't.
