@@ -11,21 +11,24 @@ CRSS_CLAUDE=${CRSS_CLAUDE:-claude}
 
 usage() {
   cat <<'H'
-crss spawn NAME DIR [--model M] [--worktree] [--brief FILE] [-- extra claude args]
+crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
-crss ls [--json]                  NAME STATUS VERSION SID DIR (also ah_* sessions started by other tools)
+crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools)
+crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
+crss wait NAME... [--timeout S]   until each is idle (turn over, brief sent), on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
 crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same session id
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
-State in $CRSS_STATE/NAME.env; tmux session ah_NAME, phone name ah-NAME. Config: $CRSS_CONFIG (default
+State in $CRSS_STATE/NAME.env; tmux session ah_NAME. Config: $CRSS_CONFIG (default
 ~/.config/crss/crss.env) may set CRSS_STATE, CRSS_DEFAULT_ARGS. CRSS_NO_SYSTEMD=1 skips systemd-run.
+CRSS_NAMES=auto|plain (spawn; default auto): Claude titles the session itself, or ah-NAME. Rename: crss send NAME "/rename T"
 H
 }
 die() { echo "crss: $*" >&2; exit 1; }
 tm() { $CRSS_TMUX "$@"; }
 envf() { echo "$CRSS_STATE/$1.env"; }
 need() { [ -f "$(envf "$1")" ] || die "no such session: $1"; }
-load() { need "$1"; DIR='' WT='' SID='' BRIEF=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
+load() { need "$1"; DIR='' WT='' SID='' BRIEF='' NAMES='' TITLE=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
 names() {
   if [ $# -gt 0 ]; then printf '%s\n' "$@"; return; fi
   local f; for f in "$CRSS_STATE"/*.env; do [ -e "$f" ] && basename "$f" .env; done; return 0
@@ -50,6 +53,15 @@ sync_sid() {
   local s; load "$1"; s=$(field "$1" sessionId)
   if [ -n "$s" ] && [ "$s" != "$SID" ]; then sed -i "s|^SID=.*|SID=$s|" "$(envf "$1")"; SID=$s; fi
 }
+# session title: latest custom title, else latest AI title in the transcript tail, else the spawn title
+title_of() { # NAME, with or without an env file
+  local SID='' TITLE='' f='' t=''
+  if [ -f "$(envf "$1")" ]; then load "$1"; else SID=$(field "$1" sessionId); fi
+  [ -z "$SID" ] || f=$(compgen -G "$HOME/.claude/projects/*/$SID.jsonl" | head -1 || true)
+  [ -z "$f" ] || t=$(tail -n 400 "$f" | { grep -E '^\{"type":"(custom|ai)-title"' || true; } |
+    jq -rs '(map(.customTitle // empty) | last) // (map(.aiTitle // empty) | last) // empty' 2>/dev/null || true)
+  t=${t:-$TITLE}; echo "${t//[$'\t\n']/ }"
+}
 paste_to() { # NAME FILE
   tm load-buffer -b "crss-$$" "$2"
   tm paste-buffer -p -d -b "crss-$$" -t "=ah_$1:"
@@ -58,13 +70,15 @@ paste_to() { # NAME FILE
 }
 
 cmd_spawn() {
-  local n=${1:-} dir=${2:-} model='' wt='' brief='' extra=() args=() sid
+  local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' extra=() args=() sid nm=${CRSS_NAMES:-auto}
   [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
   [ -d "$dir" ] || die "no such dir: $dir"
   shift 2
   while [ $# -gt 0 ]; do
     case $1 in
       --model) model=$2; shift 2 ;;
+      --effort) effort=$2; shift 2 ;;
+      --title) title=$2; shift 2 ;;
       --worktree) wt=1; shift ;;
       --brief) brief=$2; [ -r "$brief" ] || die "cannot read $brief"; shift 2 ;;
       --) shift; extra=("$@"); break ;;
@@ -72,6 +86,8 @@ cmd_spawn() {
     esac
   done
   [ -e "$(envf "$n")" ] && die "$n already exists"
+  case $nm in auto | plain) ;; *) die "CRSS_NAMES must be auto or plain, not '$nm'" ;; esac
+  if [ -n "$title" ]; then nm=auto; fi
   dir=$(cd "$dir" && pwd -P)
   if [ -n "$wt" ]; then
     local base=HEAD
@@ -83,6 +99,7 @@ cmd_spawn() {
   fi
   read -ra args <<<"${CRSS_DEFAULT_ARGS:-}"
   [ -n "$model" ] && args+=(--model "$model")
+  [ -n "$effort" ] && args+=(--effort "$effort")
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
   mkdir -p "$CRSS_STATE"
@@ -93,6 +110,8 @@ cmd_spawn() {
     echo "SID=$sid"
     echo "ARGS=($([ ${#args[@]} -gt 0 ] && printf '%q ' "${args[@]}"))"
     echo "ENVS=()"
+    [ "$nm" = auto ] && echo "NAMES=auto"
+    [ -n "$title" ] && echo "TITLE=$(printf %q "$title")"
     [ -n "$brief" ] && echo "BRIEF=$(printf %q "$brief")"
   } >"$(envf "$n")"
   cmd_up "$n"
@@ -130,7 +149,7 @@ P
 
 # runs inside the pane
 cmd_loop() {
-  local n=$1 t0 a rc
+  local n=$1 t0 a rc first
   set -m # claude gets its own foreground process group, so the pane reports "claude", not "bash"
   while [ -f "$(envf "$n")" ]; do
     load "$n"; t0=$SECONDS
@@ -138,9 +157,19 @@ cmd_loop() {
       rc=0; "${CMD[@]}" || rc=$?
     else
       trust "$DIR" || echo "crss: could not pre-trust $DIR; answer the trust dialog"
-      a=("${ARGS[@]}" --remote-control "ah-$n" -n "ah-$n")
+      first=1; if compgen -G "$HOME/.claude/projects/*/$SID.jsonl" >/dev/null; then first=''; fi
+      a=("${ARGS[@]}")
+      # NAMES=auto: a bare --remote-control lets Claude title the session (-n would stop that). The
+      # flag takes an optional value, so --resume or --session-id must follow it directly.
+      if [ "$NAMES" != auto ]; then
+        a+=(--remote-control "ah-$n" -n "ah-$n")
+      elif [ -n "$first" ] && [ -n "$TITLE" ]; then
+        a+=(--remote-control "$TITLE" -n "$TITLE")
+      else
+        a+=(--remote-control)
+      fi
       # resume once the conversation has a transcript; until then start it under SID, with the brief
-      if compgen -G "$HOME/.claude/projects/*/$SID.jsonl" >/dev/null; then
+      if [ -z "$first" ]; then
         a+=(--resume "$SID")
         if [ -n "$BRIEF" ]; then sed -i '/^BRIEF=/d' "$(envf "$n")"; rm -f "$BRIEF"; fi # brief is sent once
       else
@@ -165,33 +194,66 @@ cmd_up() {
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
     if tm has-session -t "=ah_$n" 2>/dev/null; then sync_sid "$n"; continue; fi
-    cmd="env CRSS_STATE=$(printf %q "$CRSS_STATE") $(printf %q "$SELF") _loop $n"
+    cmd="env CRSS_STATE=$(printf %q "$CRSS_STATE") ${CRSS_CONFIG:+CRSS_CONFIG=$(printf %q "$CRSS_CONFIG")} $(printf %q "$SELF") _loop $n"
     "${scope[@]}" $CRSS_TMUX new-session -d -s "ah_$n" -x 220 -y 50 -c "$DIR" "$cmd"
     echo "$n: started"
   done
 }
 
 cmd_ls() {
-  local n st v x rows=
+  local n st v x t json='' filt=() rows='' a b c d e f
+  for a in "$@"; do if [ "$a" = --json ]; then json=1; else filt+=("$a"); fi; done
+  want() { [ ${#filt[@]} -eq 0 ] || [[ " ${filt[*]} " == *" $1 "* ]]; }
   for n in $(names); do
+    want "$n" || continue
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
     if tm has-session -t "=ah_$n" 2>/dev/null; then
       st=$(field "$n" status); v=$(field "$n" version)
       sync_sid "$n"
     else st=down v=; fi
-    rows+="$n	${st:-?}	${v:--}	$SID	$DIR"$'\n'
+    rows+="$n	${st:-?}	${v:--}	$SID	$DIR	$(title_of "$n")"$'\n'
   done
   for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
     [ -e "$(envf "$n")" ] && continue
-    st=$(field "$n" status); v=$(field "$n" version); x=$(field "$n" sessionId)
-    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')"$'\n'
+    want "$n" || continue
+    st=$(field "$n" status); v=$(field "$n" version); x=$(field "$n" sessionId); t=$(title_of "$n")
+    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	$t"$'\n'
   done
-  if [ "${1:-}" = --json ]; then
-    printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4]})'
+  if [ -n "$json" ]; then
+    printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], title:(.[5] // "")})'
   else
-    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e; do printf '%-16s %-5s %-10s %.8s %s\n' "$a" "$b" "$c" "$d" "$e"; done
+    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
   fi
+}
+cmd_peek() { # exit 2 when there is no such session
+  local n=${1:-} k=${2:-30} st=down t
+  [ -f "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: no such session: $n" >&2; return 2; }
+  if tm has-session -t "=ah_$n" 2>/dev/null; then st=$(field "$n" status); st=${st:-?}; fi
+  t=$(title_of "$n"); echo "$n $st ${t:--}"
+  if [ "$st" != down ]; then tm capture-pane -p -S - -t "=ah_$n:" | { grep -v '^[[:space:]]*$' || true; } | tail -n "$k"; fi
+}
+# settled: tmux gone, a dialog open, or idle on two polls in a row with the brief sent (its transcript exists)
+cmd_wait() {
+  local ns=() to=1800 t0=$SECONDS n st rc=0 left
+  declare -A idl=() last=()
+  while [ $# -gt 0 ]; do case $1 in --timeout) to=$2; shift 2 ;; *) ns+=("$1"); shift ;; esac; done
+  [ ${#ns[@]} -gt 0 ] || die "usage: crss wait NAME... [--timeout S]"
+  sent() { ! grep -qs '^BRIEF=' "$(envf "$1")" || compgen -G "$HOME/.claude/projects/*/$(field "$1" sessionId).jsonl" >/dev/null; }
+  while :; do
+    left=0
+    for n in "${ns[@]}"; do
+      if ! tm has-session -t "=ah_$n" 2>/dev/null; then last[$n]=down; continue; fi
+      st=$(field "$n" status); last[$n]=${st:-?}
+      if [ "$st" = idle ] && sent "$n"; then idl[$n]=$((${idl[$n]:-0} + 1)); else idl[$n]=0; fi
+      if [ "$st" != waiting ] && [ "${idl[$n]}" -lt 2 ]; then left=1; fi
+    done
+    [ "$left" = 1 ] || break
+    if [ $((SECONDS - t0)) -ge "$to" ]; then rc=1; break; fi
+    sleep "${CRSS_POLL:-2}"
+  done
+  for n in "${ns[@]}"; do echo "$n ${last[$n]}"; [ "${last[$n]}" = idle ] || [ "$rc" = 1 ] || rc=2; done
+  return $rc
 }
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
@@ -284,11 +346,14 @@ cmd_reap() {
 }
 
 c=${1:-help}; [ $# -gt 0 ] && shift
+if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then if [ "$c" != _loop ]; then usage; exit 0; fi; fi
 case $c in
   spawn) cmd_spawn "$@" ;;
   _loop) cmd_loop "$@" ;;
   up) cmd_up "$@" ;;
   ls) cmd_ls "$@" ;;
+  peek) cmd_peek "$@" ;;
+  wait) cmd_wait "$@" ;;
   send) cmd_send "$@" ;;
   restart) cmd_restart "$@" ;;
   reap) cmd_reap "$@" ;;
