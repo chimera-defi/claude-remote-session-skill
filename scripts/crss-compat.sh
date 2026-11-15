@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Old crss command names, kept only for callers outside this repo (the bus router and its
-# spawn_orchestrator). Installed as symlinks named new-session, session-send,
+# Old crss command names, kept only for callers outside this repo. Installed as symlinks named new-session, session-send,
 # session-handoff, session-doctor and session-preserve; each translates the argv those callers use.
 # Everything else should call crss directly.
 set -euo pipefail
@@ -49,7 +48,7 @@ new_session() { # FOLDER [workspace|sessions|auto] [--alias A] [--tier T] [--tas
     m=(--model "$CLAUDE_SESSION_MODEL"); [[ $CLAUDE_SESSION_MODEL == *opus* ]] && m+=(--effort medium)
   fi
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 && wt=(--worktree)
-  # a launcher that is a session gets reports back; any other (bus watchdog, desktop) says how in the brief
+  # a launcher that is a session gets reports back; any other says how in the brief
   if [ -n "$brief" ] && [ -n "$launcher" ] && [[ $taken == *$'\n'$(base "$launcher")$'\n'* ]]; then
     t=$(mktemp); trap 'rm -f "$t"' EXIT; { printf 'Launcher: %s. Send questions and your final report with: session-send %s --file F\n\n' "$launcher" "$launcher"; cat "$brief"; } >"$t"; brief=$t
   fi
@@ -65,7 +64,7 @@ case $(basename "$0") in
   session-send)
     [ $# -gt 0 ] || die "usage: session-send SESSION (MSG | --file F)"
     n=$(base "$1"); shift; exec "$CRSS" send "$n" "$@" ;;
-  session-handoff) # bus consumer: exit 0 = safe to paste, else "reason=..."
+  session-handoff) # outside callers poll this: exit 0 = safe to paste, else "reason=..."
     [ "${1:-}" = ready ] && [ -n "${2:-}" ] || die "only 'session-handoff ready SESSION' is kept; use crss send"
     case $(ls_field "$(base "$2")" status) in
       idle) echo "ready: $2 SAFE"; exit 0 ;;
@@ -78,7 +77,7 @@ case $(basename "$0") in
   session-doctor)
     case ${1:-} in
       reap) [ -n "${2:-}" ] || die "usage: session-doctor reap SESSION"; n=$(base "$2"); shift 2; exec "$CRSS" reap "$n" "$@" ;;
-      idle-report | land-check) exit 0 ;; # no idle scan any more: the bus reaper then finds no candidates
+      idle-report | land-check) exit 0 ;; # no idle scan any more: a caller's reaper then finds no candidates
       *) die "${1:-} is retired; use crss ls, crss reap or crss restart" ;;
     esac ;;
   session-preserve) echo "session-preserve is retired: crss reap keeps any worktree with unpushed or uncommitted work"; exit 1 ;;
