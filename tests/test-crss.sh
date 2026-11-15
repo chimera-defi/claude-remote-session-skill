@@ -150,5 +150,19 @@ check "wait: after spawn, not before the session record exists" bash -c "grep -l
 "$C" send w1 work >/dev/null; "$C" wait w1 --timeout 1 >/dev/null; check "wait: --timeout on a busy session exits 1" [ $? = 1 ]
 out=$("$C" spawn --help); check "spawn --help: exit 0, not a bad-name error" [ $? = 0 ]
 check "spawn --help: usage text" grep -q 'crss spawn NAME DIR' <<<"$out"
-"$C" wait >/dev/null 2>&1; check "wait: no names is a usage error" [ $? = 1 ]
+"$C" wait >/dev/null 2>&1; check "wait: no names is a usage error" [ $? = 2 ]
+"$C" send w1 work >/dev/null; timeout 10 "$C" wait w1 --timeout 5m >/dev/null 2>&1
+check "wait: a non-numeric --timeout is a usage error, not an endless poll" [ $? = 2 ]
+echo brief >"$T/b"; "$C" spawn b1 "$T/work" --brief "$T/b" >/dev/null; idle b1
+"$C" wait b1 --timeout 3 >/dev/null; check "wait: idle before the brief landed is not done" [ $? = 1 ]
+echo '{}' >"$HOME/.claude/projects/p/$(sidf b1).jsonl"; "$C" wait b1 --timeout 10 >/dev/null
+check "wait: done once the brief has a transcript" [ $? = 0 ]
+out=$("$C" spawn n5 "$T/work" --title 2>&1); check "spawn: a flag without its value is named" grep -q 'needs a value' <<<"$out"
+out=$("$C" spawn n5 "$T/work" --title --x 2>&1); check "spawn: a title starting with - is refused" grep -q 'cannot start' <<<"$out"
+"$C" ls --jsno >/dev/null 2>&1; check "ls: unknown option is an error" [ $? = 1 ]
+echo '{"type":"ai-title","aiTit' >>"$HOME/.claude/projects/p/$S1.jsonl"
+check "ls title: a half-written last line does not lose the title" [ "$(tj n1)" = "Fleet naming study" ]
+printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
+echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
+check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]
 exit $F
