@@ -29,7 +29,7 @@ crss reap NAME [--force]
 
 **Names:** NAME is for `crss` and tmux (`ah_NAME`). In the app, a session is listed by its
 title. By default Claude titles each session itself (`crss ls` shows the title in its last
-column). `--title T` sets the first title; `CRSS_NAMES=plain` (config file or environment, read
+column), and the title survives `crss restart`. `--title T` sets the first title; `CRSS_NAMES=plain` (config file or environment, read
 at spawn) names it `ah-NAME` instead. Sessions spawned before this keep `ah-NAME`. Rename a live
 one: `crss send NAME "/rename New title"`. `crss SUB --help` prints usage.
 

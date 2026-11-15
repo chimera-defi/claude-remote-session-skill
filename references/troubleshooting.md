@@ -35,7 +35,7 @@ For a silent session run `crss ls NAME`, then `crss peek NAME` and match the sha
   branches; they keep a reaped session's commits reachable.
 - **Don't paste onto a draft.** An idle prompt can hold an unsent draft or dim autosuggest text;
   `tmux capture-pane -p -e -t =ah_NAME:` shows dim as `ESC[2m` (placeholder, safe) versus real text;
-  `crss peek` strips escapes, so it can't tell them apart.
+  `crss peek` prints plain text, so it can't tell them apart.
   `crss send` checks status only, not the input box.
 
 ### Auto-compact
