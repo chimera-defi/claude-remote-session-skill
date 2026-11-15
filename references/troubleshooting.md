@@ -1,6 +1,6 @@
 # Troubleshooting
 
-For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and match the shape:
+For a silent session run `crss ls NAME`, then `crss peek NAME` and match the shape:
 
 | Pane or status | Shape | Section |
 |---|---|---|
@@ -34,7 +34,8 @@ For a silent session run `crss ls`, then `tmux capture-pane -p -t =ah_NAME:` and
   the worktree is gone). Use `crss reap`, which archives ignored files first. Never delete `session/*`
   branches; they keep a reaped session's commits reachable.
 - **Don't paste onto a draft.** An idle prompt can hold an unsent draft or dim autosuggest text;
-  `tmux capture-pane -p -e` shows dim as `ESC[2m` (placeholder, safe) versus real text.
+  `tmux capture-pane -p -e -t =ah_NAME:` shows dim as `ESC[2m` (placeholder, safe) versus real text;
+  `crss peek` strips escapes, so it can't tell them apart.
   `crss send` checks status only, not the input box.
 
 ### Auto-compact
@@ -60,9 +61,9 @@ those two events must fail open (`[ -x script ] && script || exit 0`).
 ## Stuck on a menu
 
 `crss send` refuses a `waiting` session because pasted text plus Enter would answer the dialog.
-Recover without a reap: `tmux send-keys -t =ah_NAME: Down` and re-capture to prove the widget is
-live; move to the wanted option (`Enter` toggles a checkbox, it does not submit); `Right` to
-Submit, then `Enter` ("1. Submit answers"). Re-capture after each key.
+Recover without a reap: `tmux send-keys -t =ah_NAME: Down` and `crss peek NAME` to prove the widget is
+live (peek cannot send keys, so tmux stays here); move to the wanted option (`Enter` toggles a checkbox, it does not submit); `Right` to
+Submit, then `Enter` ("1. Submit answers"). Peek again after each key.
 
 The workspace-trust dialog is also `waiting`, and its default is "No, exit" (CLI 2.1.285). crss
 pre-accepts trust before each launch (`trust` in `scripts/crss.sh`, pinned by `tests/test-crss.sh`)
@@ -76,7 +77,9 @@ base URL silently disables it. Launch with a small `--settings` file setting
 one `--settings` flag: a later one replaces an earlier one. Check the live process carries it
 (`ps`). Lane-wide `permissions.deny` entries go in that same file.
 
-A session started from the phone is not a crss session (no tmux, env file or restart loop). For
+In the app, a crss session is listed by the title in `crss ls`, or `ah-NAME` when spawned with
+`CRSS_NAMES=plain` or before titles. A session started from the phone is not a crss session (no
+tmux, env file or restart loop). For
 anything long-lived, run `crss spawn` from it. Its model is the account default unless the server's environment
 sets `ANTHROPIC_MODEL`; there is no per-spawn choice. Permissions follow the server's
 `--permission-mode`. It is a different trust case from an unattended lane, so choose
@@ -90,7 +93,7 @@ app, `crss reap` doesn't touch it.
 ## Prompt suggestions missing in the app
 
 - The suggestion is a model call that stays silent when the next step is not obvious; check the TUI
-  line first (`tmux capture-pane -e`, dim `ESC[2m` on the `❯` line).
+  line first (`tmux capture-pane -p -e -t =ah_NAME:`, dim `ESC[2m` on the `❯` line; `crss peek` strips escapes).
 - **Back-off:** after 20 unused suggestions in one interactive process the CLI writes
   `promptSuggestionUnusedStreak: 20` to `~/.claude.json` and stops suggesting, host-wide. Unattended
   `--remote-control` sessions feed it. Check `jq .promptSuggestionUnusedStreak ~/.claude.json`;

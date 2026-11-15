@@ -41,7 +41,10 @@ The variables the scripts read. `crss` reads each from the environment or from `
 | `CRSS_CLAUDE` | `crss` | the claude command (`claude`) |
 | `CRSS_TMUX` | `crss` | the tmux command (`tmux`) |
 | `CRSS_NO_SYSTEMD` | `crss` | set to skip `systemd-run` scoping of new tmux sessions |
+| `CRSS_NAMES` | `crss spawn` | `auto` (default): Claude titles the session; `plain`: it is named `ah-NAME`. Any other value is an error; `--title` forces `auto`. `auto` is written to the state file as `NAMES=auto`; a state file without it (older sessions) keeps `ah-NAME` |
+| `CRSS_POLL` | `crss wait` | seconds between status polls (2) |
 | `CRSS_BACKOFF` | restart loop | seconds to wait after a launch that failed within 30 s (300) |
 | `CRSS_PAUSE` | restart loop | seconds to wait between normal restarts (5) |
+| `CLAUDE_SESSION_MODEL` | `crss-compat` | if set, `new-session` launches with this model instead of the one its tier picks |
 | `CRSS_BIN` | `crss-compat` | path of the `crss` script it calls (the `crss` next to it) |
 | `CRSS_WORKSPACE` | `crss-compat` | base folder `new-session` resolves a folder name under (`~/workspace`) |

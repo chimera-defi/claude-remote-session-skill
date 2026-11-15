@@ -26,8 +26,8 @@ bounded: route, relay, monitor; never do the target's project work.
    judgment. Shapes: `references/kickoff-templates.md`. Read `$CRSS_HOME/local.md` first if it
    exists (this host's escalation channel and project index).
 4. **Relay and confirm.** Write the prompt to a file; `crss send NAME --file F` (or `crss spawn NAME
-   DIR --brief F`). `delivered` or `queued` (exit 0) landed. `UNVERIFIED` (1): capture the pane and
-   confirm it started working before claiming success. Refused (2): see step 2.
+   DIR --brief F`). `delivered` or `queued` (exit 0) landed. `UNVERIFIED` (1): `crss peek NAME` and
+   confirm it started working before claiming success. `crss wait NAME` blocks until it is idle again. Refused (2): see step 2.
 5. **Report** to the human: which session, one line on what you handed it, and which guardrails
    you preserved.
 6. **Follow up, don't restart.** Relay news mid-run with `crss send`; respawning throws work away.
