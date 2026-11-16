@@ -36,6 +36,14 @@ while True:
             if msg.startswith("/rename "):  # handled in the TUI: a title line (trimmed), no turn, status stays idle
                 open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "custom-title", "customTitle": msg[8:].strip(), "sessionId": sid}, separators=(",", ":")) + "\n")
                 continue
+            if msg.startswith("/local"):  # a local command: lines in the transcript, status unchanged (user shape, or system/local_command)
+                tr = open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a"); sysf = msg.startswith("/localsys")
+                def line(c): return json.dumps({"type": "system", "subtype": "local_command", "content": c} if sysf else {"type": "user", "message": {"content": c}}) + "\n"
+                if "none" in msg: tr.close(); continue  # a command that leaves nothing in the transcript
+                if "other" in msg: tr.write(line("<command-name>/zzz</command-name>")); tr.close(); continue  # some other command's lines
+                tr.write(line("<command-name>%s</command-name>\n<command-args>x</command-args>" % msg.split()[0]))
+                if "quiet" not in msg: tr.write(line("<local-command-stdout>\n\x1b[1mMCP server \"x\" not found\x1b[22m\nsecond</local-command-stdout>"))
+                tr.close(); continue
             open(os.environ["FAKE_LOG"], "a").write(json.dumps(msg) + "\n")
             os.makedirs(os.environ["HOME"] + "/.claude/projects/p", exist_ok=True)
             tr = open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a")
@@ -203,6 +211,28 @@ check "restart --wait-idle: gives up on a parked session in seconds and leaves i
 out=$("$C" send p1 midturn); check "send: a parked session that takes the message is delivered, not queued" [ "$out" = delivered ]
 check "ls: a turn in progress is shell, not parked, whatever a finished sub-agent wrote" [ "$(st1 p1)" = shell ]
 out=$("$C" wait p1 --timeout 3); check "wait: shell in a turn in progress is not done" [ "$?/$out" = "1/p1 shell" ]
+# 7. local slash commands: confirmed from the transcript, which also shows the command's output
+"$C" spawn l1 "$T/work" >/dev/null; idle l1
+tp() { printf '%s\n' "$@" >>"$HOME/.claude/projects/p/$(sidf l1).jsonl"; }
+tp "{}"
+out=$("$C" send l1 "/local x"); rc=$?
+check "send local command: delivered, exit 0" [ "$rc/${out%%$'\n'*}" = 0/delivered ]
+check "send local command: stdout line shown, ANSI stripped, indented" [ "${out#*$'\n'}" = '  MCP server "x" not found' ]
+out=$("$C" send l1 "/localsys x"); check "send local command: system/local_command shape confirms too" [ "$?/$out" = $'0/delivered\n  MCP server "x" not found' ]
+tp '{"type":"user","message":{"content":"<command-name>/localnone</command-name>"}}'
+out=$("$C" send l1 "/localnone here"); check "send slash command that leaves nothing new: an older identical command does not confirm, UNVERIFIED exit 1" [ "$?/$out" = "1/UNVERIFIED: status stayed idle" ]
+out=$("$C" send l1 "/localother x"); check "send local command: another command's lines do not confirm" [ "$?/$out" = "1/UNVERIFIED: status stayed idle" ]
+out=$("$C" send l1 "/localquiet y"); check "send local command without stdout: a single line" [ "$?/$out" = "0/delivered" ]
+"$C" send p1 park >/dev/null; wait_for 10 '[ "$(st1 p1)" = parked ]'
+out=$("$C" send p1 "/local z"); check "send local command to a parked session: confirmed from the transcript with its output" [ "$?/$out" = $'0/delivered\n  MCP server "x" not found' ]
+check "ls: a parked session stays parked after a local command" [ "$(st1 p1)" = parked ]
+tq() { printf '%s\n' "$@" >>"$HOME/.claude/projects/p/$(sidf p1).jsonl"; }
+tq '{"type":"user","isMeta":true,"message":{"content":"<local-command-caveat>x</local-command-caveat>"}}' '{"type":"user","message":{"content":"<command-name>/mcp</command-name>\n<command-args>y</command-args>"}}' '{"type":"user","message":{"content":"<local-command-stdout>nope</local-command-stdout>"}}'
+check "ls: local-command lines after end_turn leave a parked session parked" [ "$(st1 p1)" = parked ]
+"$C" spawn h1 "$T/work" >/dev/null; idle h1
+"$C" send h1 park >/dev/null; wait_for 10 '[ "$(st1 h1)" = parked ]'
+f=$(compgen -G "$HOME/.claude/projects/p/$(sidf h1).jsonl"); head -c -1 "$f" >"$f.x"; mv "$f.x" "$f"
+check "ls: a transcript still being written (no final newline) is shell, not parked" [ "$(st1 h1)" = shell ]
 echo 'garbage (' >>"$CRSS_STATE/n1.env"; out=$("$C" send n1 hi 2>/dev/null); check "send: a broken env file does not turn a delivered send into a refusal" [ "$?/$out" = 0/delivered ]
 out=$("$C" ls n1 2>&1); check "ls NAME: a broken env file is not also called no such session" bash -c '[[ $1 == *"n1: bad env file, skipped"* && $1 != *"no such session"* ]]' _ "$out"
 exit $F
