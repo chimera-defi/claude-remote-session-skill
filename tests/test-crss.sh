@@ -43,6 +43,9 @@ while True:
             if msg == "park":  # the turn ends and leaves a background command: status stays shell, as the real CLI reports it
                 tr.write(json.dumps({"type": "assistant", "message": {"stop_reason": "end_turn"}}) + "\n" + json.dumps({"type": "user", "isMeta": True, "message": {"content": "note"}}) + "\n")
                 tr.close(); w("shell"); continue
+            if msg == "midturn":  # a turn in progress with a command running, and a sub-agent that has finished
+                tr.write(json.dumps({"type": "assistant", "message": {"stop_reason": "tool_use"}}) + "\n" + json.dumps({"type": "assistant", "isSidechain": True, "message": {"stop_reason": "end_turn"}}) + "\n")
+                tr.close(); w("shell"); continue
             tr.close()
             w("shell" if msg == "run-shell" else "busy"); threading.Timer(2, w, ["idle"]).start()
         else: buf, d = buf + ("\n" if d[0] == "\r" else d[0]), d[1:]
@@ -197,7 +200,9 @@ out=$("$T/bin/session-handoff" ready ah_p1); check "session-handoff ready: parke
 out=$("$C" restart p1); check "restart: skips a parked session and says so" [ "$out" = "p1: skipped, parked" ]
 t0=$SECONDS; out=$(CRSS_BUSY_POLL=1 "$C" restart p1 --wait-idle)
 check "restart --wait-idle: gives up on a parked session in seconds and leaves it running" bash -c '[[ $1 == "p1: skipped, parked:"* ]] && [ "$2" -lt 30 ] && [ "$3" = parked ]' _ "$out" "$((SECONDS - t0))" "$(st1 p1)"
-"$C" send p1 run-shell >/dev/null; check "ls: a command running in a new turn is shell again, not parked" [ "$(st1 p1)" = shell ]
+out=$("$C" send p1 midturn); check "send: a parked session that takes the message is delivered, not queued" [ "$out" = delivered ]
+check "ls: a turn in progress is shell, not parked, whatever a finished sub-agent wrote" [ "$(st1 p1)" = shell ]
+out=$("$C" wait p1 --timeout 3); check "wait: shell in a turn in progress is not done" [ "$?/$out" = "1/p1 shell" ]
 echo 'garbage (' >>"$CRSS_STATE/n1.env"; out=$("$C" send n1 hi 2>/dev/null); check "send: a broken env file does not turn a delivered send into a refusal" [ "$?/$out" = 0/delivered ]
 out=$("$C" ls n1 2>&1); check "ls NAME: a broken env file is not also called no such session" bash -c '[[ $1 == *"n1: bad env file, skipped"* && $1 != *"no such session"* ]]' _ "$out"
 exit $F
