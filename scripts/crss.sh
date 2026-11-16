@@ -294,7 +294,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: $n is down (crss up $n)" >&2; return 2; }
   tmp=$(mktemp); trap 'rm -f "$tmp"' RETURN
   if [ -n "$f" ]; then cat "$f" >"$tmp"; else printf '%s' "$*" >"$tmp"; fi
-  r=$(rec "$n"); before=$(jf "$r" status); sid0=$(jf "$r" sessionId)
+  r=$(rec "$n"); before=$(status_of "$n" "$r"); sid0=$(jf "$r" sessionId)
   # no record means claude is starting or backing off: the text would sit in the terminal for the next launch
   [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
@@ -311,7 +311,8 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   follow "$sid0"
   for _ in $(seq 40); do
     r=$(rec "$n"); s=$(jf "$r" sessionId)
-    case $(jf "$r" status) in busy | shell) echo delivered; return 0 ;; esac
+    # a parked session already reads shell: it took the message once it stops being parked
+    case $(if [ "$before" = parked ]; then status_of "$n" "$r"; else jf "$r" status; fi) in busy | shell) echo delivered; return 0 ;; esac
     if [ -n "$s" ] && [ "$s" != "$sid0" ]; then follow "$s"; echo delivered; return 0; fi
     if [ -n "$want" ] && [ "$(title_of "$n" "$s")" = "$want" ]; then echo delivered; return 0; fi
     sleep 0.25
