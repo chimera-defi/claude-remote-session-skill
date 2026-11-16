@@ -11,7 +11,7 @@ trap 'tmux -L $SOCK kill-server 2>/dev/null; rm -rf "$T"' EXIT
 
 cat >"$T/claude" <<'PY'
 #!/usr/bin/env python3
-import json, os, sys, threading, tty
+import json, os, sys, threading, tty, uuid
 a = sys.argv
 sid = next(a[i + 1] for i, x in enumerate(a) if x in ("--session-id", "--resume"))
 rec = os.environ["HOME"] + "/.claude/sessions/%d.json" % os.getpid()
@@ -32,8 +32,9 @@ while True:
         elif d[0] in "\r\n" and not paste:
             msg, buf, d = buf, "", d[1:]
             if msg == "/exit": os.remove(rec); sys.exit(0)
-            if msg.startswith("/rename "):  # handled in the TUI: a title line, no turn, status stays idle
-                open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "custom-title", "customTitle": msg[8:], "sessionId": sid}, separators=(",", ":")) + "\n")
+            if msg == "/clear": sid = str(uuid.uuid4()); w("idle"); continue  # handled in the TUI: a new session id, no turn
+            if msg.startswith("/rename "):  # handled in the TUI: a title line (trimmed), no turn, status stays idle
+                open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "custom-title", "customTitle": msg[8:].strip(), "sessionId": sid}, separators=(",", ":")) + "\n")
                 continue
             open(os.environ["FAKE_LOG"], "a").write(json.dumps(msg) + "\n")
             os.makedirs(os.environ["HOME"] + "/.claude/projects/p", exist_ok=True)
@@ -167,6 +168,17 @@ echo '{"type":"ai-title","aiTit' >>"$HOME/.claude/projects/p/$S1.jsonl"
 check "ls title: a half-written last line does not lose the title" [ "$(tj n1)" = "Fleet naming study" ]
 idle n1; out=$("$C" send n1 "/rename Night shift"); check "send /rename: confirmed by the new title, status stays idle" [ "$out" = delivered ]
 check "send /rename: ls shows the new title" [ "$(tj n1)" = "Night shift" ]
+out=$("$C" send n1 "/rename   Padded shift  "); check "send /rename: a padded title is confirmed trimmed" [ "$out" = delivered ]
+S1=$(sidf n1); out=$("$C" send n1 "/clear"); check "send /clear: confirmed by the new session id" [ "$out" = delivered ]
+check "send /clear: the env file follows the new id" bash -c "[ '$(sidf n1)' != '$S1' ] && grep -lq '$(sidf n1)' '$HOME'/.claude/sessions/*.json"
+S1=$(sidf n1); tmux -L "$SOCK" send-keys -t =ah_n1: /clear Enter; wait_for 5 '! grep -lq "$S1" "$HOME"/.claude/sessions/*.json'
+out=$("$C" send n1 "/rename After clear"); check "send /rename: confirmed after a /clear crss did not see" [ "$out" = delivered ]
+check "send /rename after /clear: ls shows the new title" [ "$(tj n1)" = "After clear" ]
+out=$("$C" wait nosuch n1 --timeout 20 2>&1); check "wait: unknown session refused with 2, not reported down" [ "$?/$out" = "2/crss: no such session: nosuch" ]
+out=$("$C" ls nosuch 2>&1); check "ls NAME: an unknown name is named, exit 2" [ "$?/$out" = "2/crss: no such session: nosuch" ]
+out=$("$C" ls n1 nosuch 2>/dev/null); check "ls NAME...: known rows still print beside an unknown name" [ "$?/${out%% *}" = "2/n1" ]
+check "ls --json NAME: an unknown name gives [] and exit 2" [ "$("$C" ls --json nosuch 2>/dev/null; echo $?)" = "[]
+2" ]
 printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
 echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
 check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]

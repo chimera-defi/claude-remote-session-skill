@@ -19,9 +19,9 @@ session doesn't.
 ```bash
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title
+crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session
 crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
-crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
+crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other (a NAME that is no session is refused at once)
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
@@ -51,7 +51,7 @@ is done: read the report or the result before you rely on it.
   `--model sonnet --effort low -- --advisor claude-opus-5-5` (choosing a model:
   `references/spawn-guide.md`; env knobs: `examples/crss-overlay/README.md#env-knobs`).
 - **send** pastes the text as one message and presses Enter; status comes from Claude's session
-  record. `delivered` (exit 0): idle went to busy or shell, or a `/rename T` shows as the title. `queued` (0): it was busy or running a shell
+  record. `delivered` (exit 0): idle went to busy or shell, a `/rename T` shows as the title, or `/clear` gave a new conversation id. `queued` (0): it was busy or running a shell
   command. `UNVERIFIED` (1): nothing changed; `crss peek NAME` before resending. Refused
   (2): no such session, down or starting, or a dialog is open (`waiting`).
 - **restart** moves sessions onto the installed `claude` and keeps the conversation. It skips busy
