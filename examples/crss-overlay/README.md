@@ -47,6 +47,7 @@ recreated (end `ah_NAME`, then `crss up NAME`). `crss-compat` reads only the env
 | `CRSS_NO_SYSTEMD` | `crss` | set to skip `systemd-run` scoping of new tmux sessions |
 | `CRSS_NAMES` | `crss spawn` | `auto` (default): Claude titles the session; `plain`: it is named `ah-NAME`. Any other value is an error; `--title` forces `auto`. `auto` is written to the state file as `NAMES=auto`; a state file without it (older sessions) keeps `ah-NAME` |
 | `CRSS_POLL` | `crss wait` | seconds between status polls (2) |
+| `CRSS_BUSY_POLL` | `crss restart --wait-idle` | seconds between polls of a busy session (15) |
 | `CRSS_BACKOFF` | restart loop | seconds to wait after a launch that failed within 30 s (300) |
 | `CRSS_PAUSE` | restart loop | seconds to wait between normal restarts (5) |
 | `CLAUDE_SESSION_MODEL` | `crss-compat` | if set, `new-session` launches with this model instead of the one its tier picks |

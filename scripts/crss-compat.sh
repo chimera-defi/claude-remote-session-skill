@@ -68,7 +68,7 @@ case $(basename "$0") in
   session-handoff) # outside callers poll this: exit 0 = safe to paste, else "reason=..."
     [ "${1:-}" = ready ] && [ -n "${2:-}" ] || die "only 'session-handoff ready SESSION' is kept; use crss send"
     case $(ls_field "$(base "$2")" status) in
-      idle) echo "ready: $2 SAFE"; exit 0 ;;
+      idle | parked) echo "ready: $2 SAFE"; exit 0 ;; # parked: turn over, a background command still runs; a paste starts a turn
       '') die "no such session: $2" ;;
       busy | shell) r=busy ;;
       waiting) r=menu ;;
