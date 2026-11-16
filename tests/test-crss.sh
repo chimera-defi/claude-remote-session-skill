@@ -182,4 +182,6 @@ check "ls --json NAME: an unknown name gives [] and exit 2" [ "$("$C" ls --json 
 printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
 echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
 check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]
+echo 'garbage (' >>"$CRSS_STATE/n1.env"; out=$("$C" send n1 hi 2>/dev/null); check "send: a broken env file does not turn a delivered send into a refusal" [ "$?/$out" = 0/delivered ]
+out=$("$C" ls n1 2>&1); check "ls NAME: a broken env file is not also called no such session" bash -c '[[ $1 == *"n1: bad env file, skipped"* && $1 != *"no such session"* ]]' _ "$out"
 exit $F

@@ -13,7 +13,7 @@ usage() {
   cat <<'H'
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
-crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools)
+crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); exit 2 for an unknown NAME
 crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
 crss wait NAME... [--timeout S]   until each is idle (turn over, brief sent), on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
@@ -231,7 +231,7 @@ cmd_ls() {
   else
     printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
   fi
-  for a in "${filt[@]}"; do [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
+  for a in "${filt[@]}"; do [ -f "$(envf "$a")" ] || [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
   return "$rc"
 }
 cmd_peek() { # exit 2 when there is no such session
@@ -292,7 +292,8 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   if [[ $(<"$tmp") == '/rename '?* ]]; then
     want=$(<"$tmp"); want=${want#/rename }; want=${want#"${want%%[![:space:]]*}"}; want=${want%"${want##*[![:space:]]}"}
   fi
-  follow() { [ ! -f "$(envf "$n")" ] || sync_sid "$n" "$1"; } # title_of reads the env file's id: stale after an in-TUI /clear
+  # title_of reads the env file's id, stale after an in-TUI /clear; a broken env file must not fail a send that already pasted
+  follow() { [ ! -f "$(envf "$n")" ] || ! ( load "$n" ) 2>/dev/null || sync_sid "$n" "$1"; }
   follow "$sid0"
   for _ in $(seq 40); do
     r=$(rec "$n"); s=$(jf "$r" sessionId)
