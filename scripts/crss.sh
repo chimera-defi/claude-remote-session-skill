@@ -28,6 +28,7 @@ die() { echo "crss: $*" >&2; exit 1; }
 tm() { $CRSS_TMUX "$@"; }
 envf() { echo "$CRSS_STATE/$1.env"; }
 need() { [ -f "$(envf "$1")" ] || die "no such session: $1"; }
+known() { [ -f "$(envf "$1")" ] || tm has-session -t "=ah_$1" 2>/dev/null || { echo "crss: no such session: $1" >&2; return 2; }; } # also ah_* sessions without an env file
 load() { need "$1"; DIR='' WT='' SID='' BRIEF='' NAMES='' TITLE=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
 names() {
   if [ $# -gt 0 ]; then printf '%s\n' "$@"; return; fi
@@ -204,7 +205,7 @@ cmd_up() {
 }
 
 cmd_ls() {
-  local n r st v x json='' filt=() rows='' a b c d e f
+  local n r st v x json='' filt=() rows='' rc=0 a b c d e f
   for a in "$@"; do
     case $a in --json) json=1 ;; -*) die "ls: unknown option: $a" ;; *) filt+=("$a") ;; esac
   done
@@ -230,10 +231,12 @@ cmd_ls() {
   else
     printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
   fi
+  for a in "${filt[@]}"; do [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
+  return "$rc"
 }
 cmd_peek() { # exit 2 when there is no such session
   local n=${1:-} k=${2:-30} st=down t
-  [ -f "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: no such session: $n" >&2; return 2; }
+  known "$n" || return 2
   if tm has-session -t "=ah_$n" 2>/dev/null; then st=$(field "$n" status); st=${st:-?}; fi
   t=$(title_of "$n"); echo "$n $st ${t:--}"
   if [ "$st" != down ]; then tm capture-pane -p -S - -t "=ah_$n:" | { grep -v '^[[:space:]]*$' || true; } | tail -n "$k"; fi
@@ -244,6 +247,7 @@ cmd_wait() {
   declare -A idl=() last=()
   while [ $# -gt 0 ]; do case $1 in --timeout) to=${2:-}; shift; [ $# -eq 0 ] || shift ;; *) ns+=("$1"); shift ;; esac; done
   if [ ${#ns[@]} -eq 0 ] || ! [[ $to =~ ^[0-9]+$ ]]; then echo "crss: usage: crss wait NAME... [--timeout SECONDS]" >&2; return 2; fi
+  for n in "${ns[@]}"; do known "$n" || return 2; done # a misspelled name is not a session that went down
   sent() { ! grep -qs '^BRIEF=' "$(envf "$1")" || compgen -G "$HOME/.claude/projects/*/$(field "$1" sessionId).jsonl" >/dev/null; }
   while :; do
     left=0
@@ -262,8 +266,8 @@ cmd_wait() {
 }
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
-  local n=${1:-} f='' before tmp want=''
-  [ -f "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: no such session: $n" >&2; return 2; }
+  local n=${1:-} f='' before tmp want='' r s sid0
+  known "$n" || return 2
   shift
   while [ $# -gt 0 ]; do
     case $1 in
@@ -276,18 +280,25 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: $n is down (crss up $n)" >&2; return 2; }
   tmp=$(mktemp); trap 'rm -f "$tmp"' RETURN
   if [ -n "$f" ]; then cat "$f" >"$tmp"; else printf '%s' "$*" >"$tmp"; fi
-  before=$(field "$n" status)
+  r=$(rec "$n"); before=$(jf "$r" status); sid0=$(jf "$r" sessionId)
   # no record means claude is starting or backing off: the text would sit in the terminal for the next launch
   [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
   paste_to "$n" "$tmp"
   case $before in busy | shell) echo "queued (session $before)"; return 0 ;; esac
-  # /rename T runs inside the TUI and never makes the session busy: confirm it by the title
-  [[ $(<"$tmp") != '/rename '?* ]] || { want=$(<"$tmp"); want=${want#/rename }; }
+  # /rename T and /clear run inside the TUI and never make the session busy: confirm them by the
+  # title (trimmed, as Claude stores it) or by the new session id
+  if [[ $(<"$tmp") == '/rename '?* ]]; then
+    want=$(<"$tmp"); want=${want#/rename }; want=${want#"${want%%[![:space:]]*}"}; want=${want%"${want##*[![:space:]]}"}
+  fi
+  follow() { [ ! -f "$(envf "$n")" ] || sync_sid "$n" "$1"; } # title_of reads the env file's id: stale after an in-TUI /clear
+  follow "$sid0"
   for _ in $(seq 40); do
-    if working "$n"; then echo delivered; return 0; fi
-    if [ -n "$want" ] && [ "$(title_of "$n")" = "$want" ]; then echo delivered; return 0; fi
+    r=$(rec "$n"); s=$(jf "$r" sessionId)
+    case $(jf "$r" status) in busy | shell) echo delivered; return 0 ;; esac
+    if [ -n "$s" ] && [ "$s" != "$sid0" ]; then follow "$s"; echo delivered; return 0; fi
+    if [ -n "$want" ] && [ "$(title_of "$n" "$s")" = "$want" ]; then echo delivered; return 0; fi
     sleep 0.25
   done
   echo "UNVERIFIED: status stayed idle"; return 1
