@@ -51,7 +51,7 @@ is done: read the report or the result before you rely on it.
   `--model sonnet --effort low -- --advisor claude-opus-5-5` (choosing a model:
   `references/spawn-guide.md`; env knobs: `examples/crss-overlay/README.md#env-knobs`).
 - **send** pastes the text as one message and presses Enter; status comes from Claude's session
-  record. `delivered` (exit 0): idle went to busy or shell, a `/rename T` shows as the title, or `/clear` gave a new conversation id. `queued` (0): it was busy or running a shell
+  record. `delivered` (exit 0): idle went to busy or shell, a `/rename T` shows as the title, or the conversation id changed (as after `/clear`). `queued` (0): it was busy or running a shell
   command. `UNVERIFIED` (1): nothing changed; `crss peek NAME` before resending. Refused
   (2): no such session, down or starting, or a dialog is open (`waiting`).
 - **restart** moves sessions onto the installed `claude` and keeps the conversation. It skips busy
