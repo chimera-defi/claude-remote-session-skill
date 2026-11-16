@@ -310,8 +310,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
-  # size of the transcript before the paste, for local_cmd
-  if [[ $(<"$tmp") =~ ^(/[A-Za-z0-9:_-]+)([[:space:]]|$) ]]; then
+  if [[ $(<"$tmp") =~ ^(/[A-Za-z0-9:_-]+)([[:space:]]|$) ]]; then # transcript size before the paste, for local_cmd
     cw=${BASH_REMATCH[1]}; tf=$(compgen -G "$HOME/.claude/projects/*/$sid0.jsonl" | head -1 || true); [ -z "$tf" ] || sz=$(wc -c <"$tf")
   fi
   paste_to "$n" "$tmp"
@@ -330,6 +329,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
     case $(if [ "$before" = parked ]; then status_of "$n" "$r"; else jf "$r" status; fi) in busy | shell) echo delivered; return 0 ;; esac
     if [ -n "$s" ] && [ "$s" != "$sid0" ]; then follow "$s"; echo delivered; return 0; fi
     if [ -n "$want" ] && [ "$(title_of "$n" "$s")" = "$want" ]; then echo delivered; return 0; fi
+    [ -z "$cw" ] || [ -n "$tf" ] || tf=$(compgen -G "$HOME/.claude/projects/*/$s.jsonl" | head -1 || true) # no transcript before the paste: a file found now is all new
     if [ -n "$tf" ] && local_cmd "$tf" "$sz" "$cw"; then return 0; fi
     sleep 0.25
   done

@@ -223,6 +223,8 @@ tp '{"type":"user","message":{"content":"<command-name>/localnone</command-name>
 out=$("$C" send l1 "/localnone here"); check "send slash command that leaves nothing new: an older identical command does not confirm, UNVERIFIED exit 1" [ "$?/$out" = "1/UNVERIFIED: status stayed idle" ]
 out=$("$C" send l1 "/localother x"); check "send local command: another command's lines do not confirm" [ "$?/$out" = "1/UNVERIFIED: status stayed idle" ]
 out=$("$C" send l1 "/localquiet y"); check "send local command without stdout: a single line" [ "$?/$out" = "0/delivered" ]
+"$C" spawn l2 "$T/work" >/dev/null; idle l2; check "fixture: a session that never had a message has no transcript" [ ! -e "$HOME/.claude/projects/p/$(sidf l2).jsonl" ]
+out=$("$C" send l2 "/local x"); check "send local command to a session with no transcript yet: confirmed from the new file" [ "$?/$out" = $'0/delivered\n  MCP server "x" not found' ]
 "$C" send p1 park >/dev/null; wait_for 10 '[ "$(st1 p1)" = parked ]'
 out=$("$C" send p1 "/local z"); check "send local command to a parked session: confirmed from the transcript with its output" [ "$?/$out" = $'0/delivered\n  MCP server "x" not found' ]
 check "ls: a parked session stays parked after a local command" [ "$(st1 p1)" = parked ]
