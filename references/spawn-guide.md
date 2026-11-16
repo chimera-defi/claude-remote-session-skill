@@ -52,7 +52,7 @@ skill listing, so trim the listing first for worker sessions.
 
 ### Add or drop a skill in a running session
 
-Tested on a live session, CLI 2.1.325. No restart, and the prompt cache holds.
+Tested once on a live session, CLI 2.1.325. No restart, and the prompt cache held.
 
 ```bash
 mkdir -p DIR/.claude/skills && cp -r path/to/my-skill DIR/.claude/skills/   # DIR: the session's folder (crss ls)
@@ -64,10 +64,13 @@ rm -r DIR/.claude/skills/my-skill && crss send NAME "/reload-skills"         # "
 - Cache: the turn after each reload read the whole prefix from cache (43k tokens) and wrote a few
   hundred new ones.
 - In a shared repo the folder shows up as untracked: remove it when the task is done, and don't commit it.
-- `/add-dir PATH` is not a way in: it opens a dialog (the session goes `waiting`), and a skill under
-  that folder's `.claude/skills` was not listed to the model afterwards.
+- `/add-dir PATH` sent to a running session did not work in the test: it opens a dialog (the session
+  goes `waiting`), and after the dialog was accepted a skill under that folder's `.claude/skills` was
+  still not listed to the model.
 - MCP servers have their own live switch: `crss send NAME "/mcp disable SERVER"` and
-  `"/mcp enable SERVER"` (pane: `MCP server "SERVER" disabled`). No dialog.
+  `"/mcp enable SERVER"` (pane: `MCP server "SERVER" disabled`). No dialog. It is not session-only: the CLI saves it under
+  the project's entry in `~/.claude.json`, so it also applies to other sessions in that project and
+  survives restarts until `/mcp enable SERVER`.
 - These commands start no turn, so `crss send` may print `UNVERIFIED`; `crss peek NAME` shows the
   result line.
 
