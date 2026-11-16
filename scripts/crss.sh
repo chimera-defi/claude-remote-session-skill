@@ -317,7 +317,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
     if [ -n "$want" ] && [ "$(title_of "$n" "$s")" = "$want" ]; then echo delivered; return 0; fi
     sleep 0.25
   done
-  echo "UNVERIFIED: status stayed idle"; return 1
+  echo "UNVERIFIED: status stayed $before"; return 1
 }
 
 restart1() { # NAME WAIT
