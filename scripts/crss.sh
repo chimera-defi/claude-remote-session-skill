@@ -60,7 +60,8 @@ status_of() { # NAME [record json]
   st=$(jf "$r" status)
   if [ "$st" = shell ]; then
     f=$(compgen -G "$HOME/.claude/projects/*/$(jf "$r" sessionId).jsonl" | head -1 || true)
-    [ -z "$f" ] || [ "$(tail -n 200 "$f" | jq -rRn '[inputs | fromjson? | objects | select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true)] | last | .message.stop_reason? // empty' 2>/dev/null || true)" != end_turn ] || st=parked
+    # a half-written last line is dropped by fromjson?, so an older message could be read: stay shell
+    [ -z "$f" ] || [ -n "$(tail -c1 "$f")" ] || [ "$(tail -n 200 "$f" | jq -rRn '[inputs | fromjson? | objects | select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true) | select((.message.content | type == "string" and (startswith("<command-name>") or startswith("<local-command-stdout>"))) | not)] | last | .message.stop_reason? // empty' 2>/dev/null || true)" != end_turn ] || st=parked
   fi
   echo "$st"
 }
@@ -68,6 +69,16 @@ status_of() { # NAME [record json]
 sync_sid() { # NAME [live session id, when the caller already has it]
   local s; load "$1"; s=${2-$(field "$1" sessionId)}
   if [ -n "$s" ] && [ "$s" != "$SID" ]; then sed -i "s|^SID=.*|SID=$s|" "$(envf "$1")"; SID=$s; fi
+}
+# a local slash command (/mcp ...) starts no turn: confirm it from the transcript lines added after the
+# paste (their <command-name> tag); print the first line of its <local-command-stdout>, if any
+local_cmd() { # FILE BYTES-BEFORE /WORD
+  local t o; t=$(tail -c +$(($2 + 1)) "$1" | jq -rRn '[inputs | fromjson? | objects | select(.type == "user" or .type == "system") | (.message.content? // .content?) | strings] | join("\n")' 2>/dev/null) || return 1
+  [[ $t == *"<command-name>$3</command-name>"* ]] || return 1
+  echo delivered
+  [[ $t == *'<local-command-stdout>'* ]] || return 0
+  o=${t#*<local-command-stdout>}; o=$(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' <<<"${o%%</local-command-stdout>*}" | grep -m1 '[^[:space:]]' || true)
+  [ -z "$o" ] || echo "  ${o:0:200}"
 }
 # session title: latest custom title, else latest AI title in the transcript tail, else the spawn title
 title_of() { # NAME [session id]; with or without an env file
@@ -280,7 +291,7 @@ cmd_wait() {
 }
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
-  local n=${1:-} f='' before tmp want='' r s sid0
+  local n=${1:-} f='' before tmp want='' r s sid0 tf='' sz=0 cw=''
   known "$n" || return 2
   shift
   while [ $# -gt 0 ]; do
@@ -299,6 +310,10 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
+  # size of the transcript before the paste, for local_cmd
+  if [[ $(<"$tmp") =~ ^(/[A-Za-z0-9:_-]+)([[:space:]]|$) ]]; then
+    cw=${BASH_REMATCH[1]}; tf=$(compgen -G "$HOME/.claude/projects/*/$sid0.jsonl" | head -1 || true); [ -z "$tf" ] || sz=$(wc -c <"$tf")
+  fi
   paste_to "$n" "$tmp"
   case $before in busy | shell) echo "queued (session $before)"; return 0 ;; esac
   # /rename T and /clear run inside the TUI and never make the session busy: confirm them by the
@@ -315,6 +330,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
     case $(if [ "$before" = parked ]; then status_of "$n" "$r"; else jf "$r" status; fi) in busy | shell) echo delivered; return 0 ;; esac
     if [ -n "$s" ] && [ "$s" != "$sid0" ]; then follow "$s"; echo delivered; return 0; fi
     if [ -n "$want" ] && [ "$(title_of "$n" "$s")" = "$want" ]; then echo delivered; return 0; fi
+    if [ -n "$tf" ] && local_cmd "$tf" "$sz" "$cw"; then return 0; fi
     sleep 0.25
   done
   echo "UNVERIFIED: status stayed $before"; return 1
