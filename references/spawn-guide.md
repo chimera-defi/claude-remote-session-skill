@@ -50,6 +50,30 @@ skill listing, so trim the listing first for worker sessions.
 - A deny rule `Skill(name)` in permissions does not remove the skill from the listing.
 - Args given at spawn are stored and re-passed on every restart.
 
+### Add or drop a skill in a running session
+
+Tested once on a live session, CLI 2.1.325. No restart, and the prompt cache held.
+
+```bash
+mkdir -p DIR/.claude/skills && cp -r path/to/my-skill DIR/.claude/skills/   # DIR: the session's folder (crss ls)
+crss send NAME "/reload-skills"   # pane: "Reloaded skills: N skills available (1 added)"
+# ... the session lists and can invoke my-skill from its next turn ...
+rm -r DIR/.claude/skills/my-skill && crss send NAME "/reload-skills"         # "(1 removed)"
+```
+
+- Cache: the turn after each reload read the whole prefix from cache (43k tokens) and wrote a few
+  hundred new ones.
+- In a shared repo the folder shows up as untracked: remove it when the task is done, and don't commit it.
+- `/add-dir PATH` sent to a running session did not work in the test: it opens a dialog (the session
+  goes `waiting`), and after the dialog was accepted a skill under that folder's `.claude/skills` was
+  still not listed to the model.
+- MCP servers have their own live switch: `crss send NAME "/mcp disable SERVER"` and
+  `"/mcp enable SERVER"` (pane: `MCP server "SERVER" disabled`). No dialog. It is not session-only: the CLI saves it under
+  the project's entry in `~/.claude.json`, so it also applies to other sessions in that project and
+  survives restarts until `/mcp enable SERVER`.
+- These commands start no turn, so `crss send` may print `UNVERIFIED`; `crss peek NAME` shows the
+  result line.
+
 ## Second opinions
 
 - **Advisor.** Launch Sonnet and Haiku lanes with `-- --advisor <model id>`; the strongest models default
