@@ -20,7 +20,7 @@ bounded: route, relay, monitor; never do the target's project work.
    choice: `../references/spawn-guide.md`). Check size and staleness, not just topic; don't route a
    one-shot into a bloated session
    ([troubleshooting](../references/troubleshooting.md#compact-or-recycle)).
-2. **Can it take a message?** `idle` yes. `busy` or `shell`: it queues. `waiting`: a dialog is open
+2. **Can it take a message?** `idle` or `parked` yes. `busy` or `shell`: it queues. `waiting`: a dialog is open
    and `crss send` refuses; look at the pane. `down` or `?`: refused.
 3. **Massage** into the seven parts below. The parts are fixed; weighting and phrasing are
    judgment. Shapes: `references/kickoff-templates.md`. Read `$CRSS_HOME/local.md` first if it
