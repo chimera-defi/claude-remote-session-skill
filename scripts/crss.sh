@@ -262,7 +262,7 @@ cmd_wait() {
 }
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
-  local n=${1:-} f='' before tmp
+  local n=${1:-} f='' before tmp want=''
   [ -f "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null || { echo "crss: no such session: $n" >&2; return 2; }
   shift
   while [ $# -gt 0 ]; do
@@ -283,8 +283,11 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
   paste_to "$n" "$tmp"
   case $before in busy | shell) echo "queued (session $before)"; return 0 ;; esac
+  # /rename T runs inside the TUI and never makes the session busy: confirm it by the title
+  [[ $(<"$tmp") != '/rename '?* ]] || { want=$(<"$tmp"); want=${want#/rename }; }
   for _ in $(seq 40); do
     if working "$n"; then echo delivered; return 0; fi
+    if [ -n "$want" ] && [ "$(title_of "$n")" = "$want" ]; then echo delivered; return 0; fi
     sleep 0.25
   done
   echo "UNVERIFIED: status stayed idle"; return 1
