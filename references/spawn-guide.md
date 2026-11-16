@@ -72,7 +72,8 @@ rm -r DIR/.claude/skills/my-skill && crss send NAME "/reload-skills"         # "
   the project's entry in `~/.claude.json`, so it also applies to other sessions in that project and
   survives restarts until `/mcp enable SERVER`.
 - These commands start no turn; `crss send` confirms them from the transcript and prints the result
-  line. A command that writes nothing there (`/add-dir` opens a dialog) may print `UNVERIFIED`; use `crss peek NAME`.
+  line. A command that has written nothing there within ten seconds (one waiting in a dialog) prints
+  `UNVERIFIED`; use `crss peek NAME`.
 
 ## Second opinions
 
