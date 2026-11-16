@@ -32,6 +32,9 @@ while True:
         elif d[0] in "\r\n" and not paste:
             msg, buf, d = buf, "", d[1:]
             if msg == "/exit": os.remove(rec); sys.exit(0)
+            if msg.startswith("/rename "):  # handled in the TUI: a title line, no turn, status stays idle
+                open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "custom-title", "customTitle": msg[8:], "sessionId": sid}, separators=(",", ":")) + "\n")
+                continue
             open(os.environ["FAKE_LOG"], "a").write(json.dumps(msg) + "\n")
             os.makedirs(os.environ["HOME"] + "/.claude/projects/p", exist_ok=True)
             open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps(msg) + "\n")
@@ -162,6 +165,8 @@ out=$("$C" spawn n5 "$T/work" --title --x 2>&1); check "spawn: a title starting 
 "$C" ls --jsno >/dev/null 2>&1; check "ls: unknown option is an error" [ $? = 1 ]
 echo '{"type":"ai-title","aiTit' >>"$HOME/.claude/projects/p/$S1.jsonl"
 check "ls title: a half-written last line does not lose the title" [ "$(tj n1)" = "Fleet naming study" ]
+idle n1; out=$("$C" send n1 "/rename Night shift"); check "send /rename: confirmed by the new title, status stays idle" [ "$out" = delivered ]
+check "send /rename: ls shows the new title" [ "$(tj n1)" = "Night shift" ]
 printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
 echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
 check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]
