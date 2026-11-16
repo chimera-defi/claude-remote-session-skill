@@ -19,9 +19,9 @@ session doesn't.
 ```bash
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [NAME...] [--json]       # name, status (idle|busy|shell|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session
+crss ls [NAME...] [--json]       # name, status (idle|busy|shell|parked|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session
 crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
-crss wait NAME... [--timeout S]  # until each is idle, on a dialog, or down; exit 0 all idle, 1 timeout, 2 other (a NAME that is no session is refused at once)
+crss wait NAME... [--timeout S]  # until each is idle or parked, on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other (a NAME that is no session is refused at once)
 crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
@@ -37,7 +37,9 @@ restart; to keep it, add the line `NAMES=auto` to its state file first (a loop s
 
 Use `crss wait` and `crss peek` instead of a sleep loop or a raw `tmux capture-pane`. Idle means the
 turn ended (and, for a session spawned with `--brief`, that the brief was sent), not that the task
-is done: read the report or the result before you rely on it.
+is done: read the report or the result before you rely on it. `parked` is a finished turn that
+left a background command running (a waiter): `wait` counts it as done, and a message sent to it
+starts a turn at once.
 
 `crss ls` also lists `ah_*` sessions started by other tools: `send` reaches them, `restart` and
 `reap` don't.
@@ -55,8 +57,8 @@ is done: read the report or the result before you rely on it.
   command. `UNVERIFIED` (1): nothing changed; `crss peek NAME` before resending. Refused
   (2): no such session, down or starting, or a dialog is open (`waiting`).
 - **restart** moves sessions onto the installed `claude` and keeps the conversation. It skips busy
-  sessions unless `--wait-idle`, and skips one with in-session scheduled tasks (exiting would stop
-  them). After a batch, tell each session its wakeups and crons died with the old process. Run
+  sessions unless `--wait-idle`, and skips a parked one or one with in-session scheduled tasks (exiting would stop
+  them): ask a parked session to stop its background command first. After a batch, tell each session its wakeups and crons died with the old process. Run
   `crss restart --all --wait-idle` after `claude update`; an install alone doesn't touch running
   sessions. `/clear` and in-TUI `/resume` change the conversation id; `crss ls` and `crss up` follow it.
 - **reap** refuses a busy session unless `--force`, removes the worktree only when nothing is

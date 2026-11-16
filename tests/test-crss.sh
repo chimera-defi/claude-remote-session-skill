@@ -38,7 +38,12 @@ while True:
                 continue
             open(os.environ["FAKE_LOG"], "a").write(json.dumps(msg) + "\n")
             os.makedirs(os.environ["HOME"] + "/.claude/projects/p", exist_ok=True)
-            open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps(msg) + "\n")
+            tr = open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a")
+            tr.write(json.dumps(msg) + "\n" + json.dumps({"type": "user", "message": {"content": msg}}) + "\n")
+            if msg == "park":  # the turn ends and leaves a background command: status stays shell, as the real CLI reports it
+                tr.write(json.dumps({"type": "assistant", "message": {"stop_reason": "end_turn"}}) + "\n" + json.dumps({"type": "user", "isMeta": True, "message": {"content": "note"}}) + "\n")
+                tr.close(); w("shell"); continue
+            tr.close()
             w("shell" if msg == "run-shell" else "busy"); threading.Timer(2, w, ["idle"]).start()
         else: buf, d = buf + ("\n" if d[0] == "\r" else d[0]), d[1:]
 PY
@@ -182,6 +187,17 @@ check "ls --json NAME: an unknown name gives [] and exit 2" [ "$("$C" ls --json 
 printf '#!/bin/sh\ntouch "%s"\nexec "%s" "$@"\n' "$T/via-config" "$T/claude" >"$T/claude2"; chmod +x "$T/claude2"
 echo "CRSS_CLAUDE=$T/claude2" >"$T/cfg2"; CRSS_CONFIG=$T/cfg2 "$C" spawn c1 "$T/work" >/dev/null; idle c1
 check "up: the pane loop reads the caller's CRSS_CONFIG" [ -e "$T/via-config" ]
+# 6. parked: a finished turn that left a background command running reads "shell" in Claude's record
+st1() { "$C" ls "$1" | awk '{print $2}'; }
+"$C" spawn p1 "$T/work" >/dev/null; idle p1; "$C" send p1 park >/dev/null
+check "ls: a finished turn with a background command is parked, not shell" wait_for 10 '[ "$(st1 p1)" = parked ]'
+out=$("$C" wait p1 --timeout 10); check "wait: a parked session is done, exit 0" [ "$?/$out" = "0/p1 parked" ]
+out=$("$C" peek p1 1 | head -1); check "peek: shows parked" [ "${out%% -*}" = "p1 parked" ]
+out=$("$T/bin/session-handoff" ready ah_p1); check "session-handoff ready: parked is SAFE" [ "$out" = "ready: ah_p1 SAFE" ]
+out=$("$C" restart p1); check "restart: skips a parked session and says so" [ "$out" = "p1: skipped, parked" ]
+t0=$SECONDS; out=$(CRSS_BUSY_POLL=1 "$C" restart p1 --wait-idle)
+check "restart --wait-idle: gives up on a parked session in seconds and leaves it running" bash -c '[[ $1 == "p1: skipped, parked:"* ]] && [ "$2" -lt 30 ] && [ "$3" = parked ]' _ "$out" "$((SECONDS - t0))" "$(st1 p1)"
+"$C" send p1 run-shell >/dev/null; check "ls: a command running in a new turn is shell again, not parked" [ "$(st1 p1)" = shell ]
 echo 'garbage (' >>"$CRSS_STATE/n1.env"; out=$("$C" send n1 hi 2>/dev/null); check "send: a broken env file does not turn a delivered send into a refusal" [ "$?/$out" = 0/delivered ]
 out=$("$C" ls n1 2>&1); check "ls NAME: a broken env file is not also called no such session" bash -c '[[ $1 == *"n1: bad env file, skipped"* && $1 != *"no such session"* ]]' _ "$out"
 exit $F

@@ -14,8 +14,9 @@ usage() {
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
 crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); exit 2 for an unknown NAME
+                                  STATUS parked: the turn is over, a background command it started still runs
 crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
-crss wait NAME... [--timeout S]   until each is idle (turn over, brief sent), on a dialog, or down; exit 0 all idle, 1 timeout, 2 other
+crss wait NAME... [--timeout S]   until each is idle or parked (turn over, brief sent), on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
 crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same session id
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
@@ -50,6 +51,19 @@ rec() { local p; p=$(cpid "$1"); if [ -n "$p" ]; then cat "$HOME/.claude/session
 jf() { jq -r ".$2 // empty" <<<"$1" 2>/dev/null || true; } # RECORD-JSON KEY
 field() { jf "$(rec "$1")" "$2"; }
 working() { case $(field "$1" status) in busy | shell) return 0 ;; esac; return 1; } # shell: a shell command is running
+# Claude's record says "shell" when a finished turn left a background command running (a waiter);
+# a command inside a turn read "busy" on CLI 2.1.325. To be safe "shell" is only reported as "parked"
+# when the transcript shows the turn is over: its last real message is an assistant one with
+# stop_reason end_turn.
+status_of() { # NAME [record json]
+  local r=${2-$(rec "$1")} st f
+  st=$(jf "$r" status)
+  if [ "$st" = shell ]; then
+    f=$(compgen -G "$HOME/.claude/projects/*/$(jf "$r" sessionId).jsonl" | head -1 || true)
+    [ -z "$f" ] || [ "$(tail -n 200 "$f" | jq -rRn '[inputs | fromjson? | objects | select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true)] | last | .message.stop_reason? // empty' 2>/dev/null || true)" != end_turn ] || st=parked
+  fi
+  echo "$st"
+}
 # /clear and in-TUI /resume change the session id; follow the live record
 sync_sid() { # NAME [live session id, when the caller already has it]
   local s; load "$1"; s=${2-$(field "$1" sessionId)}
@@ -215,7 +229,7 @@ cmd_ls() {
     ( load "$n" ) || { echo "$n: bad env file, skipped" >&2; continue; }
     load "$n"
     if tm has-session -t "=ah_$n" 2>/dev/null; then
-      r=$(rec "$n"); st=$(jf "$r" status); v=$(jf "$r" version) # one record lookup per row: it walks the process tree
+      r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version) # one record lookup per row: it walks the process tree
       sync_sid "$n" "$(jf "$r" sessionId)"
     else st=down v=; fi
     rows+="$n	${st:-?}	${v:--}	$SID	$DIR	$(title_of "$n")"$'\n'
@@ -223,7 +237,7 @@ cmd_ls() {
   for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
     [ -e "$(envf "$n")" ] && continue
     want "$n" || continue
-    r=$(rec "$n"); st=$(jf "$r" status); v=$(jf "$r" version); x=$(jf "$r" sessionId)
+    r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version); x=$(jf "$r" sessionId)
     rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	$(title_of "$n" "$x")"$'\n'
   done
   if [ -n "$json" ]; then
@@ -237,11 +251,11 @@ cmd_ls() {
 cmd_peek() { # exit 2 when there is no such session
   local n=${1:-} k=${2:-30} st=down t
   known "$n" || return 2
-  if tm has-session -t "=ah_$n" 2>/dev/null; then st=$(field "$n" status); st=${st:-?}; fi
+  if tm has-session -t "=ah_$n" 2>/dev/null; then st=$(status_of "$n"); st=${st:-?}; fi
   t=$(title_of "$n"); echo "$n $st ${t:--}"
   if [ "$st" != down ]; then tm capture-pane -p -S - -t "=ah_$n:" | { grep -v '^[[:space:]]*$' || true; } | tail -n "$k"; fi
 }
-# settled: tmux gone, a dialog open, or idle on two polls in a row with the brief sent (its transcript exists)
+# settled: tmux gone, a dialog open, or idle (or parked) on two polls in a row with the brief sent (its transcript exists)
 cmd_wait() {
   local ns=() to=1800 t0=$SECONDS n st rc=0 left
   declare -A idl=() last=()
@@ -253,15 +267,15 @@ cmd_wait() {
     left=0
     for n in "${ns[@]}"; do
       if ! tm has-session -t "=ah_$n" 2>/dev/null; then last[$n]=down; continue; fi
-      st=$(field "$n" status); last[$n]=${st:-?}
-      if [ "$st" = idle ] && sent "$n"; then idl[$n]=$((${idl[$n]:-0} + 1)); else idl[$n]=0; fi
+      st=$(status_of "$n"); last[$n]=${st:-?}
+      if { [ "$st" = idle ] || [ "$st" = parked ]; } && sent "$n"; then idl[$n]=$((${idl[$n]:-0} + 1)); else idl[$n]=0; fi
       if [ "$st" != waiting ] && [ "${idl[$n]}" -lt 2 ]; then left=1; fi
     done
     [ "$left" = 1 ] || break
     if [ $((SECONDS - t0)) -ge "$to" ]; then rc=1; break; fi
     sleep "${CRSS_POLL:-2}"
   done
-  for n in "${ns[@]}"; do echo "$n ${last[$n]}"; [ "${last[$n]}" = idle ] || [ "$rc" = 1 ] || rc=2; done
+  for n in "${ns[@]}"; do echo "$n ${last[$n]}"; [[ ${last[$n]} == @(idle|parked) ]] || [ "$rc" = 1 ] || rc=2; done
   return $rc
 }
 
@@ -306,14 +320,15 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
 }
 
 restart1() { # NAME WAIT
-  local n=$1 old p f
+  local n=$1 old p f k=0
   tm has-session -t "=ah_$n" 2>/dev/null || { cmd_up "$n"; return; }
   sync_sid "$n"
   [ -n "$(field "$n" status)" ] || { echo "$n: skipped, no live claude"; return 0; }
   [ "$(field "$n" status)" = waiting ] && { echo "$n: skipped, waiting on a dialog"; return 0; }
   if working "$n"; then
-    [ -z "$2" ] && { echo "$n: skipped, busy"; return 0; }
-    for _ in $(seq 240); do working "$n" || break; sleep 15; done
+    [ -z "$2" ] && { p=$(status_of "$n"); echo "$n: skipped, ${p/shell/busy}"; return 0; }
+    for _ in $(seq 240); do working "$n" || break; if [ "$(status_of "$n")" = parked ]; then k=$((k + 1)); [ "$k" -lt 4 ] || break; else k=0; fi; sleep "${CRSS_BUSY_POLL:-15}"; done
+    [ "$(status_of "$n")" != parked ] || { echo "$n: skipped, parked: /exit would stop the background command it left running"; return 0; }
     working "$n" && { echo "$n: skipped, still busy after 1h"; return 0; }
   fi
   old=$(cpid "$n"); f=$(mktemp); printf /exit >"$f"
