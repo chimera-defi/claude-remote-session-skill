@@ -160,10 +160,12 @@ cmv() { grep -F "$(sidf "$1")" "$FAKE_LOG.cm" | tail -1 | cut -c1-1; } # NAME: C
 check "code-mode: no --remote-control, -n title, session id kept" argq cm1 'index("--remote-control")==null and (index("-n") as $i | .[$i+1]=="Worker bee") and index("--session-id")!=null'
 check "code-mode: env var set, state file remembers" bash -c "[ \"\$(echo $(cmv cm1))\" = 1 ] && grep -qx CODE_MODE=1 '$CRSS_STATE/cm1.env'"
 "$C" send cm1 hi >/dev/null; idle cm1; "$C" restart cm1 >/dev/null
-check "code-mode: resume keeps it" bash -c "[ \"$(cmv cm1)\" = 1 ]" 
+check "code-mode: resume keeps it" wait_for 10 '[ "$(grep -cF "$(sidf cm1)" "$FAKE_LOG.cm")" -ge 2 ] && [ "$(cmv cm1)" = 1 ]'
 check "code-mode: resume has no --remote-control" argq cm1 'index("--remote-control")==null and index("--resume")!=null and index("-n")==null'
 check "code-mode: ls marks it" grep -qF "[code-mode]" <("$C" ls cm1)
-check "no code-mode: ls has no marker" [ -z "$("$C" ls n1 | grep code-mode)" ]
+check "no code-mode: a row listed after a code-mode one has no marker" [ -z "$("$C" ls | grep '^n1 ' | grep code-mode)" ]
+"$C" spawn cm2 "$T/work" --code-mode >/dev/null; idle cm2
+check "code-mode: no title still shows the placeholder" grep -qE ' - \[code-mode\]$' <("$C" ls cm2)
 check "no code-mode: env var not set" bash -c "[ \"$(cmv n1)\" != 1 ] && [ -n \"$(cmv n1)\" ]"
 S1=$(sidf n1); mkdir -p "$HOME/.claude/projects/p"
 echo '{"type":"ai-title","aiTitle":"Tmux session naming schemes","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
