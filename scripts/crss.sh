@@ -11,7 +11,7 @@ CRSS_CLAUDE=${CRSS_CLAUDE:-claude}
 
 usage() {
   cat <<'H'
-crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
+crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--code-mode] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
 crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); --json adds by (who spawned it); exit 2 for an unknown NAME
                                   STATUS parked: the turn is over, a background command it started still runs
@@ -22,6 +22,7 @@ crss restart (NAME... | --all) [--wait-idle]   /exit; the loop resumes the same 
 crss reap NAME [--force]          drop the env file, kill tmux, remove a clean pushed worktree
 State in $CRSS_STATE/NAME.env; tmux session ah_NAME. Config: $CRSS_CONFIG (default
 ~/.config/crss/crss.env) may set CRSS_STATE, CRSS_DEFAULT_ARGS. CRSS_NO_SYSTEMD=1 skips systemd-run.
+--code-mode: Claude Code's experimental Code Mode; no Remote Control, so not in the app, and a restart resumes it only with Code Mode on
 CRSS_NAMES=auto|plain (spawn; default auto): Claude titles the session itself, or ah-NAME. Rename: crss send NAME "/rename T"
 H
 }
@@ -30,7 +31,7 @@ tm() { $CRSS_TMUX "$@"; }
 envf() { echo "$CRSS_STATE/$1.env"; }
 need() { [ -f "$(envf "$1")" ] || die "no such session: $1"; }
 known() { [ -f "$(envf "$1")" ] || tm has-session -t "=ah_$1" 2>/dev/null || { echo "crss: no such session: $1" >&2; return 2; }; } # also ah_* sessions without an env file
-load() { need "$1"; DIR='' WT='' SID='' BRIEF='' NAMES='' TITLE='' BY=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
+load() { need "$1"; DIR='' WT='' SID='' BRIEF='' CODE_MODE='' NAMES='' TITLE='' BY=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
 names() {
   if [ $# -gt 0 ]; then printf '%s\n' "$@"; return; fi
   local f; for f in "$CRSS_STATE"/*.env; do [ -e "$f" ] && basename "$f" .env; done; return 0
@@ -101,7 +102,7 @@ paste_to() { # NAME FILE
 }
 
 cmd_spawn() {
-  local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' extra=() args=() sid by nm=${CRSS_NAMES:-auto}
+  local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' cm='' extra=() args=() sid by nm=${CRSS_NAMES:-auto}
   [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
   [ -d "$dir" ] || die "no such dir: $dir"
   shift 2
@@ -112,6 +113,7 @@ cmd_spawn() {
       --effort) effort=$2; shift 2 ;;
       --title) title=$2; shift 2 ;;
       --worktree) wt=1; shift ;;
+      --code-mode) cm=1; shift ;;
       --brief) brief=$2; [ -r "$brief" ] || die "cannot read $brief"; shift 2 ;;
       --) shift; extra=("$@"); break ;;
       *) die "unknown option: $1" ;;
@@ -147,6 +149,7 @@ cmd_spawn() {
     echo "ARGS=($([ ${#args[@]} -gt 0 ] && printf '%q ' "${args[@]}"))"
     echo "ENVS=()"
     [ "$nm" = auto ] && echo "NAMES=auto"
+    [ -n "$cm" ] && echo "CODE_MODE=1"
     [ -n "$title" ] && echo "TITLE=$(printf %q "$title")"
     [ -n "$brief" ] && echo "BRIEF=$(printf %q "$brief")"
   } >"$(envf "$n")"
@@ -197,7 +200,10 @@ cmd_loop() {
       a=("${ARGS[@]}")
       # NAMES=auto: a bare --remote-control lets Claude title the session (-n would stop that). The
       # flag takes an optional value, so --resume or --session-id must follow it directly.
-      if [ "$NAMES" != auto ]; then
+      if [ -n "$CODE_MODE" ]; then # Code Mode refuses to start under Remote Control; -n names it instead
+        ENVS+=(CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1)
+        if [ -n "$first" ] && [ -n "$TITLE" ]; then a+=(-n "$TITLE"); elif [ "$NAMES" != auto ]; then a+=(-n "ah-$n"); fi
+      elif [ "$NAMES" != auto ]; then
         a+=(--remote-control "ah-$n" -n "ah-$n")
       elif [ -n "$first" ] && [ -n "$TITLE" ]; then
         a+=(--remote-control "$TITLE" -n "$TITLE")
@@ -250,7 +256,7 @@ cmd_ls() {
       r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version) # one record lookup per row: it walks the process tree
       sync_sid "$n" "$(jf "$r" sessionId)"
     else st=down v=; fi
-    rows+="$n	${st:-?}	${v:--}	$SID	$DIR	@$(by_of "$BY")	$(title_of "$n")"$'\n'
+    rows+="$n	${st:-?}	${v:--}	$SID	$DIR	@$(by_of "$BY")	$(title_of "$n")	${CODE_MODE:+ [code-mode]}"$'\n'
   done
   for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
     [ -e "$(envf "$n")" ] && continue
@@ -261,7 +267,7 @@ cmd_ls() {
   if [ -n "$json" ]; then
     printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")})'
   else
-    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
+    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f g; do printf '%-16s %-5s %-10s %.8s %s %s%s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}" "$g"; done
   fi
   for a in "${filt[@]}"; do [ -f "$(envf "$a")" ] || [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
   return "$rc"
