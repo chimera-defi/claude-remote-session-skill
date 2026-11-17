@@ -106,6 +106,10 @@ exists (escalation channel, guardrails). Shapes:
   numbered options with a recommendation. Otherwise name the host's channel from `$CRSS_HOME/local.md`,
   since `crss send` can't reach it. A question sitting in a pane raises no notification; builders send
   the exact blocked command or decision to the launcher and print a final `BLOCKED:` line.
+  `crss spawn` records its caller, so a child finds its launcher with `crss ls NAME --json | jq -r '.[0].by'`.
+  That prints a NAME you can `crss send` to when the caller is a live crss session; otherwise it is a
+  conversation title (a Desktop session, or one cleared or reaped since) or a systemd unit.
+  `CRSS_BY=name crss spawn ...` overrides what is recorded.
 - **Concrete anti-patterns:** "don't branch from local `main`", "no deploys without explicit human
   approval in this session". Specific mistakes beat "be careful".
 - **Builders:** record the model that ran.

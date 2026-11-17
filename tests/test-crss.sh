@@ -6,7 +6,7 @@ T=$(mktemp -d); SOCK=crss-test-$$; F=0
 export HOME=$T/home CRSS_STATE=$T/state CRSS_TMUX="tmux -L $SOCK" CRSS_CLAUDE=$T/claude CRSS_CONFIG=$T/none
 export CRSS_BACKOFF=1 CRSS_PAUSE=1 CRSS_NO_SYSTEMD=1 FAKE_LOG=$T/log TERM=xterm
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset TMUX; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
+unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
 trap 'tmux -L $SOCK kill-server 2>/dev/null; rm -rf "$T"' EXIT
 
 cat >"$T/claude" <<'PY'
@@ -160,6 +160,27 @@ check "ls title: ai-title shows" [ "$(tj n1)" = "Tmux session naming schemes" ]
 echo '{"type":"custom-title","customTitle":"Fleet naming study","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
 check "ls title: custom-title wins" [ "$(tj n1)" = "Fleet naming study" ]
 out=$("$C" ls n1); check "ls NAME: one row, title last" bash -c "[ \"\$(wc -l <<<'$out')\" = 1 ] && [[ '$out' == n1\ *'Fleet naming study' ]]"
+# 5b. BY: who started a session, as the NAME of a crss session, a transcript title, or the raw value
+byj() { "$C" ls "$1" --json | jq -r '.[0].by'; }
+CLAUDE_CODE_SESSION_ID=$S1 "$C" spawn by1 "$T/work" >/dev/null; idle by1
+check "by: caller's conversation id that is a crss session shows its NAME" [ "$(byj by1)" = n1 ]
+CRSS_BY=x "$C" spawn by2 "$T/work" >/dev/null; idle by2
+check "by: CRSS_BY overrides" [ "$(byj by2)" = x ]
+CRSS_BY=x CLAUDE_CODE_SESSION_ID=$S1 "$C" spawn by3 "$T/work" >/dev/null
+check "by: CRSS_BY beats the conversation id" [ "$(byj by3)" = x ]
+"$C" spawn by4 "$T/work" >/dev/null; idle by4
+check "by: nothing recorded shows empty, no BY line" bash -c "[ -z \"\$('$C' ls by4 --json | jq -r '.[0].by')\" ] && ! grep -q ^BY= '$CRSS_STATE/by4.env'"
+echo '{"type":"custom-title","customTitle":"Outside caller","sessionId":"zz-1"}' >"$HOME/.claude/projects/p/zz-1.jsonl"
+CRSS_BY=zz-1 "$C" spawn by5 "$T/work" >/dev/null; idle by5
+check "by: a transcript title when the id is not a crss session" [ "$(byj by5)" = "Outside caller" ]
+echo '0::/user.slice/user-1.slice/app.slice/nightly-job.service' >"$T/cg"; CRSS_CGROUP=$T/cg "$C" spawn by6 "$T/work" >/dev/null
+check "by: the systemd unit when a timer spawns it" [ "$(byj by6)" = nightly-job.service ]
+echo '0::/user.slice/user-1.slice/session-7.scope' >"$T/cg"; CRSS_CGROUP=$T/cg "$C" spawn by7 "$T/work" >/dev/null
+check "by: a login shell (a scope, not a unit) records nothing" bash -c "! grep -q ^BY= '$CRSS_STATE/by7.env'"
+"$C" send by1 hi >/dev/null; idle by1; "$C" restart by1 >/dev/null
+check "by: restart keeps it" [ "$(byj by1)" = n1 ]
+out=$("$C" ls by1 by2); check "by: plain ls rows are unchanged (no caller column)" bash -c "[[ '$out' != *@* && '$out' != *$'\t'* ]]"
+CRSS_BY=-n "$C" spawn by8 "$T/work" >/dev/null; check "by: a value that looks like an echo flag is shown as is" [ "$(byj by8)" = -n ]
 tmux -L "$SOCK" new-session -d -s ah_pk -x 80 -y 20 "echo peekmark-xyz; sleep 600"
 check "peek: header and pane text" wait_for 10 '[[ "$("$C" peek pk 5)" == "pk "*peekmark-xyz* ]]'
 "$C" peek nosuch 2>/dev/null; check "peek: unknown session refused with 2" [ $? = 2 ]
