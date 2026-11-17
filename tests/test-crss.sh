@@ -179,6 +179,8 @@ echo '0::/user.slice/user-1.slice/session-7.scope' >"$T/cg"; CRSS_CGROUP=$T/cg "
 check "by: a login shell (a scope, not a unit) records nothing" bash -c "! grep -q ^BY= '$CRSS_STATE/by7.env'"
 "$C" send by1 hi >/dev/null; idle by1; "$C" restart by1 >/dev/null
 check "by: restart keeps it" [ "$(byj by1)" = n1 ]
+out=$("$C" ls by1 by2); check "by: plain ls rows are unchanged (no caller column)" bash -c "[[ '$out' != *@* && '$out' != *$'\t'* ]]"
+CRSS_BY=-n "$C" spawn by8 "$T/work" >/dev/null; check "by: a value that looks like an echo flag is shown as is" [ "$(byj by8)" = -n ]
 tmux -L "$SOCK" new-session -d -s ah_pk -x 80 -y 20 "echo peekmark-xyz; sleep 600"
 check "peek: header and pane text" wait_for 10 '[[ "$("$C" peek pk 5)" == "pk "*peekmark-xyz* ]]'
 "$C" peek nosuch 2>/dev/null; check "peek: unknown session refused with 2" [ $? = 2 ]

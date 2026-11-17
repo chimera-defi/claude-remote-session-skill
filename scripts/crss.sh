@@ -13,7 +13,7 @@ usage() {
   cat <<'H'
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss up [NAME...]                 start sessions that have an env file but no tmux session
-crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); exit 2 for an unknown NAME
+crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); --json adds by (who spawned it); exit 2 for an unknown NAME
                                   STATUS parked: the turn is over, a background command it started still runs
 crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
 crss wait NAME... [--timeout S]   until each is idle or parked (turn over, brief sent), on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other
@@ -91,7 +91,7 @@ title_of() { # NAME [session id]; with or without an env file
 }
 by_of() { # recorded caller: a crss session's NAME, else a transcript title, else the raw value
   local f t; [ -n "$1" ] || return 0; f=$(grep -lxF "SID=$1" "$CRSS_STATE"/*.env 2>/dev/null | head -1 || true)
-  if [ -n "$f" ]; then basename "$f" .env; else t=$(title_of - "$1"); echo "${t:-$1}"; fi
+  if [ -n "$f" ]; then basename "$f" .env; else t=$(title_of - "$1"); printf '%s\n' "${t:-$1}"; fi
 }
 paste_to() { # NAME FILE
   tm load-buffer -b "crss-$$" "$2"
