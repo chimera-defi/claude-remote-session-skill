@@ -200,7 +200,7 @@ cmd_loop() {
       a=("${ARGS[@]}")
       # NAMES=auto: a bare --remote-control lets Claude title the session (-n would stop that). The
       # flag takes an optional value, so --resume or --session-id must follow it directly.
-      if [ -n "$CODE_MODE" ]; then # Code Mode refuses to start under Remote Control; -n names it instead
+      if [ -n "$CODE_MODE" ]; then # under --remote-control the session starts without Code Mode; -n names it instead
         ENVS+=(CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1)
         if [ -n "$first" ] && [ -n "$TITLE" ]; then a+=(-n "$TITLE"); elif [ "$NAMES" != auto ]; then a+=(-n "ah-$n"); fi
       elif [ "$NAMES" != auto ]; then
@@ -267,7 +267,7 @@ cmd_ls() {
   if [ -n "$json" ]; then
     printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")})'
   else
-    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f g; do printf '%-16s %-5s %-10s %.8s %s %s%s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}" "$g"; done
+    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f g; do [ "$f" != ' [code-mode]' ] || { g=$f; f=; }; printf '%-16s %-5s %-10s %.8s %s %s%s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}" "$g"; done
   fi
   for a in "${filt[@]}"; do [ -f "$(envf "$a")" ] || [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
   return "$rc"

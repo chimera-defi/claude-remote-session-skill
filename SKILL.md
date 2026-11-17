@@ -29,7 +29,9 @@ crss reap NAME [--force]
 
 **Code Mode:** `--code-mode` starts the session with Claude Code's experimental Code Mode
 (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, Claude Code 2.1.323 or newer) and without
-`--remote-control`, which Code Mode refuses to run under. It is remembered in the state file, so
+`--remote-control` (started with that flag, a session runs without Code Mode). The first Code Mode
+start on a machine asks for a one-time confirmation: answer it once in a terminal (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 claude`)
+before spawning workers. The choice is remembered in the state file, so
 every restart resumes it the same way (a Code Mode conversation resumes only with Code Mode on).
 Costs: not visible in the Claude app or phone, cannot be moved to the Desktop app, no Claude in
 Chrome or computer use. `crss ls` marks it `[code-mode]`; send, peek, wait, restart and reap work
