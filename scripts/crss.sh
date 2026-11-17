@@ -101,7 +101,7 @@ paste_to() { # NAME FILE
 }
 
 cmd_spawn() {
-  local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' extra=() args=() sid nm=${CRSS_NAMES:-auto}
+  local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' extra=() args=() sid by nm=${CRSS_NAMES:-auto}
   [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
   [ -d "$dir" ] || die "no such dir: $dir"
   shift 2
@@ -135,7 +135,8 @@ cmd_spawn() {
   [ -n "$effort" ] && args+=(--effort "$effort")
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
-  by=${CRSS_BY:-${CLAUDE_CODE_SESSION_ID:-}}; [ -n "$by" ] || { by=$(tail -n1 /proc/self/cgroup 2>/dev/null || true); by=${by##*/}; [[ $by == *.service ]] || by=; } # who started it
+  by=${CRSS_BY:-${CLAUDE_CODE_SESSION_ID:-}} # who started it: a given name, the caller's conversation id, or the systemd unit
+  [ -n "$by" ] || { by=$(tail -n1 "${CRSS_CGROUP:-/proc/self/cgroup}" 2>/dev/null || true); by=${by##*/}; [[ $by == *.service ]] || by=; }; by=${by//[$'\t\n']/ }
   mkdir -p "$CRSS_STATE"
   if [ -n "$brief" ]; then cp "$brief" "$CRSS_STATE/$n.brief"; brief=$CRSS_STATE/$n.brief; fi
   {

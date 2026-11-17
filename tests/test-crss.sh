@@ -6,7 +6,7 @@ T=$(mktemp -d); SOCK=crss-test-$$; F=0
 export HOME=$T/home CRSS_STATE=$T/state CRSS_TMUX="tmux -L $SOCK" CRSS_CLAUDE=$T/claude CRSS_CONFIG=$T/none
 export CRSS_BACKOFF=1 CRSS_PAUSE=1 CRSS_NO_SYSTEMD=1 FAKE_LOG=$T/log TERM=xterm
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
+unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
 trap 'tmux -L $SOCK kill-server 2>/dev/null; rm -rf "$T"' EXIT
 
 cat >"$T/claude" <<'PY'
@@ -173,6 +173,10 @@ check "by: nothing recorded shows empty, no BY line" bash -c "[ -z \"\$('$C' ls 
 echo '{"type":"custom-title","customTitle":"Outside caller","sessionId":"zz-1"}' >"$HOME/.claude/projects/p/zz-1.jsonl"
 CRSS_BY=zz-1 "$C" spawn by5 "$T/work" >/dev/null; idle by5
 check "by: a transcript title when the id is not a crss session" [ "$(byj by5)" = "Outside caller" ]
+echo '0::/user.slice/user-1.slice/app.slice/nightly-job.service' >"$T/cg"; CRSS_CGROUP=$T/cg "$C" spawn by6 "$T/work" >/dev/null
+check "by: the systemd unit when a timer spawns it" [ "$(byj by6)" = nightly-job.service ]
+echo '0::/user.slice/user-1.slice/session-7.scope' >"$T/cg"; CRSS_CGROUP=$T/cg "$C" spawn by7 "$T/work" >/dev/null
+check "by: a login shell (a scope, not a unit) records nothing" bash -c "! grep -q ^BY= '$CRSS_STATE/by7.env'"
 "$C" send by1 hi >/dev/null; idle by1; "$C" restart by1 >/dev/null
 check "by: restart keeps it" [ "$(byj by1)" = n1 ]
 tmux -L "$SOCK" new-session -d -s ah_pk -x 80 -y 20 "echo peekmark-xyz; sleep 600"
