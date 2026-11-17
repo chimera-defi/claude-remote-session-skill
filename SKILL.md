@@ -30,7 +30,7 @@ crss reap NAME [--force]
 **Names:** NAME is for `crss` and tmux (`ah_NAME`). In the app, a session is listed by its
 title. By default Claude titles each session itself (`crss ls` shows the title in its last
 column), and the title survives `crss restart`. `--title T` sets the first title; `CRSS_NAMES=plain` (config file or environment, read
-at spawn) names it `ah-NAME` instead. Sessions spawned before this keep `ah-NAME`. Rename a live
+at spawn) names it `ah-NAME` instead. A session whose state file has no `NAMES=auto` line is an `ah-NAME` session. Rename a live
 one: `crss send NAME "/rename New title"`. On an `ah-NAME` session the rename lasts until its next
 restart; to keep it, add the line `NAMES=auto` to its state file first (a loop started by an older
 `crss` reads that line only after its tmux session is recreated). `crss SUB --help` prints usage.
@@ -105,5 +105,4 @@ export CLAUDE_CODE_AUTO_COMPACT_WINDOW=234000
 ```
 
 Between Claude sessions on one machine, the SendMessage tool with `to: "uds:<socket>"` delivers
-directly (the socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`). `claude --bg` could replace
-crss once a script can send to it, it shows on the phone, and it survives a reboot.
+directly (the socket is `messagingSocketPath` in `~/.claude/sessions/<pid>.json`).

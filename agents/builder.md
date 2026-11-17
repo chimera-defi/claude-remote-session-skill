@@ -31,7 +31,7 @@ consult `advisor` at a genuine fork. Stop and return early, saying why, only whe
 
 - 250 turns per invocation (`maxTurns`); at the limit you stop mid-step and the orchestrator gets
   your last message. You can't see a turn counter, so keep a checklist file current.
-- Context auto-compacts around 200K. After two compactions on one task, return with a progress file
+- Context auto-compacts when it fills. After two compactions on one task, return with a progress file
   and the next step.
 - Put findings in files and return their paths plus at most about 40 lines.
 
