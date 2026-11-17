@@ -6,7 +6,7 @@ T=$(mktemp -d); SOCK=crss-test-$$; F=0
 export HOME=$T/home CRSS_STATE=$T/state CRSS_TMUX="tmux -L $SOCK" CRSS_CLAUDE=$T/claude CRSS_CONFIG=$T/none
 export CRSS_BACKOFF=1 CRSS_PAUSE=1 CRSS_NO_SYSTEMD=1 FAKE_LOG=$T/log TERM=xterm
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
+unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY CLAUDE_CODE_EXPERIMENTAL_CODE_MODE; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
 trap 'tmux -L $SOCK kill-server 2>/dev/null; rm -rf "$T"' EXIT
 
 cat >"$T/claude" <<'PY'
@@ -21,6 +21,7 @@ def w(st):
     os.replace(rec + ".t", rec)
 w("idle")
 open(os.environ["FAKE_LOG"] + ".args", "a").write(json.dumps(a[1:]) + "\n")
+open(os.environ["FAKE_LOG"] + ".cm", "a").write(os.environ.get("CLAUDE_CODE_EXPERIMENTAL_CODE_MODE", "-") + " " + json.dumps(a[1:]) + "\n")
 sys.stdout.write("\x1b[?2004h"); sys.stdout.flush()  # enable bracketed paste, as the real TUI does
 tty.setraw(0)
 buf, paste, d = "", False, ""
@@ -154,6 +155,16 @@ check "--title: first launch names the session" argq n4 'index("--remote-control
 "$C" send n4 hi >/dev/null; idle n4; "$C" restart n4 >/dev/null
 check "--title: resume uses the bare flag" argq n4 'index("--remote-control") as $i | .[$i+1]=="--resume" and index("-n")==null'
 check "ls title: falls back to the spawn title" [ "$(tj n4)" = "Fix the thing" ]
+"$C" spawn cm1 "$T/work" --code-mode --title "Worker bee" >/dev/null; idle cm1
+cmv() { grep -F "$(sidf "$1")" "$FAKE_LOG.cm" | tail -1 | cut -c1-1; } # NAME: CODE_MODE value the last launch saw
+check "code-mode: no --remote-control, -n title, session id kept" argq cm1 'index("--remote-control")==null and (index("-n") as $i | .[$i+1]=="Worker bee") and index("--session-id")!=null'
+check "code-mode: env var set, state file remembers" bash -c "[ \"\$(echo $(cmv cm1))\" = 1 ] && grep -qx CODE_MODE=1 '$CRSS_STATE/cm1.env'"
+"$C" send cm1 hi >/dev/null; idle cm1; "$C" restart cm1 >/dev/null
+check "code-mode: resume keeps it" bash -c "[ \"$(cmv cm1)\" = 1 ]" 
+check "code-mode: resume has no --remote-control" argq cm1 'index("--remote-control")==null and index("--resume")!=null and index("-n")==null'
+check "code-mode: ls marks it" grep -qF "[code-mode]" <("$C" ls cm1)
+check "no code-mode: ls has no marker" [ -z "$("$C" ls n1 | grep code-mode)" ]
+check "no code-mode: env var not set" bash -c "[ \"$(cmv n1)\" != 1 ] && [ -n \"$(cmv n1)\" ]"
 S1=$(sidf n1); mkdir -p "$HOME/.claude/projects/p"
 echo '{"type":"ai-title","aiTitle":"Tmux session naming schemes","sessionId":"'"$S1"'"}' >>"$HOME/.claude/projects/p/$S1.jsonl"
 check "ls title: ai-title shows" [ "$(tj n1)" = "Tmux session naming schemes" ]

@@ -17,7 +17,7 @@ session doesn't.
 ## Commands
 
 ```bash
-crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
+crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--code-mode] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
 crss ls [NAME...] [--json]       # name, status (idle|busy|shell|parked|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session. `--json` adds `by`: who spawned it (a session NAME or title, else the raw id; empty if unknown)
 crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
@@ -26,6 +26,14 @@ crss restart NAME... | --all [--wait-idle]
 crss up [NAME...]                # start what should be running and isn't
 crss reap NAME [--force]
 ```
+
+**Code Mode:** `--code-mode` starts the session with Claude Code's experimental Code Mode
+(`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, Claude Code 2.1.323 or newer) and without
+`--remote-control`, which Code Mode refuses to run under. It is remembered in the state file, so
+every restart resumes it the same way (a Code Mode conversation resumes only with Code Mode on).
+Costs: not visible in the Claude app or phone, cannot be moved to the Desktop app, no Claude in
+Chrome or computer use. `crss ls` marks it `[code-mode]`; send, peek, wait, restart and reap work
+on the tmux pane and need no Remote Control. Good for worker sessions nobody talks to from the phone.
 
 **Names:** NAME is for `crss` and tmux (`ah_NAME`). In the app, a session is listed by its
 title. By default Claude titles each session itself (`crss ls` shows the title in its last
