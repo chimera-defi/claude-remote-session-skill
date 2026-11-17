@@ -19,7 +19,7 @@ session doesn't.
 ```bash
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
-crss ls [NAME...] [--json]       # name, status (idle|busy|shell|parked|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session
+crss ls [NAME...] [--json]       # name, status (idle|busy|shell|parked|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session. `--json` adds `by`: who spawned it (a session NAME or title, else the raw id; empty if unknown)
 crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
 crss wait NAME... [--timeout S]  # until each is idle or parked, on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other (a NAME that is no session is refused at once)
 crss restart NAME... | --all [--wait-idle]
