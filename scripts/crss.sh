@@ -30,7 +30,7 @@ tm() { $CRSS_TMUX "$@"; }
 envf() { echo "$CRSS_STATE/$1.env"; }
 need() { [ -f "$(envf "$1")" ] || die "no such session: $1"; }
 known() { [ -f "$(envf "$1")" ] || tm has-session -t "=ah_$1" 2>/dev/null || { echo "crss: no such session: $1" >&2; return 2; }; } # also ah_* sessions without an env file
-load() { need "$1"; DIR='' WT='' SID='' BRIEF='' NAMES='' TITLE=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
+load() { need "$1"; DIR='' WT='' SID='' BRIEF='' NAMES='' TITLE='' BY=''; CMD=() ARGS=() ENVS=(); . "$(envf "$1")"; }
 names() {
   if [ $# -gt 0 ]; then printf '%s\n' "$@"; return; fi
   local f; for f in "$CRSS_STATE"/*.env; do [ -e "$f" ] && basename "$f" .env; done; return 0
@@ -89,6 +89,10 @@ title_of() { # NAME [session id]; with or without an env file
     jq -rRn '[inputs | fromjson?] | (map(.customTitle // empty) | last) // (map(.aiTitle // empty) | last) // empty' 2>/dev/null || true)
   t=${t:-$TITLE}; echo "${t//[$'\t\n']/ }"
 }
+by_of() { # recorded caller: a crss session's NAME, else a transcript title, else the raw value
+  local f t; [ -n "$1" ] || return 0; f=$(grep -lxF "SID=$1" "$CRSS_STATE"/*.env 2>/dev/null | head -1 || true)
+  if [ -n "$f" ]; then basename "$f" .env; else t=$(title_of - "$1"); echo "${t:-$1}"; fi
+}
 paste_to() { # NAME FILE
   tm load-buffer -b "crss-$$" "$2"
   tm paste-buffer -p -d -b "crss-$$" -t "=ah_$1:"
@@ -131,12 +135,14 @@ cmd_spawn() {
   [ -n "$effort" ] && args+=(--effort "$effort")
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
+  by=${CRSS_BY:-${CLAUDE_CODE_SESSION_ID:-}}; [ -n "$by" ] || { by=$(tail -n1 /proc/self/cgroup 2>/dev/null || true); by=${by##*/}; [[ $by == *.service ]] || by=; } # who started it
   mkdir -p "$CRSS_STATE"
   if [ -n "$brief" ]; then cp "$brief" "$CRSS_STATE/$n.brief"; brief=$CRSS_STATE/$n.brief; fi
   {
     echo "DIR=$(printf %q "$dir")"
     [ -n "$wt" ] && echo "WT=$(printf %q "$wt")"
     echo "SID=$sid"
+    [ -z "$by" ] || echo "BY=$(printf %q "$by")"
     echo "ARGS=($([ ${#args[@]} -gt 0 ] && printf '%q ' "${args[@]}"))"
     echo "ENVS=()"
     [ "$nm" = auto ] && echo "NAMES=auto"
@@ -243,18 +249,18 @@ cmd_ls() {
       r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version) # one record lookup per row: it walks the process tree
       sync_sid "$n" "$(jf "$r" sessionId)"
     else st=down v=; fi
-    rows+="$n	${st:-?}	${v:--}	$SID	$DIR	$(title_of "$n")"$'\n'
+    rows+="$n	${st:-?}	${v:--}	$SID	$DIR	@$(by_of "$BY")	$(title_of "$n")"$'\n'
   done
   for n in $(tm list-sessions -F '#S' 2>/dev/null | sed -n 's/^ah_//p'); do # no env file: send reaches it, restart and reap don't
     [ -e "$(envf "$n")" ] && continue
     want "$n" || continue
     r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version); x=$(jf "$r" sessionId)
-    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	$(title_of "$n" "$x")"$'\n'
+    rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	@	$(title_of "$n" "$x")"$'\n'
   done
   if [ -n "$json" ]; then
-    printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], title:(.[5] // "")})'
+    printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")})'
   else
-    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
+    printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f; do printf '%-16s %-5s %-10s %.8s %s %s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}"; done
   fi
   for a in "${filt[@]}"; do [ -f "$(envf "$a")" ] || [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
   return "$rc"
