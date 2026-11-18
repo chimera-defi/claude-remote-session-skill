@@ -303,6 +303,11 @@ check "ls --all --hours: a wider window shows the older one" [ "$(row f0000001 -
 check "ls --all: a crss session's transcript is not listed twice" [ -z "$(row "$(sidf p1 | cut -c1-8)" --tmp)" ]
 check "ls: without --all there are no extra rows or keys" bash -c "[ \"\$('$C' ls 2>/dev/null | grep -c '^- ')\" = 0 ] && '$C' ls --json 2>/dev/null | jq -e 'all(.[]; has(\"age\") | not)' >/dev/null"
 check "ls --all --json: same keys plus age, entry, pid, proc" bash -c "'$C' ls --all --json 2>/dev/null | jq -e '.[] | select(.sid == \"a0000001$X\") | .name == \"-\" and .status == \"live\" and .pid == $LP and .proc == \"idle\" and .entry == \"claude-desktop\" and .age > 17000' >/dev/null"
+check "ls --all --hours 08: a leading zero is a plain number" [ "$(row e0000001 --hours 08)" = ended ]
+echo '{"pid":'"$LP"',"sess' >"$HOME/.claude/sessions/0.json" # sorts first; stays for the adopt refusal below
+check "ls --all: a half-written session record does not hide the ones after it" [ "$(row a0000001)" = live ]
+mv "$HOME/.claude/projects" "$T/link.away"; out=$("$C" ls --all 2>/dev/null); rc=$?; mv "$T/link.away" "$HOME/.claude/projects" # the link itself: find takes a dangling one without error
+check "ls --all: no projects folder still lists the crss sessions, exit as plain ls" bash -c '[ "$1" = "$("$3" ls >/dev/null 2>&1; echo $?)" ] && grep -q "^p1 " <<<"$2"' _ "$rc" "$out" "$C"
 "$C" ls --all n1 >/dev/null 2>&1; check "ls --all NAME: refused" [ $? = 1 ]
 "$C" ls --hours >/dev/null 2>&1; check "ls --hours without a number: refused" [ $? = 1 ]
 check "ls --hours and --tmp imply --all" [ "$("$C" ls --hours 48 2>/dev/null | grep -c '^- .* f0000001 ')$("$C" ls --tmp 2>/dev/null | grep -c '^- .* b0000003 ')" = 11 ]
@@ -311,6 +316,9 @@ out=$("$C" adopt 99999999 ad0 2>&1); check "adopt: no such transcript" [ "$?/$ou
 cp "$Q/c0000001$X.jsonl" "$Q/c0000001${X%1}2.jsonl"; out=$("$C" adopt c0000001 ad0 2>&1); check "adopt: an ambiguous prefix is refused" [ "$?/$out" = "1/crss: adopt: 2 transcripts match c0000001" ]
 out=$("$C" adopt e0000001 ad0 2>&1); check "adopt: a transcript written to in the last 2 minutes is refused" bash -c '[ "$1" = 1 ] && [[ $2 == *"under 2 minutes ago"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ]' _ "$?" "$out"
 touch -d '-10 minutes' "$Q/e0000001$X.jsonl"
+BAD="$Q/bad00001-x;touch \$HOME\$(printf '\\057')pwned.jsonl"; tx x '-3 hours' "$T/work" cli "$END" "$BAD"; touch -d '-10 minutes' "$BAD"
+out=$("$C" adopt bad00001 ad0 "$T/work" 2>&1); rc=$?; "$C" ls >/dev/null 2>&1; rm -f "$BAD"
+check "adopt: a file name that is not a session id is refused and nothing runs from it" bash -c '[ "$1" = 1 ] && [[ $2 == *"not a session id"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ] && [ ! -e "$HOME/pwned" ]' _ "$rc" "$out"
 out=$("$C" adopt e0000001 ad0 2>&1); check "adopt: a folder that is gone is refused, DIR offered" bash -c '[ "$1" = 1 ] && [[ $2 == *"no such dir"*"give DIR"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ]' _ "$?" "$out"
 out=$(CRSS_BY=boss "$C" adopt e0000001 ad1 "$T/work"); check "adopt: says what it did" grep -qF "ad1: adopted e0000001$X in $(cd "$T/work" && pwd -P)" <<<"$out"
 check "adopt: comes up as a crss session" idle ad1

@@ -60,6 +60,7 @@ working() { case $(field "$1" status) in busy | shell) return 0 ;; esac; return 
 # when the transcript shows the turn is over: its last real message is an assistant one with
 # stop_reason end_turn.
 # a real message: not metadata, a sub-agent's (sidechain) message or a local command's lines
+UUID='^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
 REAL='def real: select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true) | select((.message.content | type == "string" and (startswith("<command-name>") or startswith("<local-command-stdout>"))) | not);'
 status_of() { # NAME [record json]
   local r=${2-$(rec "$1")} st f
@@ -108,8 +109,10 @@ paste_to() { # NAME FILE
 
 # PID, session id and status of every running claude, from its session record (Desktop- and SDK-started too)
 live() {
-  local p s st
-  { jq -r '[.pid, .sessionId, .status // "?"] | @tsv' "$HOME"/.claude/sessions/*.json 2>/dev/null || true; } |
+  local f p s st
+  for f in "$HOME"/.claude/sessions/*.json; do # one jq per record: a half-written one must not hide the rest
+    jq -r '[.pid, .sessionId, .status // "?"] | @tsv' "$f" 2>/dev/null || true
+  done |
     while IFS=$'\t' read -r p s st; do if kill -0 "$p" 2>/dev/null; then printf '%s\t%s\t%s\n' "$p" "$s" "$st"; fi; done
 }
 # Transcripts no crss session has, newest first: SID STATE AGE-SECONDS PID:STATUS ENTRYPOINT DIR TITLE (tabs).
@@ -120,12 +123,12 @@ others() { # HOURS SHOW-TMP KNOWN-SIDS
   local f s p st t e d age now; declare -A lp=(); now=$(date +%s)
   while IFS=$'\t' read -r p s st; do lp[$s]=$p:$st; done < <(live)
   # depth 2 leaves out SID/subagents/*.jsonl; -L because projects may be a symlink
-  find -L "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mmin "-$(($1 * 60))" 2>/dev/null | while IFS= read -r f; do
-    s=${f##*/}; s=${s%.jsonl}; [[ " $3 " != *" $s "* ]] || continue
+  { find -L "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mmin "-$(($1 * 60))" 2>/dev/null || true; } | while IFS= read -r f; do
+    s=${f##*/}; s=${s%.jsonl}; [[ $s =~ $UUID && " $3 " != *" $s "* ]] || continue
     # newest line first, so jq stops at the first real message instead of parsing 200 long lines
     IFS=$'\t' read -r st t e d < <(tail -n 200 "$f" | tac 2>/dev/null | jq -rRn "$REAL"'first(inputs | fromjson? | objects | real)
       | [(if .type == "assistant" and .message.stop_reason == "end_turn" then "ended" else "cut" end),
-         ((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0), (.entrypoint // "-"), (.cwd // "-")] | join("\t")' 2>/dev/null) || continue
+         ((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0), (.entrypoint // "" | if . == "" then "-" else . end), (.cwd // "" | if . == "" then "-" else . end)] | join("\t")' 2>/dev/null) || continue
     [ "$t" != 0 ] || t=$(date -r "$f" +%s) # no timestamp on the message: the file's
     age=$((now - t)); [ "$age" -le $(($1 * 3600)) ] || continue
     p=${lp[$s]:-}; if [ -n "$p" ] || [ "$age" -lt 120 ]; then st=live; fi
@@ -291,6 +294,7 @@ cmd_adopt() { # SID NAME [DIR]
   mapfile -t fs < <(compgen -G "$HOME/.claude/projects/*/$s*.jsonl" || true)
   [ ${#fs[@]} -eq 1 ] || die "adopt: ${#fs[@]} transcripts match $s"
   s=$(basename "${fs[0]}" .jsonl)
+  [[ $s =~ $UUID ]] || die "adopt: not a session id: '$s'" # it goes into an env file that is sourced
   x=$(grep -lxF "SID=$s" "$CRSS_STATE"/*.env 2>/dev/null | head -1 || true)
   [ -z "$x" ] || die "adopt: $s is already crss session $(basename "$x" .env)"
   x=$(live | awk -F'\t' -v s="$s" '$2 == s { printf "pid %s (%s) ", $1, $3 }')
@@ -319,7 +323,7 @@ cmd_ls() {
   while [ $# -gt 0 ]; do
     case $1 in
       --json) json=1 ;; --all) all=1 ;; --tmp) all=1 tmp=1 ;;
-      --hours) all=1 hrs=${2:-}; [[ $hrs =~ ^[0-9]+$ ]] || die "ls: --hours needs a number"; shift ;;
+      --hours) all=1 hrs=${2:-}; [[ $hrs =~ ^[0-9]+$ ]] || die "ls: --hours needs a number"; hrs=$((10#$hrs)); shift ;;
       -*) die "ls: unknown option: $1" ;;
       *) filt+=("$1") ;;
     esac
@@ -345,7 +349,7 @@ cmd_ls() {
   done
   [ -z "$all" ] || orows=$(others "$hrs" "$tmp" "$(cut -f4 <<<"$rows" | tr '\n' ' ')")
   if [ -n "$json" ]; then
-    printf '%s' "$rows" | jq -R -s --arg o "$orows" '(split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")}))
+    printf '%s' "$rows" | jq -R -s --rawfile o <(printf '%s' "$orows") '(split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")}))
       + ($o | split("\n") | map(select(. != "") | split("\t") | {name:"-", status:.[1], version:"-", sid:.[0], dir:.[5], by:"", title:(.[6] // ""), age:(.[2] | tonumber), entry:.[4], pid:(.[3] | split(":")[0] | tonumber? // null), proc:(.[3] | split(":")[1])}))'
   else
     printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f g; do [ "$f" != ' [code-mode]' ] || { g=$f; f=; }; printf '%-16s %-5s %-10s %.8s %s %s%s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}" "$g"; done
