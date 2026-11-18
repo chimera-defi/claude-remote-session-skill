@@ -6,7 +6,8 @@ T=$(mktemp -d); SOCK=crss-test-$$; F=0
 export HOME=$T/home CRSS_STATE=$T/state CRSS_TMUX="tmux -L $SOCK" CRSS_CLAUDE=$T/claude CRSS_CONFIG=$T/none
 export CRSS_BACKOFF=1 CRSS_PAUSE=1 CRSS_NO_SYSTEMD=1 FAKE_LOG=$T/log TERM=xterm
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY CLAUDE_CODE_EXPERIMENTAL_CODE_MODE; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME" "$T/work"; echo '{}' >"$HOME/.claude.json"
+unset TMUX CLAUDE_CODE_SESSION_ID CRSS_BY CLAUDE_CODE_EXPERIMENTAL_CODE_MODE; export CRSS_CGROUP=/dev/null; mkdir -p "$HOME/.claude" "$T/work" "$T/proj"; echo '{}' >"$HOME/.claude.json"
+ln -s "$T/proj" "$HOME/.claude/projects" # a symlink, as on a host that keeps transcripts elsewhere
 trap 'tmux -L $SOCK kill-server 2>/dev/null; rm -rf "$T"' EXIT
 
 cat >"$T/claude" <<'PY'
@@ -271,4 +272,55 @@ f=$(compgen -G "$HOME/.claude/projects/p/$(sidf h1).jsonl"); head -c -1 "$f" >"$
 check "ls: a transcript still being written (no final newline) is shell, not parked" [ "$(st1 h1)" = shell ]
 echo 'garbage (' >>"$CRSS_STATE/n1.env"; out=$("$C" send n1 hi 2>/dev/null); check "send: a broken env file does not turn a delivered send into a refusal" [ "$?/$out" = 0/delivered ]
 out=$("$C" ls n1 2>&1); check "ls NAME: a broken env file is not also called no such session" bash -c '[[ $1 == *"n1: bad env file, skipped"* && $1 != *"no such session"* ]]' _ "$out"
+# 8. ls --all and adopt: transcripts no crss session has. Fixture folders are made-up paths outside any temp dir.
+Q=$HOME/.claude/projects/q; X=-0000-4000-8000-000000000001; mkdir -p "$Q/e0000001$X/subagents"
+tx() { # SID8 WHEN CWD ENTRYPOINT MESSAGE-JSON [FILE]: append one message
+  jq -cn --arg t "$(date -u -d "$2" +%Y-%m-%dT%H:%M:%S.000Z)" --arg c "$3" --arg e "$4" --argjson m "$5" '{timestamp:$t, cwd:$c, entrypoint:$e} + $m' >>"${6:-$Q/$1$X.jsonl}"
+}
+END='{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"done"}]}}'
+USR='{"type":"user","message":{"content":"do the thing"}}'; TOOL='{"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use"}]}}'
+tx e0000001 '-3 hours' /srv/demo claude-desktop "$USR"; tx e0000001 '-2 hours' /srv/demo claude-desktop "$END"
+printf '%s\n' '{"type":"custom-title","customTitle":"Desk chat"}' '{"type":"user","isMeta":true,"message":{"content":"note"}}' '{"type":"cost-state"}' >>"$Q/e0000001$X.jsonl"
+tx x '-1 hours' /srv/sub cli "$END" "$Q/e0000001$X/subagents/agent-a1.jsonl"
+tx c0000001 '-3 hours' /srv/demo cli "$END"; tx c0000001 '-3 hours' /srv/demo cli "$USR"; tx c0000002 '-3 hours' /srv/demo cli "$TOOL"
+sleep 300 & LP=$!; true & DP=$!; wait "$DP"
+tx a0000001 '-5 hours' /srv/demo claude-desktop "$END"; echo '{"pid":'"$LP"',"sessionId":"a0000001'"$X"'","status":"idle"}' >"$HOME/.claude/sessions/$LP.json"
+tx d0000001 '-5 hours' /srv/demo cli "$END"; echo '{"pid":'"$DP"',"sessionId":"d0000001'"$X"'","status":"idle"}' >"$HOME/.claude/sessions/$DP.json"
+tx a0000002 '-10 seconds' /srv/demo cli "$USR"; tx f0000001 '-40 hours' /srv/demo cli "$END"
+tx b0000001 '-2 hours' /srv/demo/scratchpad/x cli "$END"; tx b0000002 '-2 hours' /tmp/x cli "$END"; tx b0000003 '-2 hours' /srv/demo sdk-cli "$END"
+all() { "$C" ls --all "$@" 2>/dev/null | grep '^- '; }
+row() { all "${@:2}" | awk -v s="$1" '$4 == s { print $2 }'; } # SID8 [ls options]: the STATE column
+out=$(all)
+check "ls --all: a finished turn is ended; age, folder, title and entrypoint shown" grep -qE '^- +ended +2h +e0000001 /srv/demo Desk chat \[claude-desktop\]$' <<<"$out"
+check "ls --all: an unanswered prompt is cut" [ "$(row c0000001)" = cut ]
+check "ls --all: a tool call with no result is cut" [ "$(row c0000002)" = cut ]
+check "ls --all: a running claude that has the id makes it live, with its pid and status" grep -qE "^- +live +5h +a0000001 .*\[claude-desktop, pid $LP idle\]$" <<<"$out"
+check "ls --all: a message under 2 minutes old is live" [ "$(row a0000002)" = live ]
+check "ls --all: a record whose process is gone is not live" [ "$(row d0000001)" = ended ]
+check "ls --all: sub-agent files, temp and scratchpad folders, headless runs and old transcripts are left out" bash -c '! grep -qE "/srv/sub|b000000[123]|f0000001" <<<"$1"' _ "$out"
+check "ls --all --tmp: temp, scratchpad and headless rows show; sub-agent files never" [ "$(row b0000001 --tmp)$(row b0000002 --tmp)$(row b0000003 --tmp)$(all --tmp | grep -c /srv/sub)" = endedendedended0 ]
+check "ls --all --hours: a wider window shows the older one" [ "$(row f0000001 --hours 48)" = ended ]
+check "ls --all: a crss session's transcript is not listed twice" [ -z "$(row "$(sidf p1 | cut -c1-8)" --tmp)" ]
+check "ls: without --all there are no extra rows or keys" bash -c "[ \"\$('$C' ls 2>/dev/null | grep -c '^- ')\" = 0 ] && '$C' ls --json 2>/dev/null | jq -e 'all(.[]; has(\"age\") | not)' >/dev/null"
+check "ls --all --json: same keys plus age, entry, pid, proc" bash -c "'$C' ls --all --json 2>/dev/null | jq -e '.[] | select(.sid == \"a0000001$X\") | .name == \"-\" and .status == \"live\" and .pid == $LP and .proc == \"idle\" and .entry == \"claude-desktop\" and .age > 17000' >/dev/null"
+"$C" ls --all n1 >/dev/null 2>&1; check "ls --all NAME: refused" [ $? = 1 ]
+"$C" ls --hours >/dev/null 2>&1; check "ls --hours without a number: refused" [ $? = 1 ]
+check "ls --hours and --tmp imply --all" [ "$("$C" ls --hours 48 2>/dev/null | grep -c '^- .* f0000001 ')$("$C" ls --tmp 2>/dev/null | grep -c '^- .* b0000003 ')" = 11 ]
+out=$("$C" adopt a0000001 ad0 2>&1); check "adopt: refused while a running claude has the id, pid named" bash -c '[ "$1" = 1 ] && [[ $2 == *"live in pid '"$LP"' (idle)"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ]' _ "$?" "$out"
+out=$("$C" adopt 99999999 ad0 2>&1); check "adopt: no such transcript" [ "$?/$out" = "1/crss: adopt: 0 transcripts match 99999999" ]
+cp "$Q/c0000001$X.jsonl" "$Q/c0000001${X%1}2.jsonl"; out=$("$C" adopt c0000001 ad0 2>&1); check "adopt: an ambiguous prefix is refused" [ "$?/$out" = "1/crss: adopt: 2 transcripts match c0000001" ]
+out=$("$C" adopt e0000001 ad0 2>&1); check "adopt: a transcript written to in the last 2 minutes is refused" bash -c '[ "$1" = 1 ] && [[ $2 == *"under 2 minutes ago"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ]' _ "$?" "$out"
+touch -d '-10 minutes' "$Q/e0000001$X.jsonl"
+out=$("$C" adopt e0000001 ad0 2>&1); check "adopt: a folder that is gone is refused, DIR offered" bash -c '[ "$1" = 1 ] && [[ $2 == *"no such dir"*"give DIR"* ]] && [ ! -e "$CRSS_STATE/ad0.env" ]' _ "$?" "$out"
+out=$(CRSS_BY=boss "$C" adopt e0000001 ad1 "$T/work"); check "adopt: says what it did" grep -qF "ad1: adopted e0000001$X in $(cd "$T/work" && pwd -P)" <<<"$out"
+check "adopt: comes up as a crss session" idle ad1
+check "adopt: resumes the same conversation id" argq ad1 'index("--remote-control") as $i | .[$i+1]=="--resume" and .[$i+2]=="e0000001'"$X"'"'
+check "adopt: ls shows it by name with its title and caller, and no longer as a loose transcript" bash -c "[ \"\$('$C' ls ad1 --json | jq -r '.[0] | .title + \"/\" + .by')\" = 'Desk chat/boss' ] && [ -z \"$(row e0000001 --tmp)\" ]"
+out=$("$C" adopt d0000001 ad1 2>&1); check "adopt: a taken NAME is refused" [ "$?/$out" = "1/crss: ad1 already exists" ]
+out=$("$C" adopt e0000001 ad2 "$T/work" 2>&1); check "adopt: an id a crss session has is refused" [ "$?/$out" = "1/crss: adopt: e0000001$X is already crss session ad1" ]
+# the fake claude starts a second transcript file for the id on its first message, so send comes after the id checks
+out=$("$C" send ad1 hello-adopted); check "adopt: crss send reaches it" [ "$out" = delivered ]
+tx ad000001 '-4 hours' "$T/work" cli "$END"; touch -d '-10 minutes' "$Q/ad000001$X.jsonl"; "$C" adopt "ad000001$X" ad3 >/dev/null
+check "adopt: without DIR the transcript's own folder is used" grep -qxF "DIR=$(printf %q "$(cd "$T/work" && pwd -P)")" "$CRSS_STATE/ad3.env"
+kill "$LP" 2>/dev/null
 exit $F
