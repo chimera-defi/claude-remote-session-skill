@@ -10,6 +10,16 @@ For a silent session run `crss ls NAME`, then `crss peek NAME` and match the sha
 | `crss ls` says `?` | tmux up, claude starting or in crash backoff (up to 300 s) | wait; `crss up` does nothing |
 | `crss ls` says `down` | tmux session gone | `crss up NAME` |
 | every session silent, `Login expired` | dead login | [Dead login](#dead-login) |
+| a session is not in `crss ls` at all | started outside crss (Desktop app, plain `claude`) | [Started outside crss](#started-outside-crss) |
+
+## Started outside crss
+
+`crss ls --all` adds a `-` row for each recent conversation no crss session has: `cut` stopped
+mid-turn, `ended` finished its turn, `live` still has a running claude (its pid and status are in
+the brackets; an app-started one can sit `live` and `idle` with nobody able to message it while the
+app's machine is away). `crss adopt SID NAME` makes an `ended` or `cut` one a crss session; for a
+`live` one, stop the named pid first. `--tmp` adds headless (`sdk-cli`) runs and temp folders. Rules and
+tests: `others()` and `cmd_adopt` in `scripts/crss.sh`, section 8 of `tests/test-crss.sh`.
 
 ## Compact or recycle
 
