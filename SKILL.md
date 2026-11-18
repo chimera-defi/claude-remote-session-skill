@@ -20,6 +20,8 @@ session doesn't.
 crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--code-mode] [--brief FILE] [-- extra claude args]
 crss send NAME "text"            # or: crss send NAME --file brief.md
 crss ls [NAME...] [--json]       # name, status (idle|busy|shell|parked|waiting|down|?), version, conversation id, folder, title; exit 2 if a NAME is no session. `--json` adds `by`: who spawned it (a session NAME or title, else the raw id; empty if unknown)
+crss ls --all [--hours N] [--tmp]  # also conversations no crss session has: "- STATE AGE ID FOLDER TITLE [entrypoint, pid]"
+crss adopt SID NAME [DIR]        # run one of those as crss session NAME (SID: the id or its first 8+ characters)
 crss peek NAME [LINES]           # "NAME STATUS TITLE" line + last LINES (30) non-blank pane lines; exit 2 if no such session
 crss wait NAME... [--timeout S]  # until each is idle or parked, on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other (a NAME that is no session is refused at once)
 crss restart NAME... | --all [--wait-idle]
@@ -53,6 +55,14 @@ starts a turn at once.
 
 `crss ls` also lists `ah_*` sessions started by other tools: `send` reaches them, `restart` and
 `reap` don't.
+
+**Sessions started elsewhere** (the Desktop app, a plain `claude`): their transcripts are on this
+machine too, so `crss ls --all` lists the ones with a message in the last 30 hours (`--hours N`)
+as `ended`, `cut` (stopped mid-turn) or `live` (a running claude still has it), and
+`crss adopt SID NAME` resumes one in tmux so `crss send` reaches it when the app that started it
+is away. `adopt` refuses a `live` one (and one written to in the last 2 minutes): two claudes on one transcript garble it, so stop the named
+pid first, and don't reopen an adopted conversation in the app. The rules are `others()` and
+`cmd_adopt` in `scripts/crss.sh`, pinned by section 8 of `tests/test-crss.sh`.
 
 - **spawn:** NAME is lowercase letters, digits and dashes. `--worktree` makes
   `~/.claude/worktrees/NAME` on branch `session/NAME` from `origin/main` (from `HEAD` when the repo

@@ -15,6 +15,9 @@ crss spawn NAME DIR [--model M] [--effort E] [--title T] [--worktree] [--code-mo
 crss up [NAME...]                 start sessions that have an env file but no tmux session
 crss ls [NAME...] [--json]        NAME STATUS VERSION SID DIR TITLE (also ah_* sessions started by other tools); --json adds by (who spawned it); exit 2 for an unknown NAME
                                   STATUS parked: the turn is over, a background command it started still runs
+crss ls --all [--hours N] [--tmp]   also transcripts no crss session has (Desktop app, plain claude) with a message in the last N (30) hours:
+                                  - STATE AGE SID DIR TITLE [entrypoint, pid]; STATE ended | cut (stopped mid-turn) | live; --tmp adds headless and temp-dir runs
+crss adopt SID NAME [DIR]         run such a transcript as crss session NAME (SID or its first 8+ characters); refused while a running claude has it or it was written to under 2 minutes ago
 crss peek NAME [LINES]            header line (NAME STATUS TITLE) + last LINES (30) non-blank pane lines
 crss wait NAME... [--timeout S]   until each is idle or parked (turn over, brief sent), on a dialog, or down; exit 0 all idle or parked, 1 timeout, 2 other
 crss send NAME (TEXT... | --file F)   paste + Enter; delivered | queued (0), UNVERIFIED (1), refused (2)
@@ -56,13 +59,16 @@ working() { case $(field "$1" status) in busy | shell) return 0 ;; esac; return 
 # a command inside a turn read "busy" on CLI 2.1.325. To be safe "shell" is only reported as "parked"
 # when the transcript shows the turn is over: its last real message is an assistant one with
 # stop_reason end_turn.
+# a real message: not metadata, a sub-agent's (sidechain) message or a local command's lines
+UUID='^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+REAL='def real: select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true) | select((.message.content | type == "string" and (startswith("<command-name>") or startswith("<local-command-stdout>"))) | not);'
 status_of() { # NAME [record json]
   local r=${2-$(rec "$1")} st f
   st=$(jf "$r" status)
   if [ "$st" = shell ]; then
     f=$(compgen -G "$HOME/.claude/projects/*/$(jf "$r" sessionId).jsonl" | head -1 || true)
     # a half-written last line is dropped by fromjson?, so an older message could be read: stay shell
-    [ -z "$f" ] || [ -n "$(tail -c1 "$f")" ] || [ "$(tail -n 200 "$f" | jq -rRn '[inputs | fromjson? | objects | select(.type == "assistant" or (.type == "user" and .isMeta != true)) | select(.isSidechain != true) | select((.message.content | type == "string" and (startswith("<command-name>") or startswith("<local-command-stdout>"))) | not)] | last | .message.stop_reason? // empty' 2>/dev/null || true)" != end_turn ] || st=parked
+    [ -z "$f" ] || [ -n "$(tail -c1 "$f")" ] || [ "$(tail -n 200 "$f" | jq -rRn "$REAL"'[inputs | fromjson? | objects | real] | last | .message.stop_reason? // empty' 2>/dev/null || true)" != end_turn ] || st=parked
   fi
   echo "$st"
 }
@@ -101,6 +107,44 @@ paste_to() { # NAME FILE
   tm send-keys -t "=ah_$1:" Enter
 }
 
+# PID, session id and status of every running claude, from its session record (Desktop- and SDK-started too)
+live() {
+  local f p s st
+  for f in "$HOME"/.claude/sessions/*.json; do # one jq per record: a half-written one must not hide the rest
+    jq -r '[.pid, .sessionId, .status // "?"] | @tsv' "$f" 2>/dev/null || true
+  done |
+    while IFS=$'\t' read -r p s st; do if kill -0 "$p" 2>/dev/null; then printf '%s\t%s\t%s\n' "$p" "$s" "$st"; fi; done
+}
+# Transcripts no crss session has, newest first: SID STATE AGE-SECONDS PID:STATUS ENTRYPOINT DIR TITLE (tabs).
+# live: a running claude has the id, or the last message is under 2 minutes old. ended: the last real
+# message is an assistant turn that finished (status_of's rule). cut: anything else (a prompt or a tool
+# call left unanswered). Age is the last message's, since the app appends metadata to old transcripts.
+others() { # HOURS SHOW-TMP KNOWN-SIDS
+  local f s p st t e d age now; declare -A lp=(); now=$(date +%s)
+  while IFS=$'\t' read -r p s st; do lp[$s]=$p:$st; done < <(live)
+  # depth 2 leaves out SID/subagents/*.jsonl; -L because projects may be a symlink
+  { find -L "$HOME/.claude/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' -mmin "-$(($1 * 60))" 2>/dev/null || true; } | while IFS= read -r f; do
+    s=${f##*/}; s=${s%.jsonl}; [[ $s =~ $UUID && " $3 " != *" $s "* ]] || continue
+    # newest line first, so jq stops at the first real message instead of parsing 200 long lines
+    IFS=$'\t' read -r st t e d < <(tail -n 200 "$f" | tac 2>/dev/null | jq -rRn "$REAL"'first(inputs | fromjson? | objects | real)
+      | [(if .type == "assistant" and .message.stop_reason == "end_turn" then "ended" else "cut" end),
+         ((.timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0), (.entrypoint // "" | if . == "" then "-" else . end), (.cwd // "" | if . == "" then "-" else . end)] | join("\t")' 2>/dev/null) || continue
+    [ "$t" != 0 ] || t=$(date -r "$f" +%s) # no timestamp on the message: the file's
+    age=$((now - t)); [ "$age" -le $(($1 * 3600)) ] || continue
+    p=${lp[$s]:-}; if [ -n "$p" ] || [ "$age" -lt 120 ]; then st=live; fi
+    if [ "$st" != live ] && [ -z "$2" ]; then # headless runs and temp folders are noise unless asked for
+      [ "$e" != sdk-cli ] || continue
+      case $d in /tmp | /tmp/* | /var/tmp/* | /private/tmp/* | */scratchpad | */scratchpad/*) continue ;; esac
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$s" "$st" "$age" "${p:--}" "$e" "$d" "$(title_of - "$s")"
+  done | sort -t$'\t' -k3,3n
+}
+caller() { # who runs this: a given name, the caller's conversation id, or the systemd unit
+  local by=${CRSS_BY:-${CLAUDE_CODE_SESSION_ID:-}}
+  [ -n "$by" ] || { by=$(tail -n1 "${CRSS_CGROUP:-/proc/self/cgroup}" 2>/dev/null || true); by=${by##*/}; [[ $by == *.service ]] || by=; }
+  printf '%s\n' "${by//[$'\t\n']/ }" # printf: echo would eat a value like -n
+}
+
 cmd_spawn() {
   local n=${1:-} dir=${2:-} model='' effort='' title='' wt='' brief='' cm='' extra=() args=() sid by nm=${CRSS_NAMES:-auto}
   [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
@@ -137,8 +181,7 @@ cmd_spawn() {
   [ -n "$effort" ] && args+=(--effort "$effort")
   args+=("${extra[@]}")
   sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
-  by=${CRSS_BY:-${CLAUDE_CODE_SESSION_ID:-}} # who started it: a given name, the caller's conversation id, or the systemd unit
-  [ -n "$by" ] || { by=$(tail -n1 "${CRSS_CGROUP:-/proc/self/cgroup}" 2>/dev/null || true); by=${by##*/}; [[ $by == *.service ]] || by=; }; by=${by//[$'\t\n']/ }
+  by=$(caller)
   mkdir -p "$CRSS_STATE"
   if [ -n "$brief" ]; then cp "$brief" "$CRSS_STATE/$n.brief"; brief=$CRSS_STATE/$n.brief; fi
   {
@@ -242,11 +285,51 @@ cmd_up() {
   done
 }
 
+# A transcript no crss session has becomes one: an env file with its id, and cmd_loop resumes it.
+cmd_adopt() { # SID NAME [DIR]
+  local s=${1:-} n=${2:-} dir=${3:-} fs=() x by args=()
+  [[ $s =~ ^[0-9a-f-]{8,36}$ ]] || die "adopt: SID is a session id or its first 8 or more characters"
+  [[ $n =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "bad name: '$n'"
+  if [ -e "$(envf "$n")" ] || tm has-session -t "=ah_$n" 2>/dev/null; then die "$n already exists"; fi
+  mapfile -t fs < <(compgen -G "$HOME/.claude/projects/*/$s*.jsonl" || true)
+  [ ${#fs[@]} -eq 1 ] || die "adopt: ${#fs[@]} transcripts match $s"
+  s=$(basename "${fs[0]}" .jsonl)
+  [[ $s =~ $UUID ]] || die "adopt: not a session id: '$s'" # it goes into an env file that is sourced
+  x=$(grep -lxF "SID=$s" "$CRSS_STATE"/*.env 2>/dev/null | head -1 || true)
+  [ -z "$x" ] || die "adopt: $s is already crss session $(basename "$x" .env)"
+  x=$(live | awk -F'\t' -v s="$s" '$2 == s { printf "pid %s (%s) ", $1, $3 }')
+  [ -z "$x" ] || die "adopt: $s is live in ${x% }; a second claude on one transcript would garble it. Stop that one first"
+  # no session record yet (a headless run starting up) still shows as a file being written
+  [ $(($(date +%s) - $(date -r "${fs[0]}" +%s))) -ge 120 ] || die "adopt: $s was written to under 2 minutes ago; something may still be running it"
+  [ -n "$dir" ] || dir=$(tail -n 400 "${fs[0]}" | jq -rRn '[inputs | fromjson? | .cwd? // empty] | last // empty' 2>/dev/null || true)
+  [ -d "$dir" ] || die "adopt: no such dir: '$dir' (give DIR)"
+  dir=$(cd "$dir" && pwd -P); by=$(caller)
+  read -ra args <<<"${CRSS_DEFAULT_ARGS:-}"
+  mkdir -p "$CRSS_STATE"
+  {
+    echo "DIR=$(printf %q "$dir")"
+    echo "SID=$s"
+    [ -z "$by" ] || echo "BY=$(printf %q "$by")"
+    echo "ARGS=($([ ${#args[@]} -gt 0 ] && printf '%q ' "${args[@]}"))"
+    [ "${CRSS_NAMES:-auto}" != auto ] || echo "NAMES=auto"
+    echo "ENVS=()"
+  } >"$(envf "$n")"
+  cmd_up "$n"
+  echo "$n: adopted $s in $dir (tmux ah_$n, resumed by session id); crss send $n TEXT reaches it"
+}
+
 cmd_ls() {
-  local n r st v x json='' filt=() rows='' rc=0 a b c d e f
-  for a in "$@"; do
-    case $a in --json) json=1 ;; -*) die "ls: unknown option: $a" ;; *) filt+=("$a") ;; esac
+  local n r st v x json='' filt=() rows='' rc=0 a b c d e f g all='' hrs=30 tmp='' orows=''
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --json) json=1 ;; --all) all=1 ;; --tmp) all=1 tmp=1 ;;
+      --hours) all=1 hrs=${2:-}; [[ $hrs =~ ^[0-9]+$ ]] || die "ls: --hours needs a number"; hrs=$((10#$hrs)); shift ;;
+      -*) die "ls: unknown option: $1" ;;
+      *) filt+=("$1") ;;
+    esac
+    shift
   done
+  [ -z "$all" ] || [ ${#filt[@]} -eq 0 ] || die "ls: --all takes no NAME"
   want() { [ ${#filt[@]} -eq 0 ] || [[ " ${filt[*]} " == *" $1 "* ]]; }
   for n in $(names); do
     want "$n" || continue
@@ -264,10 +347,16 @@ cmd_ls() {
     r=$(rec "$n"); st=$(status_of "$n" "$r"); v=$(jf "$r" version); x=$(jf "$r" sessionId)
     rows+="$n	${st:-?}	${v:--}	${x:--}	$(tm display-message -p -t "=ah_$n:" '#{pane_current_path}')	@	$(title_of "$n" "$x")"$'\n'
   done
+  [ -z "$all" ] || orows=$(others "$hrs" "$tmp" "$(cut -f4 <<<"$rows" | tr '\n' ' ')")
   if [ -n "$json" ]; then
-    printf '%s' "$rows" | jq -R -s 'split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")})'
+    printf '%s' "$rows" | jq -R -s --rawfile o <(printf '%s' "$orows") '(split("\n")[:-1] | map(split("\t") | {name:.[0], status:.[1], version:.[2], sid:.[3], dir:.[4], by:.[5][1:], title:(.[6] // "")}))
+      + ($o | split("\n") | map(select(. != "") | split("\t") | {name:"-", status:.[1], version:"-", sid:.[0], dir:.[5], by:"", title:(.[6] // ""), age:(.[2] | tonumber), entry:.[4], pid:(.[3] | split(":")[0] | tonumber? // null), proc:(.[3] | split(":")[1])}))'
   else
     printf '%s' "$rows" | while IFS=$'\t' read -r a b c d e _ f g; do [ "$f" != ' [code-mode]' ] || { g=$f; f=; }; printf '%-16s %-5s %-10s %.8s %s %s%s\n' "$a" "$b" "$c" "$d" "$e" "${f:--}" "$g"; done
+    [ -z "$orows" ] || while IFS=$'\t' read -r a b c d e f g; do # version column holds the age; NAME - marks a row adopt can take
+      if [ "$c" -lt 3600 ]; then c=$((c / 60))m; else c=$((c / 3600))h; fi
+      [ "$d" = - ] || e+=", pid ${d/:/ }"; printf '%-16s %-5s %-10s %.8s %s %s [%s]\n' - "$b" "$c" "$a" "$f" "${g:--}" "$e"
+    done <<<"$orows"
   fi
   for a in "${filt[@]}"; do [ -f "$(envf "$a")" ] || [[ $'\n'$rows == *$'\n'"$a"$'\t'* ]] || { echo "crss: no such session: $a" >&2; rc=2; }; done # a typo is not an empty fleet
   return "$rc"
@@ -417,6 +506,7 @@ case $c in
   _loop) cmd_loop "$@" ;;
   up) cmd_up "$@" ;;
   ls) cmd_ls "$@" ;;
+  adopt) cmd_adopt "$@" ;;
   peek) cmd_peek "$@" ;;
   wait) cmd_wait "$@" ;;
   send) cmd_send "$@" ;;
