@@ -409,7 +409,7 @@ precompact() { # NAME FILE-TO-SEND SESSION-ID
           | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) | last // 0)] | @tsv' 2>/dev/null) || return 0
   [ "${t:-0}" != 0 ] || t=$(date -r "$f" +%s)
   [ $(($(date +%s) - t)) -ge "${CRSS_PRECOMPACT_IDLE:-3600}" ] && [ "${tok:-0}" -ge "${CRSS_PRECOMPACT_TOKENS:-120000}" ] || return 0
-  echo "crss: $n idle $((($(date +%s) - t) / 60))m with ${tok}k-token context: compacting first" >&2
+  echo "crss: $n idle $((($(date +%s) - t) / 60))m with a ${tok}-token context: compacting first" >&2
   sz=$(wc -c <"$f"); printf /compact >"$2.c"; paste_to "$n" "$2.c"; rm -f "$2.c"
   for _ in $(seq "${CRSS_PRECOMPACT_WAIT:-900}"); do
     t=$(tail -c +$((sz + 1)) "$f" | grep -c '"subtype":"compact_boundary"' || true)
