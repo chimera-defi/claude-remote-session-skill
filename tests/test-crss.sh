@@ -38,6 +38,10 @@ while True:
             if msg.startswith("/rename "):  # handled in the TUI: a title line (trimmed), no turn, status stays idle
                 open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "custom-title", "customTitle": msg[8:].strip(), "sessionId": sid}, separators=(",", ":")) + "\n")
                 continue
+            if msg == "/compact":  # handled in the TUI: a compact_boundary line, no turn
+                open(os.environ["FAKE_LOG"] + ".compact", "a").write("x\n")
+                open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a").write(json.dumps({"type": "system", "subtype": "compact_boundary"}, separators=(",", ":")) + "\n")
+                continue
             if msg.startswith("/local"):  # a local command: lines in the transcript, status unchanged (user shape, or system/local_command)
                 tr = open(os.environ["HOME"] + "/.claude/projects/p/%s.jsonl" % sid, "a"); sysf = msg.startswith("/localsys")
                 def line(c): return json.dumps({"type": "system", "subtype": "local_command", "content": c} if sysf else {"type": "user", "message": {"content": c}}) + "\n"
@@ -331,4 +335,20 @@ out=$("$C" send ad1 hello-adopted); check "adopt: crss send reaches it" [ "$out"
 tx ad000001 '-4 hours' "$T/work" cli "$END"; touch -d '-10 minutes' "$Q/ad000001$X.jsonl"; "$C" adopt "ad000001$X" ad3 >/dev/null
 check "adopt: without DIR the transcript's own folder is used" grep -qxF "DIR=$(printf %q "$(cd "$T/work" && pwd -P)")" "$CRSS_STATE/ad3.env"
 kill "$LP" 2>/dev/null
+# 9. send compacts a big session that has been idle past the cache TTL first, and leaves fresh or small ones alone
+export CRSS_PRECOMPACT_WAIT=10
+"$C" spawn pc1 "$T/work" >/dev/null; idle pc1; "$C" send pc1 first >/dev/null; idle pc1
+PF=$(compgen -G "$HOME/.claude/projects/*/$(sidf pc1).jsonl" | head -1)
+bigline() { echo '{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":5,"cache_read_input_tokens":'"$1"',"cache_creation_input_tokens":0}}}' >>"$PF"; }
+ncompact() { cat "$FAKE_LOG.compact" 2>/dev/null | wc -l; }
+bigline 200000; out=$("$C" send pc1 "fresh task" 2>&1); check "send: a big session idle under an hour is not compacted" [ "$(ncompact)" = 0 ]
+idle pc1; touch -d '-2 hours' "$PF"; bigline 1000; touch -d '-2 hours' "$PF"; out=$("$C" send pc1 "small task" 2>&1); check "send: a small stale session is not compacted" [ "$(ncompact)" = 0 ]
+idle pc1; bigline 200000; touch -d '-2 hours' "$PF"
+out=$(CRSS_NO_PRECOMPACT=1 "$C" send pc1 "opted out" 2>&1); check "send: CRSS_NO_PRECOMPACT skips the compact" [ "$(ncompact)" = 0 ]
+idle pc1; touch -d '-2 hours' "$PF"
+out=$(CRSS_PRECOMPACT_SKIP="x pc1" "$C" send pc1 "listed" 2>&1); check "send: a name in CRSS_PRECOMPACT_SKIP skips the compact" [ "$(ncompact)" = 0 ]
+idle pc1; touch -d '-2 hours' "$PF"
+out=$("$C" send pc1 "real task" 2>&1); check "send: a big session idle over an hour is compacted, then the message goes in" bash -c '[ "$(cat "$1.compact" | wc -l)" = 1 ] && [ "$(tail -1 "$1")" = "\"real task\"" ]' _ "$FAKE_LOG"
+idle pc1; touch -d '-2 hours' "$PF"; out=$("$C" send pc1 /rename Still-works 2>&1); check "send: a slash command is not preceded by a compact" [ "$(ncompact)" = 1 ]
+unset CRSS_PRECOMPACT_WAIT
 exit $F
