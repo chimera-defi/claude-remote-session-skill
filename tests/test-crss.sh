@@ -350,5 +350,7 @@ out=$(CRSS_PRECOMPACT_SKIP="x pc1" "$C" send pc1 "listed" 2>&1); check "send: a 
 idle pc1; touch -d '-2 hours' "$PF"
 out=$("$C" send pc1 "real task" 2>&1); check "send: a big session idle over an hour is compacted, then the message goes in" bash -c '[ "$(cat "$1.compact" | wc -l)" = 1 ] && [ "$(tail -1 "$1")" = "\"real task\"" ]' _ "$FAKE_LOG"
 idle pc1; touch -d '-2 hours' "$PF"; out=$("$C" send pc1 /rename Still-works 2>&1); check "send: a slash command is not preceded by a compact" [ "$(ncompact)" = 1 ]
+idle pc1; bigline 200000; echo '{"type":"system","subtype":"compact_boundary"}' >>"$PF"; touch -d '-2 hours' "$PF"; "$C" send pc1 "after compact" >/dev/null 2>&1
+check "send: usage from before the last compact does not count" [ "$(ncompact)" = 1 ]
 unset CRSS_PRECOMPACT_WAIT
 exit $F

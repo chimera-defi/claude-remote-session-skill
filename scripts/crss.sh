@@ -405,7 +405,7 @@ precompact() { # NAME FILE-TO-SEND SESSION-ID
   # last real message time (the app appends metadata to old transcripts) and the context its last answer used
   IFS=$'\t' read -r t tok < <(tail -n 400 "$f" | jq -rRn "$REAL"'[inputs | fromjson? | objects] as $l
     | [($l | map(real) | map(select(. != null)) | last | .timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? // 0),
-       ($l | map(select(.type == "assistant" and .isSidechain != true and .message.usage != null) | .message.usage
+       ($l | (map(.subtype? == "compact_boundary") | rindex(true) // -1) as $b | .[$b + 1:] | map(select(.type == "assistant" and .isSidechain != true and .message.usage != null) | .message.usage
           | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) | last // 0)] | @tsv' 2>/dev/null) || return 0
   [ "${t:-0}" != 0 ] || t=$(date -r "$f" +%s)
   [ $(($(date +%s) - t)) -ge "${CRSS_PRECOMPACT_IDLE:-3600}" ] && [ "${tok:-0}" -ge "${CRSS_PRECOMPACT_TOKENS:-120000}" ] || return 0
@@ -416,7 +416,7 @@ precompact() { # NAME FILE-TO-SEND SESSION-ID
     if [ "${t:-0}" -gt 0 ] && [ "$(status_of "$n")" = idle ]; then return 0; fi
     sleep 1
   done
-  echo "crss: $n compact did not finish; message not sent" >&2; return 2
+  echo "crss: $n compact did not finish; message not sent (CRSS_NO_PRECOMPACT=1 skips it)" >&2; return 2
 }
 
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
