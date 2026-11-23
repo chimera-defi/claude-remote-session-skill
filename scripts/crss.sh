@@ -392,6 +392,33 @@ cmd_wait() {
   return $rc
 }
 
+# A session idle past the 1h cache TTL pays full price to rebuild its context on the next message, so a big
+# one is compacted before the message goes in (references/troubleshooting.md#compact-or-recycle).
+# Off with CRSS_NO_PRECOMPACT=1 or NAME in CRSS_PRECOMPACT_SKIP; CRSS_PRECOMPACT_IDLE (3600 s), _TOKENS (120000), _WAIT (900 s).
+# Fail closed: a compact that does not finish refuses the send (exit 2).
+precompact() { # NAME FILE-TO-SEND SESSION-ID
+  local n=$1 f t tok sz=0
+  [ -z "${CRSS_NO_PRECOMPACT:-}" ] || return 0
+  [[ " ${CRSS_PRECOMPACT_SKIP:-} " != *" $n "* ]] || return 0
+  [[ $(<"$2") != /* ]] || return 0 # a slash command is not a task: /compact, /clear, /rename run as they are
+  f=$(compgen -G "$HOME/.claude/projects/*/$3.jsonl" | head -1 || true); [ -n "$f" ] || return 0
+  # last real message time (the app appends metadata to old transcripts) and the context its last answer used
+  IFS=$'\t' read -r t tok < <(tail -n 400 "$f" | jq -rRn "$REAL"'[inputs | fromjson? | objects] as $l
+    | [($l | map(real) | map(select(. != null)) | last | .timestamp // "" | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601? // 0),
+       ($l | (map(.subtype? == "compact_boundary") | rindex(true) // -1) as $b | .[$b + 1:] | map(select(.type == "assistant" and .isSidechain != true and .message.usage != null) | .message.usage
+          | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) | last // 0)] | @tsv' 2>/dev/null) || return 0
+  [ "${t:-0}" != 0 ] || t=$(date -r "$f" +%s)
+  [ $(($(date +%s) - t)) -ge "${CRSS_PRECOMPACT_IDLE:-3600}" ] && [ "${tok:-0}" -ge "${CRSS_PRECOMPACT_TOKENS:-120000}" ] || return 0
+  echo "crss: $n idle $((($(date +%s) - t) / 60))m with a ${tok}-token context: compacting first" >&2
+  sz=$(wc -c <"$f"); printf /compact >"$2.c"; paste_to "$n" "$2.c"; rm -f "$2.c"
+  for _ in $(seq "${CRSS_PRECOMPACT_WAIT:-900}"); do
+    t=$(tail -c +$((sz + 1)) "$f" | grep -c '"subtype":"compact_boundary"' || true)
+    if [ "${t:-0}" -gt 0 ] && [ "$(status_of "$n")" = idle ]; then return 0; fi
+    sleep 1
+  done
+  echo "crss: $n compact did not finish; message not sent (CRSS_NO_PRECOMPACT=1 skips it)" >&2; return 2
+}
+
 cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   local n=${1:-} f='' before tmp want='' r s sid0 tf='' sz=0 cw=''
   known "$n" || return 2
@@ -412,6 +439,7 @@ cmd_send() { # exit 0 delivered or queued, 1 UNVERIFIED, 2 refused
   [ -n "$before" ] || { echo "crss: $n has no live claude yet; retry shortly" >&2; return 2; }
   # a dialog is open: pasted text and Enter would answer it
   [ "$before" = waiting ] && { echo "crss: $n is waiting on a dialog; look at the pane" >&2; return 2; }
+  [ "$before" != idle ] || precompact "$n" "$tmp" "$sid0" || return 2
   if [[ $(<"$tmp") =~ ^(/[A-Za-z0-9:_-]+)([[:space:]]|$) ]]; then # transcript size before the paste, for local_cmd
     cw=${BASH_REMATCH[1]}; tf=$(compgen -G "$HOME/.claude/projects/*/$sid0.jsonl" | head -1 || true); [ -z "$tf" ] || sz=$(wc -c <"$tf")
   fi

@@ -33,6 +33,10 @@ tests: `others()` and `cmd_adopt` in `scripts/crss.sh`, section 8 of `tests/test
 - **Not under about 60 minutes idle.** The prompt cache has a 1-hour sliding TTL; inside it a
   resume reads the cache at about 0.1x, so compacting then is the most expensive moment. Compact
   lazily, when someone is about to message a stale session.
+- **Automatic:** `crss send` compacts first when the session is idle, its last message is over an hour old
+  and its last answer used 120k+ tokens, then sends (refuses with exit 2 if the compact does not finish).
+  Off: `CRSS_NO_PRECOMPACT=1`, or list names in `CRSS_PRECOMPACT_SKIP`; knobs `CRSS_PRECOMPACT_IDLE`,
+  `_TOKENS`, `_WAIT`. Rules and tests: `precompact()` in `scripts/crss.sh`, section 9 of `tests/test-crss.sh`.
 - **Recycle:** commit what should survive (`git -C DIR add -A && git -C DIR commit -m "WIP: before recycle"`),
   `crss reap NAME`, `crss spawn NAME-2 DIR --brief next-brief.md`. Put the prior branch and
   in-progress work in the brief. A `--worktree` name stays taken while its `session/NAME` branch exists.
